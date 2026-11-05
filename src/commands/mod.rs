@@ -30,6 +30,8 @@ pub struct Invocation<'a> {
     /// A trailing `!` on the command line (`:q!`, `:w!`): override safety
     /// checks such as unsaved changes.
     pub bang: bool,
+    /// The key typed after a command that takes one (the `x` in `fx`).
+    pub char_arg: Option<char>,
 }
 
 impl<'a> Invocation<'a> {
@@ -57,6 +59,7 @@ pub struct Context<'a> {
     pub register: Option<char>,
     pub args: &'a [String],
     pub bang: bool,
+    pub char_arg: Option<char>,
 }
 
 impl Context<'_> {
@@ -69,7 +72,18 @@ impl Context<'_> {
 pub struct Command {
     pub name: String,
     pub description: String,
+    /// The command needs one more key as an argument (`f{char}`, `r{char}`).
+    /// The input layer waits for it and passes it as `Context::char_arg`.
+    pub takes_char: bool,
     handler: Handler,
+}
+
+impl Command {
+    /// Marks the command as taking a character argument.
+    pub fn takes_char(&mut self) -> &mut Self {
+        self.takes_char = true;
+        self
+    }
 }
 
 #[derive(Default)]
@@ -97,14 +111,16 @@ impl CommandRegistry {
         name: impl Into<String>,
         description: impl Into<String>,
         handler: impl Fn(&mut Context) -> CommandResult + 'static,
-    ) {
+    ) -> &mut Command {
         let name = name.into();
         let command = Command {
             name: name.clone(),
             description: description.into(),
+            takes_char: false,
             handler: Box::new(handler),
         };
-        self.commands.insert(name, command);
+        self.commands.insert(name.clone(), command);
+        self.commands.get_mut(&name).expect("just inserted")
     }
 
     /// Adds an alternative name for a command (e.g. `q` for `quit`).
@@ -120,6 +136,11 @@ impl CommandRegistry {
 
     pub fn contains(&self, name: &str) -> bool {
         self.get(name).is_some()
+    }
+
+    /// Whether the named command needs a character argument.
+    pub fn takes_char(&self, name: &str) -> bool {
+        self.get(name).is_some_and(|c| c.takes_char)
     }
 
     /// All registered commands, sorted by name.
@@ -145,6 +166,7 @@ impl CommandRegistry {
             register: invocation.register,
             args: invocation.args,
             bang: invocation.bang,
+            char_arg: invocation.char_arg,
         };
         (command.handler)(&mut cx)
     }
@@ -178,6 +200,16 @@ mod tests {
     }
 
     #[test]
+    fn commands_can_take_a_char_argument() {
+        let mut registry = CommandRegistry::new();
+        registry.register("plain", "", |_| Ok(()));
+        registry.register("find", "", |_| Ok(())).takes_char();
+        assert!(registry.takes_char("find"));
+        assert!(!registry.takes_char("plain"));
+        assert!(!registry.takes_char("missing"));
+    }
+
+    #[test]
     fn unknown_commands_return_error() {
         let registry = CommandRegistry::new();
         let err = registry
@@ -193,6 +225,7 @@ mod tests {
             assert_eq!(cx.count(), 3);
             assert_eq!(cx.register, Some('a'));
             assert_eq!(cx.args, ["x"]);
+            assert_eq!(cx.char_arg, Some('z'));
             Ok(())
         });
         let args = ["x".to_string()];
@@ -201,6 +234,7 @@ mod tests {
             register: Some('a'),
             args: &args,
             bang: false,
+            char_arg: Some('z'),
         };
         registry
             .execute("check", &mut Editor::default(), invocation)

@@ -23,6 +23,8 @@ pub enum Outcome {
         command: String,
         count: Option<usize>,
         register: Option<char>,
+        /// The key typed after a command that takes one (`fx` → `x`).
+        char_arg: Option<char>,
     },
     /// Insert literal text (unbound printable key in insert/command mode).
     InsertChar(char),
@@ -40,8 +42,17 @@ pub struct InputHandler {
     awaiting_register: bool,
     /// Display text of the last completed sequence (e.g. `"a2d`).
     last_sequence: String,
-    /// Keys kept on display while an operator waits for its motion.
+    /// Keys kept on display while an operator or `f`-style command waits.
     held: String,
+    /// A command waiting for its character argument (after `f`, `t`, `r`).
+    awaiting_char: Option<AwaitingChar>,
+}
+
+#[derive(Debug)]
+struct AwaitingChar {
+    command: String,
+    count: Option<usize>,
+    register: Option<char>,
 }
 
 impl InputHandler {
@@ -53,6 +64,20 @@ impl InputHandler {
     /// insert mode, typing `jx` inserts "jx", and `jj` inserts "j" and
     /// waits on the second `j`.
     pub fn handle(&mut self, key: KeyPress, mode: Mode, keymap: &Keymap) -> Vec<Outcome> {
+        if let Some(waiting) = self.awaiting_char.take() {
+            // Any printable key is the argument, even one bound to a command
+            // (`f:` finds a colon). Anything else (`<Esc>`) cancels.
+            return match key.as_text() {
+                Some(c) => vec![Outcome::Execute {
+                    command: waiting.command,
+                    count: waiting.count,
+                    register: waiting.register,
+                    char_arg: Some(c),
+                }],
+                None => vec![Outcome::Unbound],
+            };
+        }
+
         if self.awaiting_register {
             self.awaiting_register = false;
             return match key.as_text() {
@@ -93,8 +118,9 @@ impl InputHandler {
                     command: command.to_string(),
                     count: self.count,
                     register: self.register,
+                    char_arg: None,
                 };
-                self.last_sequence = self.pending_display();
+                self.last_sequence = self.typed_display();
                 self.reset();
                 vec![outcome]
             }
@@ -129,10 +155,26 @@ impl InputHandler {
         self.awaiting_register = false;
     }
 
-    /// Keeps the last completed sequence on display. The app calls this when
-    /// an operator starts waiting for a motion, so `d` stays visible.
+    /// Keeps the last completed sequence on display, after anything already
+    /// held. The app calls this when an operator waits for a motion (`d`) or
+    /// a command waits for its character (`df`).
     pub fn hold_last_sequence(&mut self) {
-        self.held = std::mem::take(&mut self.last_sequence);
+        let last = std::mem::take(&mut self.last_sequence);
+        self.held.push_str(&last);
+    }
+
+    /// Makes the next key the character argument of `command` instead of
+    /// looking it up in the keymap.
+    pub fn await_char(&mut self, command: String, count: Option<usize>, register: Option<char>) {
+        self.awaiting_char = Some(AwaitingChar {
+            command,
+            count,
+            register,
+        });
+    }
+
+    pub fn is_awaiting_char(&self) -> bool {
+        self.awaiting_char.is_some()
     }
 
     pub fn release_held(&mut self) {
@@ -141,7 +183,12 @@ impl InputHandler {
 
     /// Partially typed input for display, e.g. `"a3g` or `d2`.
     pub fn pending_display(&self) -> String {
-        let mut out = self.held.clone();
+        self.held.clone() + &self.typed_display()
+    }
+
+    /// The register, count and keys typed for the current sequence only.
+    fn typed_display(&self) -> String {
+        let mut out = String::new();
         if let Some(name) = self.register {
             out.push(REGISTER_PREFIX);
             out.push(name);
@@ -194,6 +241,7 @@ mod tests {
             command: command.into(),
             count,
             register: None,
+            char_arg: None,
         }
     }
 
@@ -313,6 +361,7 @@ mod tests {
                 command: "paste_after".into(),
                 count: Some(2),
                 register: Some('a'),
+                char_arg: None,
             }
         );
         assert_eq!(
@@ -365,6 +414,43 @@ mod tests {
         assert_eq!(h.pending_display(), "2j3");
         h.release_held();
         assert_eq!(h.pending_display(), "3");
+    }
+
+    #[test]
+    fn awaited_char_completes_the_command() {
+        let mut h = InputHandler::default();
+        h.await_char("find_char".into(), Some(2), Some('a'));
+        assert!(h.is_awaiting_char());
+        // `j` is bound, but here it's the argument.
+        assert_eq!(
+            last(&mut h, Mode::Normal, "j"),
+            Outcome::Execute {
+                command: "find_char".into(),
+                count: Some(2),
+                register: Some('a'),
+                char_arg: Some('j'),
+            }
+        );
+        assert!(!h.is_awaiting_char());
+        assert_eq!(last(&mut h, Mode::Normal, "j"), execute("move_down", None));
+    }
+
+    #[test]
+    fn non_text_key_cancels_awaited_char() {
+        let mut h = InputHandler::default();
+        h.await_char("find_char".into(), None, None);
+        assert_eq!(last(&mut h, Mode::Normal, "<Esc>"), Outcome::Unbound);
+        assert!(!h.is_awaiting_char());
+    }
+
+    #[test]
+    fn held_sequences_accumulate() {
+        let mut h = InputHandler::default();
+        feed(&mut h, Mode::Normal, "j");
+        h.hold_last_sequence();
+        feed(&mut h, Mode::Normal, "p");
+        h.hold_last_sequence();
+        assert_eq!(h.pending_display(), "jp");
     }
 
     #[test]

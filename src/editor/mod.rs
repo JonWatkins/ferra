@@ -22,6 +22,7 @@ pub use registers::{Register, Registers};
 pub use selection::{Selection, SelectionKind};
 
 use crate::config::EditorOptions;
+use crate::core::motion::CharSearch;
 
 #[derive(Debug, Default)]
 pub struct Editor {
@@ -29,6 +30,8 @@ pub struct Editor {
     pub command_line: CommandLine,
     pub options: EditorOptions,
     pub registers: Registers,
+    /// The last `f`/`t`/`F`/`T`, for `;` and `,`.
+    pub last_char_search: Option<CharSearch>,
     mode: Mode,
     pending_operator: Option<PendingOperator>,
     selection: Option<Selection>,

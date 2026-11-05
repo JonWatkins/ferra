@@ -20,6 +20,11 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `w` `b` `e` | Word forward / backward / end |
 | Normal  | `0` `^` `$` | Line start / first non-blank / end |
 | Normal  | `gg` `G` (`5gg`, `5G`) | First / last line (or line 5) |
+| Normal  | `f` `t` `F` `T` + char | To / just before the next (or previous) char on the line |
+| Normal  | `;` `,` | Repeat the last `f`/`t`/`F`/`T` / in the other direction |
+| Normal  | `%` | Matching bracket |
+| Normal  | `{` `}` | Previous / next empty line (paragraph) |
+| Normal  | `r` + char | Replace characters (`3rx`) |
 | Normal  | `i` `a` `I` `A` `o` `O` | Enter insert mode |
 | Normal  | `d` `c` `y` + motion/text object | Delete / change / yank (`dw`, `c$`, `yiw`, `di(`, `2d3w`) |
 | Normal  | `dd` `cc` `yy` | Operate on whole lines |

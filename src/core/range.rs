@@ -1,5 +1,6 @@
 //! Ranges of text that operators act on.
 
+use super::motion::first_non_blank;
 use super::{Buffer, Position};
 
 /// How a motion's target relates to the text it covers, as in Vim.
@@ -35,17 +36,24 @@ impl Range {
                 let end = end.with_col((end.col + 1).min(buffer.line_len(end.row)));
                 Range::Chars { start, end }
             }
-            MotionKind::Exclusive => {
-                // Vim's rule: an exclusive motion ending at the start of a
-                // later line stops at the end of the previous one instead, so
-                // `dw` on a line's last word doesn't join the next line.
-                let end = if end.col == 0 && end.row > start.row {
-                    buffer.line_end(end.row - 1)
+            // Vim's `:h exclusive` rules for a motion ending at the start of a
+            // later line: it covers whole lines if it also started at (or
+            // before) the first non-blank, so `d}` removes the paragraph
+            // cleanly; otherwise it stops at the end of the previous line.
+            MotionKind::Exclusive if end.col == 0 && end.row > start.row => {
+                if start.col <= first_non_blank(buffer, start.row) {
+                    Range::Lines {
+                        first: start.row,
+                        last: end.row - 1,
+                    }
                 } else {
-                    end
-                };
-                Range::Chars { start, end }
+                    Range::Chars {
+                        start,
+                        end: buffer.line_end(end.row - 1),
+                    }
+                }
             }
+            MotionKind::Exclusive => Range::Chars { start, end },
         }
     }
 
@@ -88,10 +96,17 @@ mod tests {
     }
 
     #[test]
-    fn exclusive_motion_to_next_line_start_stops_at_line_end() {
-        let b = Buffer::from_text("foo\nbar");
-        let r = Range::from_motion(&b, pos(0, 0), pos(1, 0), MotionKind::Exclusive);
-        assert_eq!(r, chars(pos(0, 0), pos(0, 3)));
+    fn exclusive_motion_to_next_line_start_from_mid_line_stops_at_line_end() {
+        let b = Buffer::from_text("foo bar\nbaz");
+        let r = Range::from_motion(&b, pos(0, 4), pos(1, 0), MotionKind::Exclusive);
+        assert_eq!(r, chars(pos(0, 4), pos(0, 7)));
+    }
+
+    #[test]
+    fn exclusive_motion_from_line_start_to_line_start_is_linewise() {
+        let b = Buffer::from_text("  a\nb\n\nc");
+        let r = Range::from_motion(&b, pos(0, 2), pos(2, 0), MotionKind::Exclusive);
+        assert_eq!(r, Range::Lines { first: 0, last: 1 });
     }
 
     #[test]

@@ -119,7 +119,26 @@ impl App {
                     command,
                     count,
                     register,
-                } => self.execute(&command, count, register),
+                    char_arg: None,
+                } if self.commands.takes_char(&command) => {
+                    // `f`, `t`, `r`...: the next key is the argument.
+                    self.input.hold_last_sequence();
+                    self.input.await_char(command, count, register);
+                }
+                Outcome::Execute {
+                    command,
+                    count,
+                    register,
+                    char_arg,
+                } => {
+                    let invocation = Invocation {
+                        count,
+                        register,
+                        char_arg,
+                        ..Invocation::default()
+                    };
+                    self.execute(&command, invocation);
+                }
                 Outcome::InsertChar(c) => self.editor.insert_text_char(c),
                 // Like Vim, an invalid key after an operator cancels it.
                 Outcome::Unbound if self.editor.mode() == Mode::OperatorPending => {
@@ -129,20 +148,15 @@ impl App {
             }
         }
 
-        // Keep e.g. `d` on display while the operator waits for a motion.
-        if self.editor.mode() != Mode::OperatorPending {
+        // Keep e.g. `d` or `df` on display while waiting for the rest.
+        if self.editor.mode() != Mode::OperatorPending && !self.input.is_awaiting_char() {
             self.input.release_held();
         }
     }
 
     /// Runs a named command, reporting failures on the message line.
-    pub fn execute(&mut self, command: &str, count: Option<usize>, register: Option<char>) {
+    pub fn execute(&mut self, command: &str, invocation: Invocation) {
         self.editor.clear_message();
-        let invocation = Invocation {
-            count,
-            register,
-            ..Invocation::default()
-        };
         if let Err(error) = self.commands.execute(command, &mut self.editor, invocation) {
             self.editor.set_message(Message::error(error));
         }

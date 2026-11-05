@@ -1,7 +1,7 @@
 //! Operators (`d`, `c`, `y`), their single-key shortcuts (`x`, `D`, `C`,
 //! `s`, `S`, `Y`, `X`) and pasting (`p`, `P`).
 
-use super::motions::{self, Motion};
+use super::motions::{self, Motion, MotionArgs};
 use super::visual;
 use crate::commands::{CommandRegistry, CommandResult, Context};
 use crate::core::{Position, Range, motion};
@@ -71,7 +71,10 @@ fn begin(cx: &mut Context, operator: Operator) -> CommandResult {
 
 fn operate(cx: &mut Context, operator: Operator, motion: &Motion) -> CommandResult {
     let doc = &cx.editor.document;
-    let range = motion.range(doc.buffer(), doc.cursor(), cx.count);
+    let args = MotionArgs::with_count(cx.count);
+    let Some(range) = motion.range(doc.buffer(), doc.cursor(), args) else {
+        return Ok(());
+    };
     cx.editor.apply_operator(operator, range, cx.register)
 }
 

@@ -35,6 +35,25 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "replace_char",
+        "Replace [count] characters under the cursor with {char} (r)",
+        |cx| {
+            let ch = cx.char_arg.ok_or("missing character")?;
+            let n = cx.count();
+            let doc = &mut cx.editor.document;
+            let start = doc.cursor();
+            // Like Vim, do nothing unless there are enough characters.
+            if start.col + n > doc.buffer().line_len(start.row) {
+                return Ok(());
+            }
+            doc.delete(start, start.with_col(start.col + n));
+            doc.insert(start, &ch.to_string().repeat(n));
+            doc.set_cursor(start.with_col(start.col + n - 1));
+            Ok(())
+        },
+    )
+    .takes_char();
+    r.register(
         "open_line_below",
         "Open a new line below and enter insert mode",
         |cx| {
@@ -102,6 +121,41 @@ mod tests {
         let mut e = editor("abc", pos(0, 0), Mode::Insert);
         run(&mut e, "delete_char_forward", Some(2));
         assert_eq!(e.document.buffer().text(), "c");
+    }
+
+    fn replace(e: &mut crate::editor::Editor, count: Option<usize>, ch: char) {
+        let invocation = crate::commands::Invocation {
+            count,
+            char_arg: Some(ch),
+            ..Default::default()
+        };
+        crate::commands::builtin::test_util::run_with(e, "replace_char", invocation);
+    }
+
+    #[test]
+    fn replace_char_with_count() {
+        let mut e = editor("abcd", pos(0, 1), Mode::Normal);
+        replace(&mut e, Some(2), 'x');
+        assert_eq!(e.document.buffer().text(), "axxd");
+        assert_eq!(e.document.cursor(), pos(0, 2));
+    }
+
+    #[test]
+    fn replace_char_needs_enough_characters() {
+        let mut e = editor("ab", pos(0, 1), Mode::Normal);
+        replace(&mut e, Some(2), 'x');
+        assert_eq!(e.document.buffer().text(), "ab");
+        let mut e = editor("", pos(0, 0), Mode::Normal);
+        replace(&mut e, None, 'x');
+        assert_eq!(e.document.buffer().text(), "");
+    }
+
+    #[test]
+    fn replace_char_is_one_undo_step() {
+        let mut e = editor("abc", pos(0, 0), Mode::Normal);
+        replace(&mut e, Some(3), 'z');
+        e.document.undo();
+        assert_eq!(e.document.buffer().text(), "abc");
     }
 
     #[test]

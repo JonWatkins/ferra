@@ -87,6 +87,18 @@ Vim's grammar is `[count]["x]operator[count](motion | text-object)`:
 5. `Editor::apply_operator` stores the text in a register, then deletes,
    changes (deletes and enters insert mode) or yanks.
 
+Motion details:
+
+- A target function returns `None` when the motion fails (`fx` with no `x`):
+  the cursor stays put and a pending operator is cancelled.
+- `Range::from_motion` applies Vim's `:h exclusive` rules. An exclusive
+  motion ending at the start of a later line covers whole lines if it began
+  at or before the first non-blank (so `d}` removes a paragraph cleanly),
+  and otherwise stops at the end of the previous line. `dw` is
+  special-cased first, as in Vim: if the last word ends its line, the
+  operation stops there.
+- `f`/`t`/`F`/`T` store a `CharSearch` on the editor for `;` and `,`.
+
 Single-key shortcuts (`x`, `D`, `C`, `s`, `S`, `Y`, `X`) apply an operator
 over a fixed motion. Pastes read registers (`editor/registers.rs`).
 
@@ -124,6 +136,15 @@ over a fixed motion. Pastes read registers (`editor/registers.rs`).
     existing file the document never read, unless forced with `!`.
 - On the `:` line, a trailing `!` sets `Invocation::bang`, which file
   commands use to override those checks.
+
+### Commands that take a character
+
+A command registered with `.takes_char()` (`f`, `t`, `F`, `T`, `r`) gets
+the next key as its argument. When the app sees such a command without a
+character, it calls `InputHandler::await_char`. The next printable key, even
+one bound to a command (`f:`), completes it via `Invocation::char_arg`;
+anything else cancels it. Marks (`m`), macros (`q`, `@`) and plugins can use
+the same mechanism.
 
 ## Commands: the extension point
 
@@ -193,7 +214,7 @@ The current design leaves room for these:
   fast input, such as pasted keystrokes.
 - `.` repeat, which needs the last change's command, invocation and inserted
   text recorded together.
-- More motions and operators: `f`/`t`, `%`, `}`/`{`, `>`/`<`, `gu`/`gU`, `J`.
+- More operators and commands: `>`/`<`, `gu`/`gU`/`~`, `J`, `N%`.
 - Numbered delete registers `1`-`9` and the small-delete register `-`.
 - Multiple buffers/windows (`Document` → `View` split), so `:e` doesn't
   replace the only document.

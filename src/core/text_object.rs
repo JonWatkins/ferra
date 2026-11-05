@@ -131,7 +131,12 @@ pub fn bracketed(
     })
 }
 
-fn find_open(buffer: &Buffer, pos: Position, open: char, close: char) -> Option<Position> {
+pub(super) fn find_open(
+    buffer: &Buffer,
+    pos: Position,
+    open: char,
+    close: char,
+) -> Option<Position> {
     let mut depth = 0usize;
     let mut cursor = Some(pos);
     while let Some(p) = cursor {
@@ -151,7 +156,12 @@ fn find_open(buffer: &Buffer, pos: Position, open: char, close: char) -> Option<
     None
 }
 
-fn find_close(buffer: &Buffer, open_pos: Position, open: char, close: char) -> Option<Position> {
+pub(super) fn find_close(
+    buffer: &Buffer,
+    open_pos: Position,
+    open: char,
+    close: char,
+) -> Option<Position> {
     let mut depth = 0usize;
     let mut cursor = next(buffer, open_pos);
     while let Some(p) = cursor {
