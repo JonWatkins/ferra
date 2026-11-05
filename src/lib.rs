@@ -12,6 +12,7 @@
 //! - [`config`]: TOML configuration (options, theme, keybindings).
 //! - [`files`]: reading and writing files on disk (atomic saves).
 //! - [`cli`]: command-line argument parsing.
+//! - [`syntax`]: tree-sitter syntax highlighting.
 //! - [`ui`]: rendering, including the custom editor pane widget.
 //! - [`app`]: wires everything together and owns the event loop.
 
@@ -24,6 +25,7 @@ pub mod editor;
 pub mod events;
 pub mod files;
 pub mod input;
+pub mod syntax;
 pub mod ui;
 
 pub use app::App;

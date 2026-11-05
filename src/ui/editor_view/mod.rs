@@ -24,6 +24,7 @@ use crate::config::{EditorOptions, Theme};
 use crate::core::Range;
 use crate::core::search::SearchPattern;
 use crate::editor::Document;
+use crate::syntax::{HIGHLIGHT_NAMES, Highlights};
 
 /// State kept between frames for an editor pane.
 #[derive(Debug, Default, Clone)]
@@ -39,6 +40,7 @@ pub struct EditorView<'a> {
     theme: &'a Theme,
     selection: Option<Range>,
     search: Option<&'a SearchPattern>,
+    syntax: Option<&'a Highlights>,
 }
 
 impl<'a> EditorView<'a> {
@@ -49,7 +51,14 @@ impl<'a> EditorView<'a> {
             theme,
             selection: None,
             search: None,
+            syntax: None,
         }
+    }
+
+    /// Colours the text with syntax highlights, if any.
+    pub fn syntax(mut self, syntax: Option<&'a Highlights>) -> Self {
+        self.syntax = syntax;
+        self
     }
 
     /// Highlights matches of `search` (the active or last search, if any).
@@ -97,6 +106,13 @@ impl StatefulWidget for EditorView<'_> {
         let Viewport { top, left } = state.viewport;
 
         let text_style = self.theme.get("ui.text");
+        let syntax_styles: Vec<Style> = match self.syntax {
+            Some(_) => HIGHLIGHT_NAMES
+                .iter()
+                .map(|name| self.theme.get(name))
+                .collect(),
+            None => Vec::new(),
+        };
         let rows = (top..text.line_count()).take(area.height as usize);
         for (i, row) in rows.enumerate() {
             let y = area.y + i as u16;
@@ -145,6 +161,11 @@ impl StatefulWidget for EditorView<'_> {
                 }
             };
 
+            if let Some(syntax) = self.syntax {
+                for span in syntax.line(row) {
+                    highlight(span.start, span.end, syntax_styles[span.highlight]);
+                }
+            }
             if let Some(pattern) = self.search {
                 let style = self.theme.get("ui.search.match");
                 for (from, to) in pattern.matches_in_line(line_text) {
@@ -313,6 +334,29 @@ mod tests {
             .filter(|&x| buf[(x, 0)].bg == ratatui::style::Color::Yellow)
             .collect();
         assert_eq!(highlighted, vec![0, 1, 3, 4]);
+    }
+
+    #[test]
+    fn colours_text_with_syntax_highlights() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.rs");
+        std::fs::write(&path, "fn main() {}").unwrap();
+        let (doc, _) = Document::open(&path).unwrap();
+        let mut engine = crate::syntax::SyntaxEngine::default();
+        let highlights = engine.highlights(&doc);
+
+        let mut theme = Theme::default();
+        theme.set("keyword", Style::new().fg(ratatui::style::Color::Magenta));
+        let area = Rect::new(0, 0, 12, 1);
+        let mut buf = Buffer::empty(area);
+        EditorView::new(&doc, &options(LineNumbers::None), &theme)
+            .syntax(highlights)
+            .render(area, &mut buf, &mut ViewState::default());
+
+        let magenta: Vec<u16> = (0..12)
+            .filter(|&x| buf[(x, 0)].fg == ratatui::style::Color::Magenta)
+            .collect();
+        assert_eq!(magenta, vec![0, 1], "`fn` is a keyword");
     }
 
     #[test]

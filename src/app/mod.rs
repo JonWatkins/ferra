@@ -5,6 +5,7 @@ mod repeat;
 mod terminal;
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use repeat::ChangeRecorder;
 
@@ -16,7 +17,12 @@ use crate::config::{Config, Theme};
 use crate::editor::{DocumentId, Editor, Message, Mode};
 use crate::events;
 use crate::input::{InputHandler, KeyPress, Keymap, Outcome};
+use crate::syntax::SyntaxEngine;
 use crate::ui::{self, ViewState};
+
+/// Upper bound on keys handled between redraws, so the screen still updates
+/// during a very long paste.
+const MAX_KEYS_PER_FRAME: usize = 256;
 
 pub struct App {
     editor: Editor,
@@ -30,6 +36,7 @@ pub struct App {
     other_views: HashMap<DocumentId, ViewState>,
     view_document: DocumentId,
     changes: ChangeRecorder,
+    syntax: SyntaxEngine,
     /// True while `.` feeds the last change back in, so it isn't re-recorded.
     replaying: bool,
 }
@@ -63,6 +70,7 @@ impl App {
             other_views: HashMap::new(),
             view_document: DocumentId::default(),
             changes: ChangeRecorder::default(),
+            syntax: SyntaxEngine::default(),
             replaying: false,
         };
         app.validate_keymap();
@@ -146,13 +154,28 @@ impl App {
                 shape = Some(wanted);
             }
 
-            if let Event::Key(event) = event::read()?
-                && let Some(key) = KeyPress::from_event(event)
+            // Handle every key that's already waiting before drawing again,
+            // so a burst of input (fast typing, key repeat, a paste) costs
+            // one redraw and one re-highlight rather than one per key.
+            self.handle_event(event::read()?);
+            let mut handled = 1;
+            while handled < MAX_KEYS_PER_FRAME
+                && !self.should_quit()
+                && event::poll(Duration::ZERO)?
             {
-                self.handle_key(key);
+                self.handle_event(event::read()?);
+                handled += 1;
             }
         }
         terminal::restore_cursor_shape()
+    }
+
+    fn handle_event(&mut self, event: Event) {
+        if let Event::Key(event) = event
+            && let Some(key) = KeyPress::from_event(event)
+        {
+            self.handle_key(key);
+        }
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -165,7 +188,23 @@ impl App {
         }
 
         let pending = self.input.pending_display();
-        ui::draw(frame, &self.editor, &self.theme, &mut self.view, &pending);
+        if self.syntax.cached_count() > self.editor.buffer_count() {
+            let open: Vec<DocumentId> = self.editor.buffers().iter().map(|b| b.id).collect();
+            self.syntax.retain(&open);
+        }
+        let syntax = if self.editor.options.syntax_highlighting {
+            self.syntax.highlights(&self.editor.document)
+        } else {
+            None
+        };
+        ui::draw(
+            frame,
+            &self.editor,
+            &self.theme,
+            &mut self.view,
+            &pending,
+            syntax,
+        );
     }
 
     /// Handles one key press. Public so tests can drive the app directly.

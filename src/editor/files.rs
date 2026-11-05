@@ -46,6 +46,7 @@ impl Editor {
             .to_path_buf();
         let (mut document, info) = Document::open(&path)?;
         document.set_id(self.document.id());
+        document.follow_version_of(&self.document);
         self.document = document;
         self.set_mode(Mode::Normal);
         self.set_message(Message::info(describe_open(&info)));

@@ -94,6 +94,21 @@ highlighted until `:noh` or `<Esc>` in normal mode. See `[editor.search]` in the
 Any command can also be run by name, e.g. `:goto_line 10`, or `:42` to jump
 to a line.
 
+## Syntax highlighting
+
+Rust, TOML, JSON, Python and JavaScript are highlighted with tree-sitter,
+detected from the file name. Colours are theme scopes (`keyword`,
+`function`, `string`, `comment`, `type`...), each falling back to its
+parent, so `function.method` uses `function` unless you set it:
+
+```toml
+[theme]
+"keyword" = { fg = "#ff79c6", modifiers = ["bold"] }
+"comment" = "#6272a4"
+```
+
+Turn it off with `syntax-highlighting = false` under `[editor]`.
+
 ## Configuration
 
 Create `~/.config/terminal-editor/config.toml` (or under `$XDG_CONFIG_HOME`).

@@ -12,6 +12,7 @@ pub struct EditorOptions {
     pub line_numbers: LineNumbers,
     pub cursorline: bool,
     pub scroll_off: usize,
+    pub syntax_highlighting: bool,
     pub cursor_shape: CursorShapes,
     pub search: SearchOptions,
     pub file_picker: FilePickerOptions,

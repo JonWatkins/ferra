@@ -97,6 +97,30 @@ never listed, and listing stops at `max-files` (`[editor.file-picker]`). The
 fuzzy matcher gives matches in a path's file name extra weight, so `main`
 finds `src/main.rs` before `domain/lib.rs`.
 
+## Syntax highlighting
+
+`syntax/` wraps tree-sitter:
+
+- `languages.rs` lists each language: name, extensions/file names, grammar
+  and queries. Adding a language is one entry plus its grammar crate.
+- `highlight.rs` runs `tree-sitter-highlight` and turns its events into
+  spans per line, in char columns. `HIGHLIGHT_NAMES` are the names queries'
+  captures are mapped to, and they double as theme scopes.
+- `SyntaxEngine` compiles each language's queries on first use and caches
+  highlights per document, keyed on `Document::text_version`. That counter
+  changes on every edit, undo, redo and reload, unlike `edit_count`, which
+  only `.` uses. Documents over 4M chars aren't highlighted.
+
+The app asks the engine for the active buffer's highlights when drawing.
+The editor pane colours text with them first, then draws search matches and
+the selection on top.
+
+**Performance.** The whole document is re-highlighted when it changes: about
+30 ms for a 5,000-line Rust file in a release build, and a few ms for
+typical files. The event loop handles all pending keys before redrawing, so
+fast typing, key repeat and pastes cost one re-highlight per frame, not one
+per key.
+
 ## Editing model
 
 ### Undo
@@ -321,5 +345,10 @@ Done so far: named commands, runtime keybinding, and event hooks. Still to do:
   the old contents (the rename replaces the file). Vim's `backupcopy`
   handles this; we don't yet.
 - Non-UTF-8 encodings are refused rather than supported.
+- Incremental syntax parsing (feeding edits to tree-sitter and reusing the
+  previous tree), and highlighting only the visible part of very large
+  files. Language injections (e.g. regex or SQL inside strings) are turned
+  off.
+- More languages, and choosing a language for files without an extension.
 - Timeout for ambiguous key sequences such as `jk` in insert mode (Vim's
   `timeoutlen`).

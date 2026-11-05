@@ -34,6 +34,11 @@ impl Buffer {
         self.rope.len_lines()
     }
 
+    /// Total length in chars, including line breaks.
+    pub fn len_chars(&self) -> usize {
+        self.rope.len_chars()
+    }
+
     /// Line `row` without its line break. Borrowed when the line lies in a
     /// single rope chunk (almost always), otherwise copied.
     pub fn line(&self, row: usize) -> Cow<'_, str> {

@@ -36,11 +36,19 @@ impl Widget for StatusLine<'_> {
         buf.set_style(area, base);
 
         let cursor = self.editor.document.cursor();
+        let language = self
+            .editor
+            .document
+            .path()
+            .and_then(crate::syntax::detect)
+            .map(|l| format!(" {} ", l.name))
+            .unwrap_or_default();
         let right = Line::from(vec![
             Span::styled(
                 format!("{} ", self.pending),
                 self.theme.get("ui.statusline.pending"),
             ),
+            Span::raw(language),
             Span::raw(format!(" {}:{} ", cursor.row + 1, cursor.col + 1)),
         ])
         .right_aligned();
@@ -123,7 +131,8 @@ mod tests {
 
         let text = render(&editor, "");
         assert!(text.contains("…"), "{text:?}");
-        assert!(text.contains("structure/file.rs [+]"), "{text:?}");
+        assert!(text.contains("/file.rs [+]"), "{text:?}");
+        assert!(text.contains(" rust "), "language shown: {text:?}");
         assert!(text.ends_with(" 1:2 "), "{text:?}");
     }
 

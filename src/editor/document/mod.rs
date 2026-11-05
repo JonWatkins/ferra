@@ -44,6 +44,9 @@ pub struct Document {
     /// Counts edits made through `insert`/`delete` (not undo/redo), so the
     /// app can tell whether a command sequence changed the text.
     edit_count: u64,
+    /// Changes whenever the text does, including undo, redo and reloads, so
+    /// derived data (syntax highlights) knows when to recompute.
+    text_version: u64,
 }
 
 impl Document {
@@ -99,6 +102,17 @@ impl Document {
         self.edit_count
     }
 
+    /// Changes whenever the text changes in any way.
+    pub fn text_version(&self) -> u64 {
+        self.text_version
+    }
+
+    /// Continues the version sequence from a document this one replaces
+    /// (a reload), so cached data for the old text is never reused.
+    pub(in crate::editor) fn follow_version_of(&mut self, previous: &Document) {
+        self.text_version = previous.text_version + 1;
+    }
+
     // --- Cursor -----------------------------------------------------------
 
     /// Moves the cursor, clamping it into the buffer. Allows the end-of-line slot.
@@ -133,6 +147,7 @@ impl Document {
         }
         let end = self.buffer.insert_text(at, text);
         self.edit_count += 1;
+        self.text_version += 1;
         self.history.record(Change::Insert {
             at,
             text: text.to_string(),
@@ -148,6 +163,7 @@ impl Document {
         }
         let text = self.buffer.delete_range(start, end);
         self.edit_count += 1;
+        self.text_version += 1;
         self.history.record(Change::Delete {
             at: start,
             text: text.clone(),
@@ -230,18 +246,22 @@ impl Document {
 
     /// Undoes one step. Returns `false` if there was nothing to undo.
     pub fn undo(&mut self) -> bool {
-        self.history
-            .undo(&mut self.buffer)
-            .map(|pos| self.set_cursor(pos))
-            .is_some()
+        let undone = self.history.undo(&mut self.buffer);
+        if let Some(pos) = undone {
+            self.text_version += 1;
+            self.set_cursor(pos);
+        }
+        undone.is_some()
     }
 
     /// Redoes one step. Returns `false` if there was nothing to redo.
     pub fn redo(&mut self) -> bool {
-        self.history
-            .redo(&mut self.buffer)
-            .map(|pos| self.set_cursor(pos))
-            .is_some()
+        let redone = self.history.redo(&mut self.buffer);
+        if let Some(pos) = redone {
+            self.text_version += 1;
+            self.set_cursor(pos);
+        }
+        redone.is_some()
     }
 }
 
@@ -379,6 +399,22 @@ mod tests {
     #[test]
     fn scratch_document_name() {
         assert_eq!(Document::default().name(), "[scratch]");
+    }
+
+    #[test]
+    fn text_version_tracks_every_change() {
+        let mut doc = Document::with_text("abc");
+        let v0 = doc.text_version();
+        doc.insert_str("x");
+        let v1 = doc.text_version();
+        assert_ne!(v0, v1);
+        doc.undo();
+        assert_ne!(doc.text_version(), v1, "undo changes the text");
+        doc.redo();
+        doc.set_cursor(Position::new(0, 0));
+        let before = doc.text_version();
+        doc.set_cursor(Position::new(0, 2));
+        assert_eq!(doc.text_version(), before, "moving doesn't");
     }
 
     #[test]
