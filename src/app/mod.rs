@@ -1,7 +1,10 @@
 //! Application wiring: owns the editor, commands, keymap and UI state, and
 //! runs the event loop.
 
+mod repeat;
 mod terminal;
+
+use repeat::ChangeRecorder;
 
 use crossterm::event::{self, Event};
 use ratatui::{DefaultTerminal, Frame};
@@ -19,6 +22,9 @@ pub struct App {
     theme: Theme,
     input: InputHandler,
     view: ViewState,
+    changes: ChangeRecorder,
+    /// True while `.` feeds the last change back in, so it isn't re-recorded.
+    replaying: bool,
 }
 
 impl Default for App {
@@ -36,6 +42,8 @@ impl App {
             theme: config.theme,
             input: InputHandler::default(),
             view: ViewState::default(),
+            changes: ChangeRecorder::default(),
+            replaying: false,
         };
         app.validate_keymap();
         app
@@ -113,6 +121,32 @@ impl App {
 
     /// Handles one key press. Public so tests can drive the app directly.
     pub fn handle_key(&mut self, key: KeyPress) {
+        if self.replaying {
+            self.process_key(key);
+            return;
+        }
+
+        // Record each sequence from idle to idle, for `.`.
+        if self.is_idle() {
+            self.changes.begin(self.editor.document.edit_count());
+        }
+        self.changes.push(key);
+        self.process_key(key);
+        if self.editor.mode() == Mode::Command {
+            self.changes.note_command_line();
+        }
+        if self.is_idle() {
+            self.changes.finish(self.editor.document.edit_count());
+        }
+    }
+
+    /// Normal mode with nothing typed but not yet run: the boundary between
+    /// one command sequence and the next.
+    fn is_idle(&self) -> bool {
+        self.editor.mode() == Mode::Normal && self.input.is_idle()
+    }
+
+    fn process_key(&mut self, key: KeyPress) {
         for outcome in self.input.handle(key, self.editor.mode(), &self.keymap) {
             match outcome {
                 Outcome::Execute {
@@ -164,5 +198,23 @@ impl App {
             self.input.hold_last_sequence();
         }
         self.editor.finish_command();
+
+        if let Some(request) = self.editor.take_repeat_request() {
+            self.repeat_last_change(request.count);
+        }
+    }
+
+    /// `.`: feeds the last change's keys back in.
+    fn repeat_last_change(&mut self, count: Option<usize>) {
+        let Some(change) = self.changes.last_change() else {
+            return;
+        };
+        let keys = change.keys(count);
+        self.changes.note_replay();
+        self.replaying = true;
+        for key in keys {
+            self.process_key(key);
+        }
+        self.replaying = false;
     }
 }

@@ -24,6 +24,12 @@ pub use selection::{Selection, SelectionKind};
 use crate::config::EditorOptions;
 use crate::core::motion::CharSearch;
 
+/// A request from `.` to repeat the last change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepeatRequest {
+    pub count: Option<usize>,
+}
+
 #[derive(Debug, Default)]
 pub struct Editor {
     pub document: Document,
@@ -35,6 +41,9 @@ pub struct Editor {
     mode: Mode,
     pending_operator: Option<PendingOperator>,
     selection: Option<Selection>,
+    /// Set by `.`; the app replays the last change (which only it can do,
+    /// since a change is recorded as keys).
+    repeat_request: Option<RepeatRequest>,
     last_selection: Option<selection::LastSelection>,
     message: Option<Message>,
     should_quit: bool,
@@ -127,6 +136,16 @@ impl Editor {
 
     pub fn clear_message(&mut self) {
         self.message = None;
+    }
+
+    /// Asks the app to repeat the last change, with `count` replacing the
+    /// original count if given.
+    pub fn request_repeat(&mut self, count: Option<usize>) {
+        self.repeat_request = Some(RepeatRequest { count });
+    }
+
+    pub fn take_repeat_request(&mut self) -> Option<RepeatRequest> {
+        self.repeat_request.take()
     }
 
     pub fn should_quit(&self) -> bool {

@@ -177,6 +177,16 @@ impl InputHandler {
         self.awaiting_char.is_some()
     }
 
+    /// Nothing is partially typed: no keys, count, register or argument.
+    pub fn is_idle(&self) -> bool {
+        self.pending.is_empty()
+            && self.count.is_none()
+            && self.register.is_none()
+            && !self.awaiting_register
+            && self.awaiting_char.is_none()
+            && self.held.is_empty()
+    }
+
     pub fn release_held(&mut self) {
         self.held.clear();
     }
@@ -441,6 +451,21 @@ mod tests {
         h.await_char("find_char".into(), None, None);
         assert_eq!(last(&mut h, Mode::Normal, "<Esc>"), Outcome::Unbound);
         assert!(!h.is_awaiting_char());
+    }
+
+    #[test]
+    fn idle_only_when_nothing_is_partially_typed() {
+        let mut h = InputHandler::default();
+        assert!(h.is_idle());
+        feed(&mut h, Mode::Normal, "2");
+        assert!(!h.is_idle());
+        feed(&mut h, Mode::Normal, "j");
+        assert!(h.is_idle());
+        feed(&mut h, Mode::Normal, "\"a");
+        assert!(!h.is_idle());
+        h.reset();
+        h.await_char("f".into(), None, None);
+        assert!(!h.is_idle());
     }
 
     #[test]

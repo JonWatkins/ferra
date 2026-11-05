@@ -32,6 +32,7 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `p` `P` | Paste after / before |
 | Normal  | `"a` (prefix) | Use register `a` (`"ayy`, `"ap`; `"A` appends, `"_` discards, `"0` last yank) |
 | Normal  | `u` `<C-r>` | Undo / redo |
+| Normal  | `.` | Repeat the last change (`3.` replaces its count) |
 | Normal  | `v` `V` `gv` | Select characters / lines / reselect the last selection |
 | Visual  | motions, text objects | Extend the selection / select an object (`viw`, `vi(`) |
 | Visual  | `d` `x` `c` `s` `y` | Delete / change / yank the selection |

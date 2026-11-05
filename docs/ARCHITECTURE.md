@@ -137,6 +137,22 @@ over a fixed motion. Pastes read registers (`editor/registers.rs`).
 - On the `:` line, a trailing `!` sets `Invocation::bang`, which file
   commands use to override those checks.
 
+### Repeat (`.`)
+
+`app/repeat.rs` records the keys of each command sequence that starts and
+ends idle (normal mode, nothing partially typed): `dw`, `ct)foo<Esc>`,
+`vjd`. If `Document::edit_count` moved during it, the sequence becomes the
+last change. Undo/redo don't count as edits, and sequences that went
+through the `:` line are skipped. `.` is an ordinary command that sets
+`Editor::request_repeat`; the app then feeds the recorded keys back
+through the normal input path. That's why recording happens at the app
+level: only the app sees keys.
+
+Recording keys rather than commands makes every change repeatable,
+including insert sessions and future plugin commands, without each command
+having to support it. A leading count is stored separately so `3.`
+replaces it, and a `"x` register prefix is kept.
+
 ### Commands that take a character
 
 A command registered with `.takes_char()` (`f`, `t`, `F`, `T`, `r`) gets
@@ -212,8 +228,8 @@ The current design leaves room for these:
   parsed as Alt+key (this is how terminals encode Alt). Vim uses a short
   `ttimeout` to tell them apart; we don't yet. It only shows up with very
   fast input, such as pasted keystrokes.
-- `.` repeat, which needs the last change's command, invocation and inserted
-  text recorded together.
+- `.` with a count only replaces a count typed *before* the change: after
+  `d2w`, `3.` replays as `3d2w` (six words) where Vim deletes three.
 - More operators and commands: `>`/`<`, `gu`/`gU`/`~`, `J`, `N%`.
 - Numbered delete registers `1`-`9` and the small-delete register `-`.
 - Multiple buffers/windows (`Document` → `View` split), so `:e` doesn't

@@ -29,6 +29,9 @@ pub struct Document {
     /// The file's modified time when last read or written, to detect
     /// changes made by other programs.
     disk_modified: Option<SystemTime>,
+    /// Counts edits made through `insert`/`delete` (not undo/redo), so the
+    /// app can tell whether a command sequence changed the text.
+    edit_count: u64,
 }
 
 impl Document {
@@ -59,6 +62,11 @@ impl Document {
 
     pub fn cursor(&self) -> Position {
         self.cursor
+    }
+
+    /// Increases with every edit; undo and redo don't count as edits.
+    pub fn edit_count(&self) -> u64 {
+        self.edit_count
     }
 
     // --- Cursor -----------------------------------------------------------
@@ -94,6 +102,7 @@ impl Document {
             return at;
         }
         let end = self.buffer.insert_text(at, text);
+        self.edit_count += 1;
         self.history.record(Change::Insert {
             at,
             text: text.to_string(),
@@ -108,6 +117,7 @@ impl Document {
             return String::new();
         }
         let text = self.buffer.delete_range(start, end);
+        self.edit_count += 1;
         self.history.record(Change::Delete {
             at: start,
             text: text.clone(),
@@ -339,6 +349,19 @@ mod tests {
     #[test]
     fn scratch_document_name() {
         assert_eq!(Document::default().name(), "[scratch]");
+    }
+
+    #[test]
+    fn edit_count_ignores_undo_and_empty_edits() {
+        let mut doc = Document::with_text("abc");
+        doc.insert(Position::new(0, 0), "");
+        assert_eq!(doc.edit_count(), 0);
+        doc.insert_str("x");
+        doc.delete_backward();
+        assert_eq!(doc.edit_count(), 2);
+        doc.undo();
+        doc.redo();
+        assert_eq!(doc.edit_count(), 2);
     }
 
     #[test]

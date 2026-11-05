@@ -12,6 +12,14 @@ pub fn register(r: &mut CommandRegistry) {
         }
         Ok(())
     });
+    r.register(
+        "repeat_last_change",
+        "Repeat the last change; [count] replaces its count (.)",
+        |cx| {
+            cx.editor.request_repeat(cx.count);
+            Ok(())
+        },
+    );
     r.register("redo", "Redo [count] changes", |cx| {
         for _ in 0..cx.count() {
             if !cx.editor.document.redo() {
