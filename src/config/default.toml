@@ -22,6 +22,12 @@ highlight = true
 # Searches wrap around the end of the file.
 wrap = true
 
+[editor.file-picker]
+# <Space>f lists files under the current directory.
+hidden = false
+git-ignore = true
+max-files = 20000
+
 [editor.cursor-shape]
 # "block", "bar" or "underline".
 normal = "block"
@@ -136,6 +142,7 @@ visual = "block"
 "gv" = "reselect_visual"
 "<Space>b" = "buffer_picker"
 "<Space>p" = "command_palette"
+"<Space>f" = "file_picker"
 "]b" = "buffer_next"
 "[b" = "buffer_prev"
 "ZZ" = "exit"

@@ -5,8 +5,10 @@
 //! newline) is [`core::TextFormat`](crate::core::TextFormat)'s job.
 
 mod error;
+mod walk;
 
 pub use error::FileError;
+pub use walk::{FileList, WalkOptions, list_files};
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};

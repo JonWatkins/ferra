@@ -7,6 +7,8 @@ mod fuzzy;
 
 pub use fuzzy::{FuzzyMatch, fuzzy_match};
 
+use std::path::PathBuf;
+
 use super::DocumentId;
 
 /// What choosing an item does.
@@ -14,6 +16,7 @@ use super::DocumentId;
 pub enum PickerAction {
     SwitchBuffer(DocumentId),
     RunCommand(String),
+    OpenFile(PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

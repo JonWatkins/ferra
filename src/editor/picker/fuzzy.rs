@@ -13,6 +13,9 @@ const CONSECUTIVE: i64 = 12;
 const WORD_START: i64 = 10;
 /// Penalty per skipped character between matches.
 const GAP: i64 = 1;
+/// Bonus for a match in a path's final component (the file name), so `mod`
+/// ranks `a/mod.rs` above `modules/x.rs`.
+const FILE_NAME: i64 = 8;
 
 /// A successful match: its score, and the char positions in the candidate
 /// that matched (for highlighting).
@@ -75,6 +78,7 @@ fn match_from(
     let mut positions = Vec::with_capacity(query.len());
     let mut score = 0;
     let mut next = start;
+    let file_name_start = chars.iter().rposition(|&c| c == '/').map_or(0, |i| i + 1);
 
     for &q in query {
         let at = (next..chars.len()).find(|&i| fold(chars[i]) == q)?;
@@ -86,6 +90,9 @@ fn match_from(
         }
         if is_word_start(chars, at) {
             score += WORD_START;
+        }
+        if at >= file_name_start {
+            score += FILE_NAME;
         }
         positions.push(at);
         next = at + 1;
@@ -148,6 +155,12 @@ mod tests {
     fn finds_the_best_start() {
         let m = fuzzy_match("next", "nope_next").unwrap();
         assert_eq!(m.positions, vec![5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn file_name_matches_rank_above_directory_matches() {
+        assert!(score("mod", "a/mod.rs") > score("mod", "modules/x.rs"));
+        assert!(score("main", "src/main.rs") > score("main", "domain/lib.rs"));
     }
 
     #[test]

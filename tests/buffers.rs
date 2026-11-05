@@ -247,3 +247,46 @@ fn statusline_shows_the_active_buffer() {
     let status = render(&mut app, 120, 5).rows[3].clone();
     assert!(status.contains("two.txt"), "{status:?}");
 }
+
+#[test]
+fn space_f_lists_project_files_respecting_gitignore() {
+    // Tests run from the crate root, so this lists this repository.
+    let mut app = app();
+    keys(&mut app, "<Space>f");
+    assert_eq!(app.editor().mode(), Mode::Picker);
+    let picker = app.editor().picker().unwrap();
+    let labels: Vec<&str> = picker
+        .matches()
+        .iter()
+        .map(|m| picker.item(m).label.as_str())
+        .collect();
+    assert!(labels.contains(&"Cargo.toml"), "{labels:?}");
+    assert!(labels.contains(&"src/main.rs"), "{labels:?}");
+    assert!(
+        !labels.iter().any(|l| l.starts_with("target/")),
+        "gitignored"
+    );
+    assert!(!labels.iter().any(|l| l.starts_with(".git/")), "never .git");
+}
+
+#[test]
+fn file_picker_opens_the_chosen_file_in_a_new_buffer() {
+    let ws = Workspace::new();
+    ws.file("notes.md", "notes\n");
+    fs::create_dir_all(ws.dir.path().join("src")).unwrap();
+    fs::write(ws.dir.path().join("src/lib.rs"), "lib\n").unwrap();
+
+    let mut app = app();
+    keys(&mut app, "iscratch<Esc>");
+    let root = ws.dir.path().display().to_string();
+    keys(
+        &mut app,
+        &format!(":file_picker {}<CR>", root.replace('<', "<lt>")),
+    );
+    let screen = render(&mut app, 80, 20);
+    assert!(screen.rows.join("\n").contains("Files"));
+
+    keys(&mut app, "lib<CR>");
+    assert_eq!(text(&app), "lib");
+    assert_eq!(app.editor().buffer_count(), 2, "the scratch buffer is kept");
+}

@@ -2,8 +2,11 @@
 //! commands that drive an open picker.
 
 use crate::commands::{CommandRegistry, Invocation};
-use crate::editor::Mode;
+use std::path::PathBuf;
+
 use crate::editor::picker::{Picker, PickerAction, PickerItem};
+use crate::editor::{Message, Mode};
+use crate::files;
 
 /// Commands that make no sense to run from the palette: they drive the
 /// prompt or picker itself, or need a key typed after them.
@@ -46,6 +49,43 @@ pub fn register(r: &mut CommandRegistry) {
     });
     r.alias("ls", "buffer_picker");
     r.alias("buffers", "buffer_picker");
+
+    r.register(
+        "file_picker",
+        "Pick a file to open, from the current directory or [dir]",
+        |cx| {
+            let given = (!cx.args.is_empty()).then(|| PathBuf::from(cx.args.join(" ")));
+            let root = given.clone().unwrap_or_else(|| PathBuf::from("."));
+            let options = cx.editor.options.file_picker.into();
+            let list = files::list_files(&root, &options);
+            if list.truncated {
+                cx.editor.set_message(Message::info(format!(
+                    "Showing the first {} files (see max-files)",
+                    list.files.len()
+                )));
+            }
+            let items = list
+                .files
+                .into_iter()
+                .map(|relative| {
+                    // Files under the current directory open by their
+                    // relative path, which keeps buffer names short.
+                    let path = match &given {
+                        Some(dir) => dir.join(&relative),
+                        None => relative.clone(),
+                    };
+                    PickerItem {
+                        label: relative.to_string_lossy().into_owned(),
+                        detail: String::new(),
+                        action: PickerAction::OpenFile(path),
+                    }
+                })
+                .collect();
+            cx.editor.open_picker(Picker::new("Files", items));
+            Ok(())
+        },
+    );
+    r.alias("files", "file_picker");
 
     r.register("command_palette", "Pick a command to run", |cx| {
         let items = cx
@@ -97,6 +137,7 @@ pub fn register(r: &mut CommandRegistry) {
                 cx.editor.switch_to(id);
                 Ok(())
             }
+            Some(PickerAction::OpenFile(path)) => cx.editor.open(&path).map_err(|e| e.to_string()),
             Some(PickerAction::RunCommand(name)) => {
                 cx.registry.execute(&name, cx.editor, Invocation::default())
             }
@@ -170,6 +211,43 @@ mod tests {
         run(&mut e, "buffer_picker", None);
         let selected = e.picker().unwrap().selected_item().unwrap();
         assert_eq!(selected.detail, "#1 [+] (current)");
+    }
+
+    #[test]
+    fn file_picker_lists_and_opens_files() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+        fs::write(dir.path().join("README.md"), "# hi\n").unwrap();
+
+        let mut e = Editor::default();
+        let root = dir.path().to_str().unwrap();
+        crate::commands::builtin::test_util::run_with_args(&mut e, "file_picker", &[root]);
+        assert_eq!(e.mode(), Mode::Picker);
+        assert_eq!(
+            labels(&e),
+            ["README.md", "src/main.rs"],
+            "relative to the root"
+        );
+
+        type_text(&mut e, "main");
+        run(&mut e, "picker_accept", None);
+        assert_eq!(e.document.buffer().text(), "fn main() {}");
+        assert!(e.document.path().unwrap().ends_with("src/main.rs"));
+    }
+
+    #[test]
+    fn file_picker_reports_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["a", "b", "c"] {
+            fs::write(dir.path().join(name), "").unwrap();
+        }
+        let mut e = Editor::default();
+        e.options.file_picker.max_files = 2;
+        let root = dir.path().to_str().unwrap();
+        crate::commands::builtin::test_util::run_with_args(&mut e, "file_picker", &[root]);
+        assert_eq!(labels(&e).len(), 2);
+        assert!(e.message().unwrap().text.contains("first 2 files"));
     }
 
     #[test]

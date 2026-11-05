@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 use crate::core::search::CaseMode;
 use crate::editor::Mode;
+use crate::files::WalkOptions;
 
 /// Behavioural options from the `[editor]` config section.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -13,6 +14,29 @@ pub struct EditorOptions {
     pub scroll_off: usize,
     pub cursor_shape: CursorShapes,
     pub search: SearchOptions,
+    pub file_picker: FilePickerOptions,
+}
+
+/// The `[editor.file-picker]` config section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct FilePickerOptions {
+    /// List hidden files and directories.
+    pub hidden: bool,
+    /// Skip files ignored by `.gitignore` and friends.
+    pub git_ignore: bool,
+    /// Stop listing after this many files.
+    pub max_files: usize,
+}
+
+impl From<FilePickerOptions> for WalkOptions {
+    fn from(options: FilePickerOptions) -> Self {
+        Self {
+            hidden: options.hidden,
+            git_ignore: options.git_ignore,
+            max_files: options.max_files,
+        }
+    }
 }
 
 /// The `[editor.search]` config section.

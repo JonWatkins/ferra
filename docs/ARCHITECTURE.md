@@ -90,6 +90,13 @@ commands, except ones that drive the prompt or picker or need a character.
 `ui/picker.rs` draws the popup over the editor pane, cutting labels (paths)
 from the start and descriptions from the end.
 
+The file picker lists files with `files::list_files`, which uses the `ignore`
+crate (ripgrep's walker): `.gitignore`, `.ignore` and git excludes are
+honoured even outside a repository, hidden files are optional, `.git` is
+never listed, and listing stops at `max-files` (`[editor.file-picker]`). The
+fuzzy matcher gives matches in a path's file name extra weight, so `main`
+finds `src/main.rs` before `domain/lib.rs`.
+
 ## Editing model
 
 ### Undo
@@ -306,7 +313,8 @@ Done so far: named commands, runtime keybinding, and event hooks. Still to do:
 - More operators and commands: `>`/`<`, `gu`/`gU`/`~`, `J`, `N%`.
 - Numbered delete registers `1`-`9` and the small-delete register `-`.
 - Split windows (several views onto buffers at once).
-- A file picker (fuzzy-find files in the project) using the same picker.
+- File listing runs on the UI thread. It's capped by `max-files`, but very
+  large trees could be walked in the background and streamed into the picker.
 - Asking before overwriting on external changes, and reloading
   automatically when the file changes and there are no local edits.
 - Writing through hard links keeps the old inode's other names pointing at

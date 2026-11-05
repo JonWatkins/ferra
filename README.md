@@ -57,6 +57,7 @@ Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
 | Keys / command | Action |
 |----------------|--------|
 | `<Space>b`, `:ls` | Buffer picker (starts on the previous buffer, so `<Space>b<CR>` toggles) |
+| `<Space>f`, `:files [dir]` | File picker: fuzzy-find a file under the current directory (respects `.gitignore`) |
 | `<Space>p` | Command palette: every command, with its description |
 | `]b` `[b`, `:bn` `:bp` | Next / previous buffer |
 | `:b 2`, `:b name`, `:b #` | Switch by number, part of the name, or to the previous buffer |
