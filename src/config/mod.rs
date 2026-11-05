@@ -19,6 +19,9 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 use toml::{Table, Value};
 
+use std::collections::HashMap;
+
+use crate::events::EventKind;
 use crate::input::Keymap;
 
 const DEFAULT_CONFIG: &str = include_str!("default.toml");
@@ -33,6 +36,8 @@ pub struct Config {
     pub editor: EditorOptions,
     pub theme: Theme,
     pub keys: Keymap,
+    /// Commands to run when events fire: `before-save = ["trim_trailing_whitespace"]`.
+    pub hooks: HashMap<EventKind, Vec<String>>,
 }
 
 impl Default for Config {

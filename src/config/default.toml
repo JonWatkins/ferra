@@ -291,3 +291,10 @@ visual = "block"
 "<C-c>" = "command_line_cancel"
 "<CR>" = "command_line_execute"
 "<BS>" = "command_line_backspace"
+
+# Commands to run when something happens. Events: "opened", "before-save",
+# "after-save", "mode-changed", "buffer-changed". A before-save command that
+# fails cancels the save. For example:
+#
+#   before-save = ["trim_trailing_whitespace"]
+[hooks]

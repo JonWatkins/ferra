@@ -2,6 +2,7 @@
 //! `cw`, ...) live in `operators.rs`.
 
 use crate::commands::CommandRegistry;
+use crate::core::Position;
 use crate::editor::Mode;
 
 pub fn register(r: &mut CommandRegistry) {
@@ -31,6 +32,24 @@ pub fn register(r: &mut CommandRegistry) {
             for _ in 0..cx.count() {
                 cx.editor.document.delete_forward();
             }
+            Ok(())
+        },
+    );
+    r.register(
+        "trim_trailing_whitespace",
+        "Remove trailing whitespace from every line",
+        |cx| {
+            let doc = &mut cx.editor.document;
+            let cursor = doc.cursor();
+            for row in 0..doc.buffer().line_count() {
+                let line = doc.buffer().line(row);
+                let len = line.chars().count();
+                let kept = line.trim_end().chars().count();
+                if kept < len {
+                    doc.delete(Position::new(row, kept), Position::new(row, len));
+                }
+            }
+            doc.set_cursor(cursor);
             Ok(())
         },
     );
@@ -156,6 +175,20 @@ mod tests {
         replace(&mut e, Some(3), 'z');
         e.document.undo();
         assert_eq!(e.document.buffer().text(), "abc");
+    }
+
+    #[test]
+    fn trim_trailing_whitespace_is_one_undo_step() {
+        let mut e = editor("a  \nb\t\n  \nc", pos(0, 3), Mode::Normal);
+        run(&mut e, "trim_trailing_whitespace", None);
+        assert_eq!(e.document.buffer().text(), "a\nb\n\nc");
+        assert_eq!(
+            e.document.cursor(),
+            pos(0, 0),
+            "cursor clamped onto the line"
+        );
+        e.document.undo();
+        assert_eq!(e.document.buffer().text(), "a  \nb\t\n  \nc");
     }
 
     #[test]

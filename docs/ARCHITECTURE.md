@@ -194,21 +194,43 @@ This means:
 
 `tests/extensibility.rs` covers this contract.
 
-## Plugin roadmap (not yet implemented)
+## Events and hooks
 
-The current design leaves room for these:
+`events::Event` lists what hooks can observe: `Opened`, `BeforeSave`,
+`AfterSave`, `ModeChanged` and `BufferChanged`. Hooks are registered on the
+`CommandRegistry` with `on(kind, source, handler)`, next to commands, so the
+registry stays the single extension point. A hook gets the same `Context` as
+a command.
+
+There are two delivery styles:
+
+- **Before** events fire synchronously from the command doing the work
+  (`write` fires `BeforeSave` with `CommandRegistry::fire`). A hook can edit
+  the document first, or return an error to cancel.
+- **After** events are queued with `Editor::emit`, because the editor has no
+  access to the registry. The app dispatches them once each key has been
+  handled (`App::dispatch_events`). That's also when it emits
+  `BufferChanged` if the key edited the text. Hooks can queue further
+  events, so dispatch repeats, but stops after 8 rounds with an error so
+  two hooks can't trigger each other forever. A hook's own edits form a
+  separate undo step.
+
+`[hooks]` in config maps an event to a list of commands
+(`CommandRegistry::on_run_commands`), and unknown command names are
+reported at startup, like the keymap.
+
+## Plugin roadmap
+
+Done so far: named commands, runtime keybinding, and event hooks. Still to do:
 
 1. **Scripting runtime.** Lua (via `mlua`) is the likely first choice because
-   it's familiar to Neovim users. A plugin's `register_command` call maps
-   straight onto `CommandRegistry::register`. The handler closure is
-   deliberately not `Send`, so a non-thread-safe Lua state can live inside it.
-2. **Hooks/events.** Add an `events` module with an event enum
-   (`ModeChanged`, `BufferChanged`, `KeyPressed`, ...) and a hook registry
-   that `App` fires after commands run. Plugins subscribe to it.
-3. **Plugin keymaps.** `Keymap::bind` already supports runtime binding.
-4. **Plugin UI.** Statusline segments and gutter columns become lists of
+   it's familiar to Neovim users. A plugin's `register_command` and `on`
+   calls map straight onto `CommandRegistry::register` and
+   `CommandRegistry::on`. Handlers are deliberately not `Send`, so a
+   non-thread-safe Lua state can live inside them.
+2. **Plugin UI.** Statusline segments and gutter columns become lists of
    components that plugins can contribute to.
-5. **Isolation.** If sandboxing becomes a goal, a WASM runtime can sit behind
+3. **Isolation.** If sandboxing becomes a goal, a WASM runtime can sit behind
    the same command and hook interfaces.
 
 ## Configuration

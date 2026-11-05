@@ -12,6 +12,7 @@ use ratatui::{DefaultTerminal, Frame};
 use crate::commands::{CommandRegistry, Invocation};
 use crate::config::{Config, Theme};
 use crate::editor::{Editor, Message, Mode};
+use crate::events;
 use crate::input::{InputHandler, KeyPress, Keymap, Outcome};
 use crate::ui::{self, ViewState};
 
@@ -35,9 +36,20 @@ impl Default for App {
 
 impl App {
     pub fn new(config: Config) -> Self {
+        let mut commands = CommandRegistry::with_builtins();
+        let mut unknown_hook_commands = Vec::new();
+        for (kind, hook_commands) in config.hooks {
+            for name in &hook_commands {
+                if !commands.contains(name) {
+                    unknown_hook_commands.push(format!("{name} ({})", kind.id()));
+                }
+            }
+            commands.on_run_commands(kind, hook_commands);
+        }
+
         let mut app = Self {
             editor: Editor::new(config.editor),
-            commands: CommandRegistry::with_builtins(),
+            commands,
             keymap: config.keys,
             theme: config.theme,
             input: InputHandler::default(),
@@ -46,6 +58,14 @@ impl App {
             replaying: false,
         };
         app.validate_keymap();
+        if !unknown_hook_commands.is_empty() {
+            unknown_hook_commands.sort();
+            let text = format!(
+                "Hooks reference unknown commands: {}",
+                unknown_hook_commands.join(", ")
+            );
+            app.editor.set_message(Message::error(text));
+        }
         app
     }
 
@@ -83,6 +103,7 @@ impl App {
         if let Err(error) = self.editor.open(path) {
             self.editor.set_message(Message::error(error.to_string()));
         }
+        self.dispatch_events();
     }
 
     pub fn should_quit(&self) -> bool {
@@ -126,9 +147,11 @@ impl App {
             return;
         }
 
+        let edits_before = self.editor.document.edit_count();
+
         // Record each sequence from idle to idle, for `.`.
         if self.is_idle() {
-            self.changes.begin(self.editor.document.edit_count());
+            self.changes.begin(edits_before);
         }
         self.changes.push(key);
         self.process_key(key);
@@ -137,6 +160,36 @@ impl App {
         }
         if self.is_idle() {
             self.changes.finish(self.editor.document.edit_count());
+        }
+
+        if self.editor.document.edit_count() != edits_before {
+            self.editor.emit(events::Event::BufferChanged);
+        }
+        self.dispatch_events();
+    }
+
+    /// Runs hooks for the events queued while handling a key. Hooks can
+    /// queue more events, so this repeats, up to a limit that stops two
+    /// hooks from triggering each other forever.
+    fn dispatch_events(&mut self) {
+        const MAX_ROUNDS: usize = 8;
+        for _ in 0..MAX_ROUNDS {
+            let events = self.editor.take_events();
+            if events.is_empty() {
+                return;
+            }
+            for event in events {
+                if let Err(error) = self.commands.fire(&event, &mut self.editor) {
+                    self.editor.set_message(Message::error(error));
+                }
+            }
+            // A hook's edits form their own undo step.
+            self.editor.finish_command();
+        }
+        if !self.editor.take_events().is_empty() {
+            self.editor.set_message(Message::error(format!(
+                "Hooks kept triggering each other; stopped after {MAX_ROUNDS} rounds"
+            )));
         }
     }
 

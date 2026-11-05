@@ -1,4 +1,4 @@
-//! The named command registry.
+//! The named command registry, and the hooks that run on editor events.
 //!
 //! Every user-facing action is a named command (`move_down`, `delete_line`,
 //! `quit`, ...). Keymaps bind keys to command *names*, and the `:` command
@@ -7,6 +7,7 @@
 //! their own commands through the same [`CommandRegistry::register`] API.
 
 mod builtin;
+mod hooks;
 
 use std::collections::HashMap;
 
@@ -90,6 +91,7 @@ impl Command {
 pub struct CommandRegistry {
     commands: HashMap<String, Command>,
     aliases: HashMap<String, String>,
+    hooks: hooks::Hooks,
 }
 
 impl CommandRegistry {

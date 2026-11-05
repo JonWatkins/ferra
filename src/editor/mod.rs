@@ -24,6 +24,7 @@ pub use selection::{Selection, SelectionKind};
 
 use crate::config::EditorOptions;
 use crate::core::motion::CharSearch;
+use crate::events::Event;
 
 /// A request from `.` to repeat the last change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +47,8 @@ pub struct Editor {
     /// Set by `.`; the app replays the last change (which only it can do,
     /// since a change is recorded as keys).
     repeat_request: Option<RepeatRequest>,
+    /// "After" events waiting for the app to dispatch to hooks.
+    events: Vec<Event>,
     last_selection: Option<selection::LastSelection>,
     message: Option<Message>,
     should_quit: bool,
@@ -74,6 +77,12 @@ impl Editor {
     /// Switches mode, applying Vim's transition rules.
     pub fn set_mode(&mut self, mode: Mode) {
         let previous = std::mem::replace(&mut self.mode, mode);
+        if previous != mode {
+            self.emit(Event::ModeChanged {
+                from: previous,
+                to: mode,
+            });
+        }
 
         if previous == Mode::Insert && mode == Mode::Normal {
             // Like Vim, leaving insert mode steps back onto the last typed char.
@@ -146,6 +155,16 @@ impl Editor {
         self.message = None;
     }
 
+    /// Queues an event for hooks. The app dispatches queued events after each
+    /// key, once the editor is in a consistent state.
+    pub fn emit(&mut self, event: Event) {
+        self.events.push(event);
+    }
+
+    pub fn take_events(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.events)
+    }
+
     /// Asks the app to repeat the last change, with `count` replacing the
     /// original count if given.
     pub fn request_repeat(&mut self, count: Option<usize>) {
@@ -201,6 +220,22 @@ mod tests {
         editor.finish_command();
         editor.document.undo();
         assert_eq!(editor.document.buffer().text(), "");
+    }
+
+    #[test]
+    fn mode_changes_are_emitted() {
+        let mut editor = Editor::default();
+        editor.set_mode(Mode::Normal);
+        assert!(editor.take_events().is_empty(), "no change, no event");
+        editor.set_mode(Mode::Insert);
+        assert_eq!(
+            editor.take_events(),
+            vec![Event::ModeChanged {
+                from: Mode::Normal,
+                to: Mode::Insert
+            }]
+        );
+        assert!(editor.take_events().is_empty());
     }
 
     #[test]

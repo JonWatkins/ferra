@@ -101,5 +101,17 @@ insert = "underline"
 "x" = ""                    # unbind a default
 ```
 
+### Hooks
+
+Run commands when something happens:
+
+```toml
+[hooks]
+before-save = ["trim_trailing_whitespace"]
+```
+
+Events: `opened`, `before-save`, `after-save`, `mode-changed`,
+`buffer-changed`. A `before-save` command that fails cancels the save.
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the
 plugin roadmap.

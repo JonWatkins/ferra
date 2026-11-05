@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::{Document, Editor, Message, Mode, OpenInfo, SaveInfo};
 use crate::core::LineEnding;
+use crate::events::Event;
 use crate::files::FileError;
 
 /// Vim's "E37" message, used wherever unsaved changes would be lost.
@@ -17,6 +18,7 @@ impl Editor {
         self.document = document;
         self.set_mode(Mode::Normal);
         self.set_message(Message::info(describe_open(&info)));
+        self.emit(Event::Opened { path: info.path });
         Ok(())
     }
 
@@ -24,6 +26,7 @@ impl Editor {
     pub fn save(&mut self, target: Option<&Path>, force: bool) -> Result<(), FileError> {
         let info = self.document.save(target, force)?;
         self.set_message(Message::info(describe_save(&info)));
+        self.emit(Event::AfterSave { path: info.path });
         Ok(())
     }
 }
@@ -124,5 +127,9 @@ mod tests {
 
         editor.save(None, false).unwrap();
         assert!(editor.message().unwrap().text.ends_with("1L, 3B written"));
+
+        let events = editor.take_events();
+        assert!(events.contains(&Event::Opened { path: path.clone() }));
+        assert!(events.contains(&Event::AfterSave { path }));
     }
 }

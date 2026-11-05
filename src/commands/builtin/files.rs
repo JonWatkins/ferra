@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use crate::commands::{CommandRegistry, CommandResult, Context};
 use crate::editor::UNSAVED_CHANGES;
+use crate::events::Event;
 
 pub fn register(r: &mut CommandRegistry) {
     r.register(
@@ -78,6 +79,8 @@ pub fn register(r: &mut CommandRegistry) {
 
 fn write(cx: &mut Context) -> CommandResult {
     let target = path_arg(cx);
+    // Before-save hooks can edit the text first, or cancel with an error.
+    cx.registry.fire(&Event::BeforeSave, cx.editor)?;
     cx.editor
         .save(target.as_deref(), cx.bang)
         .map_err(|e| e.to_string())
