@@ -9,6 +9,10 @@ use crate::files::WalkOptions;
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct EditorOptions {
     pub tab_width: usize,
+    /// Indent with spaces (`tab-width` of them) rather than tab characters.
+    pub expand_tab: bool,
+    /// New lines start with the indentation of the line they came from.
+    pub auto_indent: bool,
     pub line_numbers: LineNumbers,
     pub cursorline: bool,
     pub scroll_off: usize,

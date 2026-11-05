@@ -1,6 +1,8 @@
-//! Operators (`d`, `c`, `y`) and applying them to ranges.
+//! Operators (`d`, `c`, `y`, `>`, `<`, `gu`, `gU`, `g~`) and applying them to
+//! ranges.
 
 use super::registers::{Register, StoreKind};
+use super::transform::CaseChange;
 use super::{Editor, Mode};
 use crate::core::{Position, Range, motion};
 
@@ -9,6 +11,11 @@ pub enum Operator {
     Delete,
     Change,
     Yank,
+    Indent,
+    Outdent,
+    Lowercase,
+    Uppercase,
+    ToggleCase,
 }
 
 /// An operator waiting for a motion or text object (operator-pending mode).
@@ -52,6 +59,24 @@ impl Editor {
         range: Range,
         register: Option<char>,
     ) -> Result<(), String> {
+        // These transform the text in place and don't touch registers.
+        match operator {
+            Operator::Indent | Operator::Outdent => {
+                self.shift_lines(range, operator == Operator::Indent);
+                return Ok(());
+            }
+            Operator::Lowercase | Operator::Uppercase | Operator::ToggleCase => {
+                let change = match operator {
+                    Operator::Lowercase => CaseChange::Lower,
+                    Operator::Uppercase => CaseChange::Upper,
+                    _ => CaseChange::Toggle,
+                };
+                self.change_case(range, change);
+                return Ok(());
+            }
+            Operator::Delete | Operator::Change | Operator::Yank => {}
+        }
+
         let buffer = self.document.buffer();
         let value = match range {
             Range::Chars { start, end } => Register::charwise(buffer.text_range(start, end)),
@@ -61,9 +86,10 @@ impl Editor {
         // Like Vim, an empty change (e.g. `x` on an empty line) leaves the
         // registers alone, but `c` still enters insert mode.
         if !range.is_empty() {
-            let kind = match operator {
-                Operator::Yank => StoreKind::Yank,
-                Operator::Delete | Operator::Change => StoreKind::Delete,
+            let kind = if operator == Operator::Yank {
+                StoreKind::Yank
+            } else {
+                StoreKind::Delete
             };
             self.registers.store(register, value, kind)?;
         }
@@ -99,6 +125,14 @@ impl Editor {
                 doc.set_cursor(Position::new(first, 0));
                 self.set_mode(Mode::Insert);
             }
+            (
+                Operator::Indent
+                | Operator::Outdent
+                | Operator::Lowercase
+                | Operator::Uppercase
+                | Operator::ToggleCase,
+                _,
+            ) => unreachable!("handled before touching registers"),
         }
         Ok(())
     }

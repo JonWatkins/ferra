@@ -153,6 +153,24 @@ Vim's grammar is `[count]["x]operator[count](motion | text-object)`:
 5. `Editor::apply_operator` stores the text in a register, then deletes,
    changes (deletes and enters insert mode) or yanks.
 
+Operators that transform text in place (`>`, `<`, `gu`, `gU`, `g~`) don't
+touch registers. `apply_operator` hands them to `editor/transform.rs`:
+
+- `shift_lines` measures each line's indent, adds or removes one level, and
+  rebuilds it with spaces (`expand-tab`) or tabs plus spaces, as Vim does,
+  so mixed indentation gets tidied rather than made worse.
+- `change_case` replaces the range with its re-cased text (which may change
+  length, e.g. `ß` → `SS`).
+
+`J` and auto-indent live there too. Auto-indent is `indent_for_new_line`:
+the current line's indent, plus a level after an opening bracket. Typing a
+closing bracket on a line that's only indentation removes a level.
+
+The editor pane draws tabs as spaces up to the next tab stop (`tab-width`).
+`ui/editor_view/line.rs` is the one place that maps character columns to
+display cells, so the cursor, text and highlights stay aligned with tabs
+and wide characters.
+
 Motion details:
 
 - A target function returns `None` when the motion fails (`fx` with no `x`):
@@ -334,7 +352,11 @@ Done so far: named commands, runtime keybinding, and event hooks. Still to do:
   fast input, such as pasted keystrokes.
 - `.` with a count only replaces a count typed *before* the change: after
   `d2w`, `3.` replays as `3d2w` (six words) where Vim deletes three.
-- More operators and commands: `>`/`<`, `gu`/`gU`/`~`, `J`, `N%`.
+- Language-aware indentation (tree-sitter indent queries), and `=` to
+  re-indent. Auto-indent currently copies the previous line and reacts to
+  brackets only.
+- `N%`, `gJ` (join without spaces), and `.` repeating a visual operation on
+  the same amount of text, as Vim does.
 - Numbered delete registers `1`-`9` and the small-delete register `-`.
 - Split windows (several views onto buffers at once).
 - File listing runs on the UI thread. It's capped by `max-files`, but very

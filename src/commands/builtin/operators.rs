@@ -23,6 +23,32 @@ pub fn register(r: &mut CommandRegistry) {
     });
 
     r.register(
+        "operator_indent",
+        "Indent over a motion or text object (>)",
+        |cx| begin(cx, Operator::Indent),
+    );
+    r.register(
+        "operator_outdent",
+        "Outdent over a motion or text object (<)",
+        |cx| begin(cx, Operator::Outdent),
+    );
+    r.register(
+        "operator_lowercase",
+        "Lowercase over a motion or text object (gu)",
+        |cx| begin(cx, Operator::Lowercase),
+    );
+    r.register(
+        "operator_uppercase",
+        "Uppercase over a motion or text object (gU)",
+        |cx| begin(cx, Operator::Uppercase),
+    );
+    r.register(
+        "operator_toggle_case",
+        "Toggle case over a motion or text object (g~)",
+        |cx| begin(cx, Operator::ToggleCase),
+    );
+
+    r.register(
         "delete_char",
         "Delete [count] characters under the cursor (dl)",
         |cx| operate(cx, Operator::Delete, &motions::RIGHT),

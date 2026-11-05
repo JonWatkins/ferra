@@ -2,16 +2,23 @@
 //! `cw`, ...) live in `operators.rs`.
 
 use crate::commands::CommandRegistry;
-use crate::core::Position;
+use crate::core::{Position, Range};
+use crate::editor::CaseChange;
 use crate::editor::Mode;
 
 pub fn register(r: &mut CommandRegistry) {
-    r.register("insert_newline", "Insert a line break", |cx| {
-        cx.editor.document.insert_str("\n");
-        Ok(())
-    });
-    r.register("insert_tab", "Insert indentation", |cx| {
-        let indent = " ".repeat(cx.editor.options.tab_width);
+    r.register(
+        "insert_newline",
+        "Insert a line break (keeping indentation with auto-indent)",
+        |cx| {
+            let cursor = cx.editor.document.cursor();
+            let indent = cx.editor.indent_for_new_line(cursor.row, cursor.col);
+            cx.editor.document.insert_str(&format!("\n{indent}"));
+            Ok(())
+        },
+    );
+    r.register("insert_tab", "Insert one level of indentation", |cx| {
+        let indent = cx.editor.indent_unit();
         cx.editor.document.insert_str(&indent);
         Ok(())
     });
@@ -54,6 +61,39 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "join_lines",
+        "Join [count] lines (at least two), or the selected lines (J)",
+        |cx| {
+            let (row, joins) = match cx.editor.take_selection() {
+                Some(range) => {
+                    let (first, last) = range.rows();
+                    (first, (last - first).max(1))
+                }
+                None => (cx.editor.document.cursor().row, cx.count().max(2) - 1),
+            };
+            for _ in 0..joins {
+                if !cx.editor.join_line(row) {
+                    break;
+                }
+            }
+            Ok(())
+        },
+    );
+    r.register(
+        "toggle_case_char",
+        "Toggle the case of [count] characters and move past them (~)",
+        |cx| {
+            let n = cx.count();
+            let doc = &cx.editor.document;
+            let start = doc.cursor();
+            let end = start.with_col((start.col + n).min(doc.buffer().line_len(start.row)));
+            cx.editor
+                .change_case(Range::Chars { start, end }, CaseChange::Toggle);
+            cx.editor.document.set_cursor(end);
+            Ok(())
+        },
+    );
+    r.register(
         "replace_char",
         "Replace [count] characters under the cursor with {char} (r)",
         |cx| {
@@ -76,7 +116,11 @@ pub fn register(r: &mut CommandRegistry) {
         "open_line_below",
         "Open a new line below and enter insert mode",
         |cx| {
+            let row = cx.editor.document.cursor().row;
+            let line_len = cx.editor.document.buffer().line_len(row);
+            let indent = cx.editor.indent_for_new_line(row, line_len);
             cx.editor.document.open_line(true);
+            cx.editor.document.insert_str(&indent);
             cx.editor.set_mode(Mode::Insert);
             Ok(())
         },
@@ -85,7 +129,11 @@ pub fn register(r: &mut CommandRegistry) {
         "open_line_above",
         "Open a new line above and enter insert mode",
         |cx| {
+            // The new line above takes this line's indentation.
+            let row = cx.editor.document.cursor().row;
+            let indent = cx.editor.indent_for_new_line(row, 0);
             cx.editor.document.open_line(false);
+            cx.editor.document.insert_str(&indent);
             cx.editor.set_mode(Mode::Insert);
             Ok(())
         },
@@ -118,6 +166,44 @@ mod tests {
         assert_eq!(e.document.buffer().text(), "\na");
         assert_eq!(e.document.cursor(), pos(0, 0));
         assert_eq!(e.mode(), Mode::Insert);
+    }
+
+    #[test]
+    fn auto_indent_on_enter_and_open_line() {
+        let mut e = editor("    foo {", pos(0, 9), Mode::Insert);
+        run(&mut e, "insert_newline", None);
+        assert_eq!(e.document.buffer().text(), "    foo {\n        ");
+        assert_eq!(e.document.cursor(), pos(1, 8));
+
+        let mut e = editor("  a", pos(0, 0), Mode::Normal);
+        run(&mut e, "open_line_below", None);
+        run(&mut e, "normal_mode", None);
+        run(&mut e, "open_line_above", None);
+        assert_eq!(e.document.buffer().text(), "  a\n  \n  ");
+    }
+
+    #[test]
+    fn join_lines_with_count_and_selection() {
+        let mut e = editor("a\n  b\nc\nd", pos(0, 0), Mode::Normal);
+        run(&mut e, "join_lines", Some(3));
+        assert_eq!(e.document.buffer().text(), "a b c\nd");
+
+        let mut e = editor("a\nb\nc", pos(0, 0), Mode::Normal);
+        e.toggle_visual(crate::editor::SelectionKind::Line);
+        e.document.set_cursor(pos(1, 0));
+        run(&mut e, "join_lines", None);
+        assert_eq!(e.document.buffer().text(), "a b\nc");
+        assert_eq!(e.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn tilde_toggles_and_moves() {
+        let mut e = editor("abC", pos(0, 0), Mode::Normal);
+        run(&mut e, "toggle_case_char", Some(2));
+        assert_eq!(e.document.buffer().text(), "ABC");
+        assert_eq!(e.document.cursor(), pos(0, 2));
+        run(&mut e, "toggle_case_char", Some(5));
+        assert_eq!(e.document.buffer().text(), "ABc");
     }
 
     #[test]

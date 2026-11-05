@@ -61,19 +61,8 @@ fn operate_on_selected_lines(cx: &mut Context, operator: Operator) -> CommandRes
     let Some(range) = cx.editor.take_selection() else {
         return Ok(());
     };
-    let lines = match range {
-        Range::Lines { .. } => range,
-        Range::Chars { start, end } => Range::Lines {
-            first: start.row,
-            // A selection ending at the start of a line (its line break
-            // selected) doesn't include that line.
-            last: if end.col == 0 && end.row > start.row {
-                end.row - 1
-            } else {
-                end.row
-            },
-        },
-    };
+    let (first, last) = range.rows();
+    let lines = Range::Lines { first, last };
     cx.editor.apply_operator(operator, lines, cx.register)
 }
 

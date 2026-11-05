@@ -85,13 +85,14 @@ impl StatefulWidget for EditorView<'_> {
 
         let text = self.document.buffer();
         let cursor = self.document.cursor();
+        let tab_width = self.options.tab_width;
         let line_numbers = self.options.line_numbers;
 
         let gutter_width = gutter::width(text.line_count(), line_numbers).min(area.width);
         let [gutter_area, text_area] =
             Layout::horizontal([Constraint::Length(gutter_width), Constraint::Min(0)]).areas(area);
 
-        let cursor_col = line::display_col(&text.line(cursor.row), cursor.col);
+        let cursor_col = line::display_col(&text.line(cursor.row), cursor.col, tab_width);
         let target = ScrollTarget {
             row: cursor.row,
             col: cursor_col,
@@ -138,7 +139,7 @@ impl StatefulWidget for EditorView<'_> {
             );
 
             let line_text = &*text.line(row);
-            let visible = line::visible_slice(line_text, left, text_area.width as usize);
+            let visible = line::visible_slice(line_text, left, text_area.width as usize, tab_width);
             buf.set_stringn(
                 text_area.x,
                 y,
@@ -151,8 +152,8 @@ impl StatefulWidget for EditorView<'_> {
                 // Char columns to display cells; a column past the last char
                 // (a selected line break) is drawn as one extra cell.
                 let line_len = text.line_len(row);
-                let from = line::display_col(line_text, from);
-                let to = line::display_col(line_text, to) + usize::from(to > line_len);
+                let from = line::display_col(line_text, from, tab_width);
+                let to = line::display_col(line_text, to, tab_width) + usize::from(to > line_len);
                 let start = from.max(left) - left;
                 let end = to.saturating_sub(left).min(text_area.width as usize);
                 if start < end {
@@ -357,6 +358,22 @@ mod tests {
             .filter(|&x| buf[(x, 0)].fg == ratatui::style::Color::Magenta)
             .collect();
         assert_eq!(magenta, vec![0, 1], "`fn` is a keyword");
+    }
+
+    #[test]
+    fn tabs_render_as_spaces_and_the_cursor_follows() {
+        let mut doc = Document::with_text("\tx");
+        doc.set_cursor(TextPos::new(0, 1));
+        let options = EditorOptions {
+            tab_width: 4,
+            ..options(LineNumbers::None)
+        };
+        let area = Rect::new(0, 0, 8, 1);
+        let mut buf = Buffer::empty(area);
+        let mut state = ViewState::default();
+        EditorView::new(&doc, &options, &Theme::default()).render(area, &mut buf, &mut state);
+        assert_eq!(row_text(&buf, 0), "    x   ");
+        assert_eq!(state.cursor, Some(Position::new(4, 0)));
     }
 
     #[test]

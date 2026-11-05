@@ -14,6 +14,7 @@ pub mod picker;
 pub mod registers;
 mod search;
 mod selection;
+mod transform;
 
 pub use buffers::BufferInfo;
 pub use command_line::{CommandLine, Prompt};
@@ -24,6 +25,7 @@ pub use mode::Mode;
 pub use operator::{Operator, PendingOperator};
 pub use registers::{Register, Registers};
 pub use selection::{Selection, SelectionKind};
+pub use transform::CaseChange;
 
 use crate::config::EditorOptions;
 use crate::core::motion::CharSearch;
@@ -147,7 +149,10 @@ impl Editor {
     /// Inserts typed text into whatever has focus in the current mode.
     pub fn insert_text_char(&mut self, c: char) {
         match self.mode {
-            Mode::Insert => self.document.insert_char(c),
+            Mode::Insert => {
+                self.dedent_for_closing_bracket(c);
+                self.document.insert_char(c);
+            }
             Mode::Command => {
                 self.command_line.push(c);
                 self.update_search_preview();

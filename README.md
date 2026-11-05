@@ -26,6 +26,10 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `%` | Matching bracket |
 | Normal  | `{` `}` | Previous / next empty line (paragraph) |
 | Normal  | `r` + char | Replace characters (`3rx`) |
+| Normal  | `>` `<` + motion, `>>` `<<` | Indent / outdent lines (`>ip`, `3>>`; visual `>` `<`) |
+| Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |
+| Normal  | `~` | Toggle case under the cursor and move on |
+| Normal  | `J` | Join lines (`3J`, visual `J`) |
 | Normal  | `i` `a` `I` `A` `o` `O` | Enter insert mode |
 | Normal  | `d` `c` `y` + motion/text object | Delete / change / yank (`dw`, `c$`, `yiw`, `di(`, `2d3w`) |
 | Normal  | `dd` `cc` `yy` | Operate on whole lines |
@@ -118,6 +122,8 @@ every option. Example:
 ```toml
 [editor]
 tab-width = 2
+expand-tab = true           # indent with spaces; false for tabs
+auto-indent = true          # new lines keep indentation
 line-numbers = "absolute"   # "absolute" | "relative" | "none"
 scroll-off = 8
 

@@ -2,13 +2,14 @@
 
 mod common;
 
-use common::{app, cursor, keys, render, text};
+use common::{app_with_config, cursor, keys, render, text};
 use terminal_editor::App;
 use terminal_editor::editor::Mode;
 
-/// An app containing `content`, with the cursor at the start.
+/// An app containing `content`, with the cursor at the start. The text is
+/// typed in, so auto-indent is off to keep it exactly as written.
 fn with_text(content: &str) -> App {
-    let mut app = app();
+    let mut app = app_with_config("[editor]\nauto-indent = false");
     keys(&mut app, &format!("i{content}<Esc>gg0"));
     app
 }

@@ -4,8 +4,13 @@
 # merged on top of it, so you only need to specify what you want to change.
 
 [editor]
-# Spaces inserted by <Tab>.
+# Width of a tab stop, and of one indent level.
 tab-width = 4
+# Indent with spaces (true) or tab characters (false).
+expand-tab = true
+# Enter, o and O keep the current line's indentation (one level more after
+# an opening bracket).
+auto-indent = true
 # "absolute", "relative" (hybrid: current line shows its absolute number) or "none".
 line-numbers = "relative"
 # Highlight the line the cursor is on.
@@ -141,6 +146,13 @@ visual = "block"
 "d" = "operator_delete"
 "c" = "operator_change"
 "y" = "operator_yank"
+">" = "operator_indent"
+"<lt>" = "operator_outdent"
+"gu" = "operator_lowercase"
+"gU" = "operator_uppercase"
+"g~" = "operator_toggle_case"
+"~" = "toggle_case_char"
+"J" = "join_lines"
 "x" = "delete_char"
 "<Del>" = "delete_char"
 "r" = "replace_char"
@@ -174,12 +186,17 @@ visual = "block"
 "ZQ" = "force_quit"
 
 # After an operator: motions and text objects. Pressing the operator key
-# again ("dd", "cc", "yy") acts on whole lines.
+# again ("dd", "cc", "yy", ">>", "guu", "gUU", "g~~") acts on whole lines.
 [keys.operator]
 "<Esc>" = "normal_mode"
 "d" = "current_line"
 "c" = "current_line"
 "y" = "current_line"
+">" = "current_line"
+"<lt>" = "current_line"
+"u" = "current_line"
+"U" = "current_line"
+"~" = "current_line"
 "h" = "move_left"
 "j" = "move_down"
 "k" = "move_up"
@@ -250,6 +267,12 @@ visual = "block"
 "c" = "operator_change"
 "s" = "operator_change"
 "y" = "operator_yank"
+">" = "operator_indent"
+"<lt>" = "operator_outdent"
+"u" = "operator_lowercase"
+"U" = "operator_uppercase"
+"~" = "operator_toggle_case"
+"J" = "join_lines"
 "D" = "visual_delete_lines"
 "X" = "visual_delete_lines"
 "C" = "visual_change_lines"

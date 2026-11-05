@@ -57,6 +57,19 @@ impl Range {
         }
     }
 
+    /// The first and last rows the range touches. A character range ending
+    /// at the very start of a line (only the line break before it selected)
+    /// doesn't count that line.
+    pub fn rows(&self) -> (usize, usize) {
+        match *self {
+            Range::Lines { first, last } => (first, last),
+            Range::Chars { start, end } if end.col == 0 && end.row > start.row => {
+                (start.row, end.row - 1)
+            }
+            Range::Chars { start, end } => (start.row, end.row),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         matches!(self, Range::Chars { start, end } if start == end)
     }
@@ -114,6 +127,17 @@ mod tests {
         let b = Buffer::from_text("a\nb\nc");
         let r = Range::from_motion(&b, pos(2, 0), pos(1, 0), MotionKind::Linewise);
         assert_eq!(r, Range::Lines { first: 1, last: 2 });
+    }
+
+    #[test]
+    fn rows_of_ranges() {
+        assert_eq!(Range::Lines { first: 1, last: 3 }.rows(), (1, 3));
+        assert_eq!(chars(pos(0, 2), pos(2, 1)).rows(), (0, 2));
+        assert_eq!(
+            chars(pos(0, 2), pos(1, 0)).rows(),
+            (0, 0),
+            "only the line break"
+        );
     }
 
     #[test]
