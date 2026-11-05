@@ -1,4 +1,5 @@
-//! Editor state: the document, current mode, command line and messages.
+//! Editor state: the document, current mode, registers, command line and
+//! messages.
 //!
 //! The editor is UI-agnostic. It's mutated by commands and read by the UI.
 
@@ -6,11 +7,15 @@ mod command_line;
 mod document;
 mod message;
 mod mode;
+mod operator;
+pub mod registers;
 
 pub use command_line::CommandLine;
 pub use document::Document;
 pub use message::{Message, Severity};
 pub use mode::Mode;
+pub use operator::{Operator, PendingOperator};
+pub use registers::{Register, Registers};
 
 use crate::config::EditorOptions;
 
@@ -19,7 +24,9 @@ pub struct Editor {
     pub document: Document,
     pub command_line: CommandLine,
     pub options: EditorOptions,
+    pub registers: Registers,
     mode: Mode,
+    pending_operator: Option<PendingOperator>,
     message: Option<Message>,
     should_quit: bool,
 }
@@ -57,13 +64,32 @@ impl Editor {
         if previous == Mode::Command || mode == Mode::Command {
             self.command_line.clear();
         }
+        if mode != Mode::OperatorPending {
+            self.pending_operator = None;
+        }
         self.enforce_cursor_rules();
+    }
+
+    /// The operator awaiting a motion, if in operator-pending mode.
+    pub fn pending_operator(&self) -> Option<PendingOperator> {
+        self.pending_operator
     }
 
     /// Normal mode may not rest on the end-of-line slot.
     pub fn enforce_cursor_rules(&mut self) {
-        if self.mode == Mode::Normal {
+        if matches!(self.mode, Mode::Normal | Mode::OperatorPending) {
             self.document.clamp_to_last_char();
+        }
+    }
+
+    /// Housekeeping after every command: enforces cursor rules and closes the
+    /// undo step. An insert session stays open until insert mode is left, so
+    /// that it (and the command that started it, like `o` or `cw`) undoes as
+    /// one step.
+    pub fn finish_command(&mut self) {
+        self.enforce_cursor_rules();
+        if self.mode != Mode::Insert {
+            self.document.commit();
         }
     }
 
@@ -72,7 +98,7 @@ impl Editor {
         match self.mode {
             Mode::Insert => self.document.insert_char(c),
             Mode::Command => self.command_line.push(c),
-            Mode::Normal => {}
+            Mode::Normal | Mode::OperatorPending => {}
         }
     }
 
@@ -120,6 +146,19 @@ mod tests {
         assert_eq!(editor.command_line.input(), "q");
         editor.set_mode(Mode::Normal);
         assert!(editor.command_line.is_empty());
+    }
+
+    #[test]
+    fn insert_session_is_one_undo_step() {
+        let mut editor = Editor::default();
+        editor.set_mode(Mode::Insert);
+        editor.insert_text_char('a');
+        editor.finish_command();
+        editor.insert_text_char('b');
+        editor.set_mode(Mode::Normal);
+        editor.finish_command();
+        editor.document.undo();
+        assert_eq!(editor.document.buffer().text(), "");
     }
 
     #[test]

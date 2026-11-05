@@ -1,8 +1,8 @@
 //! Turns key presses into commands.
 //!
-//! [`InputHandler`] accumulates counts (`3`) and multi-key sequences (`g`,
-//! `gg`) and resolves them against the [`Keymap`]. It decides *what* should
-//! happen; the app then performs it.
+//! [`InputHandler`] accumulates register selections (`"a`), counts (`3`) and
+//! multi-key sequences (`g`, `gg`) and resolves them against the [`Keymap`].
+//! It decides *what* should happen; the app then performs it.
 
 mod key;
 mod keymap;
@@ -12,6 +12,9 @@ pub use keymap::{KeyBindings, Keymap, Lookup};
 
 use crate::editor::Mode;
 
+/// Selects a register for the next command, as in Vim (`"ayy`).
+const REGISTER_PREFIX: char = '"';
+
 /// What the app should do in response to a key press.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -19,10 +22,11 @@ pub enum Outcome {
     Execute {
         command: String,
         count: Option<usize>,
+        register: Option<char>,
     },
     /// Insert literal text (unbound printable key in insert/command mode).
     InsertChar(char),
-    /// Waiting for more keys to complete a sequence or count.
+    /// Waiting for more keys to complete a sequence, count or register.
     Pending,
     /// The key did nothing.
     Unbound,
@@ -32,6 +36,12 @@ pub enum Outcome {
 pub struct InputHandler {
     pending: Vec<KeyPress>,
     count: Option<usize>,
+    register: Option<char>,
+    awaiting_register: bool,
+    /// Display text of the last completed sequence (e.g. `"a2d`).
+    last_sequence: String,
+    /// Keys kept on display while an operator waits for its motion.
+    held: String,
 }
 
 impl InputHandler {
@@ -43,7 +53,27 @@ impl InputHandler {
     /// insert mode, typing `jx` inserts "jx", and `jj` inserts "j" and
     /// waits on the second `j`.
     pub fn handle(&mut self, key: KeyPress, mode: Mode, keymap: &Keymap) -> Vec<Outcome> {
-        if mode == Mode::Normal
+        if self.awaiting_register {
+            self.awaiting_register = false;
+            return match key.as_text() {
+                Some(name) => {
+                    self.register = Some(name);
+                    vec![Outcome::Pending]
+                }
+                None => {
+                    self.reset();
+                    vec![Outcome::Unbound]
+                }
+            };
+        }
+
+        if mode == Mode::Normal && self.pending.is_empty() && key.as_text() == Some(REGISTER_PREFIX)
+        {
+            self.awaiting_register = true;
+            return vec![Outcome::Pending];
+        }
+
+        if mode.accepts_count()
             && self.pending.is_empty()
             && let Some(digit) = key.as_digit()
             // A leading `0` is a command (go to line start), not a count.
@@ -60,7 +90,9 @@ impl InputHandler {
                 let outcome = Outcome::Execute {
                     command: command.to_string(),
                     count: self.count,
+                    register: self.register,
                 };
+                self.last_sequence = self.pending_display();
                 self.reset();
                 vec![outcome]
             }
@@ -68,7 +100,7 @@ impl InputHandler {
             Lookup::NoMatch => {
                 let keys = std::mem::take(&mut self.pending);
                 self.reset();
-                if mode == Mode::Normal {
+                if !mode.accepts_text() {
                     // Like Vim, an invalid normal-mode sequence is discarded.
                     return vec![Outcome::Unbound];
                 }
@@ -87,17 +119,38 @@ impl InputHandler {
         }
     }
 
-    /// Clears any partially typed count or key sequence.
+    /// Clears any partially typed register, count or key sequence.
     pub fn reset(&mut self) {
         self.pending.clear();
         self.count = None;
+        self.register = None;
+        self.awaiting_register = false;
     }
 
-    /// The partially typed count and keys, for display (e.g. `"3g"`).
+    /// Keeps the last completed sequence on display. The app calls this when
+    /// an operator starts waiting for a motion, so `d` stays visible.
+    pub fn hold_last_sequence(&mut self) {
+        self.held = std::mem::take(&mut self.last_sequence);
+    }
+
+    pub fn release_held(&mut self) {
+        self.held.clear();
+    }
+
+    /// Partially typed input for display, e.g. `"a3g` or `d2`.
     pub fn pending_display(&self) -> String {
-        let count = self.count.map(|c| c.to_string()).unwrap_or_default();
-        let keys: String = self.pending.iter().map(ToString::to_string).collect();
-        count + &keys
+        let mut out = self.held.clone();
+        if let Some(name) = self.register {
+            out.push(REGISTER_PREFIX);
+            out.push(name);
+        } else if self.awaiting_register {
+            out.push(REGISTER_PREFIX);
+        }
+        if let Some(count) = self.count {
+            out.push_str(&count.to_string());
+        }
+        out.extend(self.pending.iter().map(ToString::to_string));
+        out
     }
 }
 
@@ -112,6 +165,12 @@ mod tests {
         map.bind(Mode::Normal, &parse_keys("gg").unwrap(), "goto_file_start");
         map.bind(Mode::Insert, &parse_keys("<Esc>").unwrap(), "normal_mode");
         map.bind(Mode::Insert, &parse_keys("jk").unwrap(), "normal_mode");
+        map.bind(Mode::Normal, &parse_keys("p").unwrap(), "paste_after");
+        map.bind(
+            Mode::OperatorPending,
+            &parse_keys("w").unwrap(),
+            "move_word_forward",
+        );
         map
     }
 
@@ -132,6 +191,7 @@ mod tests {
         Outcome::Execute {
             command: command.into(),
             count,
+            register: None,
         }
     }
 
@@ -239,6 +299,70 @@ mod tests {
     fn unbound_ctrl_keys_are_not_inserted() {
         let mut h = InputHandler::default();
         assert_eq!(last(&mut h, Mode::Insert, "<C-z>"), Outcome::Unbound);
+    }
+
+    #[test]
+    fn register_prefix_selects_register() {
+        let mut h = InputHandler::default();
+        let outcome = last(&mut h, Mode::Normal, "\"a2p");
+        assert_eq!(
+            outcome,
+            Outcome::Execute {
+                command: "paste_after".into(),
+                count: Some(2),
+                register: Some('a'),
+            }
+        );
+        assert_eq!(
+            last(&mut h, Mode::Normal, "p"),
+            execute("paste_after", None)
+        );
+    }
+
+    #[test]
+    fn register_prefix_after_count() {
+        let mut h = InputHandler::default();
+        feed(&mut h, Mode::Normal, "3\"b");
+        assert_eq!(h.pending_display(), "\"b3");
+    }
+
+    #[test]
+    fn register_prefix_with_non_text_key_cancels() {
+        let mut h = InputHandler::default();
+        assert_eq!(last(&mut h, Mode::Normal, "\"<Esc>"), Outcome::Unbound);
+        assert_eq!(h.pending_display(), "");
+    }
+
+    #[test]
+    fn quote_is_typed_in_insert_mode() {
+        let mut h = InputHandler::default();
+        assert_eq!(last(&mut h, Mode::Insert, "\""), Outcome::InsertChar('"'));
+    }
+
+    #[test]
+    fn counts_work_in_operator_pending_mode() {
+        let mut h = InputHandler::default();
+        assert_eq!(
+            last(&mut h, Mode::OperatorPending, "3w"),
+            execute("move_word_forward", Some(3))
+        );
+    }
+
+    #[test]
+    fn unbound_keys_in_operator_pending_mode_are_not_text() {
+        let mut h = InputHandler::default();
+        assert_eq!(last(&mut h, Mode::OperatorPending, "z"), Outcome::Unbound);
+    }
+
+    #[test]
+    fn held_sequence_is_displayed_until_released() {
+        let mut h = InputHandler::default();
+        feed(&mut h, Mode::Normal, "2j");
+        h.hold_last_sequence();
+        feed(&mut h, Mode::OperatorPending, "3");
+        assert_eq!(h.pending_display(), "2j3");
+        h.release_held();
+        assert_eq!(h.pending_display(), "3");
     }
 
     #[test]

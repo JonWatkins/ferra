@@ -5,6 +5,7 @@
 mod common;
 
 use common::{app_with_config, keys, text};
+use terminal_editor::commands::Invocation;
 
 #[test]
 fn custom_command_can_be_bound_and_run() {
@@ -54,9 +55,28 @@ fn commands_can_call_other_commands() {
     app.commands_mut()
         .register("top_and_insert", "gg then i", |cx| {
             cx.registry
-                .execute("goto_file_start", cx.editor, None, &[])?;
-            cx.registry.execute("insert_mode", cx.editor, None, &[])
+                .execute("goto_file_start", cx.editor, Invocation::default())?;
+            cx.registry
+                .execute("insert_mode", cx.editor, Invocation::default())
         });
     keys(&mut app, "ia<CR>b<Esc>:top_and_insert<CR>X");
     assert_eq!(text(&app), "Xa\nb");
+}
+
+#[test]
+fn custom_commands_receive_selected_register() {
+    let mut app = app_with_config(
+        r#"
+        [keys.normal]
+        "Q" = "which_register"
+        "#,
+    );
+    app.commands_mut()
+        .register("which_register", "Insert register name", |cx| {
+            let name = cx.register.unwrap_or('-');
+            cx.editor.document.insert_str(&name.to_string());
+            Ok(())
+        });
+    keys(&mut app, "\"zQ");
+    assert_eq!(text(&app), "z");
 }

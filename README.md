@@ -20,11 +20,19 @@ Quit with `:q`.
 | Normal  | `0` `^` `$` | Line start / first non-blank / end |
 | Normal  | `gg` `G` (`5gg`, `5G`) | First / last line (or line 5) |
 | Normal  | `i` `a` `I` `A` `o` `O` | Enter insert mode |
-| Normal  | `x` `dd` | Delete char / line |
+| Normal  | `d` `c` `y` + motion/text object | Delete / change / yank (`dw`, `c$`, `yiw`, `di(`, `2d3w`) |
+| Normal  | `dd` `cc` `yy` | Operate on whole lines |
+| Normal  | `x` `X` `D` `C` `s` `S` `Y` | Shortcuts (`dl` `dh` `d$` `c$` `cl` `cc` `yy`) |
+| Normal  | `p` `P` | Paste after / before |
+| Normal  | `"a` (prefix) | Use register `a` (`"ayy`, `"ap`; `"A` appends, `"_` discards, `"0` last yank) |
+| Normal  | `u` `<C-r>` | Undo / redo |
 | Normal  | `:` | Command line |
-| Normal  | `3j`, `2dd`, ... | Counts work with every command |
+| Normal  | `3j`, `2dd`, `3u`, ... | Counts work with every command |
 | Insert  | `<Esc>` | Back to normal mode |
 | Command | `<CR>` / `<Esc>` | Run / cancel |
+
+Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
+(`ib`), `i{` `a{` (`iB`), `i[` `a[`, `i<` `a<`.
 
 Command line: `:q`, `:42` (go to line), or any command by name, e.g.
 `:goto_line 10`.

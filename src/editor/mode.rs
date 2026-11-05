@@ -11,10 +11,18 @@ pub enum Mode {
     Insert,
     /// Typing a `:` command on the command line.
     Command,
+    /// An operator (`d`, `c`, `y`) is waiting for a motion or text object.
+    #[serde(rename = "operator")]
+    OperatorPending,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 3] = [Mode::Normal, Mode::Insert, Mode::Command];
+    pub const ALL: [Mode; 4] = [
+        Mode::Normal,
+        Mode::Insert,
+        Mode::Command,
+        Mode::OperatorPending,
+    ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
     pub const fn id(self) -> &'static str {
@@ -22,13 +30,29 @@ impl Mode {
             Mode::Normal => "normal",
             Mode::Insert => "insert",
             Mode::Command => "command",
+            Mode::OperatorPending => "operator",
         }
+    }
+
+    /// Whether unbound printable keys are typed as text in this mode.
+    pub const fn accepts_text(self) -> bool {
+        matches!(self, Mode::Insert | Mode::Command)
+    }
+
+    /// Whether a numeric count prefix (`3j`, `d2w`) can be typed.
+    pub const fn accepts_count(self) -> bool {
+        matches!(self, Mode::Normal | Mode::OperatorPending)
     }
 }
 
 impl fmt::Display for Mode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.id().to_uppercase())
+        // Operator-pending is a sub-state of normal mode; the pending keys
+        // are shown separately in the status line, as with Vim's `showcmd`.
+        match self {
+            Mode::OperatorPending => f.write_str("NORMAL"),
+            other => f.write_str(&other.id().to_uppercase()),
+        }
     }
 }
 
@@ -37,7 +61,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn display_is_uppercase_id() {
+    fn display_is_uppercase_label() {
         assert_eq!(Mode::Insert.to_string(), "INSERT");
+        assert_eq!(Mode::OperatorPending.to_string(), "NORMAL");
+    }
+
+    #[test]
+    fn text_and_count_acceptance() {
+        assert!(Mode::Insert.accepts_text() && Mode::Command.accepts_text());
+        assert!(!Mode::Normal.accepts_text() && !Mode::OperatorPending.accepts_text());
+        assert!(Mode::Normal.accepts_count() && Mode::OperatorPending.accepts_count());
+        assert!(!Mode::Insert.accepts_count());
     }
 }

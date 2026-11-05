@@ -2,8 +2,12 @@ use super::Position;
 
 /// The text being edited, stored as a list of lines (without line endings).
 ///
-/// A buffer always contains at least one (possibly empty) line. Positions
-/// passed to its methods must be valid (`row < line_count()`,
+/// A buffer always contains at least one (possibly empty) line. All mutation
+/// goes through two primitives, [`insert_text`](Self::insert_text) and
+/// [`delete_range`](Self::delete_range), which makes every edit expressible
+/// as an invertible [`Change`](super::Change) for undo.
+///
+/// Positions passed in must be valid (`row < line_count()`,
 /// `col <= line_len(row)`); keeping them valid is the caller's job.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Buffer {
@@ -43,6 +47,11 @@ impl Buffer {
         self.lines[row].chars().count()
     }
 
+    /// The position just past the last character of `row`.
+    pub fn line_end(&self, row: usize) -> Position {
+        Position::new(row, self.line_len(row))
+    }
+
     /// Returns the whole buffer joined with `\n`.
     pub fn text(&self) -> String {
         self.lines.join("\n")
@@ -53,54 +62,54 @@ impl Buffer {
         self.lines.get(pos.row)?.chars().nth(pos.col)
     }
 
-    pub fn insert_char(&mut self, at: Position, c: char) {
-        let line = &mut self.lines[at.row];
-        line.insert(byte_index(line, at.col), c);
-    }
-
-    /// Inserts `s` (which must not contain newlines) at `at`.
-    pub fn insert_str(&mut self, at: Position, s: &str) {
-        debug_assert!(!s.contains('\n'), "use split_line for newlines");
-        let line = &mut self.lines[at.row];
-        line.insert_str(byte_index(line, at.col), s);
-    }
-
-    /// Splits the line at `at`, moving the remainder onto a new line below.
-    pub fn split_line(&mut self, at: Position) {
-        let line = &mut self.lines[at.row];
-        let rest = line.split_off(byte_index(line, at.col));
-        self.lines.insert(at.row + 1, rest);
-    }
-
-    /// Removes and returns the character at `at`, or `None` at the end of the line.
-    pub fn remove_char(&mut self, at: Position) -> Option<char> {
-        let line = &mut self.lines[at.row];
-        let idx = byte_index(line, at.col);
-        (idx < line.len()).then(|| line.remove(idx))
-    }
-
-    /// Appends the line below `row` onto `row`. Returns `false` if `row` is the last line.
-    pub fn join_with_next(&mut self, row: usize) -> bool {
-        if row + 1 >= self.lines.len() {
-            return false;
+    /// The text between `start` (inclusive) and `end` (exclusive).
+    pub fn text_range(&self, start: Position, end: Position) -> String {
+        debug_assert!(start <= end, "range must be ordered");
+        if start.row == end.row {
+            return char_slice(&self.lines[start.row], start.col, end.col).to_string();
         }
-        let next = self.lines.remove(row + 1);
-        self.lines[row].push_str(&next);
-        true
-    }
-
-    /// Inserts a new line so that it becomes line `row`.
-    pub fn insert_line(&mut self, row: usize, text: String) {
-        self.lines.insert(row, text);
-    }
-
-    /// Removes line `row` and returns its contents. Removing the only line
-    /// leaves a single empty line, preserving the "at least one line" invariant.
-    pub fn remove_line(&mut self, row: usize) -> String {
-        if self.lines.len() == 1 {
-            return std::mem::take(&mut self.lines[0]);
+        let mut text = char_slice(&self.lines[start.row], start.col, usize::MAX).to_string();
+        for line in &self.lines[start.row + 1..end.row] {
+            text.push('\n');
+            text.push_str(line);
         }
-        self.lines.remove(row)
+        text.push('\n');
+        text.push_str(char_slice(&self.lines[end.row], 0, end.col));
+        text
+    }
+
+    /// Inserts `text` (which may span lines) at `at`. Returns the position
+    /// just after the inserted text.
+    pub fn insert_text(&mut self, at: Position, text: &str) -> Position {
+        let line = &mut self.lines[at.row];
+        let tail = line.split_off(byte_index(line, at.col));
+
+        let mut parts = text.split('\n');
+        let first = parts.next().unwrap_or_default();
+        line.push_str(first);
+
+        let rest: Vec<String> = parts.map(String::from).collect();
+        let end = match rest.last() {
+            None => Position::new(at.row, at.col + first.chars().count()),
+            Some(last) => Position::new(at.row + rest.len(), last.chars().count()),
+        };
+        self.lines.splice(at.row + 1..at.row + 1, rest);
+        self.lines[end.row].push_str(&tail);
+        end
+    }
+
+    /// Removes the text between `start` (inclusive) and `end` (exclusive) and
+    /// returns it.
+    pub fn delete_range(&mut self, start: Position, end: Position) -> String {
+        let removed = self.text_range(start, end);
+        let end_line = &self.lines[end.row];
+        let tail = end_line[byte_index(end_line, end.col)..].to_string();
+
+        let start_line = &mut self.lines[start.row];
+        start_line.truncate(byte_index(start_line, start.col));
+        start_line.push_str(&tail);
+        self.lines.drain(start.row + 1..=end.row);
+        removed
     }
 }
 
@@ -111,9 +120,18 @@ fn byte_index(s: &str, char_idx: usize) -> usize {
         .map_or(s.len(), |(byte, _)| byte)
 }
 
+/// The substring between two `char` indices (clamped to the string).
+fn char_slice(s: &str, from: usize, to: usize) -> &str {
+    &s[byte_index(s, from)..byte_index(s, to)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pos(row: usize, col: usize) -> Position {
+        Position::new(row, col)
+    }
 
     #[test]
     fn default_buffer_has_one_empty_line() {
@@ -121,61 +139,86 @@ mod tests {
     }
 
     #[test]
-    fn insert_char_handles_multibyte_text() {
-        let mut buffer = Buffer::from_text("héllo");
-        buffer.insert_char(Position::new(0, 2), 'X');
-        assert_eq!(buffer.text(), "héXllo");
-    }
-
-    #[test]
-    fn insert_str_inserts_at_char_index() {
-        let mut buffer = Buffer::from_text("ac");
-        buffer.insert_str(Position::new(0, 1), "bb");
-        assert_eq!(buffer.text(), "abbc");
-    }
-
-    #[test]
-    fn split_and_join_are_inverse() {
-        let mut buffer = Buffer::from_text("hello world");
-        buffer.split_line(Position::new(0, 5));
-        assert_eq!(buffer.lines(), &["hello", " world"]);
-        assert!(buffer.join_with_next(0));
-        assert_eq!(buffer.text(), "hello world");
-    }
-
-    #[test]
-    fn remove_char_returns_removed_char() {
-        let mut buffer = Buffer::from_text("aé");
-        assert_eq!(buffer.remove_char(Position::new(0, 1)), Some('é'));
-        assert_eq!(buffer.remove_char(Position::new(0, 1)), None);
-        assert_eq!(buffer.text(), "a");
-    }
-
-    #[test]
-    fn join_on_last_line_is_noop() {
-        assert!(!Buffer::from_text("only").join_with_next(0));
-    }
-
-    #[test]
     fn char_at_returns_none_past_end() {
         let buffer = Buffer::from_text("ab");
-        assert_eq!(buffer.char_at(Position::new(0, 1)), Some('b'));
-        assert_eq!(buffer.char_at(Position::new(0, 2)), None);
-        assert_eq!(buffer.char_at(Position::new(5, 0)), None);
+        assert_eq!(buffer.char_at(pos(0, 1)), Some('b'));
+        assert_eq!(buffer.char_at(pos(0, 2)), None);
+        assert_eq!(buffer.char_at(pos(5, 0)), None);
     }
 
     #[test]
-    fn remove_line_keeps_at_least_one_line() {
-        let mut buffer = Buffer::from_text("a\nb");
-        assert_eq!(buffer.remove_line(0), "a");
-        assert_eq!(buffer.remove_line(0), "b");
+    fn insert_single_line_text() {
+        let mut buffer = Buffer::from_text("héllo");
+        let end = buffer.insert_text(pos(0, 2), "XY");
+        assert_eq!(buffer.text(), "héXYllo");
+        assert_eq!(end, pos(0, 4));
+    }
+
+    #[test]
+    fn insert_multi_line_text() {
+        let mut buffer = Buffer::from_text("ab\ncd");
+        let end = buffer.insert_text(pos(0, 1), "1\n2\n3");
+        assert_eq!(buffer.text(), "a1\n2\n3b\ncd");
+        assert_eq!(end, pos(2, 1));
+    }
+
+    #[test]
+    fn insert_newline_splits_line() {
+        let mut buffer = Buffer::from_text("ab");
+        let end = buffer.insert_text(pos(0, 1), "\n");
+        assert_eq!(buffer.lines(), &["a", "b"]);
+        assert_eq!(end, pos(1, 0));
+    }
+
+    #[test]
+    fn insert_empty_text_is_noop() {
+        let mut buffer = Buffer::from_text("ab");
+        assert_eq!(buffer.insert_text(pos(0, 1), ""), pos(0, 1));
+        assert_eq!(buffer.text(), "ab");
+    }
+
+    #[test]
+    fn text_range_within_and_across_lines() {
+        let buffer = Buffer::from_text("abc\ndef\nghi");
+        assert_eq!(buffer.text_range(pos(0, 1), pos(0, 3)), "bc");
+        assert_eq!(buffer.text_range(pos(0, 2), pos(2, 1)), "c\ndef\ng");
+        assert_eq!(buffer.text_range(pos(0, 3), pos(1, 0)), "\n");
+    }
+
+    #[test]
+    fn delete_within_line() {
+        let mut buffer = Buffer::from_text("abcdef");
+        assert_eq!(buffer.delete_range(pos(0, 1), pos(0, 4)), "bcd");
+        assert_eq!(buffer.text(), "aef");
+    }
+
+    #[test]
+    fn delete_across_lines() {
+        let mut buffer = Buffer::from_text("abc\ndef\nghi");
+        assert_eq!(buffer.delete_range(pos(0, 2), pos(2, 1)), "c\ndef\ng");
+        assert_eq!(buffer.text(), "abhi");
+    }
+
+    #[test]
+    fn delete_newline_joins_lines() {
+        let mut buffer = Buffer::from_text("ab\ncd");
+        buffer.delete_range(pos(0, 2), pos(1, 0));
+        assert_eq!(buffer.text(), "abcd");
+    }
+
+    #[test]
+    fn delete_everything_leaves_one_empty_line() {
+        let mut buffer = Buffer::from_text("ab\ncd");
+        buffer.delete_range(pos(0, 0), pos(1, 2));
         assert_eq!(buffer.lines(), &[String::new()]);
     }
 
     #[test]
-    fn insert_line_places_line_at_row() {
-        let mut buffer = Buffer::from_text("a\nc");
-        buffer.insert_line(1, "b".into());
-        assert_eq!(buffer.text(), "a\nb\nc");
+    fn insert_then_delete_round_trips() {
+        let original = Buffer::from_text("one\ntwo");
+        let mut buffer = original.clone();
+        let end = buffer.insert_text(pos(1, 1), "X\nY\n");
+        buffer.delete_range(pos(1, 1), end);
+        assert_eq!(buffer, original);
     }
 }

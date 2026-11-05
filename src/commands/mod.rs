@@ -17,14 +17,41 @@ pub type CommandResult = Result<(), String>;
 
 type Handler = Box<dyn Fn(&mut Context) -> CommandResult>;
 
+/// How a command was invoked: the parts that come from the user's input
+/// rather than editor state.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Invocation<'a> {
+    /// Numeric prefix typed before the key (e.g. the `3` in `3j`).
+    pub count: Option<usize>,
+    /// Register selected with `"x` before the key (e.g. the `a` in `"ayy`).
+    pub register: Option<char>,
+    /// Arguments passed on the command line (e.g. `:goto_line 10`).
+    pub args: &'a [String],
+}
+
+impl<'a> Invocation<'a> {
+    pub fn with_count(count: usize) -> Self {
+        Self {
+            count: Some(count),
+            ..Self::default()
+        }
+    }
+
+    pub fn with_args(args: &'a [String]) -> Self {
+        Self {
+            args,
+            ..Self::default()
+        }
+    }
+}
+
 /// Everything a command can see and change while running.
 pub struct Context<'a> {
     pub editor: &'a mut Editor,
     /// The registry, so commands can run other commands (e.g. `:` execution).
     pub registry: &'a CommandRegistry,
-    /// Numeric prefix typed before the key (e.g. the `3` in `3j`).
     pub count: Option<usize>,
-    /// Arguments passed on the command line (e.g. `:goto_line 10`).
+    pub register: Option<char>,
     pub args: &'a [String],
 }
 
@@ -102,8 +129,7 @@ impl CommandRegistry {
         &self,
         name: &str,
         editor: &mut Editor,
-        count: Option<usize>,
-        args: &[String],
+        invocation: Invocation,
     ) -> CommandResult {
         let command = self
             .get(name)
@@ -111,8 +137,9 @@ impl CommandRegistry {
         let mut cx = Context {
             editor,
             registry: self,
-            count,
-            args,
+            count: invocation.count,
+            register: invocation.register,
+            args: invocation.args,
         };
         (command.handler)(&mut cx)
     }
@@ -131,7 +158,9 @@ mod tests {
         });
 
         let mut editor = Editor::default();
-        registry.execute("bye", &mut editor, None, &[]).unwrap();
+        registry
+            .execute("bye", &mut editor, Invocation::default())
+            .unwrap();
         assert!(editor.should_quit());
     }
 
@@ -147,21 +176,28 @@ mod tests {
     fn unknown_commands_return_error() {
         let registry = CommandRegistry::new();
         let err = registry
-            .execute("nope", &mut Editor::default(), None, &[])
+            .execute("nope", &mut Editor::default(), Invocation::default())
             .unwrap_err();
         assert_eq!(err, "Unknown command: nope");
     }
 
     #[test]
-    fn count_and_args_are_passed_through() {
+    fn invocation_is_passed_through() {
         let mut registry = CommandRegistry::new();
         registry.register("check", "", |cx| {
             assert_eq!(cx.count(), 3);
-            assert_eq!(cx.args, ["a"]);
+            assert_eq!(cx.register, Some('a'));
+            assert_eq!(cx.args, ["x"]);
             Ok(())
         });
+        let args = ["x".to_string()];
+        let invocation = Invocation {
+            count: Some(3),
+            register: Some('a'),
+            args: &args,
+        };
         registry
-            .execute("check", &mut Editor::default(), Some(3), &["a".into()])
+            .execute("check", &mut Editor::default(), invocation)
             .unwrap();
     }
 

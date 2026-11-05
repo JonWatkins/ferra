@@ -11,13 +11,13 @@
 use super::{Buffer, Position};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CharClass {
+pub(super) enum CharClass {
     Whitespace,
     Word,
     Punctuation,
 }
 
-fn char_class(c: char) -> CharClass {
+pub(super) fn char_class(c: char) -> CharClass {
     if c.is_whitespace() {
         CharClass::Whitespace
     } else if c.is_alphanumeric() || c == '_' {
@@ -27,7 +27,7 @@ fn char_class(c: char) -> CharClass {
     }
 }
 
-fn class_at(buffer: &Buffer, pos: Position) -> CharClass {
+pub(super) fn class_at(buffer: &Buffer, pos: Position) -> CharClass {
     buffer
         .char_at(pos)
         .map_or(CharClass::Whitespace, char_class)
@@ -38,7 +38,7 @@ fn is_empty_line(buffer: &Buffer, row: usize) -> bool {
 }
 
 /// The next position, including each line's end-of-line slot.
-fn next(buffer: &Buffer, pos: Position) -> Option<Position> {
+pub(super) fn next(buffer: &Buffer, pos: Position) -> Option<Position> {
     if pos.col < buffer.line_len(pos.row) {
         Some(Position::new(pos.row, pos.col + 1))
     } else if pos.row + 1 < buffer.line_count() {
@@ -49,7 +49,7 @@ fn next(buffer: &Buffer, pos: Position) -> Option<Position> {
 }
 
 /// The previous position, including each line's end-of-line slot.
-fn prev(buffer: &Buffer, pos: Position) -> Option<Position> {
+pub(super) fn prev(buffer: &Buffer, pos: Position) -> Option<Position> {
     if pos.col > 0 {
         Some(Position::new(pos.row, pos.col - 1))
     } else if pos.row > 0 {
@@ -136,6 +136,21 @@ pub fn word_end(buffer: &Buffer, pos: Position) -> Position {
     p
 }
 
+/// End of the word under the cursor (or of the next word, from whitespace).
+/// Unlike `e`, a cursor already on the last character of a word stays put.
+///
+/// This gives `cw` its Vim behaviour: it changes to the end of the current
+/// word rather than swallowing the whitespace after it like `dw` does.
+pub fn current_word_end(buffer: &Buffer, pos: Position) -> Position {
+    let class = class_at(buffer, pos);
+    let at_word_end = next(buffer, pos).is_none_or(|n| class_at(buffer, n) != class);
+    if class != CharClass::Whitespace && at_word_end {
+        pos
+    } else {
+        word_end(buffer, pos)
+    }
+}
+
 /// `^`: column of the first non-whitespace character on `row`.
 pub fn first_non_blank(buffer: &Buffer, row: usize) -> usize {
     buffer
@@ -216,6 +231,14 @@ mod tests {
     fn word_end_handles_punctuation() {
         let b = Buffer::from_text("a.b");
         assert_eq!(word_end(&b, pos(0, 0)), pos(0, 1));
+    }
+
+    #[test]
+    fn current_word_end_stays_on_last_char() {
+        let b = Buffer::from_text("ab cd");
+        assert_eq!(current_word_end(&b, pos(0, 0)), pos(0, 1));
+        assert_eq!(current_word_end(&b, pos(0, 1)), pos(0, 1));
+        assert_eq!(current_word_end(&b, pos(0, 2)), pos(0, 4));
     }
 
     #[test]

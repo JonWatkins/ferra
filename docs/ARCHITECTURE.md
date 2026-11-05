@@ -16,16 +16,16 @@ Dependencies only point downwards. Lower layers never know about higher ones.
      │       │          │          │
      └───────┴────┬─────┴──────────┘
                   ▼
-               editor      Editor, Document, Mode, CommandLine, Message
+               editor      Editor, Document, Mode, Registers, operators
                   │
                   ▼
-                core       Buffer, Position, motions (pure, no deps)
+                core       Buffer, History, Range, motions, text objects (pure)
 ```
 
 | Module      | Responsibility | Terminal/UI deps? |
 |-------------|----------------|-------------------|
-| `core`      | Text storage and pure motion functions. | No |
-| `editor`    | Editor state and mode transition rules. | No |
+| `core`      | Text storage, undo history, ranges, and pure motion and text-object functions. | No |
+| `editor`    | Editor state, mode transition rules, registers, applying operators. | No |
 | `commands`  | Named command registry plus built-in commands. | No |
 | `input`     | Key notation, per-mode keymap trie, counts and pending sequences. | crossterm (event conversion only) |
 | `config`    | Embedded `default.toml` deep-merged with the user config; options, theme, keymap. | ratatui `Style` (theme) |
@@ -52,6 +52,41 @@ crossterm KeyEvent
 The UI only *reads* state. All mutation goes through commands, apart from
 literal text insertion.
 
+## Editing model
+
+### Undo
+
+- `Buffer` has exactly two mutators: `insert_text` and `delete_range`.
+  `Document` wraps them and records each edit as a `core::Change`. Nothing
+  else can change the text, so every edit is undoable.
+- `core::History` groups changes into transactions. Adjacent inserts and
+  backspaces merge, so typing a word is stored as one change.
+- `Editor::finish_command` runs after every command and closes the undo step
+  unless the editor is in insert mode. So, as in Vim, each normal-mode
+  command is one step, and an insert session undoes together with the command
+  that started it (`o`, `cw`, `A`, ...).
+
+### Operators
+
+Vim's grammar is `[count]["x]operator[count](motion | text-object)`:
+
+1. An operator command (`operator_delete`, ...) calls `Editor::begin_operator`,
+   which enters `Mode::OperatorPending` and stores the count and register.
+2. Keys are now looked up in `[keys.operator]` (Vim's `omap`). Counts are
+   still accepted, so `2d3w` works.
+3. **Motions are data** (`commands/builtin/motions.rs`): a target function plus
+   a `MotionKind` (exclusive, inclusive or linewise). A motion command takes
+   the pending operator if there is one and applies it over
+   `Range::from_motion`. Otherwise it moves the cursor. One definition serves
+   both `w` and `dw`.
+4. **Text objects** (`core::text_object`) return a `Range` directly. `dd`,
+   `cc` and `yy` are the `current_line` text object.
+5. `Editor::apply_operator` stores the text in a register, then deletes,
+   changes (deletes and enters insert mode) or yanks.
+
+Single-key shortcuts (`x`, `D`, `C`, `s`, `S`, `Y`, `X`) apply an operator
+over a fixed motion. Pastes read registers (`editor/registers.rs`).
+
 ## Commands: the extension point
 
 Every action is a named command such as `move_down`, `delete_line` or `quit`.
@@ -61,7 +96,9 @@ This means:
 - **The `:` command line** runs any command by name or alias (`:q`, `:goto_line 10`, `:42`).
 - **Plugins** will call `CommandRegistry::register(name, description, handler)`,
   exactly as built-ins do. Handlers receive a `Context` with the editor, the
-  registry (so they can compose other commands), a count and arguments.
+  registry (so they can compose other commands), and the `Invocation` (count,
+  register and arguments). Invocation details are grouped into one struct so
+  the signature stays stable as input features are added.
 - **Discoverability**: `CommandRegistry::commands()` lists names and
   descriptions, ready for a command palette or completion.
 
@@ -111,11 +148,13 @@ The current design leaves room for these:
 
 ## Known gaps / next steps
 
-- Undo/redo, which needs an edit transaction log in `core`.
-- Operator-pending mode (`d{motion}`, `c`, `y`) and registers. Motions are
-  already pure functions, ready to be used as operator targets.
-- Visual mode and selections.
+- Visual mode, which would reuse text objects and `apply_operator` directly.
+- `.` repeat, which needs the last change's command, invocation and inserted
+  text recorded together.
+- More motions and operators: `f`/`t`, `%`, `}`/`{`, `>`/`<`, `gu`/`gU`, `J`.
+- Numbered delete registers `1`-`9` and the small-delete register `-`.
 - File open/save and multiple buffers/windows (`Document` → `View` split).
-- Timeout for ambiguous insert-mode sequences such as `jk` (Vim's `timeoutlen`).
-- Rope-based buffer (e.g. `ropey`) for large files. `Buffer`'s API hides the
-  storage, so this is a local change.
+- Timeout for ambiguous key sequences such as `jk` in insert mode (Vim's
+  `timeoutlen`).
+- Rope-based buffer (e.g. `ropey`) for large files. `Buffer` has only two
+  mutators, so this is a local change.

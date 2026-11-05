@@ -6,9 +6,9 @@ mod terminal;
 use crossterm::event::{self, Event};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::commands::CommandRegistry;
+use crate::commands::{CommandRegistry, Invocation};
 use crate::config::{Config, Theme};
-use crate::editor::{Editor, Message};
+use crate::editor::{Editor, Message, Mode};
 use crate::input::{InputHandler, KeyPress, Keymap, Outcome};
 use crate::ui::{self, ViewState};
 
@@ -107,19 +107,40 @@ impl App {
     pub fn handle_key(&mut self, key: KeyPress) {
         for outcome in self.input.handle(key, self.editor.mode(), &self.keymap) {
             match outcome {
-                Outcome::Execute { command, count } => self.execute(&command, count),
+                Outcome::Execute {
+                    command,
+                    count,
+                    register,
+                } => self.execute(&command, count, register),
                 Outcome::InsertChar(c) => self.editor.insert_text_char(c),
+                // Like Vim, an invalid key after an operator cancels it.
+                Outcome::Unbound if self.editor.mode() == Mode::OperatorPending => {
+                    self.editor.set_mode(Mode::Normal);
+                }
                 Outcome::Pending | Outcome::Unbound => {}
             }
+        }
+
+        // Keep e.g. `d` on display while the operator waits for a motion.
+        if self.editor.mode() != Mode::OperatorPending {
+            self.input.release_held();
         }
     }
 
     /// Runs a named command, reporting failures on the message line.
-    pub fn execute(&mut self, command: &str, count: Option<usize>) {
+    pub fn execute(&mut self, command: &str, count: Option<usize>, register: Option<char>) {
         self.editor.clear_message();
-        if let Err(error) = self.commands.execute(command, &mut self.editor, count, &[]) {
+        let invocation = Invocation {
+            count,
+            register,
+            ..Invocation::default()
+        };
+        if let Err(error) = self.commands.execute(command, &mut self.editor, invocation) {
             self.editor.set_message(Message::error(error));
         }
-        self.editor.enforce_cursor_rules();
+        if self.editor.mode() == Mode::OperatorPending {
+            self.input.hold_last_sequence();
+        }
+        self.editor.finish_command();
     }
 }

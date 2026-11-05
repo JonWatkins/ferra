@@ -1,9 +1,12 @@
+//! Insert-mode editing and line opening. Operator-based edits (`x`, `dd`,
+//! `cw`, ...) live in `operators.rs`.
+
 use crate::commands::CommandRegistry;
 use crate::editor::Mode;
 
 pub fn register(r: &mut CommandRegistry) {
     r.register("insert_newline", "Insert a line break", |cx| {
-        cx.editor.document.insert_newline();
+        cx.editor.document.insert_str("\n");
         Ok(())
     });
     r.register("insert_tab", "Insert indentation", |cx| {
@@ -32,20 +35,6 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
-        "delete_char",
-        "Delete [count] characters under cursor (within the line)",
-        |cx| {
-            let n = cx.count();
-            cx.editor.document.delete_chars(n);
-            Ok(())
-        },
-    );
-    r.register("delete_line", "Delete [count] lines", |cx| {
-        let n = cx.count();
-        cx.editor.document.delete_lines(n);
-        Ok(())
-    });
-    r.register(
         "open_line_below",
         "Open a new line below and enter insert mode",
         |cx| {
@@ -73,28 +62,6 @@ mod tests {
 
     fn pos(row: usize, col: usize) -> Position {
         Position::new(row, col)
-    }
-
-    #[test]
-    fn delete_char_respects_count() {
-        let mut e = editor("abcdef", pos(0, 1), Mode::Normal);
-        run(&mut e, "delete_char", Some(3));
-        assert_eq!(e.document.buffer().text(), "aef");
-    }
-
-    #[test]
-    fn delete_char_at_line_end_keeps_cursor_on_char() {
-        let mut e = editor("abc", pos(0, 2), Mode::Normal);
-        run(&mut e, "delete_char", None);
-        assert_eq!(e.document.buffer().text(), "ab");
-        assert_eq!(e.document.cursor(), pos(0, 1));
-    }
-
-    #[test]
-    fn delete_line_respects_count() {
-        let mut e = editor("a\nb\nc", pos(0, 0), Mode::Normal);
-        run(&mut e, "delete_line", Some(2));
-        assert_eq!(e.document.buffer().text(), "c");
     }
 
     #[test]
@@ -128,6 +95,13 @@ mod tests {
         let mut e = editor("a\nb", pos(1, 0), Mode::Insert);
         run(&mut e, "delete_char_backward", None);
         assert_eq!(e.document.buffer().text(), "ab");
+    }
+
+    #[test]
+    fn delete_char_forward_respects_count() {
+        let mut e = editor("abc", pos(0, 0), Mode::Insert);
+        run(&mut e, "delete_char_forward", Some(2));
+        assert_eq!(e.document.buffer().text(), "c");
     }
 
     #[test]

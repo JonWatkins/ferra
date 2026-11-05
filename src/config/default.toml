@@ -18,6 +18,8 @@ scroll-off = 5
 normal = "block"
 insert = "bar"
 command = "bar"
+# While an operator (d, c, y) waits for a motion.
+operator = "underline"
 
 # Theme styles are keyed by scope. Lookups fall back to the parent scope, so
 # "ui.linenr.selected" falls back to "ui.linenr".
@@ -35,6 +37,7 @@ command = "bar"
 "ui.statusline.normal" = { fg = "#16181d", bg = "#7aa2f7", modifiers = ["bold"] }
 "ui.statusline.insert" = { fg = "#16181d", bg = "#9ece6a", modifiers = ["bold"] }
 "ui.statusline.command" = { fg = "#16181d", bg = "#e0af68", modifiers = ["bold"] }
+"ui.statusline.operator" = { fg = "#16181d", bg = "#7aa2f7", modifiers = ["bold"] }
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
 "ui.command-line" = "#d4d7dd"
 "ui.message.info" = "#a0a6b0"
@@ -43,6 +46,9 @@ command = "bar"
 # Keybindings: "<keys>" = "<command name>". Bind to "" to remove a default.
 # Notation: "x", "gg", "<C-x>", "<A-x>", "<S-Tab>", "<Esc>", "<CR>", "<BS>",
 # "<Del>", "<Tab>", "<Space>", "<lt>", "<Left>", "<Home>", "<PageUp>", "<F1>".
+#
+# Motions are shared by [keys.normal] (move the cursor) and [keys.operator]
+# (the range for d/c/y). A register can be selected with "x before a command.
 [keys.normal]
 "h" = "move_left"
 "j" = "move_down"
@@ -68,10 +74,76 @@ command = "bar"
 "A" = "append_at_line_end"
 "o" = "open_line_below"
 "O" = "open_line_above"
+"d" = "operator_delete"
+"c" = "operator_change"
+"y" = "operator_yank"
 "x" = "delete_char"
 "<Del>" = "delete_char"
-"dd" = "delete_line"
+"X" = "delete_char_before"
+"D" = "delete_to_line_end"
+"C" = "change_to_line_end"
+"s" = "substitute_char"
+"S" = "substitute_line"
+"Y" = "yank_line"
+"p" = "paste_after"
+"P" = "paste_before"
+"u" = "undo"
+"<C-r>" = "redo"
 ":" = "command_mode"
+
+# After an operator: motions and text objects. Pressing the operator key
+# again ("dd", "cc", "yy") acts on whole lines.
+[keys.operator]
+"<Esc>" = "normal_mode"
+"d" = "current_line"
+"c" = "current_line"
+"y" = "current_line"
+"h" = "move_left"
+"j" = "move_down"
+"k" = "move_up"
+"l" = "move_right"
+"<Left>" = "move_left"
+"<Down>" = "move_down"
+"<Up>" = "move_up"
+"<Right>" = "move_right"
+"w" = "move_word_forward"
+"b" = "move_word_backward"
+"e" = "move_word_end"
+"0" = "goto_line_start"
+"^" = "goto_first_non_blank"
+"$" = "goto_line_end"
+"<Home>" = "goto_line_start"
+"<End>" = "goto_line_end"
+"gg" = "goto_file_start"
+"G" = "goto_file_end"
+"iw" = "inner_word"
+"aw" = "around_word"
+"i\"" = "inner_double_quote"
+"a\"" = "around_double_quote"
+"i'" = "inner_single_quote"
+"a'" = "around_single_quote"
+"i`" = "inner_backtick"
+"a`" = "around_backtick"
+"i(" = "inner_paren"
+"a(" = "around_paren"
+"i)" = "inner_paren"
+"a)" = "around_paren"
+"ib" = "inner_paren"
+"ab" = "around_paren"
+"i{" = "inner_brace"
+"a{" = "around_brace"
+"i}" = "inner_brace"
+"a}" = "around_brace"
+"iB" = "inner_brace"
+"aB" = "around_brace"
+"i[" = "inner_bracket"
+"a[" = "around_bracket"
+"i]" = "inner_bracket"
+"a]" = "around_bracket"
+"i<lt>" = "inner_angle"
+"a<lt>" = "around_angle"
+"i>" = "inner_angle"
+"a>" = "around_angle"
 
 [keys.insert]
 "<Esc>" = "normal_mode"

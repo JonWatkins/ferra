@@ -5,21 +5,27 @@
 
 mod command_line;
 mod editing;
+mod history;
 mod modes;
-mod movement;
+mod motions;
+mod operators;
+mod text_objects;
 
 use super::CommandRegistry;
 
 pub(super) fn register_all(registry: &mut CommandRegistry) {
-    movement::register(registry);
+    motions::register(registry);
+    text_objects::register(registry);
+    operators::register(registry);
     editing::register(registry);
+    history::register(registry);
     modes::register(registry);
     command_line::register(registry);
 }
 
 #[cfg(test)]
 pub(crate) mod test_util {
-    use crate::commands::CommandRegistry;
+    use crate::commands::{CommandRegistry, Invocation};
     use crate::core::Position;
     use crate::editor::{Document, Editor, Mode};
 
@@ -31,18 +37,27 @@ pub(crate) mod test_util {
         editor
     }
 
-    /// Runs a built-in command, applying normal-mode cursor rules afterwards
-    /// exactly as the app does.
+    /// Runs a built-in command with an optional count.
     pub fn run(editor: &mut Editor, name: &str, count: Option<usize>) {
-        run_with_args(editor, name, count, &[]);
+        let invocation = Invocation {
+            count,
+            ..Invocation::default()
+        };
+        run_with(editor, name, invocation);
     }
 
-    pub fn run_with_args(editor: &mut Editor, name: &str, count: Option<usize>, args: &[&str]) {
-        let registry = CommandRegistry::with_builtins();
+    pub fn run_with_args(editor: &mut Editor, name: &str, args: &[&str]) {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        if let Err(e) = registry.execute(name, editor, count, &args) {
+        run_with(editor, name, Invocation::with_args(&args));
+    }
+
+    /// Runs a built-in command exactly as the app does: errors become
+    /// messages, then cursor rules and undo boundaries are applied.
+    pub fn run_with(editor: &mut Editor, name: &str, invocation: Invocation) {
+        let registry = CommandRegistry::with_builtins();
+        if let Err(e) = registry.execute(name, editor, invocation) {
             editor.set_message(crate::editor::Message::error(e));
         }
-        editor.enforce_cursor_rules();
+        editor.finish_command();
     }
 }

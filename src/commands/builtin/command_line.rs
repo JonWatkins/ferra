@@ -1,4 +1,4 @@
-use crate::commands::CommandRegistry;
+use crate::commands::{CommandRegistry, Invocation};
 use crate::editor::Mode;
 
 pub fn register(r: &mut CommandRegistry) {
@@ -25,11 +25,14 @@ pub fn register(r: &mut CommandRegistry) {
             // `:42` jumps to line 42, as in Vim.
             if name.chars().all(|c| c.is_ascii_digit()) {
                 let args = [name.to_string()];
-                return cx.registry.execute("goto_line", cx.editor, None, &args);
+                return cx
+                    .registry
+                    .execute("goto_line", cx.editor, Invocation::with_args(&args));
             }
 
             let args: Vec<String> = parts.map(String::from).collect();
-            cx.registry.execute(name, cx.editor, None, &args)
+            cx.registry
+                .execute(name, cx.editor, Invocation::with_args(&args))
         },
     );
     r.register(
