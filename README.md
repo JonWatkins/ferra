@@ -33,6 +33,9 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `"a` (prefix) | Use register `a` (`"ayy`, `"ap`; `"A` appends, `"_` discards, `"0` last yank) |
 | Normal  | `u` `<C-r>` | Undo / redo |
 | Normal  | `.` | Repeat the last change (`3.` replaces its count) |
+| Normal  | `/` `?` | Search forward / backward (regex; matches preview as you type) |
+| Normal  | `n` `N` | Next / previous match |
+| Normal  | `*` `#` | Search forward / backward for the word under the cursor |
 | Normal  | `v` `V` `gv` | Select characters / lines / reselect the last selection |
 | Visual  | motions, text objects | Extend the selection / select an object (`viw`, `vi(`) |
 | Visual  | `d` `x` `c` `s` `y` | Delete / change / yank the selection |
@@ -63,6 +66,11 @@ on disk since it was read, or writing over an existing file. Saves are
 atomic and keep line endings (LF/CRLF), a missing final newline, file
 permissions and symlinks. Files that aren't UTF-8 are refused rather than
 risk corrupting them.
+
+Search patterns use Rust [regex syntax](https://docs.rs/regex/latest/regex/#syntax),
+plus Vim's `\<` and `\>` word boundaries. Case is "smart" by default
+(case-sensitive only if the pattern has a capital letter). Matches stay
+highlighted until `:noh` or `<Esc>` in normal mode. See `[editor.search]` in the defaults.
 
 Any command can also be run by name, e.g. `:goto_line 10`, or `:42` to jump
 to a line.

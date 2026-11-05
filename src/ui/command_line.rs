@@ -1,4 +1,5 @@
-//! The bottom line: the `:` prompt in command mode, otherwise the last message.
+//! The bottom line: the `:`, `/` or `?` prompt in command mode, otherwise
+//! the last message.
 
 use ratatui::{
     buffer::Buffer,
@@ -12,8 +13,6 @@ use super::text::truncate_start;
 use crate::config::Theme;
 use crate::editor::{Editor, Mode, Severity};
 
-const PROMPT: &str = ":";
-
 pub struct CommandLineView<'a> {
     editor: &'a Editor,
     theme: &'a Theme,
@@ -26,7 +25,8 @@ impl<'a> CommandLineView<'a> {
 
     /// Where the terminal cursor goes while typing a command.
     pub fn cursor_position(editor: &Editor, area: Rect) -> Position {
-        let offset = PROMPT.width() + editor.command_line.input().width();
+        // The prompt symbol is one cell wide.
+        let offset = 1 + editor.command_line.input().width();
         let x = (area.x as usize + offset).min(area.right().saturating_sub(1) as usize);
         Position::new(x as u16, area.y)
     }
@@ -35,7 +35,8 @@ impl<'a> CommandLineView<'a> {
 impl Widget for CommandLineView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let line = if self.editor.mode() == Mode::Command {
-            let text = format!("{PROMPT}{}", self.editor.command_line.input());
+            let line = &self.editor.command_line;
+            let text = format!("{}{}", line.prompt().symbol(), line.input());
             Line::styled(text, self.theme.get("ui.command-line"))
         } else if let Some(message) = self.editor.message() {
             let scope = match message.severity {
@@ -75,6 +76,14 @@ mod tests {
         assert_eq!(render(&editor).trim_end(), ":q");
         let pos = CommandLineView::cursor_position(&editor, Rect::new(0, 5, 20, 1));
         assert_eq!(pos, Position::new(2, 5));
+    }
+
+    #[test]
+    fn shows_search_prompt_symbol() {
+        let mut editor = Editor::default();
+        editor.open_search(false);
+        editor.insert_text_char('x');
+        assert_eq!(render(&editor).trim_end(), "?x");
     }
 
     #[test]

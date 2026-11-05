@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::text::truncate_start;
 use crate::config::Theme;
-use crate::editor::{Editor, SelectionKind};
+use crate::editor::{Editor, Mode, SelectionKind};
 
 pub struct StatusLine<'a> {
     editor: &'a Editor,
@@ -48,6 +48,9 @@ impl Widget for StatusLine<'_> {
         let mode = self.editor.mode();
         let mode_label = match self.editor.selection() {
             Some(selection) if selection.kind == SelectionKind::Line => " V-LINE ".to_string(),
+            _ if mode == Mode::Command && self.editor.command_line.prompt().is_search() => {
+                " SEARCH ".to_string()
+            }
             _ => format!(" {mode} "),
         };
         let modified = if self.editor.document.is_modified() {
@@ -131,6 +134,13 @@ mod tests {
         assert!(render(&editor, "").starts_with(" VISUAL "));
         editor.toggle_visual(SelectionKind::Line);
         assert!(render(&editor, "").starts_with(" V-LINE "));
+    }
+
+    #[test]
+    fn shows_search_label() {
+        let mut editor = Editor::default();
+        editor.open_search(true);
+        assert!(render(&editor, "").starts_with(" SEARCH "));
     }
 
     #[test]

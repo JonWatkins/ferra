@@ -48,7 +48,8 @@ pub fn draw(
     .areas(area);
 
     let editor_view = EditorView::new(&editor.document, &editor.options, theme)
-        .selection(editor.selection_range());
+        .selection(editor.selection_range())
+        .search(editor.search_highlight());
     frame.render_stateful_widget(editor_view, main, view);
     frame.render_widget(StatusLine::new(editor, theme, pending), status);
     frame.render_widget(CommandLineView::new(editor, theme), command);

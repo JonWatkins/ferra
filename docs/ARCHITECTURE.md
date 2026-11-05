@@ -137,6 +137,21 @@ over a fixed motion. Pastes read registers (`editor/registers.rs`).
 - On the `:` line, a trailing `!` sets `Invocation::bang`, which file
   commands use to override those checks.
 
+### Search
+
+- `core::search::SearchPattern` compiles a pattern (Rust `regex`, with Vim's
+  `\<`/`\>` translated to `\b`, and smart case) and finds the next or
+  previous match from a position, wrapping if allowed. Matches don't span
+  lines.
+- The bottom-line prompt is shared. `CommandLine` has a `Prompt` (`:`, `/`,
+  `?`), so search reuses command mode's keymap and editing, and
+  `command_line_execute` hands search prompts to `Editor::finish_search`.
+- Typing at a search prompt calls `Editor::update_search_preview`, which
+  moves the cursor to the first match (incremental search). Leaving the
+  prompt any other way puts the cursor back where it started.
+- `Editor::search_highlight` gives the UI the pattern to highlight: the one
+  being typed, or the last search unless `:noh` hid it.
+
 ### Repeat (`.`)
 
 `app/repeat.rs` records the keys of each command sequence that starts and
@@ -224,6 +239,7 @@ The current design leaves room for these:
 ## Known gaps / next steps
 
 - Visual block mode (`<C-v>`) and visual-mode `:` ranges (`:'<,'>`).
+- Search as a motion for operators (`d/foo`) and search history.
 - `Esc` immediately followed by another key in the same terminal read is
   parsed as Alt+key (this is how terminals encode Alt). Vim uses a short
   `ttimeout` to tell them apart; we don't yet. It only shows up with very

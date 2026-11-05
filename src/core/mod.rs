@@ -10,6 +10,7 @@ mod history;
 pub mod motion;
 mod position;
 mod range;
+pub mod search;
 pub mod text_format;
 pub mod text_object;
 

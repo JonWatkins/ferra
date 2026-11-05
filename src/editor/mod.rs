@@ -10,9 +10,10 @@ mod message;
 mod mode;
 mod operator;
 pub mod registers;
+mod search;
 mod selection;
 
-pub use command_line::CommandLine;
+pub use command_line::{CommandLine, Prompt};
 pub use document::{Document, OpenInfo, SaveInfo};
 pub use files::UNSAVED_CHANGES;
 pub use message::{Message, Severity};
@@ -41,6 +42,7 @@ pub struct Editor {
     mode: Mode,
     pending_operator: Option<PendingOperator>,
     selection: Option<Selection>,
+    search: search::SearchState,
     /// Set by `.`; the app replays the last change (which only it can do,
     /// since a change is recorded as keys).
     repeat_request: Option<RepeatRequest>,
@@ -78,6 +80,9 @@ impl Editor {
             let cursor = self.document.cursor();
             self.document
                 .set_cursor(cursor.with_col(cursor.col.saturating_sub(1)));
+        }
+        if previous == Mode::Command && mode != Mode::Command {
+            self.end_search_prompt();
         }
         if previous == Mode::Command || mode == Mode::Command {
             self.command_line.clear();
@@ -121,7 +126,10 @@ impl Editor {
     pub fn insert_text_char(&mut self, c: char) {
         match self.mode {
             Mode::Insert => self.document.insert_char(c),
-            Mode::Command => self.command_line.push(c),
+            Mode::Command => {
+                self.command_line.push(c);
+                self.update_search_preview();
+            }
             Mode::Normal | Mode::OperatorPending | Mode::Visual => {}
         }
     }

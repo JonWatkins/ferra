@@ -10,6 +10,7 @@ mod history;
 mod modes;
 mod motions;
 mod operators;
+mod search;
 mod text_objects;
 mod visual;
 
@@ -23,6 +24,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     history::register(registry);
     files::register(registry);
     visual::register(registry);
+    search::register(registry);
     modes::register(registry);
     command_line::register(registry);
 }

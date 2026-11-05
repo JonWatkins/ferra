@@ -6,6 +6,9 @@ pub fn register(r: &mut CommandRegistry) {
         "command_line_execute",
         "Run the command typed on the command line",
         |cx| {
+            if cx.editor.command_line.prompt().is_search() {
+                return cx.editor.finish_search();
+            }
             let input = cx.editor.command_line.take();
             cx.editor.set_mode(Mode::Normal);
 
@@ -51,6 +54,8 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| {
             if cx.editor.command_line.pop().is_none() {
                 cx.editor.set_mode(Mode::Normal);
+            } else {
+                cx.editor.update_search_preview();
             }
             Ok(())
         },

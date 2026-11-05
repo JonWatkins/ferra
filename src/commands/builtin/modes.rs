@@ -37,7 +37,7 @@ pub fn register(r: &mut CommandRegistry) {
         Ok(())
     });
     r.register("command_mode", "Enter command-line mode", |cx| {
-        cx.editor.set_mode(Mode::Command);
+        cx.editor.open_command_line();
         Ok(())
     });
 }

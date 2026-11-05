@@ -22,6 +22,7 @@ use ratatui::{
 
 use crate::config::{EditorOptions, Theme};
 use crate::core::Range;
+use crate::core::search::SearchPattern;
 use crate::editor::Document;
 
 /// State kept between frames for an editor pane.
@@ -37,6 +38,7 @@ pub struct EditorView<'a> {
     options: &'a EditorOptions,
     theme: &'a Theme,
     selection: Option<Range>,
+    search: Option<&'a SearchPattern>,
 }
 
 impl<'a> EditorView<'a> {
@@ -46,7 +48,14 @@ impl<'a> EditorView<'a> {
             options,
             theme,
             selection: None,
+            search: None,
         }
+    }
+
+    /// Highlights matches of `search` (the active or last search, if any).
+    pub fn search(mut self, search: Option<&'a SearchPattern>) -> Self {
+        self.search = search;
+        self
     }
 
     /// Highlights `selection` (the visual-mode selection, if any).
@@ -122,19 +131,31 @@ impl StatefulWidget for EditorView<'_> {
                 text_style,
             );
 
-            if let Some(range) = self.selection
-                && let Some((from, to)) = selection::selected_cols(range, row, text.line_len(row))
-            {
-                // Selected columns in display cells; the line break (one past
-                // the last char) is drawn as one extra cell.
+            let mut highlight = |from: usize, to: usize, style: Style| {
+                // Char columns to display cells; a column past the last char
+                // (a selected line break) is drawn as one extra cell.
+                let line_len = text.line_len(row);
                 let from = line::display_col(line_text, from);
-                let to = line::display_col(line_text, to) + usize::from(to > text.line_len(row));
+                let to = line::display_col(line_text, to) + usize::from(to > line_len);
                 let start = from.max(left) - left;
                 let end = to.saturating_sub(left).min(text_area.width as usize);
                 if start < end {
                     let cells = Rect::new(text_area.x + start as u16, y, (end - start) as u16, 1);
-                    buf.set_style(cells, self.theme.get("ui.selection"));
+                    buf.set_style(cells, style);
                 }
+            };
+
+            if let Some(pattern) = self.search {
+                let style = self.theme.get("ui.search.match");
+                for (from, to) in pattern.matches_in_line(line_text) {
+                    highlight(from, to, style);
+                }
+            }
+            // The selection is drawn last, so it wins over search matches.
+            if let Some(range) = self.selection
+                && let Some((from, to)) = selection::selected_cols(range, row, text.line_len(row))
+            {
+                highlight(from, to, self.theme.get("ui.selection"));
             }
         }
 
@@ -270,6 +291,28 @@ mod tests {
             .filter(|&x| buf[(x, 0)].bg == ratatui::style::Color::Blue)
             .collect();
         assert_eq!(highlighted, vec![0, 1]);
+    }
+
+    #[test]
+    fn highlights_search_matches() {
+        let doc = Document::with_text("ab ab");
+        let mut theme = Theme::default();
+        theme.set(
+            "ui.search.match",
+            Style::new().bg(ratatui::style::Color::Yellow),
+        );
+        let pattern = SearchPattern::new("ab", crate::core::search::CaseMode::Smart).unwrap();
+
+        let area = Rect::new(0, 0, 6, 1);
+        let mut buf = Buffer::empty(area);
+        EditorView::new(&doc, &options(LineNumbers::None), &theme)
+            .search(Some(&pattern))
+            .render(area, &mut buf, &mut ViewState::default());
+
+        let highlighted: Vec<u16> = (0..6)
+            .filter(|&x| buf[(x, 0)].bg == ratatui::style::Color::Yellow)
+            .collect();
+        assert_eq!(highlighted, vec![0, 1, 3, 4]);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use crate::core::search::CaseMode;
 use crate::editor::Mode;
 
 /// Behavioural options from the `[editor]` config section.
@@ -11,6 +12,37 @@ pub struct EditorOptions {
     pub cursorline: bool,
     pub scroll_off: usize,
     pub cursor_shape: CursorShapes,
+    pub search: SearchOptions,
+}
+
+/// The `[editor.search]` config section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct SearchOptions {
+    pub case: SearchCase,
+    /// Keep matches of the last search highlighted (until `:noh`).
+    pub highlight: bool,
+    /// Wrap around the end (or start) of the buffer.
+    pub wrap: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchCase {
+    /// Case-insensitive unless the pattern has an uppercase letter.
+    Smart,
+    Sensitive,
+    Insensitive,
+}
+
+impl From<SearchCase> for CaseMode {
+    fn from(case: SearchCase) -> Self {
+        match case {
+            SearchCase::Smart => CaseMode::Smart,
+            SearchCase::Sensitive => CaseMode::Sensitive,
+            SearchCase::Insensitive => CaseMode::Insensitive,
+        }
+    }
 }
 
 impl Default for EditorOptions {

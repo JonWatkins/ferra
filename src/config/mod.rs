@@ -7,7 +7,9 @@
 mod options;
 mod theme;
 
-pub use options::{CursorShape, CursorShapes, EditorOptions, LineNumbers};
+pub use options::{
+    CursorShape, CursorShapes, EditorOptions, LineNumbers, SearchCase, SearchOptions,
+};
 pub use theme::{StyleSpec, Theme};
 
 use std::fmt;

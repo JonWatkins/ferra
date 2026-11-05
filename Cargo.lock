@@ -1529,6 +1529,7 @@ dependencies = [
  "color-eyre",
  "crossterm",
  "ratatui",
+ "regex",
  "serde",
  "tempfile",
  "toml",

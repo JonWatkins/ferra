@@ -13,6 +13,15 @@ cursorline = true
 # Minimum lines kept visible above/below the cursor when scrolling.
 scroll-off = 5
 
+[editor.search]
+# "smart" (case-insensitive unless the pattern has a capital), "sensitive"
+# or "insensitive".
+case = "smart"
+# Keep matches of the last search highlighted, until :noh.
+highlight = true
+# Searches wrap around the end of the file.
+wrap = true
+
 [editor.cursor-shape]
 # "block", "bar" or "underline".
 normal = "block"
@@ -33,6 +42,7 @@ visual = "block"
 "ui.text" = "#d4d7dd"
 "ui.cursorline" = { bg = "#1f2229" }
 "ui.selection" = { bg = "#33467c" }
+"ui.search.match" = { fg = "#16181d", bg = "#e0af68" }
 "ui.linenr" = "#4b5263"
 "ui.linenr.selected" = { fg = "#c9ccd3", modifiers = ["bold"] }
 "ui.statusline" = { fg = "#a0a6b0", bg = "#1f2229" }
@@ -54,6 +64,7 @@ visual = "block"
 # Motions are shared by [keys.normal] (move the cursor) and [keys.operator]
 # (the range for d/c/y). A register can be selected with "x before a command.
 [keys.normal]
+"<Esc>" = "clear_search_highlight"
 "h" = "move_left"
 "j" = "move_down"
 "k" = "move_up"
@@ -105,6 +116,12 @@ visual = "block"
 "<C-r>" = "redo"
 "." = "repeat_last_change"
 ":" = "command_mode"
+"/" = "search_forward"
+"?" = "search_backward"
+"n" = "search_next"
+"N" = "search_prev"
+"*" = "search_word_forward"
+"#" = "search_word_backward"
 "v" = "visual_mode"
 "V" = "visual_line_mode"
 "gv" = "reselect_visual"
@@ -196,6 +213,10 @@ visual = "block"
 "Y" = "visual_yank_lines"
 "p" = "paste_after"
 "P" = "paste_before"
+"n" = "search_next"
+"N" = "search_prev"
+"*" = "search_word_forward"
+"#" = "search_word_backward"
 "h" = "move_left"
 "j" = "move_down"
 "k" = "move_up"
