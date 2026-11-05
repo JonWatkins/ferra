@@ -4,12 +4,13 @@ A modal, fully configurable terminal text editor written in Rust, inspired by
 Vim, Helix and Emacs.
 
 ```sh
-cargo run            # start the editor
-cargo test           # run all tests
+cargo run -- notes.md   # open (or create) a file
+cargo run               # start with an empty scratch buffer
+cargo test              # run all tests
 cargo clippy --all-targets -- -D warnings
 ```
 
-Quit with `:q`.
+Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 
 ## Default keys
 
@@ -34,8 +35,24 @@ Quit with `:q`.
 Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
 (`ib`), `i{` `a{` (`iB`), `i[` `a[`, `i<` `a<`.
 
-Command line: `:q`, `:42` (go to line), or any command by name, e.g.
-`:goto_line 10`.
+## Files
+
+| Command | Action |
+|---------|--------|
+| `:w` / `:w path` | Save, or write to `path` (a scratch buffer adopts it) |
+| `:wq`, `:x`, `ZZ` | Save and quit (`:x`/`ZZ` only write if there are changes) |
+| `:q` | Quit; refuses if there are unsaved changes |
+| `:q!`, `ZQ` | Quit, discarding changes |
+| `:e path` / `:e!` | Open another file / reload the current one, discarding changes |
+
+A trailing `!` overrides safety checks: unsaved changes, a file that changed
+on disk since it was read, or writing over an existing file. Saves are
+atomic and keep line endings (LF/CRLF), a missing final newline, file
+permissions and symlinks. Files that aren't UTF-8 are refused rather than
+risk corrupting them.
+
+Any command can also be run by name, e.g. `:goto_line 10`, or `:42` to jump
+to a line.
 
 ## Configuration
 

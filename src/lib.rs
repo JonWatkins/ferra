@@ -9,14 +9,18 @@
 //!   is a command, which makes everything bindable and (later) scriptable.
 //! - [`input`]: key notation, keymaps and pending-key/count handling.
 //! - [`config`]: TOML configuration (options, theme, keybindings).
+//! - [`files`]: reading and writing files on disk (atomic saves).
+//! - [`cli`]: command-line argument parsing.
 //! - [`ui`]: rendering, including the custom editor pane widget.
 //! - [`app`]: wires everything together and owns the event loop.
 
 pub mod app;
+pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod core;
 pub mod editor;
+pub mod files;
 pub mod input;
 pub mod ui;
 

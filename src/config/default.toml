@@ -39,6 +39,7 @@ operator = "underline"
 "ui.statusline.command" = { fg = "#16181d", bg = "#e0af68", modifiers = ["bold"] }
 "ui.statusline.operator" = { fg = "#16181d", bg = "#7aa2f7", modifiers = ["bold"] }
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
+"ui.statusline.modified" = { fg = "#e0af68", bg = "#1f2229", modifiers = ["bold"] }
 "ui.command-line" = "#d4d7dd"
 "ui.message.info" = "#a0a6b0"
 "ui.message.error" = { fg = "#f7768e", modifiers = ["bold"] }
@@ -90,6 +91,8 @@ operator = "underline"
 "u" = "undo"
 "<C-r>" = "redo"
 ":" = "command_mode"
+"ZZ" = "exit"
+"ZQ" = "force_quit"
 
 # After an operator: motions and text objects. Pressing the operator key
 # again ("dd", "cc", "yy") acts on whole lines.

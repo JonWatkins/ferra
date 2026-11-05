@@ -8,6 +8,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
+use super::text::truncate_start;
 use crate::config::Theme;
 use crate::editor::{Editor, Mode, Severity};
 
@@ -41,7 +42,10 @@ impl Widget for CommandLineView<'_> {
                 Severity::Info => "ui.message.info",
                 Severity::Error => "ui.message.error",
             };
-            Line::styled(message.text.as_str(), self.theme.get(scope))
+            // Keep the end visible: for "path" 12L, 340B written, the part
+            // after a long path is what matters.
+            let text = truncate_start(&message.text, area.width as usize);
+            Line::styled(text, self.theme.get(scope))
         } else {
             return;
         };
@@ -78,6 +82,16 @@ mod tests {
         let mut editor = Editor::default();
         editor.set_message(Message::error("boom"));
         assert_eq!(render(&editor).trim_end(), "boom");
+    }
+
+    #[test]
+    fn long_messages_keep_their_end() {
+        let mut editor = Editor::default();
+        editor.set_message(Message::info(
+            "\"/a/very/long/path/to/file.txt\" 3L written",
+        ));
+        // The test area is 20 cells wide.
+        assert_eq!(render(&editor), "…ile.txt\" 3L written");
     }
 
     #[test]

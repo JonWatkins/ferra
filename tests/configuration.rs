@@ -54,7 +54,16 @@ fn keys_can_be_remapped_and_defaults_kept() {
     );
     keys(&mut app, "ia<CR>b<Esc>k");
     assert_eq!(cursor(&app), (0, 0), "default `k` still works");
+
+    // The remapped key runs `quit`, which protects the unsaved text...
     keys(&mut app, "<C-q>");
+    assert!(!app.should_quit());
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        terminal_editor::editor::UNSAVED_CHANGES
+    );
+    // ...and quits once there's nothing to lose.
+    keys(&mut app, "uu<C-q>");
     assert!(app.should_quit());
 }
 

@@ -17,9 +17,10 @@ Dependencies only point downwards. Lower layers never know about higher ones.
      └───────┴────┬─────┴──────────┘
                   ▼
                editor      Editor, Document, Mode, Registers, operators
-                  │
-                  ▼
-                core       Buffer, History, Range, motions, text objects (pure)
+                  │   ╲
+                  ▼    ▼
+                core   files   core: Buffer, History, TextFormat, motions (pure)
+                               files: the only code that touches the disk
 ```
 
 | Module      | Responsibility | Terminal/UI deps? |
@@ -28,7 +29,9 @@ Dependencies only point downwards. Lower layers never know about higher ones.
 | `editor`    | Editor state, mode transition rules, registers, applying operators. | No |
 | `commands`  | Named command registry plus built-in commands. | No |
 | `input`     | Key notation, per-mode keymap trie, counts and pending sequences. | crossterm (event conversion only) |
+| `files`     | Reading files and atomic writes (temp file + fsync + rename, permissions, symlinks). | No |
 | `config`    | Embedded `default.toml` deep-merged with the user config; options, theme, keymap. | ratatui `Style` (theme) |
+| `cli`       | Command-line argument parsing. | No |
 | `ui`        | Widgets: our own `EditorView` (gutter, viewport, cursorline), `StatusLine`, `CommandLineView`. | ratatui |
 | `app`       | Owns everything and runs the loop. | ratatui + crossterm |
 
@@ -86,6 +89,24 @@ Vim's grammar is `[count]["x]operator[count](motion | text-object)`:
 
 Single-key shortcuts (`x`, `D`, `C`, `s`, `S`, `Y`, `X`) apply an operator
 over a fixed motion. Pastes read registers (`editor/registers.rs`).
+
+### Files
+
+- `core::TextFormat` splits file contents into buffer text (always `\n`, no
+  final newline) and the format to write back (LF/CRLF, final newline). An
+  untouched file round-trips byte for byte.
+- `files` is the only module that touches the disk. Writes go to a temp file
+  in the same directory, are fsynced, then renamed over the target. Existing
+  permissions are copied and symlinks are followed.
+- `Document` holds the path, format and two pieces of save state:
+  - **Modified tracking:** `History` gives each committed state a
+    `Revision`. The document is modified when its revision differs from the
+    saved one, so undoing back to the save clears `[+]`.
+  - **External changes:** the file's mtime at read/write time. A save
+    refuses to overwrite a file whose mtime has changed since, or an
+    existing file the document never read, unless forced with `!`.
+- On the `:` line, a trailing `!` sets `Invocation::bang`, which file
+  commands use to override those checks.
 
 ## Commands: the extension point
 
@@ -153,7 +174,14 @@ The current design leaves room for these:
   text recorded together.
 - More motions and operators: `f`/`t`, `%`, `}`/`{`, `>`/`<`, `gu`/`gU`, `J`.
 - Numbered delete registers `1`-`9` and the small-delete register `-`.
-- File open/save and multiple buffers/windows (`Document` → `View` split).
+- Multiple buffers/windows (`Document` → `View` split), so `:e` doesn't
+  replace the only document.
+- Asking before overwriting on external changes, and reloading
+  automatically when the file changes and there are no local edits.
+- Writing through hard links keeps the old inode's other names pointing at
+  the old contents (the rename replaces the file). Vim's `backupcopy`
+  handles this; we don't yet.
+- Non-UTF-8 encodings are refused rather than supported.
 - Timeout for ambiguous key sequences such as `jk` in insert mode (Vim's
   `timeoutlen`).
 - Rope-based buffer (e.g. `ropey`) for large files. `Buffer` has only two

@@ -88,13 +88,24 @@ pub fn end_of(at: Position, text: &str) -> Position {
     }
 }
 
-type Transaction = Vec<Change>;
+/// A committed undo step. Its id names the buffer state it produces.
+#[derive(Debug, Clone)]
+struct Transaction {
+    id: Revision,
+    changes: Vec<Change>,
+}
+
+/// Identifies a buffer state in the history, so callers can tell whether
+/// they're back at a given state (e.g. the last save) after undo/redo.
+/// `0` is the original, unedited state.
+pub type Revision = u64;
 
 #[derive(Debug, Default, Clone)]
 pub struct History {
     undo: Vec<Transaction>,
     redo: Vec<Transaction>,
-    pending: Transaction,
+    pending: Vec<Change>,
+    last_id: Revision,
 }
 
 impl History {
@@ -112,8 +123,22 @@ impl History {
     /// Closes the pending transaction, making it one undo step.
     pub fn commit(&mut self) {
         if !self.pending.is_empty() {
-            self.undo.push(std::mem::take(&mut self.pending));
+            self.last_id += 1;
+            self.undo.push(Transaction {
+                id: self.last_id,
+                changes: std::mem::take(&mut self.pending),
+            });
         }
+    }
+
+    /// Whether there are recorded changes not yet committed.
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// The revision of the last committed state (ignoring pending changes).
+    pub fn revision(&self) -> Revision {
+        self.undo.last().map_or(0, |t| t.id)
     }
 
     /// Undoes the last transaction. Returns where the cursor should go, or
@@ -121,10 +146,10 @@ impl History {
     pub fn undo(&mut self, buffer: &mut Buffer) -> Option<Position> {
         self.commit();
         let transaction = self.undo.pop()?;
-        for change in transaction.iter().rev() {
+        for change in transaction.changes.iter().rev() {
             change.inverted().apply(buffer);
         }
-        let cursor = transaction.first().map(Change::position);
+        let cursor = transaction.changes.first().map(Change::position);
         self.redo.push(transaction);
         cursor
     }
@@ -133,10 +158,10 @@ impl History {
     pub fn redo(&mut self, buffer: &mut Buffer) -> Option<Position> {
         self.commit();
         let transaction = self.redo.pop()?;
-        for change in &transaction {
+        for change in &transaction.changes {
             change.apply(buffer);
         }
-        let cursor = transaction.first().map(Change::position);
+        let cursor = transaction.changes.first().map(Change::position);
         self.undo.push(transaction);
         cursor
     }
@@ -261,6 +286,48 @@ mod tests {
         assert!(history.can_undo());
         history.undo(&mut buffer);
         assert_eq!(buffer.text(), "");
+    }
+
+    #[test]
+    fn revisions_track_undo_and_redo() {
+        let mut buffer = Buffer::default();
+        let mut history = History::default();
+        assert_eq!(history.revision(), 0);
+
+        edit(&mut buffer, &mut history, insert(0, 0, "a"));
+        assert!(history.has_pending());
+        assert_eq!(
+            history.revision(),
+            0,
+            "pending changes have no revision yet"
+        );
+        history.commit();
+        let first = history.revision();
+        edit(&mut buffer, &mut history, insert(0, 1, "b"));
+        history.commit();
+        let second = history.revision();
+        assert_ne!(first, second);
+
+        history.undo(&mut buffer);
+        assert_eq!(history.revision(), first);
+        history.redo(&mut buffer);
+        assert_eq!(history.revision(), second);
+        history.undo(&mut buffer);
+        history.undo(&mut buffer);
+        assert_eq!(history.revision(), 0);
+    }
+
+    #[test]
+    fn diverging_edit_gets_a_new_revision() {
+        let mut buffer = Buffer::default();
+        let mut history = History::default();
+        edit(&mut buffer, &mut history, insert(0, 0, "a"));
+        history.commit();
+        let undone = history.revision();
+        history.undo(&mut buffer);
+        edit(&mut buffer, &mut history, insert(0, 0, "b"));
+        history.commit();
+        assert_ne!(history.revision(), undone, "ids are never reused");
     }
 
     #[test]

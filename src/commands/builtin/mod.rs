@@ -5,6 +5,7 @@
 
 mod command_line;
 mod editing;
+mod files;
 mod history;
 mod modes;
 mod motions;
@@ -19,6 +20,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     operators::register(registry);
     editing::register(registry);
     history::register(registry);
+    files::register(registry);
     modes::register(registry);
     command_line::register(registry);
 }

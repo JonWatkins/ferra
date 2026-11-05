@@ -14,6 +14,7 @@
 mod command_line;
 pub mod editor_view;
 mod statusline;
+mod text;
 
 pub use command_line::CommandLineView;
 pub use editor_view::{EditorView, ViewState};

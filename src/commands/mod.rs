@@ -27,6 +27,9 @@ pub struct Invocation<'a> {
     pub register: Option<char>,
     /// Arguments passed on the command line (e.g. `:goto_line 10`).
     pub args: &'a [String],
+    /// A trailing `!` on the command line (`:q!`, `:w!`): override safety
+    /// checks such as unsaved changes.
+    pub bang: bool,
 }
 
 impl<'a> Invocation<'a> {
@@ -53,6 +56,7 @@ pub struct Context<'a> {
     pub count: Option<usize>,
     pub register: Option<char>,
     pub args: &'a [String],
+    pub bang: bool,
 }
 
 impl Context<'_> {
@@ -140,6 +144,7 @@ impl CommandRegistry {
             count: invocation.count,
             register: invocation.register,
             args: invocation.args,
+            bang: invocation.bang,
         };
         (command.handler)(&mut cx)
     }
@@ -195,6 +200,7 @@ mod tests {
             count: Some(3),
             register: Some('a'),
             args: &args,
+            bang: false,
         };
         registry
             .execute("check", &mut Editor::default(), invocation)

@@ -69,6 +69,14 @@ impl App {
         &mut self.commands
     }
 
+    /// Opens a file at startup, reporting any failure on the message line
+    /// (the editor still starts, with an empty scratch document).
+    pub fn open(&mut self, path: &std::path::Path) {
+        if let Err(error) = self.editor.open(path) {
+            self.editor.set_message(Message::error(error.to_string()));
+        }
+    }
+
     pub fn should_quit(&self) -> bool {
         self.editor.should_quit()
     }

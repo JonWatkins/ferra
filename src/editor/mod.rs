@@ -5,13 +5,15 @@
 
 mod command_line;
 mod document;
+mod files;
 mod message;
 mod mode;
 mod operator;
 pub mod registers;
 
 pub use command_line::CommandLine;
-pub use document::Document;
+pub use document::{Document, OpenInfo, SaveInfo};
+pub use files::UNSAVED_CHANGES;
 pub use message::{Message, Severity};
 pub use mode::Mode;
 pub use operator::{Operator, PendingOperator};

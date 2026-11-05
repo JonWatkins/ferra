@@ -1,10 +1,20 @@
-use crate::core::{Buffer, Change, History, Position};
+mod file;
 
-/// A buffer, the cursor editing it, and its undo history.
+pub use file::{OpenInfo, SaveInfo};
+
+use std::borrow::Cow;
+use std::path::PathBuf;
+use std::time::SystemTime;
+
+use crate::core::{Buffer, Change, History, Position, Revision, TextFormat};
+
+/// A buffer, the cursor editing it, its undo history, and the file it
+/// belongs to (if any).
 ///
 /// All text changes go through [`insert`](Self::insert) and
 /// [`delete`](Self::delete), which record them in the history. Higher-level
-/// behaviour (counts, modes, Vim semantics) lives in the commands.
+/// behaviour (counts, modes, Vim semantics) lives in the commands. Opening
+/// and saving live in the `file` submodule.
 #[derive(Debug, Default, Clone)]
 pub struct Document {
     buffer: Buffer,
@@ -12,6 +22,13 @@ pub struct Document {
     /// Column to aim for when moving vertically through shorter lines.
     sticky_col: Option<usize>,
     history: History,
+    path: Option<PathBuf>,
+    format: TextFormat,
+    /// The history revision that matches the file on disk.
+    saved_revision: Revision,
+    /// The file's modified time when last read or written, to detect
+    /// changes made by other programs.
+    disk_modified: Option<SystemTime>,
 }
 
 impl Document {
@@ -22,9 +39,18 @@ impl Document {
         }
     }
 
-    /// Display name for the UI. Will come from the file path once files exist.
-    pub fn name(&self) -> &str {
-        "[scratch]"
+    /// Display name for the UI: the path as given, or `[scratch]`.
+    pub fn name(&self) -> Cow<'_, str> {
+        match &self.path {
+            Some(path) => path.to_string_lossy(),
+            None => Cow::Borrowed("[scratch]"),
+        }
+    }
+
+    /// Whether there are changes not yet saved. Undoing back to the saved
+    /// state counts as unmodified again.
+    pub fn is_modified(&self) -> bool {
+        self.history.has_pending() || self.history.revision() != self.saved_revision
     }
 
     pub fn buffer(&self) -> &Buffer {
@@ -294,6 +320,25 @@ mod tests {
 
         assert!(doc.redo());
         assert_eq!(doc.buffer().text(), "abcde\nf");
+    }
+
+    #[test]
+    fn modified_until_undone_back_to_saved_state() {
+        let mut doc = Document::with_text("abc");
+        assert!(!doc.is_modified());
+        doc.insert_str("x");
+        assert!(doc.is_modified(), "pending changes count");
+        doc.commit();
+        assert!(doc.is_modified());
+        doc.undo();
+        assert!(!doc.is_modified());
+        doc.redo();
+        assert!(doc.is_modified());
+    }
+
+    #[test]
+    fn scratch_document_name() {
+        assert_eq!(Document::default().name(), "[scratch]");
     }
 
     #[test]

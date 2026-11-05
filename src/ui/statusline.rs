@@ -7,6 +7,9 @@ use ratatui::{
     widgets::Widget,
 };
 
+use unicode_width::UnicodeWidthStr;
+
+use super::text::truncate_start;
 use crate::config::Theme;
 use crate::editor::Editor;
 
@@ -32,13 +35,6 @@ impl Widget for StatusLine<'_> {
         let base = self.theme.get("ui.statusline");
         buf.set_style(area, base);
 
-        let mode = self.editor.mode();
-        let mode_style = self.theme.get(&format!("ui.statusline.{}", mode.id()));
-        let left = Line::from(vec![
-            Span::styled(format!(" {mode} "), mode_style),
-            Span::raw(format!(" {} ", self.editor.document.name())),
-        ]);
-
         let cursor = self.editor.document.cursor();
         let right = Line::from(vec![
             Span::styled(
@@ -48,6 +44,26 @@ impl Widget for StatusLine<'_> {
             Span::raw(format!(" {}:{} ", cursor.row + 1, cursor.col + 1)),
         ])
         .right_aligned();
+
+        let mode = self.editor.mode();
+        let mode_label = format!(" {mode} ");
+        let modified = if self.editor.document.is_modified() {
+            "[+] "
+        } else {
+            ""
+        };
+        // The name gets whatever space is left, so a long path is shortened
+        // from the left and the file name and `[+]` stay visible.
+        let fixed = mode_label.width() + 2 + modified.width() + right.width();
+        let name_budget = (area.width as usize).saturating_sub(fixed);
+        let name = truncate_start(&self.editor.document.name(), name_budget);
+
+        let mode_style = self.theme.get(&format!("ui.statusline.{}", mode.id()));
+        let left = Line::from(vec![
+            Span::styled(mode_label, mode_style),
+            Span::raw(format!(" {name} ")),
+            Span::styled(modified, self.theme.get("ui.statusline.modified")),
+        ]);
 
         left.render(area, buf);
         right.render(area, buf);
@@ -81,6 +97,28 @@ mod tests {
         let mut editor = Editor::default();
         editor.set_mode(Mode::Insert);
         assert!(render(&editor, "").starts_with(" INSERT "));
+    }
+
+    #[test]
+    fn shows_modified_marker() {
+        let mut editor = Editor::default();
+        assert!(!render(&editor, "").contains("[+]"));
+        editor.document.insert_str("x");
+        assert!(render(&editor, "").contains(" [scratch] [+] "));
+    }
+
+    #[test]
+    fn long_names_are_shortened_from_the_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("deeply/nested/directory/structure/file.rs");
+        let (document, _) = Document::open(&path).unwrap();
+        let mut editor = Editor::with_document(document);
+        editor.document.insert_str("x");
+
+        let text = render(&editor, "");
+        assert!(text.contains("…"), "{text:?}");
+        assert!(text.contains("structure/file.rs [+]"), "{text:?}");
+        assert!(text.ends_with(" 1:2 "), "{text:?}");
     }
 
     #[test]

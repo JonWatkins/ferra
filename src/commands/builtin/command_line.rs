@@ -2,14 +2,6 @@ use crate::commands::{CommandRegistry, Invocation};
 use crate::editor::Mode;
 
 pub fn register(r: &mut CommandRegistry) {
-    r.register("quit", "Quit the editor", |cx| {
-        cx.editor.quit();
-        Ok(())
-    });
-    r.alias("q", "quit");
-    r.alias("q!", "quit");
-    r.alias("quit!", "quit");
-
     r.register(
         "command_line_execute",
         "Run the command typed on the command line",
@@ -30,9 +22,19 @@ pub fn register(r: &mut CommandRegistry) {
                     .execute("goto_line", cx.editor, Invocation::with_args(&args));
             }
 
+            // A trailing `!` (`:q!`, `:w!`) forces the command, unless a
+            // command is literally registered with the `!` in its name.
+            let (name, bang) = match name.strip_suffix('!') {
+                Some(base) if !cx.registry.contains(name) => (base, true),
+                _ => (name, false),
+            };
             let args: Vec<String> = parts.map(String::from).collect();
-            cx.registry
-                .execute(name, cx.editor, Invocation::with_args(&args))
+            let invocation = Invocation {
+                args: &args,
+                bang,
+                ..Invocation::default()
+            };
+            cx.registry.execute(name, cx.editor, invocation)
         },
     );
     r.register(
@@ -73,6 +75,21 @@ mod tests {
         run(&mut e, "command_line_execute", None);
         assert!(e.should_quit());
         assert_eq!(e.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn trailing_bang_forces_command() {
+        let mut e = command_editor("", "q!");
+        e.document.insert_str("unsaved");
+        run(&mut e, "command_line_execute", None);
+        assert!(e.should_quit());
+    }
+
+    #[test]
+    fn bang_on_unknown_command_reports_base_name() {
+        let mut e = command_editor("", "nope!");
+        run(&mut e, "command_line_execute", None);
+        assert_eq!(e.message().unwrap().text, "Unknown command: nope");
     }
 
     #[test]
