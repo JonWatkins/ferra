@@ -109,7 +109,7 @@ fn invalid_config_values_are_errors() {
         ("[editor]\nline-numbers = \"sideways\"", "sideways"),
         ("[theme]\n\"ui.text\" = \"nope\"", "invalid color"),
         ("[keys.normal]\n\"<Nope>\" = \"quit\"", "<Nope>"),
-        ("[keys.visual]\n\"x\" = \"quit\"", "visual"),
+        ("[keys.replace]\n\"x\" = \"quit\"", "replace"),
         ("[unknown]", "unknown"),
     ] {
         let err = Config::from_toml(toml).expect_err(toml).to_string();

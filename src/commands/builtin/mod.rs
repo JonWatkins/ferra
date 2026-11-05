@@ -11,6 +11,7 @@ mod modes;
 mod motions;
 mod operators;
 mod text_objects;
+mod visual;
 
 use super::CommandRegistry;
 
@@ -21,6 +22,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     editing::register(registry);
     history::register(registry);
     files::register(registry);
+    visual::register(registry);
     modes::register(registry);
     command_line::register(registry);
 }

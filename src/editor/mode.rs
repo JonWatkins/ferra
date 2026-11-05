@@ -14,14 +14,18 @@ pub enum Mode {
     /// An operator (`d`, `c`, `y`) is waiting for a motion or text object.
     #[serde(rename = "operator")]
     OperatorPending,
+    /// Selecting text (`v` characterwise, `V` linewise). The kind of
+    /// selection lives on the editor, so both share one keymap and style.
+    Visual,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 4] = [
+    pub const ALL: [Mode; 5] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
         Mode::OperatorPending,
+        Mode::Visual,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -31,6 +35,7 @@ impl Mode {
             Mode::Insert => "insert",
             Mode::Command => "command",
             Mode::OperatorPending => "operator",
+            Mode::Visual => "visual",
         }
     }
 
@@ -41,7 +46,12 @@ impl Mode {
 
     /// Whether a numeric count prefix (`3j`, `d2w`) can be typed.
     pub const fn accepts_count(self) -> bool {
-        matches!(self, Mode::Normal | Mode::OperatorPending)
+        matches!(self, Mode::Normal | Mode::OperatorPending | Mode::Visual)
+    }
+
+    /// Whether a `"x` register prefix can be typed.
+    pub const fn accepts_register(self) -> bool {
+        matches!(self, Mode::Normal | Mode::Visual)
     }
 }
 
@@ -71,6 +81,8 @@ mod tests {
         assert!(Mode::Insert.accepts_text() && Mode::Command.accepts_text());
         assert!(!Mode::Normal.accepts_text() && !Mode::OperatorPending.accepts_text());
         assert!(Mode::Normal.accepts_count() && Mode::OperatorPending.accepts_count());
+        assert!(Mode::Visual.accepts_count() && Mode::Visual.accepts_register());
         assert!(!Mode::Insert.accepts_count());
+        assert!(!Mode::OperatorPending.accepts_register());
     }
 }

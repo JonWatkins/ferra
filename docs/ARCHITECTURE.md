@@ -90,6 +90,23 @@ Vim's grammar is `[count]["x]operator[count](motion | text-object)`:
 Single-key shortcuts (`x`, `D`, `C`, `s`, `S`, `Y`, `X`) apply an operator
 over a fixed motion. Pastes read registers (`editor/registers.rs`).
 
+### Visual mode
+
+- One `Mode::Visual`, with the kind (`Char` for `v`, `Line` for `V`) on the
+  editor's `Selection` (`editor/selection.rs`). Both kinds share one
+  `[keys.visual]` table, cursor shape and theme scope. The statusline shows
+  `V-LINE` for line selections.
+- A selection is the anchor plus the cursor, and `Selection::range` turns
+  it into the same `core::Range` that motions and text objects produce.
+  So nothing new is needed to operate on it:
+  - Motions just move the cursor, which extends the selection.
+  - Text objects call `Editor::select_range` instead of applying an operator.
+  - Operator commands call `Editor::take_selection`, which ends visual mode
+    and returns the range, then apply the operator to it right away.
+- Leaving visual mode remembers the selection for `gv`.
+- The editor pane highlights the selection (`ui.selection`), including one
+  cell for a selected line break so selected empty lines are visible.
+
 ### Files
 
 - `core::TextFormat` splits file contents into buffer text (always `\n`, no
@@ -169,7 +186,11 @@ The current design leaves room for these:
 
 ## Known gaps / next steps
 
-- Visual mode, which would reuse text objects and `apply_operator` directly.
+- Visual block mode (`<C-v>`) and visual-mode `:` ranges (`:'<,'>`).
+- `Esc` immediately followed by another key in the same terminal read is
+  parsed as Alt+key (this is how terminals encode Alt). Vim uses a short
+  `ttimeout` to tell them apart; we don't yet. It only shows up with very
+  fast input, such as pasted keystrokes.
 - `.` repeat, which needs the last change's command, invocation and inserted
   text recorded together.
 - More motions and operators: `f`/`t`, `%`, `}`/`{`, `>`/`<`, `gu`/`gU`, `J`.

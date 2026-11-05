@@ -6,6 +6,7 @@
 use super::motions::multiply_counts;
 use crate::commands::CommandRegistry;
 use crate::core::{Buffer, Position, Range, text_object};
+use crate::editor::Mode;
 
 type SelectFn = fn(&Buffer, Position, usize) -> Option<Range>;
 
@@ -109,6 +110,13 @@ pub fn register(r: &mut CommandRegistry) {
     ];
     for object in groups.into_iter().flatten() {
         r.register(object.name, object.description, move |cx| {
+            if cx.editor.mode() == Mode::Visual {
+                let doc = &cx.editor.document;
+                if let Some(range) = (object.select)(doc.buffer(), doc.cursor(), cx.count()) {
+                    cx.editor.select_range(range);
+                }
+                return Ok(());
+            }
             let Some(pending) = cx.editor.take_pending_operator() else {
                 return Ok(());
             };
@@ -175,6 +183,21 @@ mod tests {
         e.begin_operator(Operator::Delete, Some(2), None);
         run(&mut e, "current_line", None);
         assert_eq!(e.document.buffer().text(), "c");
+    }
+
+    #[test]
+    fn selects_object_in_visual_mode() {
+        let mut e = editor("call(a, b)", Position::new(0, 6), Mode::Normal);
+        e.toggle_visual(crate::editor::SelectionKind::Char);
+        run(&mut e, "inner_paren", None);
+        assert_eq!(
+            e.selection_range(),
+            Some(crate::core::Range::Chars {
+                start: Position::new(0, 5),
+                end: Position::new(0, 9)
+            })
+        );
+        assert_eq!(e.mode(), Mode::Visual);
     }
 
     #[test]

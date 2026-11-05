@@ -10,6 +10,7 @@ mod message;
 mod mode;
 mod operator;
 pub mod registers;
+mod selection;
 
 pub use command_line::CommandLine;
 pub use document::{Document, OpenInfo, SaveInfo};
@@ -18,6 +19,7 @@ pub use message::{Message, Severity};
 pub use mode::Mode;
 pub use operator::{Operator, PendingOperator};
 pub use registers::{Register, Registers};
+pub use selection::{Selection, SelectionKind};
 
 use crate::config::EditorOptions;
 
@@ -29,6 +31,8 @@ pub struct Editor {
     pub registers: Registers,
     mode: Mode,
     pending_operator: Option<PendingOperator>,
+    selection: Option<Selection>,
+    last_selection: Option<selection::LastSelection>,
     message: Option<Message>,
     should_quit: bool,
 }
@@ -69,6 +73,9 @@ impl Editor {
         if mode != Mode::OperatorPending {
             self.pending_operator = None;
         }
+        if mode != Mode::Visual {
+            self.end_selection();
+        }
         self.enforce_cursor_rules();
     }
 
@@ -79,7 +86,10 @@ impl Editor {
 
     /// Normal mode may not rest on the end-of-line slot.
     pub fn enforce_cursor_rules(&mut self) {
-        if matches!(self.mode, Mode::Normal | Mode::OperatorPending) {
+        if matches!(
+            self.mode,
+            Mode::Normal | Mode::OperatorPending | Mode::Visual
+        ) {
             self.document.clamp_to_last_char();
         }
     }
@@ -100,7 +110,7 @@ impl Editor {
         match self.mode {
             Mode::Insert => self.document.insert_char(c),
             Mode::Command => self.command_line.push(c),
-            Mode::Normal | Mode::OperatorPending => {}
+            Mode::Normal | Mode::OperatorPending | Mode::Visual => {}
         }
     }
 

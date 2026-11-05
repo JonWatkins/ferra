@@ -67,7 +67,9 @@ impl InputHandler {
             };
         }
 
-        if mode == Mode::Normal && self.pending.is_empty() && key.as_text() == Some(REGISTER_PREFIX)
+        if mode.accepts_register()
+            && self.pending.is_empty()
+            && key.as_text() == Some(REGISTER_PREFIX)
         {
             self.awaiting_register = true;
             return vec![Outcome::Pending];

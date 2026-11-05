@@ -2,9 +2,10 @@
 //! `s`, `S`, `Y`, `X`) and pasting (`p`, `P`).
 
 use super::motions::{self, Motion};
+use super::visual;
 use crate::commands::{CommandRegistry, CommandResult, Context};
 use crate::core::{Position, Range, motion};
-use crate::editor::Operator;
+use crate::editor::{Mode, Operator};
 
 pub fn register(r: &mut CommandRegistry) {
     r.register(
@@ -59,7 +60,11 @@ pub fn register(r: &mut CommandRegistry) {
     );
 }
 
+/// Starts an operator, or in visual mode applies it to the selection.
 fn begin(cx: &mut Context, operator: Operator) -> CommandResult {
+    if let Some(range) = cx.editor.take_selection() {
+        return cx.editor.apply_operator(operator, range, cx.register);
+    }
     cx.editor.begin_operator(operator, cx.count, cx.register);
     Ok(())
 }
@@ -85,6 +90,9 @@ fn paste(cx: &mut Context, after: bool) -> CommandResult {
         .get(cx.register)
         .cloned()
         .ok_or("Nothing to paste: register is empty")?;
+    if cx.editor.mode() == Mode::Visual {
+        return visual::replace_selection(cx, register, after);
+    }
     let count = cx.count();
     let doc = &mut cx.editor.document;
     let cursor = doc.cursor();
@@ -171,6 +179,21 @@ mod tests {
         run(&mut e, "substitute_line", None);
         assert_eq!(text(&e), "a\n\nc");
         assert_eq!(e.mode(), Mode::Insert);
+    }
+
+    #[test]
+    fn operators_apply_to_selection_in_visual_mode() {
+        let mut e = editor("hello world", pos(0, 0), Mode::Normal);
+        e.toggle_visual(crate::editor::SelectionKind::Char);
+        e.document.set_cursor(pos(0, 4));
+        run(&mut e, "operator_yank", None);
+        assert_eq!(e.registers.get(None), Some(&Register::charwise("hello")));
+        assert_eq!(e.mode(), Mode::Normal);
+
+        e.toggle_visual(crate::editor::SelectionKind::Char);
+        e.document.set_cursor(pos(0, 5));
+        run(&mut e, "operator_delete", None);
+        assert_eq!(text(&e), "world");
     }
 
     #[test]

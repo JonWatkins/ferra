@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::text::truncate_start;
 use crate::config::Theme;
-use crate::editor::Editor;
+use crate::editor::{Editor, SelectionKind};
 
 pub struct StatusLine<'a> {
     editor: &'a Editor,
@@ -46,7 +46,10 @@ impl Widget for StatusLine<'_> {
         .right_aligned();
 
         let mode = self.editor.mode();
-        let mode_label = format!(" {mode} ");
+        let mode_label = match self.editor.selection() {
+            Some(selection) if selection.kind == SelectionKind::Line => " V-LINE ".to_string(),
+            _ => format!(" {mode} "),
+        };
         let modified = if self.editor.document.is_modified() {
             "[+] "
         } else {
@@ -119,6 +122,15 @@ mod tests {
         assert!(text.contains("…"), "{text:?}");
         assert!(text.contains("structure/file.rs [+]"), "{text:?}");
         assert!(text.ends_with(" 1:2 "), "{text:?}");
+    }
+
+    #[test]
+    fn shows_visual_and_visual_line() {
+        let mut editor = Editor::default();
+        editor.toggle_visual(SelectionKind::Char);
+        assert!(render(&editor, "").starts_with(" VISUAL "));
+        editor.toggle_visual(SelectionKind::Line);
+        assert!(render(&editor, "").starts_with(" V-LINE "));
     }
 
     #[test]

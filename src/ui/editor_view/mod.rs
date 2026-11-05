@@ -1,12 +1,14 @@
 //! The editor pane: a custom ratatui widget that renders a document with a
-//! line-number gutter, cursorline highlight and scrolling viewport.
+//! line-number gutter, cursorline and selection highlights, and a scrolling
+//! viewport.
 //!
 //! Ratatui has no built-in widget suited to editing, so this is our own.
-//! Per-line rendering is deliberately simple for now; syntax highlighting,
-//! selections and diagnostics will layer styled spans onto it later.
+//! Each row is drawn as text, then highlights are layered on as styles;
+//! syntax highlighting and diagnostics will layer on the same way.
 
 mod gutter;
 mod line;
+mod selection;
 mod viewport;
 
 pub use viewport::{ScrollTarget, Viewport};
@@ -19,6 +21,7 @@ use ratatui::{
 };
 
 use crate::config::{EditorOptions, Theme};
+use crate::core::Range;
 use crate::editor::Document;
 
 /// State kept between frames for an editor pane.
@@ -33,6 +36,7 @@ pub struct EditorView<'a> {
     document: &'a Document,
     options: &'a EditorOptions,
     theme: &'a Theme,
+    selection: Option<Range>,
 }
 
 impl<'a> EditorView<'a> {
@@ -41,7 +45,14 @@ impl<'a> EditorView<'a> {
             document,
             options,
             theme,
+            selection: None,
         }
+    }
+
+    /// Highlights `selection` (the visual-mode selection, if any).
+    pub fn selection(mut self, selection: Option<Range>) -> Self {
+        self.selection = selection;
+        self
     }
 }
 
@@ -101,7 +112,8 @@ impl StatefulWidget for EditorView<'_> {
                 self.theme.get(gutter_scope),
             );
 
-            let visible = line::visible_slice(text.line(row), left, text_area.width as usize);
+            let line_text = text.line(row);
+            let visible = line::visible_slice(line_text, left, text_area.width as usize);
             buf.set_stringn(
                 text_area.x,
                 y,
@@ -109,6 +121,21 @@ impl StatefulWidget for EditorView<'_> {
                 text_area.width as usize,
                 text_style,
             );
+
+            if let Some(range) = self.selection
+                && let Some((from, to)) = selection::selected_cols(range, row, text.line_len(row))
+            {
+                // Selected columns in display cells; the line break (one past
+                // the last char) is drawn as one extra cell.
+                let from = line::display_col(line_text, from);
+                let to = line::display_col(line_text, to) + usize::from(to > text.line_len(row));
+                let start = from.max(left) - left;
+                let end = to.saturating_sub(left).min(text_area.width as usize);
+                if start < end {
+                    let cells = Rect::new(text_area.x + start as u16, y, (end - start) as u16, 1);
+                    buf.set_style(cells, self.theme.get("ui.selection"));
+                }
+            }
         }
 
         if !text_area.is_empty() {
@@ -191,6 +218,58 @@ mod tests {
         doc.set_cursor(TextPos::new(0, 1));
         let (_, state) = render(&doc, &options(LineNumbers::None), 10, 1);
         assert_eq!(state.cursor, Some(Position::new(2, 0)));
+    }
+
+    #[test]
+    fn highlights_selection_including_line_break() {
+        let doc = Document::with_text("abc\nde");
+        let mut theme = Theme::default();
+        let selected = Style::new().bg(ratatui::style::Color::Blue);
+        theme.set("ui.selection", selected);
+        let range = Range::Chars {
+            start: TextPos::new(0, 1),
+            end: TextPos::new(1, 1),
+        };
+
+        let area = Rect::new(0, 0, 6, 2);
+        let mut buf = Buffer::empty(area);
+        EditorView::new(&doc, &options(LineNumbers::None), &theme)
+            .selection(Some(range))
+            .render(area, &mut buf, &mut ViewState::default());
+
+        let highlighted = |y: u16| -> Vec<u16> {
+            (0..6)
+                .filter(|&x| buf[(x, y)].bg == ratatui::style::Color::Blue)
+                .collect()
+        };
+        assert_eq!(highlighted(0), vec![1, 2, 3], "b, c and the line break");
+        assert_eq!(highlighted(1), vec![0], "d");
+    }
+
+    #[test]
+    fn selection_highlight_respects_horizontal_scroll() {
+        let mut doc = Document::with_text("0123456789");
+        doc.set_cursor(TextPos::new(0, 9));
+        let mut theme = Theme::default();
+        theme.set("ui.selection", Style::new().bg(ratatui::style::Color::Blue));
+        let range = Range::Chars {
+            start: TextPos::new(0, 2),
+            end: TextPos::new(0, 8),
+        };
+
+        let area = Rect::new(0, 0, 4, 1);
+        let mut buf = Buffer::empty(area);
+        let mut state = ViewState::default();
+        EditorView::new(&doc, &options(LineNumbers::None), &theme)
+            .selection(Some(range))
+            .render(area, &mut buf, &mut state);
+
+        // Scrolled so columns 6..=9 are visible; 6 and 7 are selected.
+        assert_eq!(state.viewport.left, 6);
+        let highlighted: Vec<u16> = (0..4)
+            .filter(|&x| buf[(x, 0)].bg == ratatui::style::Color::Blue)
+            .collect();
+        assert_eq!(highlighted, vec![0, 1]);
     }
 
     #[test]
