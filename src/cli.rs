@@ -4,10 +4,10 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 pub const USAGE: &str = "\
-Usage: terminal-editor [OPTIONS] [FILE]
+Usage: terminal-editor [OPTIONS] [FILE]...
 
 Arguments:
-  [FILE]  File to open; it is created on save if it doesn't exist
+  [FILE]...  Files to open, one buffer each; created on save if missing
 
 Options:
   -h, --help     Print help
@@ -16,14 +16,14 @@ Options:
 /// What the program was asked to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum CliAction {
-    Edit { file: Option<PathBuf> },
+    Edit { files: Vec<PathBuf> },
     PrintHelp,
     PrintVersion,
 }
 
 /// Parses arguments (excluding the program name).
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, String> {
-    let mut file = None;
+    let mut files = Vec::new();
     let mut options_done = false;
 
     for arg in args {
@@ -41,13 +41,10 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Stri
                 _ => {}
             }
         }
-        if file.is_some() {
-            return Err("only one file can be opened at a time (for now)".into());
-        }
-        file = Some(PathBuf::from(arg));
+        files.push(PathBuf::from(arg));
     }
 
-    Ok(CliAction::Edit { file })
+    Ok(CliAction::Edit { files })
 }
 
 #[cfg(test)]
@@ -58,20 +55,20 @@ mod tests {
         parse(args.iter().map(OsString::from))
     }
 
-    fn edit(file: Option<&str>) -> CliAction {
+    fn edit(files: &[&str]) -> CliAction {
         CliAction::Edit {
-            file: file.map(PathBuf::from),
+            files: files.iter().map(PathBuf::from).collect(),
         }
     }
 
     #[test]
     fn no_arguments_opens_scratch() {
-        assert_eq!(parse_strs(&[]), Ok(edit(None)));
+        assert_eq!(parse_strs(&[]), Ok(edit(&[])));
     }
 
     #[test]
     fn single_file() {
-        assert_eq!(parse_strs(&["notes.md"]), Ok(edit(Some("notes.md"))));
+        assert_eq!(parse_strs(&["notes.md"]), Ok(edit(&["notes.md"])));
     }
 
     #[test]
@@ -83,21 +80,18 @@ mod tests {
 
     #[test]
     fn double_dash_allows_dash_prefixed_file_names() {
-        assert_eq!(
-            parse_strs(&["--", "-weird.txt"]),
-            Ok(edit(Some("-weird.txt")))
-        );
-        assert_eq!(parse_strs(&["--", "--help"]), Ok(edit(Some("--help"))));
+        assert_eq!(parse_strs(&["--", "-weird.txt"]), Ok(edit(&["-weird.txt"])));
+        assert_eq!(parse_strs(&["--", "--help"]), Ok(edit(&["--help"])));
     }
 
     #[test]
-    fn rejects_unknown_options_and_extra_files() {
+    fn rejects_unknown_options_and_accepts_many_files() {
         assert!(
             parse_strs(&["--frobnicate"])
                 .unwrap_err()
                 .contains("--frobnicate")
         );
-        assert!(parse_strs(&["a", "b"]).is_err());
+        assert_eq!(parse_strs(&["a", "b"]), Ok(edit(&["a", "b"])));
     }
 
     #[cfg(unix)]
@@ -108,7 +102,7 @@ mod tests {
         assert_eq!(
             parse([raw.clone()]),
             Ok(CliAction::Edit {
-                file: Some(PathBuf::from(raw))
+                files: vec![PathBuf::from(raw)]
             })
         );
     }

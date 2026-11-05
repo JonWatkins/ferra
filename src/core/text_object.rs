@@ -197,7 +197,7 @@ mod tests {
         let b = Buffer::from_text(text);
         Some(match f(&b, at)? {
             Range::Chars { start, end } => b.text_range(start, end),
-            Range::Lines { first, last } => b.lines()[first..=last].join("\n"),
+            Range::Lines { first, last } => b.lines_text(first, last),
         })
     }
 

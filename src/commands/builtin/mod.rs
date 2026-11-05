@@ -3,6 +3,7 @@
 //! Each submodule exposes a `register` function. Command names are
 //! `snake_case` and are the identifiers used in keybinding config.
 
+mod buffers;
 mod command_line;
 mod editing;
 mod files;
@@ -10,6 +11,7 @@ mod history;
 mod modes;
 mod motions;
 mod operators;
+mod picker;
 mod search;
 mod text_objects;
 mod visual;
@@ -23,8 +25,10 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     editing::register(registry);
     history::register(registry);
     files::register(registry);
+    buffers::register(registry);
     visual::register(registry);
     search::register(registry);
+    picker::register(registry);
     modes::register(registry);
     command_line::register(registry);
 }

@@ -18,8 +18,7 @@ pub fn register(r: &mut CommandRegistry) {
 
     r.register("write_quit", "Save the file and quit", |cx| {
         write(cx)?;
-        cx.editor.quit();
-        Ok(())
+        quit(cx)
     });
     r.alias("wq", "write_quit");
 
@@ -27,24 +26,36 @@ pub fn register(r: &mut CommandRegistry) {
         if cx.editor.document.is_modified() || !cx.args.is_empty() {
             write(cx)?;
         }
-        cx.editor.quit();
-        Ok(())
+        quit(cx)
     });
     r.alias("x", "exit");
     r.alias("xit", "exit");
 
     r.register(
         "quit",
-        "Quit, unless there are unsaved changes (! to discard them)",
-        |cx| {
-            if cx.editor.document.is_modified() && !cx.bang {
-                return Err(UNSAVED_CHANGES.into());
-            }
-            cx.editor.quit();
-            Ok(())
-        },
+        "Quit, unless any buffer has unsaved changes (! to discard them)",
+        quit,
     );
     r.alias("q", "quit");
+    r.alias("qa", "quit");
+    r.alias("qall", "quit");
+
+    r.register(
+        "write_all",
+        "Save every buffer with unsaved changes",
+        write_all,
+    );
+    r.alias("wa", "write_all");
+    r.register(
+        "write_all_quit",
+        "Save every buffer with unsaved changes, then quit",
+        |cx| {
+            write_all(cx)?;
+            quit(cx)
+        },
+    );
+    r.alias("wqa", "write_all_quit");
+    r.alias("xa", "write_all_quit");
 
     r.register(
         "force_quit",
@@ -57,24 +68,61 @@ pub fn register(r: &mut CommandRegistry) {
 
     r.register(
         "edit",
-        "Open [path], or reload the current file (! to discard changes)",
+        "Open [path] in a buffer, or reload the current file (! to discard changes)",
         |cx| {
-            let path = match path_arg(cx) {
-                Some(path) => path,
-                None => cx
-                    .editor
-                    .document
-                    .path()
-                    .map(PathBuf::from)
-                    .ok_or("No file name")?,
-            };
+            if let Some(path) = path_arg(cx) {
+                // The current buffer stays open, so nothing is lost.
+                return cx.editor.open(&path).map_err(|e| e.to_string());
+            }
             if cx.editor.document.is_modified() && !cx.bang {
                 return Err(UNSAVED_CHANGES.into());
             }
-            cx.editor.open(&path).map_err(|e| e.to_string())
+            cx.editor.reload().map_err(|e| e.to_string())
         },
     );
     r.alias("e", "edit");
+}
+
+/// Quits unless a buffer has unsaved changes (or `!` was given).
+fn quit(cx: &mut Context) -> CommandResult {
+    if !cx.bang
+        && let Some(doc) = cx.editor.first_modified_buffer()
+    {
+        if doc.id() == cx.editor.document.id() {
+            return Err(UNSAVED_CHANGES.into());
+        }
+        return Err(format!(
+            "No write since last change for buffer {} \"{}\" (add ! to override)",
+            doc.id(),
+            doc.name()
+        ));
+    }
+    cx.editor.quit();
+    Ok(())
+}
+
+/// `:wa`: saves each modified buffer in turn (running its before-save hooks
+/// as the active buffer), then returns to the buffer we started in.
+fn write_all(cx: &mut Context) -> CommandResult {
+    let start = cx.editor.document.id();
+    let mut result = Ok(());
+    for id in cx.editor.modified_buffer_ids() {
+        cx.editor.switch_to(id);
+        let saved = cx
+            .registry
+            .fire(&Event::BeforeSave, cx.editor)
+            .and_then(|()| cx.editor.save(None, cx.bang).map_err(|e| e.to_string()));
+        if let Err(error) = saved {
+            result = Err(format!("Buffer {id}: {error}"));
+            break;
+        }
+    }
+    cx.editor.switch_to(start);
+    if result.is_ok() {
+        cx.editor
+            .set_message(crate::editor::Message::info("All buffers written"));
+    }
+    result
 }
 
 fn write(cx: &mut Context) -> CommandResult {

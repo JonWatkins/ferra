@@ -5,6 +5,7 @@ Vim, Helix and Emacs.
 
 ```sh
 cargo run -- notes.md   # open (or create) a file
+cargo run -- a.rs b.rs  # open several files, one buffer each
 cargo run               # start with an empty scratch buffer
 cargo test              # run all tests
 cargo clippy --all-targets -- -D warnings
@@ -51,6 +52,23 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
 (`ib`), `i{` `a{` (`iB`), `i[` `a[`, `i<` `a<`.
 
+## Buffers and the picker
+
+| Keys / command | Action |
+|----------------|--------|
+| `<Space>b`, `:ls` | Buffer picker (starts on the previous buffer, so `<Space>b<CR>` toggles) |
+| `<Space>p` | Command palette: every command, with its description |
+| `]b` `[b`, `:bn` `:bp` | Next / previous buffer |
+| `:b 2`, `:b name`, `:b #` | Switch by number, part of the name, or to the previous buffer |
+| `:bd` | Close the buffer (`:bd!` discards changes) |
+| `:wa`, `:wqa`, `:qa` | Write all / write all and quit / quit |
+
+In a picker, type to fuzzy-filter, move with `<C-n>`/`<C-p>` (or arrows,
+`<Tab>`), `<CR>` to choose, `<Esc>` to close. Each buffer keeps its own
+cursor, scroll position and undo history. `:e path` opens another buffer
+without closing the current one, and `:q` refuses while *any* buffer has
+unsaved changes.
+
 ## Files
 
 | Command | Action |
@@ -59,7 +77,7 @@ Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
 | `:wq`, `:x`, `ZZ` | Save and quit (`:x`/`ZZ` only write if there are changes) |
 | `:q` | Quit; refuses if there are unsaved changes |
 | `:q!`, `ZQ` | Quit, discarding changes |
-| `:e path` / `:e!` | Open another file / reload the current one, discarding changes |
+| `:e path` / `:e!` | Open a file in a new buffer (or switch to it) / reload the current one |
 
 A trailing `!` overrides safety checks: unsaved changes, a file that changed
 on disk since it was read, or writing over an existing file. Saves are

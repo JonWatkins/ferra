@@ -13,11 +13,13 @@
 
 mod command_line;
 pub mod editor_view;
+mod picker;
 mod statusline;
 mod text;
 
 pub use command_line::CommandLineView;
 pub use editor_view::{EditorView, ViewState};
+pub use picker::PickerView;
 pub use statusline::StatusLine;
 
 use ratatui::{
@@ -54,8 +56,18 @@ pub fn draw(
     frame.render_widget(StatusLine::new(editor, theme, pending), status);
     frame.render_widget(CommandLineView::new(editor, theme), command);
 
-    let cursor = match editor.mode() {
-        Mode::Command => Some(CommandLineView::cursor_position(editor, command)),
+    // The picker popup floats over the editor pane.
+    let popup = editor.picker().filter(|_| editor.mode() == Mode::Picker);
+    if let Some(picker) = popup {
+        let popup_area = PickerView::area(main);
+        frame.render_widget(PickerView::new(picker, theme), popup_area);
+    }
+
+    let cursor = match (editor.mode(), popup) {
+        (Mode::Picker, Some(picker)) => {
+            Some(PickerView::cursor_position(picker, PickerView::area(main)))
+        }
+        (Mode::Command, _) => Some(CommandLineView::cursor_position(editor, command)),
         _ => view.cursor,
     };
     if let Some(position) = cursor {

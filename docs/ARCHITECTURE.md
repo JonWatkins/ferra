@@ -55,6 +55,41 @@ crossterm KeyEvent
 The UI only *reads* state. All mutation goes through commands, apart from
 literal text insertion.
 
+## Text storage
+
+`core::Buffer` wraps a `ropey::Rope`, so inserts, deletes and line lookups
+are O(log n) in the file size. Lines are `\n`-separated (file line endings
+are `TextFormat`'s job). `Buffer::line` returns `Cow<str>`, which is borrowed
+when the line lies in one rope chunk, so the common case doesn't allocate.
+`Buffer` still has only two mutators, `insert_text` and `delete_range`, so
+the switch to a rope didn't touch anything outside `core::buffer`.
+
+## Buffers
+
+`Editor::document` is always the active buffer; the others wait in
+`Editor::background`, least recently used first (`editor/buffers.rs`).
+Switching swaps a background document into place, so the rest of the
+editor only ever deals with "the document". Each `Document` has a
+`DocumentId` (shown from 1), its own cursor and its own undo history. The app
+keeps each buffer's scroll position (`App::other_views`).
+
+`Editor::open` switches to an already-open file (comparing canonical paths)
+or opens a new buffer. A pristine scratch buffer is replaced rather than
+kept, and its number is reused. `:q` and the write-and-quit commands check
+every buffer for unsaved changes. `:wa` saves each modified buffer as the
+active one, so its before-save hooks run.
+
+## Pickers
+
+`editor/picker/` holds the picker state: items with an action
+(`SwitchBuffer` or `RunCommand`), the query, and fuzzy-matched results
+(`fuzzy.rs`, a small dependency-free matcher that favours word starts and
+consecutive runs). `Mode::Picker` has its own `[keys.picker]` table; unbound
+printable keys filter the list. The command palette lists the registry's
+commands, except ones that drive the prompt or picker or need a character.
+`ui/picker.rs` draws the popup over the editor pane, cutting labels (paths)
+from the start and descriptions from the end.
+
 ## Editing model
 
 ### Undo
@@ -270,8 +305,8 @@ Done so far: named commands, runtime keybinding, and event hooks. Still to do:
   `d2w`, `3.` replays as `3d2w` (six words) where Vim deletes three.
 - More operators and commands: `>`/`<`, `gu`/`gU`/`~`, `J`, `N%`.
 - Numbered delete registers `1`-`9` and the small-delete register `-`.
-- Multiple buffers/windows (`Document` → `View` split), so `:e` doesn't
-  replace the only document.
+- Split windows (several views onto buffers at once).
+- A file picker (fuzzy-find files in the project) using the same picker.
 - Asking before overwriting on external changes, and reloading
   automatically when the file changes and there are no local edits.
 - Writing through hard links keeps the old inode's other names pointing at
@@ -280,5 +315,3 @@ Done so far: named commands, runtime keybinding, and event hooks. Still to do:
 - Non-UTF-8 encodings are refused rather than supported.
 - Timeout for ambiguous key sequences such as `jk` in insert mode (Vim's
   `timeoutlen`).
-- Rope-based buffer (e.g. `ropey`) for large files. `Buffer` has only two
-  mutators, so this is a local change.

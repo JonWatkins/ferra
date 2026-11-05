@@ -6,8 +6,8 @@ use terminal_editor::{App, Config, editor::Message};
 fn main() -> color_eyre::Result<ExitCode> {
     color_eyre::install()?;
 
-    let file = match cli::parse(std::env::args_os().skip(1)) {
-        Ok(CliAction::Edit { file }) => file,
+    let files = match cli::parse(std::env::args_os().skip(1)) {
+        Ok(CliAction::Edit { files }) => files,
         Ok(CliAction::PrintHelp) => {
             println!("A modal terminal text editor.\n\n{}", cli::USAGE);
             return Ok(ExitCode::SUCCESS);
@@ -30,9 +30,7 @@ fn main() -> color_eyre::Result<ExitCode> {
     };
 
     let mut app = App::new(config);
-    if let Some(path) = file {
-        app.open(&path);
-    }
+    app.open_all(&files);
     // Shown last so it isn't hidden by the file's "opened" message.
     if let Some(error) = config_error {
         app.editor_mut()

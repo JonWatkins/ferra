@@ -55,9 +55,7 @@ impl Editor {
         let buffer = self.document.buffer();
         let value = match range {
             Range::Chars { start, end } => Register::charwise(buffer.text_range(start, end)),
-            Range::Lines { first, last } => {
-                Register::linewise(buffer.lines()[first..=last].join("\n"))
-            }
+            Range::Lines { first, last } => Register::linewise(buffer.lines_text(first, last)),
         };
 
         // Like Vim, an empty change (e.g. `x` on an empty line) leaves the

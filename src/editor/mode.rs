@@ -17,15 +17,18 @@ pub enum Mode {
     /// Selecting text (`v` characterwise, `V` linewise). The kind of
     /// selection lives on the editor, so both share one keymap and style.
     Visual,
+    /// A picker popup (buffers, commands) has focus.
+    Picker,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 5] = [
+    pub const ALL: [Mode; 6] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
         Mode::OperatorPending,
         Mode::Visual,
+        Mode::Picker,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -36,12 +39,13 @@ impl Mode {
             Mode::Command => "command",
             Mode::OperatorPending => "operator",
             Mode::Visual => "visual",
+            Mode::Picker => "picker",
         }
     }
 
     /// Whether unbound printable keys are typed as text in this mode.
     pub const fn accepts_text(self) -> bool {
-        matches!(self, Mode::Insert | Mode::Command)
+        matches!(self, Mode::Insert | Mode::Command | Mode::Picker)
     }
 
     /// Whether a numeric count prefix (`3j`, `d2w`) can be typed.

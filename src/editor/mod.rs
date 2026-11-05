@@ -3,18 +3,21 @@
 //!
 //! The editor is UI-agnostic. It's mutated by commands and read by the UI.
 
+mod buffers;
 mod command_line;
 mod document;
 mod files;
 mod message;
 mod mode;
 mod operator;
+pub mod picker;
 pub mod registers;
 mod search;
 mod selection;
 
+pub use buffers::BufferInfo;
 pub use command_line::{CommandLine, Prompt};
-pub use document::{Document, OpenInfo, SaveInfo};
+pub use document::{Document, DocumentId, OpenInfo, SaveInfo};
 pub use files::UNSAVED_CHANGES;
 pub use message::{Message, Severity};
 pub use mode::Mode;
@@ -34,7 +37,12 @@ pub struct RepeatRequest {
 
 #[derive(Debug, Default)]
 pub struct Editor {
+    /// The active buffer.
     pub document: Document,
+    /// The other open buffers, least recently used first.
+    background: Vec<Document>,
+    /// The last id handed out; new documents get the next one.
+    last_id: u64,
     pub command_line: CommandLine,
     pub options: EditorOptions,
     pub registers: Registers,
@@ -44,6 +52,8 @@ pub struct Editor {
     pending_operator: Option<PendingOperator>,
     selection: Option<Selection>,
     search: search::SearchState,
+    /// The open picker popup, in picker mode.
+    picker: Option<picker::Picker>,
     /// Set by `.`; the app replays the last change (which only it can do,
     /// since a change is recorded as keys).
     repeat_request: Option<RepeatRequest>,
@@ -102,6 +112,9 @@ impl Editor {
         if mode != Mode::Visual {
             self.end_selection();
         }
+        if mode != Mode::Picker {
+            self.picker = None;
+        }
         self.enforce_cursor_rules();
     }
 
@@ -139,6 +152,11 @@ impl Editor {
                 self.command_line.push(c);
                 self.update_search_preview();
             }
+            Mode::Picker => {
+                if let Some(picker) = &mut self.picker {
+                    picker.push(c);
+                }
+            }
             Mode::Normal | Mode::OperatorPending | Mode::Visual => {}
         }
     }
@@ -153,6 +171,32 @@ impl Editor {
 
     pub fn clear_message(&mut self) {
         self.message = None;
+    }
+
+    /// Opens `picker` as a popup, in picker mode.
+    pub fn open_picker(&mut self, picker: picker::Picker) {
+        self.set_mode(Mode::Picker);
+        self.picker = Some(picker);
+    }
+
+    pub fn picker(&self) -> Option<&picker::Picker> {
+        self.picker.as_ref()
+    }
+
+    pub fn picker_mut(&mut self) -> Option<&mut picker::Picker> {
+        self.picker.as_mut()
+    }
+
+    /// Closes the picker, returning to normal mode, and returns the action
+    /// of the selected item, if any.
+    pub fn accept_picker(&mut self) -> Option<picker::PickerAction> {
+        let action = self
+            .picker
+            .as_ref()
+            .and_then(|p| p.selected_item())
+            .map(|item| item.action.clone());
+        self.set_mode(Mode::Normal);
+        action
     }
 
     /// Queues an event for hooks. The app dispatches queued events after each

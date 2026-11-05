@@ -108,7 +108,7 @@ impl SearchPattern {
                 return None;
             }
 
-            let starts = self.match_starts(buffer.line(row));
+            let starts = self.match_starts(&buffer.line(row));
             let candidate = if step == 0 {
                 if forward {
                     starts.into_iter().find(|&(s, _)| s > from.col)
@@ -191,8 +191,8 @@ mod tests {
     #[test]
     fn smart_case() {
         let b = Buffer::from_text("Foo foo");
-        assert_eq!(pattern("foo").matches_in_line(b.line(0)).len(), 2);
-        assert_eq!(pattern("Foo").matches_in_line(b.line(0)), vec![(0, 3)]);
+        assert_eq!(pattern("foo").matches_in_line(&b.line(0)).len(), 2);
+        assert_eq!(pattern("Foo").matches_in_line(&b.line(0)), vec![(0, 3)]);
     }
 
     #[test]

@@ -8,6 +8,7 @@ color-eyre = "0.6.5"
 crossterm = "0.29.0"
 ratatui = "0.30.2"
 regex = "1.13.1"
+ropey = "1.6.1"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.2.0"
 unicode-width = "0.2.3"

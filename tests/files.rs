@@ -164,21 +164,34 @@ fn write_refuses_to_clobber_unless_forced() {
 }
 
 #[test]
-fn edit_switches_files_and_reloads() {
+fn edit_opens_buffers_and_keeps_unsaved_changes() {
     let ws = Workspace::new();
     let a = ws.file("a.txt", "aaa\n");
     let b = ws.file("b.txt", "bbb\n");
     let mut app = open(&a);
 
+    // Editing another file keeps the modified buffer open in the background.
     keys(&mut app, "x");
     cmd(&mut app, &format!("e {}", b.display()));
-    assert_eq!(message(&app), UNSAVED_CHANGES);
+    assert_eq!(text(&app), "bbb");
+    assert_eq!(app.editor().buffer_count(), 2);
+
+    // Its changes are still there, and still protected by :q.
+    cmd(&mut app, "q");
+    assert!(!app.should_quit());
+    assert!(message(&app).contains("for buffer 1"), "{}", message(&app));
+    cmd(&mut app, "b a.txt");
     assert_eq!(text(&app), "aa");
 
+    // :e reloads the current file, refusing to discard changes without !.
+    cmd(&mut app, "e");
+    assert_eq!(message(&app), UNSAVED_CHANGES);
     cmd(&mut app, "e!");
     assert_eq!(text(&app), "aaa", "e! reloads from disk");
 
+    // Opening an already open file switches to it rather than reopening.
     cmd(&mut app, &format!("e {}", b.display()));
+    assert_eq!(app.editor().buffer_count(), 2);
     assert_eq!(text(&app), "bbb");
 }
 

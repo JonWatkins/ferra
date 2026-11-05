@@ -28,9 +28,41 @@ pub fn truncate_start(text: &str, max_width: usize) -> String {
         .collect()
 }
 
+/// Shortens `text` to at most `max_width` cells by cutting from the end:
+/// `Switch to the next buffer` → `Switch to the…`. For prose, where the
+/// start matters most.
+pub fn truncate_end(text: &str, max_width: usize) -> String {
+    if text.width() <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    let mut kept = String::new();
+    let mut width = 1; // the ellipsis
+    for c in text.chars() {
+        let w = c.width().unwrap_or(0);
+        if width + w > max_width {
+            break;
+        }
+        width += w;
+        kept.push(c);
+    }
+    kept.push(ELLIPSIS);
+    kept
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncate_end_cases() {
+        assert_eq!(truncate_end("short", 10), "short");
+        assert_eq!(truncate_end("abcdefgh", 5), "abcd…");
+        assert_eq!(truncate_end("日本語", 4), "日…");
+        assert_eq!(truncate_end("abc", 0), "");
+    }
 
     #[test]
     fn truncate_start_cases() {

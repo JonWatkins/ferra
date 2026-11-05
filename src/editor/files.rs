@@ -13,8 +13,39 @@ pub const UNSAVED_CHANGES: &str = "No write since last change (add ! to override
 
 impl Editor {
     /// Replaces the current document with the file at `path`.
+    /// Opens the file at `path` in a new buffer, or switches to it if it's
+    /// already open.
     pub fn open(&mut self, path: &Path) -> Result<(), FileError> {
-        let (document, info) = Document::open(path)?;
+        if let Some(id) = self.find_open_path(path) {
+            self.switch_to(id);
+            let name = self.document.name().into_owned();
+            self.set_message(Message::info(format!("\"{name}\"")));
+            return Ok(());
+        }
+        let (mut document, info) = Document::open(path)?;
+        // A file replacing the untouched starting buffer takes its number,
+        // so the first file opened is buffer 1, as in Vim.
+        let id = if self.document.is_pristine_scratch() {
+            self.document.id()
+        } else {
+            self.new_document_id()
+        };
+        document.set_id(id);
+        self.activate(document);
+        self.set_message(Message::info(describe_open(&info)));
+        self.emit(Event::Opened { path: info.path });
+        Ok(())
+    }
+
+    /// Re-reads the active buffer's file, discarding unsaved changes.
+    pub fn reload(&mut self) -> Result<(), FileError> {
+        let path = self
+            .document
+            .path()
+            .ok_or(FileError::NoFileName)?
+            .to_path_buf();
+        let (mut document, info) = Document::open(&path)?;
+        document.set_id(self.document.id());
         self.document = document;
         self.set_mode(Mode::Normal);
         self.set_message(Message::info(describe_open(&info)));

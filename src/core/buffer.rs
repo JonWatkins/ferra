@@ -1,50 +1,59 @@
+use std::borrow::Cow;
+
+use ropey::Rope;
+
 use super::Position;
 
-/// The text being edited, stored as a list of lines (without line endings).
+/// The text being edited, stored in a rope.
 ///
-/// A buffer always contains at least one (possibly empty) line. All mutation
-/// goes through two primitives, [`insert_text`](Self::insert_text) and
-/// [`delete_range`](Self::delete_range), which makes every edit expressible
-/// as an invertible [`Change`](super::Change) for undo.
+/// A rope keeps the text in a balanced tree of chunks, so inserting,
+/// deleting and finding a line are O(log n) in the size of the file, rather
+/// than O(n) as with one string or a list of lines. Lines are separated by
+/// `\n` only (file line endings are handled by [`TextFormat`](super::TextFormat)),
+/// and a buffer always has at least one (possibly empty) line.
+///
+/// All mutation goes through two primitives, [`insert_text`](Self::insert_text)
+/// and [`delete_range`](Self::delete_range), which makes every edit
+/// expressible as an invertible [`Change`](super::Change) for undo.
 ///
 /// Positions passed in must be valid (`row < line_count()`,
 /// `col <= line_len(row)`); keeping them valid is the caller's job.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Buffer {
-    lines: Vec<String>,
-}
-
-impl Default for Buffer {
-    fn default() -> Self {
-        Self {
-            lines: vec![String::new()],
-        }
-    }
+    rope: Rope,
 }
 
 impl Buffer {
-    /// Creates a buffer from a string, splitting on `\n`.
     pub fn from_text(text: &str) -> Self {
         Self {
-            lines: text.split('\n').map(String::from).collect(),
+            rope: Rope::from_str(text),
         }
     }
 
-    pub fn lines(&self) -> &[String] {
-        &self.lines
-    }
-
-    pub fn line(&self, row: usize) -> &str {
-        &self.lines[row]
-    }
-
     pub fn line_count(&self) -> usize {
-        self.lines.len()
+        self.rope.len_lines()
     }
 
-    /// Length of the given line in `char`s.
+    /// Line `row` without its line break. Borrowed when the line lies in a
+    /// single rope chunk (almost always), otherwise copied.
+    pub fn line(&self, row: usize) -> Cow<'_, str> {
+        let slice = self.rope.line(row);
+        let slice = slice.slice(..self.line_len(row));
+        match slice.as_str() {
+            Some(text) => Cow::Borrowed(text),
+            None => Cow::Owned(slice.to_string()),
+        }
+    }
+
+    /// Length of the given line in `char`s, excluding its line break.
     pub fn line_len(&self, row: usize) -> usize {
-        self.lines[row].chars().count()
+        let line = self.rope.line(row);
+        let len = line.len_chars();
+        if len > 0 && line.char(len - 1) == '\n' {
+            len - 1
+        } else {
+            len
+        }
     }
 
     /// The position just past the last character of `row`.
@@ -52,77 +61,59 @@ impl Buffer {
         Position::new(row, self.line_len(row))
     }
 
-    /// Returns the whole buffer joined with `\n`.
+    /// Lines `first..=last` joined with `\n` (no trailing line break).
+    pub fn lines_text(&self, first: usize, last: usize) -> String {
+        self.text_range(Position::new(first, 0), self.line_end(last))
+    }
+
+    /// The whole buffer as one string.
     pub fn text(&self) -> String {
-        self.lines.join("\n")
+        self.rope.to_string()
     }
 
     /// The character at `pos`, or `None` at (or past) the end of the line.
     pub fn char_at(&self, pos: Position) -> Option<char> {
-        self.lines.get(pos.row)?.chars().nth(pos.col)
+        if pos.row >= self.line_count() || pos.col >= self.line_len(pos.row) {
+            return None;
+        }
+        Some(self.rope.char(self.char_index(pos)))
     }
 
     /// The text between `start` (inclusive) and `end` (exclusive).
     pub fn text_range(&self, start: Position, end: Position) -> String {
         debug_assert!(start <= end, "range must be ordered");
-        if start.row == end.row {
-            return char_slice(&self.lines[start.row], start.col, end.col).to_string();
-        }
-        let mut text = char_slice(&self.lines[start.row], start.col, usize::MAX).to_string();
-        for line in &self.lines[start.row + 1..end.row] {
-            text.push('\n');
-            text.push_str(line);
-        }
-        text.push('\n');
-        text.push_str(char_slice(&self.lines[end.row], 0, end.col));
-        text
+        self.rope
+            .slice(self.char_index(start)..self.char_index(end))
+            .to_string()
     }
 
     /// Inserts `text` (which may span lines) at `at`. Returns the position
     /// just after the inserted text.
     pub fn insert_text(&mut self, at: Position, text: &str) -> Position {
-        let line = &mut self.lines[at.row];
-        let tail = line.split_off(byte_index(line, at.col));
-
-        let mut parts = text.split('\n');
-        let first = parts.next().unwrap_or_default();
-        line.push_str(first);
-
-        let rest: Vec<String> = parts.map(String::from).collect();
-        let end = match rest.last() {
-            None => Position::new(at.row, at.col + first.chars().count()),
-            Some(last) => Position::new(at.row + rest.len(), last.chars().count()),
-        };
-        self.lines.splice(at.row + 1..at.row + 1, rest);
-        self.lines[end.row].push_str(&tail);
-        end
+        let index = self.char_index(at);
+        self.rope.insert(index, text);
+        self.position_of(index + text.chars().count())
     }
 
     /// Removes the text between `start` (inclusive) and `end` (exclusive) and
     /// returns it.
     pub fn delete_range(&mut self, start: Position, end: Position) -> String {
-        let removed = self.text_range(start, end);
-        let end_line = &self.lines[end.row];
-        let tail = end_line[byte_index(end_line, end.col)..].to_string();
-
-        let start_line = &mut self.lines[start.row];
-        start_line.truncate(byte_index(start_line, start.col));
-        start_line.push_str(&tail);
-        self.lines.drain(start.row + 1..=end.row);
+        let range = self.char_index(start)..self.char_index(end);
+        let removed = self.rope.slice(range.clone()).to_string();
+        self.rope.remove(range);
         removed
     }
-}
 
-/// Converts a `char` index into a byte index within `s`.
-fn byte_index(s: &str, char_idx: usize) -> usize {
-    s.char_indices()
-        .nth(char_idx)
-        .map_or(s.len(), |(byte, _)| byte)
-}
+    /// Converts a position to an index into the rope's chars.
+    fn char_index(&self, pos: Position) -> usize {
+        self.rope.line_to_char(pos.row) + pos.col
+    }
 
-/// The substring between two `char` indices (clamped to the string).
-fn char_slice(s: &str, from: usize, to: usize) -> &str {
-    &s[byte_index(s, from)..byte_index(s, to)]
+    /// Converts an index into the rope's chars to a position.
+    fn position_of(&self, index: usize) -> Position {
+        let row = self.rope.char_to_line(index);
+        Position::new(row, index - self.rope.line_to_char(row))
+    }
 }
 
 #[cfg(test)]
@@ -133,17 +124,51 @@ mod tests {
         Position::new(row, col)
     }
 
+    fn lines(buffer: &Buffer) -> Vec<String> {
+        (0..buffer.line_count())
+            .map(|row| buffer.line(row).into_owned())
+            .collect()
+    }
+
     #[test]
     fn default_buffer_has_one_empty_line() {
-        assert_eq!(Buffer::default().lines(), &[String::new()]);
+        let buffer = Buffer::default();
+        assert_eq!(lines(&buffer), [""]);
+        assert_eq!(buffer.line_len(0), 0);
+    }
+
+    #[test]
+    fn lines_exclude_line_breaks() {
+        let buffer = Buffer::from_text("ab\n\ncd\n");
+        assert_eq!(lines(&buffer), ["ab", "", "cd", ""]);
+        assert_eq!(buffer.line_len(0), 2);
+        assert_eq!(buffer.line_len(3), 0);
+    }
+
+    #[test]
+    fn line_len_counts_chars() {
+        let buffer = Buffer::from_text("héllo 日本");
+        assert_eq!(buffer.line_len(0), 8);
     }
 
     #[test]
     fn char_at_returns_none_past_end() {
-        let buffer = Buffer::from_text("ab");
+        let buffer = Buffer::from_text("ab\ncd");
         assert_eq!(buffer.char_at(pos(0, 1)), Some('b'));
-        assert_eq!(buffer.char_at(pos(0, 2)), None);
+        assert_eq!(
+            buffer.char_at(pos(0, 2)),
+            None,
+            "the line break isn't a char"
+        );
+        assert_eq!(buffer.char_at(pos(1, 0)), Some('c'));
         assert_eq!(buffer.char_at(pos(5, 0)), None);
+    }
+
+    #[test]
+    fn lines_text_joins_a_range() {
+        let buffer = Buffer::from_text("a\nb\nc");
+        assert_eq!(buffer.lines_text(0, 1), "a\nb");
+        assert_eq!(buffer.lines_text(2, 2), "c");
     }
 
     #[test]
@@ -166,8 +191,16 @@ mod tests {
     fn insert_newline_splits_line() {
         let mut buffer = Buffer::from_text("ab");
         let end = buffer.insert_text(pos(0, 1), "\n");
-        assert_eq!(buffer.lines(), &["a", "b"]);
+        assert_eq!(lines(&buffer), ["a", "b"]);
         assert_eq!(end, pos(1, 0));
+    }
+
+    #[test]
+    fn insert_at_end_of_buffer() {
+        let mut buffer = Buffer::from_text("a");
+        let end = buffer.insert_text(pos(0, 1), "\n");
+        assert_eq!(end, pos(1, 0));
+        assert_eq!(buffer.line_count(), 2);
     }
 
     #[test]
@@ -210,7 +243,7 @@ mod tests {
     fn delete_everything_leaves_one_empty_line() {
         let mut buffer = Buffer::from_text("ab\ncd");
         buffer.delete_range(pos(0, 0), pos(1, 2));
-        assert_eq!(buffer.lines(), &[String::new()]);
+        assert_eq!(lines(&buffer), [""]);
     }
 
     #[test]
@@ -220,5 +253,20 @@ mod tests {
         let end = buffer.insert_text(pos(1, 1), "X\nY\n");
         buffer.delete_range(pos(1, 1), end);
         assert_eq!(buffer, original);
+    }
+
+    #[test]
+    fn large_buffers_stay_fast_to_edit() {
+        // 200k lines: a Vec<String> splice per edit would be noticeably slow;
+        // with a rope this is instant. Mostly a smoke test for big files.
+        let text = "line of text\n".repeat(200_000);
+        let mut buffer = Buffer::from_text(&text);
+        for i in 0..1_000 {
+            let at = pos(i * 100, 0);
+            let end = buffer.insert_text(at, "x\n");
+            buffer.delete_range(at, end);
+        }
+        assert_eq!(buffer.line_count(), 200_001);
+        assert_eq!(buffer.line(199_999), "line of text");
     }
 }

@@ -82,7 +82,7 @@ impl StatefulWidget for EditorView<'_> {
         let [gutter_area, text_area] =
             Layout::horizontal([Constraint::Length(gutter_width), Constraint::Min(0)]).areas(area);
 
-        let cursor_col = line::display_col(text.line(cursor.row), cursor.col);
+        let cursor_col = line::display_col(&text.line(cursor.row), cursor.col);
         let target = ScrollTarget {
             row: cursor.row,
             col: cursor_col,
@@ -121,7 +121,7 @@ impl StatefulWidget for EditorView<'_> {
                 self.theme.get(gutter_scope),
             );
 
-            let line_text = text.line(row);
+            let line_text = &*text.line(row);
             let visible = line::visible_slice(line_text, left, text_area.width as usize);
             buf.set_stringn(
                 text_area.x,

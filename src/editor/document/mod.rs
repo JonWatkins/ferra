@@ -8,6 +8,17 @@ use std::time::SystemTime;
 
 use crate::core::{Buffer, Change, History, Position, Revision, TextFormat};
 
+/// Identifies a document among the editor's open buffers. Shown to users
+/// starting from 1.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DocumentId(pub u64);
+
+impl std::fmt::Display for DocumentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0 + 1)
+    }
+}
+
 /// A buffer, the cursor editing it, its undo history, and the file it
 /// belongs to (if any).
 ///
@@ -17,6 +28,7 @@ use crate::core::{Buffer, Change, History, Position, Revision, TextFormat};
 /// and saving live in the `file` submodule.
 #[derive(Debug, Default, Clone)]
 pub struct Document {
+    id: DocumentId,
     buffer: Buffer,
     cursor: Position,
     /// Column to aim for when moving vertically through shorter lines.
@@ -54,6 +66,24 @@ impl Document {
     /// state counts as unmodified again.
     pub fn is_modified(&self) -> bool {
         self.history.has_pending() || self.history.revision() != self.saved_revision
+    }
+
+    pub fn id(&self) -> DocumentId {
+        self.id
+    }
+
+    /// Gives the document its identity among the editor's buffers.
+    pub(in crate::editor) fn set_id(&mut self, id: DocumentId) {
+        self.id = id;
+    }
+
+    /// An unnamed, unmodified, empty document: nothing would be lost by
+    /// replacing it.
+    pub fn is_pristine_scratch(&self) -> bool {
+        self.path.is_none()
+            && !self.is_modified()
+            && self.buffer.line_count() == 1
+            && self.buffer.line_len(0) == 0
     }
 
     pub fn buffer(&self) -> &Buffer {
@@ -128,7 +158,7 @@ impl Document {
     /// Deletes whole lines `first..=last` (including their line breaks) and
     /// returns their text. Deleting every line leaves one empty line.
     pub fn delete_lines(&mut self, first: usize, last: usize) -> String {
-        let text = self.buffer.lines()[first..=last].join("\n");
+        let text = self.buffer.lines_text(first, last);
         let (start, end) = if last + 1 < self.buffer.line_count() {
             (Position::new(first, 0), Position::new(last + 1, 0))
         } else if first > 0 {
@@ -298,7 +328,7 @@ mod tests {
         assert_eq!(doc.delete_lines(1, 1), "d");
         assert_eq!(doc.buffer().text(), "a");
         assert_eq!(doc.delete_lines(0, 0), "a");
-        assert_eq!(doc.buffer().lines(), &[String::new()]);
+        assert_eq!(doc.buffer().text(), "");
     }
 
     #[test]

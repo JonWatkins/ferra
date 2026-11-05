@@ -27,6 +27,7 @@ wrap = true
 normal = "block"
 insert = "bar"
 command = "bar"
+picker = "bar"
 # While an operator (d, c, y) waits for a motion.
 operator = "underline"
 visual = "block"
@@ -43,6 +44,13 @@ visual = "block"
 "ui.cursorline" = { bg = "#1f2229" }
 "ui.selection" = { bg = "#33467c" }
 "ui.search.match" = { fg = "#16181d", bg = "#e0af68" }
+"ui.popup" = { fg = "#d4d7dd", bg = "#1f2229" }
+"ui.popup.border" = "#4b5263"
+"ui.popup.title" = { fg = "#7aa2f7", modifiers = ["bold"] }
+"ui.popup.prompt" = "#7aa2f7"
+"ui.popup.selected" = { bg = "#33467c" }
+"ui.popup.match" = { fg = "#e0af68", modifiers = ["bold"] }
+"ui.popup.detail" = "#6b7280"
 "ui.linenr" = "#4b5263"
 "ui.linenr.selected" = { fg = "#c9ccd3", modifiers = ["bold"] }
 "ui.statusline" = { fg = "#a0a6b0", bg = "#1f2229" }
@@ -51,6 +59,7 @@ visual = "block"
 "ui.statusline.command" = { fg = "#16181d", bg = "#e0af68", modifiers = ["bold"] }
 "ui.statusline.operator" = { fg = "#16181d", bg = "#7aa2f7", modifiers = ["bold"] }
 "ui.statusline.visual" = { fg = "#16181d", bg = "#bb9af7", modifiers = ["bold"] }
+"ui.statusline.picker" = { fg = "#16181d", bg = "#7dcfff", modifiers = ["bold"] }
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
 "ui.statusline.modified" = { fg = "#e0af68", bg = "#1f2229", modifiers = ["bold"] }
 "ui.command-line" = "#d4d7dd"
@@ -125,6 +134,10 @@ visual = "block"
 "v" = "visual_mode"
 "V" = "visual_line_mode"
 "gv" = "reselect_visual"
+"<Space>b" = "buffer_picker"
+"<Space>p" = "command_palette"
+"]b" = "buffer_next"
+"[b" = "buffer_prev"
 "ZZ" = "exit"
 "ZQ" = "force_quit"
 
@@ -272,6 +285,21 @@ visual = "block"
 "a<lt>" = "around_angle"
 "i>" = "inner_angle"
 "a>" = "around_angle"
+
+# The picker popup (<Space>b buffers, <Space>p commands). Typing filters.
+[keys.picker]
+"<Esc>" = "picker_cancel"
+"<C-c>" = "picker_cancel"
+"<CR>" = "picker_accept"
+"<Down>" = "picker_next"
+"<C-n>" = "picker_next"
+"<C-j>" = "picker_next"
+"<Tab>" = "picker_next"
+"<Up>" = "picker_prev"
+"<C-p>" = "picker_prev"
+"<C-k>" = "picker_prev"
+"<S-Tab>" = "picker_prev"
+"<BS>" = "picker_backspace"
 
 [keys.insert]
 "<Esc>" = "normal_mode"

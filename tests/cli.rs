@@ -20,7 +20,7 @@ fn help_prints_usage() {
     let (code, stdout, _) = run(&["--help"]);
     assert_eq!(code, 0);
     assert!(
-        stdout.contains("Usage: terminal-editor [OPTIONS] [FILE]"),
+        stdout.contains("Usage: terminal-editor [OPTIONS] [FILE]..."),
         "{stdout}"
     );
 }

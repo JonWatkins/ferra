@@ -76,6 +76,7 @@ pub struct CursorShapes {
     pub command: CursorShape,
     pub operator: CursorShape,
     pub visual: CursorShape,
+    pub picker: CursorShape,
 }
 
 impl CursorShapes {
@@ -86,6 +87,7 @@ impl CursorShapes {
             Mode::Command => self.command,
             Mode::OperatorPending => self.operator,
             Mode::Visual => self.visual,
+            Mode::Picker => self.picker,
         }
     }
 }
@@ -102,6 +104,7 @@ mod tests {
             command: CursorShape::Underline,
             operator: CursorShape::Block,
             visual: CursorShape::Block,
+            picker: CursorShape::Bar,
         };
         assert_eq!(shapes.for_mode(Mode::Insert), CursorShape::Bar);
         assert_eq!(shapes.for_mode(Mode::Command), CursorShape::Underline);

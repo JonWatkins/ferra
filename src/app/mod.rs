@@ -4,6 +4,8 @@
 mod repeat;
 mod terminal;
 
+use std::collections::HashMap;
+
 use repeat::ChangeRecorder;
 
 use crossterm::event::{self, Event};
@@ -11,7 +13,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::commands::{CommandRegistry, Invocation};
 use crate::config::{Config, Theme};
-use crate::editor::{Editor, Message, Mode};
+use crate::editor::{DocumentId, Editor, Message, Mode};
 use crate::events;
 use crate::input::{InputHandler, KeyPress, Keymap, Outcome};
 use crate::ui::{self, ViewState};
@@ -23,6 +25,10 @@ pub struct App {
     theme: Theme,
     input: InputHandler,
     view: ViewState,
+    /// Scroll state of buffers that aren't shown, so switching back to one
+    /// keeps its place.
+    other_views: HashMap<DocumentId, ViewState>,
+    view_document: DocumentId,
     changes: ChangeRecorder,
     /// True while `.` feeds the last change back in, so it isn't re-recorded.
     replaying: bool,
@@ -54,6 +60,8 @@ impl App {
             theme: config.theme,
             input: InputHandler::default(),
             view: ViewState::default(),
+            other_views: HashMap::new(),
+            view_document: DocumentId::default(),
             changes: ChangeRecorder::default(),
             replaying: false,
         };
@@ -97,8 +105,20 @@ impl App {
         &mut self.commands
     }
 
-    /// Opens a file at startup, reporting any failure on the message line
-    /// (the editor still starts, with an empty scratch document).
+    /// Opens files at startup, one buffer each, showing the first.
+    pub fn open_all(&mut self, paths: &[std::path::PathBuf]) {
+        let mut first = None;
+        for path in paths {
+            self.open(path);
+            first.get_or_insert(self.editor.document.id());
+        }
+        if let Some(id) = first {
+            self.editor.switch_to(id);
+        }
+    }
+
+    /// Opens a file, reporting any failure on the message line (the editor
+    /// carries on with whatever buffer it had).
     pub fn open(&mut self, path: &std::path::Path) {
         if let Err(error) = self.editor.open(path) {
             self.editor.set_message(Message::error(error.to_string()));
@@ -136,6 +156,14 @@ impl App {
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
+        let shown = self.editor.document.id();
+        if shown != self.view_document {
+            let previous = std::mem::take(&mut self.view);
+            self.other_views.insert(self.view_document, previous);
+            self.view = self.other_views.remove(&shown).unwrap_or_default();
+            self.view_document = shown;
+        }
+
         let pending = self.input.pending_display();
         ui::draw(frame, &self.editor, &self.theme, &mut self.view, &pending);
     }
@@ -155,7 +183,8 @@ impl App {
         }
         self.changes.push(key);
         self.process_key(key);
-        if self.editor.mode() == Mode::Command {
+        // `:` commands and picker choices aren't repeated by `.`.
+        if matches!(self.editor.mode(), Mode::Command | Mode::Picker) {
             self.changes.note_command_line();
         }
         if self.is_idle() {
