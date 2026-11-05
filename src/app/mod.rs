@@ -1,0 +1,125 @@
+//! Application wiring: owns the editor, commands, keymap and UI state, and
+//! runs the event loop.
+
+mod terminal;
+
+use crossterm::event::{self, Event};
+use ratatui::{DefaultTerminal, Frame};
+
+use crate::commands::CommandRegistry;
+use crate::config::{Config, Theme};
+use crate::editor::{Editor, Message};
+use crate::input::{InputHandler, KeyPress, Keymap, Outcome};
+use crate::ui::{self, ViewState};
+
+pub struct App {
+    editor: Editor,
+    commands: CommandRegistry,
+    keymap: Keymap,
+    theme: Theme,
+    input: InputHandler,
+    view: ViewState,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self::new(Config::default())
+    }
+}
+
+impl App {
+    pub fn new(config: Config) -> Self {
+        let mut app = Self {
+            editor: Editor::new(config.editor),
+            commands: CommandRegistry::with_builtins(),
+            keymap: config.keys,
+            theme: config.theme,
+            input: InputHandler::default(),
+            view: ViewState::default(),
+        };
+        app.validate_keymap();
+        app
+    }
+
+    /// Warns about bindings to commands that don't exist (usually typos).
+    fn validate_keymap(&mut self) {
+        let mut unknown: Vec<String> = self
+            .keymap
+            .bound_commands()
+            .into_iter()
+            .filter(|(_, command)| !self.commands.contains(command))
+            .map(|(mode, command)| format!("{command} ({})", mode.id()))
+            .collect();
+        if !unknown.is_empty() {
+            unknown.sort();
+            let text = format!("Keymap references unknown commands: {}", unknown.join(", "));
+            self.editor.set_message(Message::error(text));
+        }
+    }
+
+    pub fn editor(&self) -> &Editor {
+        &self.editor
+    }
+
+    pub fn editor_mut(&mut self) -> &mut Editor {
+        &mut self.editor
+    }
+
+    pub fn commands_mut(&mut self) -> &mut CommandRegistry {
+        &mut self.commands
+    }
+
+    pub fn should_quit(&self) -> bool {
+        self.editor.should_quit()
+    }
+
+    /// Runs the event loop until the user quits.
+    pub fn run(mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+        let mut shape = None;
+        while !self.should_quit() {
+            terminal.draw(|frame| self.draw(frame))?;
+
+            let wanted = self
+                .editor
+                .options
+                .cursor_shape
+                .for_mode(self.editor.mode());
+            if shape != Some(wanted) {
+                terminal::set_cursor_shape(wanted)?;
+                shape = Some(wanted);
+            }
+
+            if let Event::Key(event) = event::read()?
+                && let Some(key) = KeyPress::from_event(event)
+            {
+                self.handle_key(key);
+            }
+        }
+        terminal::restore_cursor_shape()
+    }
+
+    pub fn draw(&mut self, frame: &mut Frame) {
+        let pending = self.input.pending_display();
+        ui::draw(frame, &self.editor, &self.theme, &mut self.view, &pending);
+    }
+
+    /// Handles one key press. Public so tests can drive the app directly.
+    pub fn handle_key(&mut self, key: KeyPress) {
+        for outcome in self.input.handle(key, self.editor.mode(), &self.keymap) {
+            match outcome {
+                Outcome::Execute { command, count } => self.execute(&command, count),
+                Outcome::InsertChar(c) => self.editor.insert_text_char(c),
+                Outcome::Pending | Outcome::Unbound => {}
+            }
+        }
+    }
+
+    /// Runs a named command, reporting failures on the message line.
+    pub fn execute(&mut self, command: &str, count: Option<usize>) {
+        self.editor.clear_message();
+        if let Err(error) = self.commands.execute(command, &mut self.editor, count, &[]) {
+            self.editor.set_message(Message::error(error));
+        }
+        self.editor.enforce_cursor_rules();
+    }
+}

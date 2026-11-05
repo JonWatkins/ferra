@@ -1,0 +1,93 @@
+# Default configuration.
+#
+# This file is embedded in the binary. Your own config file (see README) is
+# merged on top of it, so you only need to specify what you want to change.
+
+[editor]
+# Spaces inserted by <Tab>.
+tab-width = 4
+# "absolute", "relative" (hybrid: current line shows its absolute number) or "none".
+line-numbers = "relative"
+# Highlight the line the cursor is on.
+cursorline = true
+# Minimum lines kept visible above/below the cursor when scrolling.
+scroll-off = 5
+
+[editor.cursor-shape]
+# "block", "bar" or "underline".
+normal = "block"
+insert = "bar"
+command = "bar"
+
+# Theme styles are keyed by scope. Lookups fall back to the parent scope, so
+# "ui.linenr.selected" falls back to "ui.linenr".
+#
+# A style is either a foreground colour string, or a table with optional
+# `fg`, `bg` and `modifiers` (bold, italic, dim, underlined, reversed, crossed_out).
+# Colours may be hex ("#rrggbb"), names ("red", "lightblue") or indices ("42").
+[theme]
+"ui.background" = { bg = "#16181d" }
+"ui.text" = "#d4d7dd"
+"ui.cursorline" = { bg = "#1f2229" }
+"ui.linenr" = "#4b5263"
+"ui.linenr.selected" = { fg = "#c9ccd3", modifiers = ["bold"] }
+"ui.statusline" = { fg = "#a0a6b0", bg = "#1f2229" }
+"ui.statusline.normal" = { fg = "#16181d", bg = "#7aa2f7", modifiers = ["bold"] }
+"ui.statusline.insert" = { fg = "#16181d", bg = "#9ece6a", modifiers = ["bold"] }
+"ui.statusline.command" = { fg = "#16181d", bg = "#e0af68", modifiers = ["bold"] }
+"ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
+"ui.command-line" = "#d4d7dd"
+"ui.message.info" = "#a0a6b0"
+"ui.message.error" = { fg = "#f7768e", modifiers = ["bold"] }
+
+# Keybindings: "<keys>" = "<command name>". Bind to "" to remove a default.
+# Notation: "x", "gg", "<C-x>", "<A-x>", "<S-Tab>", "<Esc>", "<CR>", "<BS>",
+# "<Del>", "<Tab>", "<Space>", "<lt>", "<Left>", "<Home>", "<PageUp>", "<F1>".
+[keys.normal]
+"h" = "move_left"
+"j" = "move_down"
+"k" = "move_up"
+"l" = "move_right"
+"<Left>" = "move_left"
+"<Down>" = "move_down"
+"<Up>" = "move_up"
+"<Right>" = "move_right"
+"w" = "move_word_forward"
+"b" = "move_word_backward"
+"e" = "move_word_end"
+"0" = "goto_line_start"
+"^" = "goto_first_non_blank"
+"$" = "goto_line_end"
+"<Home>" = "goto_line_start"
+"<End>" = "goto_line_end"
+"gg" = "goto_file_start"
+"G" = "goto_file_end"
+"i" = "insert_mode"
+"a" = "append_mode"
+"I" = "insert_at_line_start"
+"A" = "append_at_line_end"
+"o" = "open_line_below"
+"O" = "open_line_above"
+"x" = "delete_char"
+"<Del>" = "delete_char"
+"dd" = "delete_line"
+":" = "command_mode"
+
+[keys.insert]
+"<Esc>" = "normal_mode"
+"<CR>" = "insert_newline"
+"<Tab>" = "insert_tab"
+"<BS>" = "delete_char_backward"
+"<Del>" = "delete_char_forward"
+"<Left>" = "move_left"
+"<Down>" = "move_down"
+"<Up>" = "move_up"
+"<Right>" = "move_right"
+"<Home>" = "goto_line_start"
+"<End>" = "goto_line_end"
+
+[keys.command]
+"<Esc>" = "command_line_cancel"
+"<C-c>" = "command_line_cancel"
+"<CR>" = "command_line_execute"
+"<BS>" = "command_line_backspace"
