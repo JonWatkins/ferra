@@ -118,6 +118,7 @@ impl Widget for PickerView<'_> {
                 &item.label,
                 &found.positions,
                 &item.detail,
+                picker.keeps_label_start(),
                 self.theme,
             );
         }
@@ -125,13 +126,15 @@ impl Widget for PickerView<'_> {
 }
 
 /// Draws one row: the label (matched letters highlighted, shortened from
-/// the left if needed) and the detail right-aligned.
+/// the left if needed, or the right with `keep_start`) and the detail
+/// right-aligned.
 fn render_item(
     buf: &mut Buffer,
     area: Rect,
     label: &str,
     positions: &[usize],
     detail: &str,
+    keep_start: bool,
     theme: &Theme,
 ) {
     // One cell of padding each side, and two between label and detail.
@@ -148,19 +151,33 @@ fn render_item(
         (room.saturating_sub(detail_room + gap), detail_room)
     };
     // Labels (often paths) are cut from the start, descriptions at the end.
-    let shown = truncate_start(label, label_room);
+    let shown = if keep_start {
+        truncate_end(label, label_room)
+    } else {
+        truncate_start(label, label_room)
+    };
     let detail = truncate_end(detail, detail_room);
+    let shortened = shown != label;
 
-    // If the label was shortened, its first char is an ellipsis standing in
-    // for `cut` chars; shift the match positions to suit.
-    let cut = label.chars().count() + usize::from(shown != label) - shown.chars().count();
+    // If the label lost its start, its first char is an ellipsis standing
+    // in for `cut` chars; shift the match positions to suit.
+    let cut = if keep_start || !shortened {
+        0
+    } else {
+        label.chars().count() + 1 - shown.chars().count()
+    };
+    let ellipsis_at = match (shortened, keep_start) {
+        (false, _) => None,
+        (true, true) => Some(shown.chars().count() - 1),
+        (true, false) => Some(0),
+    };
     let match_style = theme.get("ui.popup.match");
     let spans: Vec<Span> = shown
         .chars()
         .enumerate()
         .map(|(i, c)| {
             let original = i + cut;
-            let matched = (i > 0 || cut == 0) && positions.contains(&original);
+            let matched = ellipsis_at != Some(i) && positions.contains(&original);
             let style = if matched {
                 match_style
             } else {
@@ -240,6 +257,18 @@ mod tests {
         assert!(rows[3].contains("…"), "{:?}", rows[3]);
         assert!(rows[3].contains("file.rs"), "{:?}", rows[3]);
         assert!(rows[3].contains("#1"), "{:?}", rows[3]);
+    }
+
+    #[test]
+    fn some_pickers_keep_the_start_of_long_labels() {
+        let picker = Picker::new(
+            "Registers",
+            vec![item("\"a  some long text that will not fit", "1 line")],
+        )
+        .keep_label_start();
+        let rows = render(&picker, 24, 6);
+        assert!(rows[3].contains("\"a  some"), "{:?}", rows[3]);
+        assert!(rows[3].contains("…"), "{:?}", rows[3]);
     }
 
     #[test]

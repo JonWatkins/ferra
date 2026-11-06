@@ -36,6 +36,7 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `x` `X` `D` `C` `s` `S` `Y` | Shortcuts (`dl` `dh` `d$` `c$` `cl` `cc` `yy`) |
 | Normal  | `p` `P` | Paste after / before |
 | Normal  | `"a` (prefix) | Use register `a` (`"ayy`, `"ap`; `"A` appends, `"_` discards, `"0` last yank) |
+| Normal  | `"/`, `":`, `"%` | Read-only registers: the last search, the last `:` command, the file name (`"%p`) |
 | Normal  | `"1`-`"9`, `"-` | Recent deletes of a line or more (`"1` newest), and the last delete within a line. `"1p` then `.` pastes `"2`, `"3`... |
 | Normal  | `u` `<C-r>` | Undo / redo |
 | Normal  | `.` | Repeat the last change (`3.` replaces its count) |
@@ -117,6 +118,7 @@ lines.
 | `<Space>b`, `:ls` | Buffer picker (starts on the previous buffer, so `<Space>b<CR>` toggles) |
 | `<Space>f`, `:files [dir]` | File picker: fuzzy-find a file under the current directory (respects `.gitignore`) |
 | `<Space>p` | Command palette: every command, with its description |
+| `<Space>r`, `:reg` | Register picker: what each register holds; choosing one pastes it after the cursor |
 | `]b` `[b`, `:bn` `:bp` | Next / previous buffer |
 | `:b 2`, `:b name`, `:b #` | Switch by number, part of the name, or to the previous buffer |
 | `:bd` | Close the buffer (`:bd!` discards changes) |

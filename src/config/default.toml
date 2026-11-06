@@ -200,6 +200,7 @@ visual = "block"
 "<Space>b" = "buffer_picker"
 "<Space>p" = "command_palette"
 "<Space>f" = "file_picker"
+"<Space>r" = "register_picker"
 "<C-w>s" = "split_horizontal"
 "<C-w>v" = "split_vertical"
 "<C-w>w" = "window_next"
@@ -381,7 +382,8 @@ visual = "block"
 "i>" = "inner_angle"
 "a>" = "around_angle"
 
-# The picker popup (<Space>b buffers, <Space>p commands). Typing filters.
+# The picker popup (<Space>b buffers, <Space>f files, <Space>p commands,
+# <Space>r registers). Typing filters.
 [keys.picker]
 "<Esc>" = "picker_cancel"
 "<C-c>" = "picker_cancel"

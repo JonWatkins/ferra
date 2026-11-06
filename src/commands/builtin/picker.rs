@@ -1,5 +1,5 @@
-//! Picker popups: the buffer list and the command palette, plus the
-//! commands that drive an open picker.
+//! Picker popups: buffers, files, the command palette and registers, plus
+//! the commands that drive an open picker.
 
 use crate::commands::{ArgCompletion, CommandRegistry, Invocation};
 use std::path::PathBuf;
@@ -104,6 +104,31 @@ pub fn register(r: &mut CommandRegistry) {
         Ok(())
     });
 
+    r.register(
+        "register_picker",
+        "List the registers; choosing one pastes it",
+        |cx| {
+            let items: Vec<PickerItem> = cx
+                .editor
+                .register_entries()
+                .into_iter()
+                .map(|(name, value)| PickerItem {
+                    label: format!("\"{name}  {}", register_preview(&value.text)),
+                    detail: register_detail(&value),
+                    action: PickerAction::Paste(name),
+                })
+                .collect();
+            if items.is_empty() {
+                return Err("All registers are empty".into());
+            }
+            cx.editor
+                .open_picker(Picker::new("Registers", items).keep_label_start());
+            Ok(())
+        },
+    );
+    r.alias("registers", "register_picker");
+    r.alias("reg", "register_picker");
+
     r.register("picker_next", "Select the next picker item", |cx| {
         if let Some(picker) = cx.editor.picker_mut() {
             picker.move_selection(1);
@@ -145,9 +170,49 @@ pub fn register(r: &mut CommandRegistry) {
             Some(PickerAction::RunCommand(name)) => {
                 cx.registry.execute(&name, cx.editor, Invocation::default())
             }
+            Some(PickerAction::Paste(register)) => {
+                let invocation = Invocation {
+                    register: Some(register),
+                    ..Invocation::default()
+                };
+                cx.registry.execute("paste_after", cx.editor, invocation)
+            }
             None => Ok(()),
         },
     );
+}
+
+/// Longest register preview shown, in characters.
+const PREVIEW_CHARS: usize = 60;
+
+/// One line of a register's text: line breaks shown as `⏎`, tabs as
+/// spaces, cut short with `…`.
+fn register_preview(text: &str) -> String {
+    let flat: String = text
+        .chars()
+        .map(|c| match c {
+            '\n' => '⏎',
+            '\t' => ' ',
+            c if c.is_control() => '?',
+            c => c,
+        })
+        .collect();
+    if flat.chars().count() > PREVIEW_CHARS {
+        flat.chars().take(PREVIEW_CHARS - 1).chain(['…']).collect()
+    } else {
+        flat
+    }
+}
+
+/// `3 lines` for linewise text; nothing for a piece of a line.
+fn register_detail(value: &crate::editor::Register) -> String {
+    if !value.linewise {
+        return String::new();
+    }
+    match value.text.lines().count().max(1) {
+        1 => "1 line".into(),
+        n => format!("{n} lines"),
+    }
 }
 
 #[cfg(test)]
@@ -299,5 +364,42 @@ mod tests {
         type_text(&mut e, "no command looks like this");
         run(&mut e, "picker_accept", None);
         assert_eq!(e.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn register_previews_fit_on_one_line() {
+        use super::{PREVIEW_CHARS, register_preview};
+        assert_eq!(register_preview("a\n\tb"), "a⏎ b");
+        let long = "x".repeat(100);
+        let preview = register_preview(&long);
+        assert_eq!(preview.chars().count(), PREVIEW_CHARS);
+        assert!(preview.ends_with('…'));
+    }
+
+    #[test]
+    fn register_picker_lists_filled_registers_and_pastes_the_choice() {
+        use crate::editor::Register;
+        use crate::editor::registers::StoreKind;
+        let mut e = Editor::with_document(crate::editor::Document::with_text("x"));
+        assert_eq!(
+            crate::commands::CommandRegistry::with_builtins()
+                .execute("register_picker", &mut e, Default::default())
+                .unwrap_err(),
+            "All registers are empty"
+        );
+        e.registers
+            .store(Some('b'), Register::linewise("one\ntwo"), StoreKind::Yank)
+            .unwrap();
+        run(&mut e, "register_picker", None);
+        assert_eq!(labels(&e), ["\"\"  one⏎two", "\"b  one⏎two"]);
+        assert_eq!(
+            e.picker().unwrap().selected_item().unwrap().detail,
+            "2 lines"
+        );
+
+        type_text(&mut e, "b");
+        run(&mut e, "picker_accept", None);
+        assert_eq!(e.mode(), Mode::Normal);
+        assert_eq!(e.document.buffer().text(), "x\none\ntwo");
     }
 }

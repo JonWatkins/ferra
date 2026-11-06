@@ -1,4 +1,5 @@
-//! The picker: a filterable list shown in a popup (buffers, commands).
+//! The picker: a filterable list shown in a popup (buffers, files,
+//! commands, registers).
 //!
 //! The picker only holds state; the commands in `commands/builtin/picker.rs`
 //! fill it and act on the chosen item, and `ui/picker.rs` draws it.
@@ -17,6 +18,8 @@ pub enum PickerAction {
     SwitchBuffer(DocumentId),
     RunCommand(String),
     OpenFile(PathBuf),
+    /// Paste from this register after the cursor.
+    Paste(char),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +48,9 @@ pub struct Picker {
     query: String,
     matches: Vec<PickerMatch>,
     selected: usize,
+    /// Long labels lose their end rather than their start (the default,
+    /// which suits paths).
+    keep_label_start: bool,
 }
 
 impl Picker {
@@ -55,6 +61,7 @@ impl Picker {
             query: String::new(),
             matches: Vec::new(),
             selected: 0,
+            keep_label_start: false,
         };
         picker.refilter();
         picker
@@ -71,6 +78,17 @@ impl Picker {
             self.selected = i;
         }
         self
+    }
+
+    /// Shortens long labels at the end, for labels whose start matters
+    /// most (`"a  text...`).
+    pub fn keep_label_start(mut self) -> Self {
+        self.keep_label_start = true;
+        self
+    }
+
+    pub fn keeps_label_start(&self) -> bool {
+        self.keep_label_start
     }
 
     pub fn title(&self) -> &str {

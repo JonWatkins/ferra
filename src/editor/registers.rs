@@ -10,6 +10,7 @@
 //! | `-`      | The last delete within one line. |
 //! | `_`      | Black hole. Writes are discarded. |
 //! | `+`, `*` | The system clipboard (both the same here). |
+//! | `/`, `:`, `%` | Read-only: the last search, the last `:` command, the file name. |
 
 use std::collections::HashMap;
 use std::fmt;
@@ -24,6 +25,12 @@ pub const SMALL_DELETE: char = '-';
 pub const BLACK_HOLE: char = '_';
 pub const CLIPBOARD: char = '+';
 pub const SELECTION: char = '*';
+pub const LAST_SEARCH: char = '/';
+pub const LAST_COMMAND: char = ':';
+pub const FILE_NAME: char = '%';
+
+/// Register names in the order `:registers` lists them.
+const LISTED: &str = "\"0123456789abcdefghijklmnopqrstuvwxyz-+";
 
 /// How the system clipboard is used (`clipboard` in `[editor]`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -230,6 +237,15 @@ impl Registers {
         Ok(())
     }
 
+    /// Every register holding text, in display order. `"+` is the last text
+    /// stored there, not read from the system clipboard.
+    pub fn entries(&self) -> Vec<(char, &Register)> {
+        LISTED
+            .chars()
+            .filter_map(|name| Some((name, self.registers.get(&name)?)))
+            .collect()
+    }
+
     /// Puts `value` in `1`, moving `1`-`8` down one; `9` falls off.
     fn shift_numbered(&mut self, value: Register) {
         for n in (b'1'..b'9').rev() {
@@ -238,6 +254,57 @@ impl Registers {
             }
         }
         self.registers.insert('1', value);
+    }
+}
+
+impl super::Editor {
+    /// Reads register `name` for pasting, including the read-only ones
+    /// that come from elsewhere in the editor (`/`, `:`, `%`).
+    pub fn read_register(&mut self, name: Option<char>) -> Result<Option<Register>, String> {
+        Ok(match name {
+            Some(LAST_SEARCH) => self
+                .last_search_pattern()
+                .map(|p| Register::charwise(p.source())),
+            Some(LAST_COMMAND) => self.command_line.last_command().map(Register::charwise),
+            Some(FILE_NAME) => self
+                .document
+                .path()
+                .map(|path| Register::charwise(path.to_string_lossy())),
+            _ => return self.registers.read(name),
+        })
+    }
+
+    /// Every register with text, for `:registers`: the read-only ones after
+    /// the rest.
+    pub fn register_entries(&self) -> Vec<(char, Register)> {
+        let mut entries: Vec<(char, Register)> = self
+            .registers
+            .entries()
+            .into_iter()
+            .map(|(name, value)| (name, value.clone()))
+            .collect();
+        let read_only = [
+            (
+                LAST_SEARCH,
+                self.last_search_pattern().map(|p| p.source().to_string()),
+            ),
+            (
+                LAST_COMMAND,
+                self.command_line.last_command().map(str::to_string),
+            ),
+            (
+                FILE_NAME,
+                self.document
+                    .path()
+                    .map(|p| p.to_string_lossy().into_owned()),
+            ),
+        ];
+        for (name, text) in read_only {
+            if let Some(text) = text {
+                entries.push((name, Register::charwise(text)));
+            }
+        }
+        entries
     }
 }
 

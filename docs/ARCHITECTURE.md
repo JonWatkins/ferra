@@ -121,13 +121,21 @@ lines.
 ## Pickers
 
 `editor/picker/` holds the picker state: items with an action
-(`SwitchBuffer` or `RunCommand`), the query, and fuzzy-matched results
+(`SwitchBuffer`, `OpenFile`, `RunCommand` or `Paste`), the query, and fuzzy-matched results
 (`fuzzy.rs`, a small dependency-free matcher that favours word starts and
 consecutive runs). `Mode::Picker` has its own `[keys.picker]` table; unbound
 printable keys filter the list. The command palette lists the registry's
 commands, except ones that drive the prompt or picker or need a character.
 `ui/picker.rs` draws the popup over the editor pane, cutting labels (paths)
-from the start and descriptions from the end.
+from the start and descriptions from the end. A picker built with
+`keep_label_start` cuts labels at the end instead: the register picker's
+labels start with the register name and a one-line preview of its text,
+so typing filters by either.
+
+The read-only registers `"/`, `":` and `"%` live elsewhere in the editor
+(the last search, command-line history, the document's path), so
+`Editor::read_register` answers them before falling back to `Registers`;
+pastes and the register picker go through it.
 
 The file picker lists files with `files::list_files`, which uses the `ignore`
 crate (ripgrep's walker): `.gitignore`, `.ignore` and git excludes are
@@ -522,7 +530,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
   brackets only.
 - `N%`, `gJ` (join without spaces), and `.` repeating a visual operation on
   the same amount of text, as Vim does.
-- `:registers` to list what's in each register.
+- The `".` register (the last inserted text) and `"=` (the expression
+  register).
 - Resizing windows (`<C-w>+`, `<C-w>>`, `<C-w>=`) and moving them around.
 - Window-local options, and a statusline per window.
 - File listing runs on the UI thread. It's capped by `max-files`, but very

@@ -115,8 +115,7 @@ fn operate_on_lines(cx: &mut Context, operator: Operator) -> CommandResult {
 fn paste(cx: &mut Context, after: bool) -> CommandResult {
     let register = cx
         .editor
-        .registers
-        .read(cx.register)?
+        .read_register(cx.register)?
         .ok_or("Nothing to paste: register is empty")?;
     if cx.editor.mode() == Mode::Visual {
         return visual::replace_selection(cx, register, after);
