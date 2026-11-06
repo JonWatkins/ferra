@@ -36,7 +36,7 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `x` `X` `D` `C` `s` `S` `Y` | Shortcuts (`dl` `dh` `d$` `c$` `cl` `cc` `yy`) |
 | Normal  | `p` `P` | Paste after / before |
 | Normal  | `"a` (prefix) | Use register `a` (`"ayy`, `"ap`; `"A` appends, `"_` discards, `"0` last yank) |
-| Normal  | `"/`, `":`, `"%` | Read-only registers: the last search, the last `:` command, the file name (`"%p`) |
+| Normal  | `"/`, `":`, `"%`, `".` | Read-only registers: the last search, the last `:` command, the file name (`"%p`), the last inserted text |
 | Normal  | `"1`-`"9`, `"-` | Recent deletes of a line or more (`"1` newest), and the last delete within a line. `"1p` then `.` pastes `"2`, `"3`... |
 | Normal  | `u` `<C-r>` | Undo / redo |
 | Normal  | `.` | Repeat the last change (`3.` replaces its counts: after `d2w`, deletes three words; later `.` keep the 3) |
@@ -67,6 +67,7 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `:` | Command line |
 | Normal  | `3j`, `2dd`, `3u`, ... | Counts work with every command |
 | Insert  | `<Esc>` | Back to normal mode |
+| Insert  | `<C-r>{register}` | Insert a register's text (`<C-r>"` the last yank, `<C-r>.` the last insert, `<C-r>+` the clipboard) |
 | Command | `<CR>` / `<Esc>` | Run / cancel |
 
 Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
@@ -93,6 +94,7 @@ The `:` and `/`/`?` prompts support:
 | `<Up>` `<Down>` (`<C-p>` `<C-n>`) | History, matching what you've typed (`:e<Up>` recalls earlier `:e` commands). Separate for `:` and searches |
 | `<Left>` `<Right>`, `<Home>` `<End>` (`<C-b>` `<C-e>`) | Move the cursor |
 | `<Del>`, `<C-w>`, `<C-u>` | Delete a character / the word before the cursor / everything before it |
+| `<C-r>{register}` | Insert a register's first line (`/<C-r>"` searches for what you yanked) |
 
 ## Substitute and ranges
 

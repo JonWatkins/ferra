@@ -287,6 +287,7 @@ impl App {
                     doc.set_cursor(cursor.with_col(0));
                 }
                 doc.insert_str(&text);
+                self.editor.note_typed(&text);
             }
             Mode::Command | Mode::Picker => {
                 let first_line = text.lines().next().unwrap_or_default();

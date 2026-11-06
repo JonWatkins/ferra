@@ -1,7 +1,7 @@
 //! Insert-mode editing and line opening. Operator-based edits (`x`, `dd`,
 //! `cw`, ...) live in `operators.rs`.
 
-use crate::commands::CommandRegistry;
+use crate::commands::{CommandRegistry, CommandResult, Context};
 use crate::core::{Position, Range};
 use crate::editor::CaseChange;
 use crate::editor::Mode;
@@ -14,12 +14,14 @@ pub fn register(r: &mut CommandRegistry) {
             let cursor = cx.editor.document.cursor();
             let indent = cx.editor.indent_for_new_line(cursor.row, cursor.col);
             cx.editor.document.insert_str(&format!("\n{indent}"));
+            cx.editor.note_typed("\n");
             Ok(())
         },
     );
     r.register("insert_tab", "Insert one level of indentation", |cx| {
         let indent = cx.editor.indent_unit();
         cx.editor.document.insert_str(&indent);
+        cx.editor.note_typed("\t");
         Ok(())
     });
     r.register(
@@ -28,10 +30,17 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| {
             for _ in 0..cx.count() {
                 cx.editor.document.delete_backward();
+                cx.editor.note_typed_backspace();
             }
             Ok(())
         },
     );
+    r.register(
+        "insert_register",
+        "Insert the contents of register {char} while typing (<C-r>)",
+        insert_register,
+    )
+    .takes_char();
     r.register(
         "delete_char_forward",
         "Delete character under cursor, joining lines at line end",
@@ -138,6 +147,36 @@ pub fn register(r: &mut CommandRegistry) {
             Ok(())
         },
     );
+}
+
+/// `<C-r>{register}`: in insert mode, inserts the register's text as it is
+/// (no auto-indent; a line register brings its line break). On the `:` and
+/// `/` lines, inserts its first line.
+fn insert_register(cx: &mut Context) -> CommandResult {
+    let name = cx.char_arg.ok_or("missing register name")?;
+    let register = cx
+        .editor
+        .read_register(Some(name))?
+        .ok_or_else(|| format!("Register {name} is empty"))?;
+    match cx.editor.mode() {
+        Mode::Insert => {
+            let text = if register.linewise {
+                format!("{}\n", register.text)
+            } else {
+                register.text
+            };
+            cx.editor.document.insert_str(&text);
+            cx.editor.note_typed(&text);
+        }
+        Mode::Command => {
+            let first_line = register.text.lines().next().unwrap_or_default().to_string();
+            first_line
+                .chars()
+                .for_each(|c| cx.editor.insert_text_char(c));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -87,6 +87,9 @@ pub struct Editor {
     normal_queue: Vec<NormalRun>,
     /// Keeps the undo step open across commands (`:normal` over a range).
     undo_held: bool,
+    /// What's been typed in the current insert session, for the `.`
+    /// register.
+    typed: String,
     mode: Mode,
     pending_operator: Option<PendingOperator>,
     selection: Option<Selection>,
@@ -148,6 +151,13 @@ impl Editor {
             });
         }
 
+        if previous != Mode::Insert && mode == Mode::Insert {
+            self.typed.clear();
+        }
+        if previous == Mode::Insert && mode != Mode::Insert && !self.typed.is_empty() {
+            self.registers
+                .set_last_insert(std::mem::take(&mut self.typed));
+        }
         if previous == Mode::Insert {
             // `I`/`A` on a block: copy what was typed to the other rows.
             let block_insert = self.block_insert.take();
@@ -214,6 +224,7 @@ impl Editor {
             Mode::Insert => {
                 self.dedent_for_closing_bracket(c);
                 self.document.insert_char(c);
+                self.typed.push(c);
             }
             Mode::Command => {
                 self.command_line.push(c);
@@ -276,6 +287,21 @@ impl Editor {
 
     pub fn take_char_request(&mut self) -> Option<String> {
         self.char_request.take()
+    }
+
+    /// Notes text entered in insert mode other than by typing characters
+    /// (a line break, a tab, a paste), for the `.` register.
+    pub fn note_typed(&mut self, text: &str) {
+        if self.mode == Mode::Insert {
+            self.typed.push_str(text);
+        }
+    }
+
+    /// Backspace in insert mode: what was typed loses its last character.
+    pub fn note_typed_backspace(&mut self) {
+        if self.mode == Mode::Insert {
+            self.typed.pop();
+        }
     }
 
     /// Queues keys for `:normal` to run at `at`.

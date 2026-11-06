@@ -45,6 +45,7 @@ fn lists_registers_in_order() {
             "\"1  gamma",
             "\"a  alpha",
             "\"-  beta",
+            "\".  alpha beta⏎gamma",
             "\":  registers",
         ],
     );

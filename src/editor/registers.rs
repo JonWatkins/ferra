@@ -10,6 +10,7 @@
 //! | `-`      | The last delete within one line. |
 //! | `_`      | Black hole. Writes are discarded. |
 //! | `+`, `*` | The system clipboard (both the same here). |
+//! | `.`      | Read-only: the text typed in the last insert session. |
 //! | `/`, `:`, `%` | Read-only: the last search, the last `:` command, the file name. |
 
 use std::collections::HashMap;
@@ -28,9 +29,10 @@ pub const SELECTION: char = '*';
 pub const LAST_SEARCH: char = '/';
 pub const LAST_COMMAND: char = ':';
 pub const FILE_NAME: char = '%';
+pub const LAST_INSERT: char = '.';
 
 /// Register names in the order `:registers` lists them.
-const LISTED: &str = "\"0123456789abcdefghijklmnopqrstuvwxyz-+";
+const LISTED: &str = "\"0123456789abcdefghijklmnopqrstuvwxyz-.+";
 
 /// How the system clipboard is used (`clipboard` in `[editor]`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -252,6 +254,11 @@ impl Registers {
         };
         self.registers.insert(UNNAMED, value);
         Ok(())
+    }
+
+    /// Sets the read-only `.` register (the text of the last insert).
+    pub fn set_last_insert(&mut self, text: String) {
+        self.registers.insert(LAST_INSERT, Register::charwise(text));
     }
 
     /// Every register holding text, in display order. `"+` is the last text

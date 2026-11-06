@@ -159,6 +159,14 @@ The read-only registers `"/`, `":` and `"%` live elsewhere in the editor
 `Editor::read_register` answers them before falling back to `Registers`;
 pastes and the register picker go through it.
 
+`".` holds the text typed in the last insert session. The editor collects
+it while in insert mode (typed characters, line breaks, tabs, pastes and
+`<C-r>` insertions, with backspaces taking characters back off) and stores
+it when insert mode ends, if anything was typed. `<C-r>{register}`
+(`insert_register`) takes the register name as its next key, like `f`;
+in insert mode it inserts the text exactly, without auto-indent, and on the
+`:`/`/` line the first line.
+
 The file picker lists files with `files::list_files`, which uses the `ignore`
 crate (ripgrep's walker): `.gitignore`, `.ignore` and git excludes are
 honoured even outside a repository, hidden files are optional, `.git` is
@@ -635,8 +643,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
   brackets only.
 - `N%`, `gJ` (join without spaces), and `.` repeating a visual operation on
   the same amount of text, as Vim does.
-- The `".` register (the last inserted text) and `"=` (the expression
-  register).
+- `"=` (the expression register), and `<C-r><C-w>` (the word under the
+  cursor) on the `:` line.
 - Window-local options, and a configurable status line format (Vim's
   `statusline` `%`-items).
 - File listing runs on the UI thread. It's capped by `max-files`, but very
