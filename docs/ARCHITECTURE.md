@@ -620,12 +620,110 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 1. **A wider API**, driven by real plugins: selections, registers, search,
    buffers, options, and creating pickers from Lua.
-2. **Plugin UI.** Statusline segments and gutter columns become lists of
-   components that plugins can contribute to.
+2. **Plugin UI**: plugins drawing their own windows and modals, and adding
+   to existing ones (see "Plugin windows and decorations" below).
 3. **Registering at runtime.** Registrations made inside a callback (rather
    than while loading) are collected but not yet installed.
 4. **Isolation.** If sandboxing untrusted plugins becomes a goal, a WASM
    runtime could sit behind the same command and hook interfaces.
+
+## Roadmap: deferred features
+
+Planned, not started: plugin UI, LSP support, an agent harness, an embedded
+terminal and Git support. They share three foundations, which should come first.
+
+### Foundations
+
+1. **Background work and an event channel.** Today the event loop only
+   waits for terminal input. LSP replies, agent output and a shell's output
+   all arrive in the background, so the loop should also wait on a channel
+   that background tasks send to (each message handled like a key: it can
+   edit, fire hooks and request a redraw). Plugins would use the same
+   channel for timers and jobs.
+2. **Floating windows and scratch buffers.** The picker is already a popup
+   over the editor; generalise it into floats with a position, size, border
+   and title, showing any buffer. Plus scratch buffers that belong to a
+   plugin or feature (not files, never "modified"), and key bindings local
+   to one buffer, so a popup can have its own `q` to close.
+3. **Decorations.** Highlights over ranges, virtual text (end of line or
+   inline), gutter signs and status line segments, all kept in place as
+   text is edited (the same bookkeeping as marks and `track_rows`), drawn by
+   the editor pane after syntax highlighting.
+
+### Plugin windows and decorations
+
+Built on the foundations, exposed to Lua in the style of Neovim's
+`nvim_open_win` and extmarks:
+
+- `editor.buffer.create()` / `set_lines`: a scratch buffer a plugin fills.
+- `editor.window.open(buffer, { float = { row, col, width, height, border,
+  title } })`, or as a split; then `focus`, `close`, `set_config`.
+- Buffer-local `editor.map` and `on("buffer-closed")`, so a plugin's modal
+  handles its own keys.
+- `editor.decorate(buffer, range, { highlight, virtual_text, sign })`,
+  returning a handle to update or clear: diagnostics, git signs, inline
+  hints, search counts.
+- Status line and gutter components that plugins add to the built-in ones.
+
+### LSP support
+
+A client per language server, configured in the `[languages]` table
+(`language-server = { command = "rust-analyzer" }`, as Helix does), running
+in the background and reporting through the event channel. In order:
+diagnostics (decorations and a picker list), hover (a float), go to
+definition and references (the jump list is ready for this), completion (a
+float in insert mode), rename, code actions and formatting (as one undo step
+each, through the command registry).
+
+### Agent harness
+
+An AI agent working inside the editor: a chat buffer in a split or float,
+streaming replies through the event channel. Its tools are the command
+registry (open, search, read, edit), so every change it makes is an
+ordinary edit: undoable, repeatable and visible. Proposed edits can be
+shown as a diff first, using decorations, and accepted or rejected per hunk.
+Built as a plugin-level feature on the same APIs, so a different agent
+could be swapped in.
+
+### Embedded terminal
+
+A shell in a window: a pseudo-terminal (`portable-pty`) feeding a terminal
+emulator (`vt100` or `alacritty_terminal`) whose screen is drawn into the
+window, with output arriving through the event channel. A terminal mode
+sends keys to the shell, and a key (like Neovim's `<C-\><C-n>`) goes back
+to normal mode, where the scrollback is an ordinary read-only buffer to
+search and yank from.
+
+### Git support
+
+The everyday Git features, without leaving the editor:
+
+- **Change signs in the gutter**: added, changed and removed lines compared
+  with the index (or `HEAD`), updated as you type, plus a status line
+  segment with the branch and counts.
+- **Hunks**: `]c`/`[c` to move between changes, preview a hunk's diff in a
+  float, and stage, unstage or reset (undo) a hunk, or the whole file.
+- **Diff views**: the buffer side by side with the index, `HEAD` or any
+  revision, scrolling together with matching lines aligned; also a diff of
+  the whole working tree to browse file by file.
+- **Blame**: the author and summary of the current line as virtual text
+  (optional), and a blame view of the whole file that opens a commit's
+  diff.
+- **Status and commits**: a picker of changed files (stage or unstage from
+  it), writing the commit message in a buffer and committing on save,
+  amending, and branches (list, switch, create) in a picker.
+- **History**: the log of a file or a line range, opening any version.
+- **Conflicts**: jumping between conflict markers and keeping ours, theirs
+  or both, as one undo step each.
+
+Reading (diffs against the index and `HEAD`, blame, status) can use a Git
+library in-process (`gix`, pure Rust, or `git2`), with the line diff from a
+diff crate (`imara-diff` or `similar`); writing (staging, committing,
+switching branches) can shell out to `git` to get its exact behaviour and
+hooks. Large repositories mean doing the work in the background. It all
+sits on the foundations above: decorations for signs and blame, floats for
+previews, the event channel for background results, and pickers for
+status, branches and history.
 
 ## Configuration
 
