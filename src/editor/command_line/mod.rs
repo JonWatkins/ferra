@@ -84,6 +84,11 @@ impl CommandLine {
         self.prompt
     }
 
+    /// The last `:` command run, for `@:`.
+    pub fn last_command(&self) -> Option<&str> {
+        self.command_history.newest()
+    }
+
     pub fn completion(&self) -> Option<&Completion> {
         self.completion.as_ref()
     }

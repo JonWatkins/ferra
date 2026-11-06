@@ -66,6 +66,26 @@ impl Registers {
         self.registers.get(&name)
     }
 
+    /// Sets register `name` directly, without touching the unnamed or yank
+    /// registers (used for recording macros). Uppercase appends.
+    pub fn set(&mut self, name: char, value: Register) -> Result<(), String> {
+        match name {
+            'a'..='z' | UNNAMED => {
+                self.registers.insert(name, value);
+            }
+            'A'..='Z' => {
+                let lower = name.to_ascii_lowercase();
+                let merged = match self.registers.get(&lower) {
+                    Some(existing) => existing.appended(&value),
+                    None => value,
+                };
+                self.registers.insert(lower, merged);
+            }
+            _ => return Err(format!("Invalid register: \"{name}")),
+        }
+        Ok(())
+    }
+
     /// Stores `value` into register `name` (`None` means unnamed).
     pub fn store(
         &mut self,
@@ -160,6 +180,18 @@ mod tests {
         r.store(Some('_'), Register::charwise("gone"), StoreKind::Delete)
             .unwrap();
         assert_eq!(text(&r, None), Some("keep"));
+    }
+
+    #[test]
+    fn set_leaves_unnamed_alone_and_appends_uppercase() {
+        let mut r = Registers::default();
+        r.store(None, Register::charwise("yanked"), StoreKind::Yank)
+            .unwrap();
+        r.set('q', Register::charwise("ix")).unwrap();
+        r.set('Q', Register::charwise("<Esc>")).unwrap();
+        assert_eq!(text(&r, Some('q')), Some("ix<Esc>"));
+        assert_eq!(text(&r, None), Some("yanked"));
+        assert!(r.set('%', Register::charwise("x")).is_err());
     }
 
     #[test]

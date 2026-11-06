@@ -43,7 +43,13 @@ impl Widget for StatusLine<'_> {
             .and_then(crate::syntax::detect)
             .map(|l| format!(" {} ", l.name))
             .unwrap_or_default();
+        let recording = self
+            .editor
+            .recording_macro()
+            .map(|r| format!("recording @{r}  "))
+            .unwrap_or_default();
         let right = Line::from(vec![
+            Span::styled(recording, self.theme.get("ui.statusline.recording")),
             Span::styled(
                 format!("{} ", self.pending),
                 self.theme.get("ui.statusline.pending"),
@@ -150,6 +156,13 @@ mod tests {
         let mut editor = Editor::default();
         editor.open_search(true);
         assert!(render(&editor, "").starts_with(" SEARCH "));
+    }
+
+    #[test]
+    fn shows_macro_recording() {
+        let mut editor = Editor::default();
+        editor.set_recording_macro(Some('q'));
+        assert!(render(&editor, "").contains("recording @q"));
     }
 
     #[test]

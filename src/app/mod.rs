@@ -1,6 +1,7 @@
 //! Application wiring: owns the editor, commands, keymap and UI state, and
 //! runs the event loop.
 
+mod macros;
 mod repeat;
 mod terminal;
 
@@ -35,6 +36,7 @@ pub struct App {
     views: Views,
     changes: ChangeRecorder,
     syntax: SyntaxEngine,
+    macros: macros::MacroState,
     /// The Lua runtime, created when the first plugin loads.
     plugins: Option<PluginHost>,
     /// True while `.` feeds the last change back in, so it isn't re-recorded.
@@ -69,6 +71,7 @@ impl App {
             views: Views::default(),
             changes: ChangeRecorder::default(),
             syntax: SyntaxEngine::default(),
+            macros: macros::MacroState::default(),
             plugins: None,
             replaying: false,
         };
@@ -267,6 +270,7 @@ impl App {
 
     /// Handles one key press. Public so tests can drive the app directly.
     pub fn handle_key(&mut self, key: KeyPress) {
+        self.record_macro_key(key);
         if self.replaying {
             self.process_key(key);
             return;
@@ -372,14 +376,23 @@ impl App {
         self.editor.clear_message();
         if let Err(error) = self.commands.execute(command, &mut self.editor, invocation) {
             self.editor.set_message(Message::error(error));
+            self.note_command_failure();
         }
         if self.editor.mode() == Mode::OperatorPending {
             self.input.hold_last_sequence();
         }
         self.editor.finish_command();
 
+        // A command that wants the next key (`q` before a register).
+        if let Some(command) = self.editor.take_char_request() {
+            self.input.hold_last_sequence();
+            self.input.await_char(command, None, None);
+        }
         if let Some(request) = self.editor.take_repeat_request() {
             self.repeat_last_change(request.count);
+        }
+        if let Some(request) = self.editor.take_macro_request() {
+            self.handle_macro_request(request);
         }
     }
 

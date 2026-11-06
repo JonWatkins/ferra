@@ -1,4 +1,5 @@
 mod file;
+mod marks;
 
 pub use file::{OpenInfo, SaveInfo};
 
@@ -47,6 +48,8 @@ pub struct Document {
     /// Changes whenever the text does, including undo, redo and reloads, so
     /// derived data (syntax highlights) knows when to recompute.
     text_version: u64,
+    /// Local marks (`ma`), kept in place as the text changes.
+    marks: marks::Marks,
 }
 
 impl Document {
@@ -95,6 +98,19 @@ impl Document {
 
     pub fn cursor(&self) -> Position {
         self.cursor
+    }
+
+    /// Sets mark `name` at the cursor.
+    pub fn set_mark(&mut self, name: char) {
+        self.marks.set(name, self.cursor);
+    }
+
+    /// Where mark `name` is, clamped into the buffer (undo can move text
+    /// without moving marks).
+    pub fn mark(&self, name: char) -> Option<Position> {
+        let mark = self.marks.get(name)?;
+        let row = mark.row.min(self.buffer.line_count() - 1);
+        Some(Position::new(row, mark.col.min(self.buffer.line_len(row))))
     }
 
     /// Increases with every edit; undo and redo don't count as edits.
@@ -146,6 +162,7 @@ impl Document {
             return at;
         }
         let end = self.buffer.insert_text(at, text);
+        self.marks.after_insert(at, end);
         self.edit_count += 1;
         self.text_version += 1;
         self.history.record(Change::Insert {
@@ -162,6 +179,7 @@ impl Document {
             return String::new();
         }
         let text = self.buffer.delete_range(start, end);
+        self.marks.after_delete(start, end);
         self.edit_count += 1;
         self.text_version += 1;
         self.history.record(Change::Delete {
@@ -415,6 +433,19 @@ mod tests {
         let before = doc.text_version();
         doc.set_cursor(Position::new(0, 2));
         assert_eq!(doc.text_version(), before, "moving doesn't");
+    }
+
+    #[test]
+    fn marks_follow_edits() {
+        let mut doc = Document::with_text("a\nb\nc");
+        doc.set_cursor(Position::new(2, 0));
+        doc.set_mark('m');
+        doc.set_cursor(Position::new(0, 0));
+        doc.insert_str("new\n");
+        assert_eq!(doc.mark('m'), Some(Position::new(3, 0)));
+        doc.delete_lines(0, 1);
+        assert_eq!(doc.mark('m'), Some(Position::new(1, 0)));
+        assert_eq!(doc.mark('x'), None);
     }
 
     #[test]

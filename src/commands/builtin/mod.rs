@@ -9,6 +9,8 @@ mod editing;
 mod ex_commands;
 mod files;
 mod history;
+mod macros;
+mod marks;
 mod modes;
 mod motions;
 mod operators;
@@ -33,6 +35,8 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     picker::register(registry);
     windows::register(registry);
     ex_commands::register(registry);
+    marks::register(registry);
+    macros::register(registry);
     modes::register(registry);
     command_line::register(registry);
 }

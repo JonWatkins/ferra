@@ -19,6 +19,9 @@ pub struct MotionArgs {
     pub char: Option<char>,
     /// Repeating a character search with `;` or `,`.
     pub repeating: bool,
+    /// A position worked out by the command (a mark's), for motions that
+    /// go to one.
+    pub target: Option<Position>,
 }
 
 impl MotionArgs {
@@ -188,6 +191,16 @@ pub const TILL_CHAR_BACKWARD: Motion = Motion::new(
     |b, p, a| char_search(a, false, true)?.target(b, p, a.n(), a.repeating),
 );
 
+/// `'a`: the mark's line (linewise, at its first non-blank). The command
+/// resolves the mark into `MotionArgs::target`. Not bound directly.
+pub const MARK_LINE: Motion = Motion::new("mark_line", "", Linewise, |b, _, a| {
+    let mark = a.target?;
+    Some(line_start(b, mark.row))
+});
+
+/// `` `a ``: the mark's exact position (exclusive). Not bound directly.
+pub const MARK_EXACT: Motion = Motion::new("mark_exact", "", Exclusive, |_, _, a| a.target);
+
 /// `cw`: like `ce`, not `dw` (Vim special case). Not bound directly.
 const CHANGE_WORD: Motion = Motion::new("change_word", "", Inclusive, |b, p, a| {
     let first = motion::current_word_end(b, p);
@@ -251,7 +264,7 @@ pub fn register(r: &mut CommandRegistry) {
             let args = MotionArgs {
                 count: cx.count,
                 char: Some(ch),
-                repeating: false,
+                ..MotionArgs::default()
             };
             cx.editor.last_char_search = char_search(args, is_forward(motion), is_till(motion));
             run(cx, motion, args)
@@ -293,6 +306,7 @@ fn repeat_char_search(cx: &mut Context, reverse: bool) -> CommandResult {
         count: cx.count,
         char: Some(search.ch),
         repeating: true,
+        ..MotionArgs::default()
     };
     run(cx, motion, args)
 }
@@ -314,7 +328,7 @@ fn is_till(motion: &Motion) -> bool {
 }
 
 /// Runs a motion: applies the pending operator over it, or moves the cursor.
-fn run(cx: &mut Context, motion: &'static Motion, args: MotionArgs) -> CommandResult {
+pub(super) fn run(cx: &mut Context, motion: &'static Motion, args: MotionArgs) -> CommandResult {
     let Some(pending) = cx.editor.take_pending_operator() else {
         move_cursor(cx.editor, motion, args);
         return Ok(());

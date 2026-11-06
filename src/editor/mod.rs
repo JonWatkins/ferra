@@ -7,6 +7,7 @@ mod buffers;
 mod command_line;
 mod document;
 mod files;
+mod marks;
 mod message;
 mod mode;
 mod operator;
@@ -32,6 +33,18 @@ pub use windows::{Window, WindowId, Windows};
 use crate::config::EditorOptions;
 use crate::core::motion::CharSearch;
 use crate::events::Event;
+
+/// A request from `q`/`@` for the app, which records and replays keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacroRequest {
+    StartRecording(char),
+    StopRecording,
+    /// Play register `register` `count` times (`@` means the last played).
+    Play {
+        register: char,
+        count: usize,
+    },
+}
 
 /// A request from `.` to repeat the last change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +77,13 @@ pub struct Editor {
     repeat_request: Option<RepeatRequest>,
     /// "After" events waiting for the app to dispatch to hooks.
     events: Vec<Event>,
+    /// A command asking for the next key as its argument (see `request_char`).
+    char_request: Option<String>,
+    macro_request: Option<MacroRequest>,
+    /// The register a macro is being recorded into.
+    recording_macro: Option<char>,
+    /// Which buffer each global mark (`A`-`Z`) is in.
+    global_marks: std::collections::HashMap<char, DocumentId>,
     last_selection: Option<selection::LastSelection>,
     message: Option<Message>,
     should_quit: bool,
@@ -205,6 +225,34 @@ impl Editor {
             .map(|item| item.action.clone());
         self.set_mode(Mode::Normal);
         action
+    }
+
+    /// Asks for the next key to be passed to `command` as its character
+    /// argument. For commands that only sometimes need one (`q` takes a
+    /// register to start recording, but not to stop); others use
+    /// `Command::takes_char`.
+    pub fn request_char(&mut self, command: &str) {
+        self.char_request = Some(command.to_string());
+    }
+
+    pub fn take_char_request(&mut self) -> Option<String> {
+        self.char_request.take()
+    }
+
+    pub fn request_macro(&mut self, request: MacroRequest) {
+        self.macro_request = Some(request);
+    }
+
+    pub fn take_macro_request(&mut self) -> Option<MacroRequest> {
+        self.macro_request.take()
+    }
+
+    pub fn recording_macro(&self) -> Option<char> {
+        self.recording_macro
+    }
+
+    pub fn set_recording_macro(&mut self, register: Option<char>) {
+        self.recording_macro = register;
     }
 
     /// Queues an event for hooks. The app dispatches queued events after each

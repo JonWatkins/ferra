@@ -38,6 +38,10 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `"a` (prefix) | Use register `a` (`"ayy`, `"ap`; `"A` appends, `"_` discards, `"0` last yank) |
 | Normal  | `u` `<C-r>` | Undo / redo |
 | Normal  | `.` | Repeat the last change (`3.` replaces its count) |
+| Normal  | `q{a-z}` … `q` | Record a macro (`qA` appends); the statusline shows `recording @a` |
+| Normal  | `@{a-z}`, `@@`, `@:` | Play a macro (`10@a`), the last one, or the last `:` command |
+| Normal  | `m{a-z}`, `m{A-Z}` | Set a mark in this buffer / a global mark that jumps across buffers |
+| Normal  | `'{mark}`, `` `{mark} `` | Jump to a mark's line / exact position (also after operators: `d'a`) |
 | Normal  | `/` `?` | Search forward / backward (regex; matches preview as you type) |
 | Normal  | `n` `N` | Next / previous match |
 | Normal  | `*` `#` | Search forward / backward for the word under the cursor |
@@ -55,6 +59,10 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 
 Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
 (`ib`), `i{` `a{` (`iB`), `i[` `a[`, `i<` `a<`.
+
+Macros are stored in their register as key notation (`A;<Esc>j`), so
+`"ap` pastes one to edit and `"ay$` yanks it back. Playback stops at the
+first failing command.
 
 ## The command line
 

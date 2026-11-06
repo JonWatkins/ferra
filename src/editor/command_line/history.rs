@@ -20,6 +20,11 @@ impl History {
         &self.entries
     }
 
+    /// The most recent entry.
+    pub fn newest(&self) -> Option<&str> {
+        self.entries.last().map(String::as_str)
+    }
+
     /// Adds `entry` as the newest one. Blank entries are skipped, and an
     /// existing copy moves to the end rather than appearing twice.
     pub fn push(&mut self, entry: &str) {

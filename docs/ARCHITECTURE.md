@@ -312,14 +312,37 @@ including insert sessions and future plugin commands, without each command
 having to support it. A leading count is stored separately so `3.`
 replaces it, and a `"x` register prefix is kept.
 
+### Macros and marks
+
+Macros are recorded and replayed as keys, like `.`, so they live in the
+app (`app/macros.rs`). `q` and `@` are ordinary commands that set an
+`Editor::request_macro`, which the app acts on after the command. While
+recording, every key the user presses is kept. Stopping drops the `q` that
+stopped it and stores the rest in the register as key notation (via
+`KeyPress`'s `Display`, which round-trips with `parse_keys`), so a macro is
+ordinary register text. Playing parses it and feeds the keys through
+`handle_key`. Keys a macro plays aren't recorded into a macro being
+recorded, a failing command stops playback, and nesting deeper than 100
+stops with an error.
+
+Marks are kept by each `Document` (`document/marks.rs`) and adjusted by its
+`insert` and `delete`, so they move with text inserted or deleted before
+them. Global marks (`A`-`Z`) record which buffer they're in and reuse that
+buffer's mark under the same letter. Undo applies changes below `Document`
+and doesn't move marks, so positions are clamped when used. `'` and `` ` ``
+are motions whose target comes from the mark (`MotionArgs::target`), so they
+work after operators and in visual mode.
+
 ### Commands that take a character
 
 A command registered with `.takes_char()` (`f`, `t`, `F`, `T`, `r`) gets
 the next key as its argument. When the app sees such a command without a
 character, it calls `InputHandler::await_char`. The next printable key, even
 one bound to a command (`f:`), completes it via `Invocation::char_arg`;
-anything else cancels it. Marks (`m`), macros (`q`, `@`) and plugins can use
-the same mechanism.
+anything else cancels it. A command that only sometimes needs a key (`q`
+takes a register to start recording, but not to stop) calls
+`Editor::request_char` instead, and the app then waits for the key the same
+way.
 
 ## Commands: the extension point
 

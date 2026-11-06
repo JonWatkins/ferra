@@ -36,7 +36,11 @@ fn ranges_select_lines() {
     keys(&mut app, ":2,3s/x/y/<CR>");
     assert_eq!(text(&app), "x\ny\ny\nx");
     keys(&mut app, ":.,$s/./z/<CR>");
-    assert_eq!(text(&app), "x\ny\nz\nz", "from the cursor (left on line 3) to the end");
+    assert_eq!(
+        text(&app),
+        "x\ny\nz\nz",
+        "from the cursor (left on line 3) to the end"
+    );
 }
 
 #[test]
@@ -69,7 +73,11 @@ fn n_finds_the_substituted_pattern_next() {
     let mut app = with_text("one<CR>two<CR>one");
     keys(&mut app, ":1s/one/ONE/<CR>");
     keys(&mut app, "gg/one<CR>");
-    assert_eq!(cursor(&app), (2, 0), "smart case: `one` still finds the last line");
+    assert_eq!(
+        cursor(&app),
+        (2, 0),
+        "smart case: `one` still finds the last line"
+    );
 }
 
 #[test]
@@ -78,9 +86,17 @@ fn errors() {
     keys(&mut app, ":s/zzz/y/<CR>");
     assert_eq!(message(&app), "Pattern not found: zzz");
     keys(&mut app, ":s/a/b/q<CR>");
-    assert!(message(&app).contains("Unknown flag 'q'"), "{}", message(&app));
+    assert!(
+        message(&app).contains("Unknown flag 'q'"),
+        "{}",
+        message(&app)
+    );
     keys(&mut app, ":s/(/x/<CR>");
-    assert!(message(&app).starts_with("Invalid pattern"), "{}", message(&app));
+    assert!(
+        message(&app).starts_with("Invalid pattern"),
+        "{}",
+        message(&app)
+    );
     assert_eq!(text(&app), "abc");
 }
 
@@ -108,5 +124,9 @@ fn ranges_alone_go_to_lines() {
 fn substitute_commands_go_into_history() {
     let mut app = with_text("a a");
     keys(&mut app, ":s/a/b/<CR>:<Up><CR>");
-    assert_eq!(text(&app), "b b", "the recalled :s ran again on the next `a`");
+    assert_eq!(
+        text(&app),
+        "b b",
+        "the recalled :s ran again on the next `a`"
+    );
 }
