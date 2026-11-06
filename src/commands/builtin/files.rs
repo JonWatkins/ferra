@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use crate::commands::{CommandRegistry, CommandResult, Context};
+use crate::commands::{ArgCompletion, CommandRegistry, CommandResult, Context};
 use crate::editor::UNSAVED_CHANGES;
 use crate::events::Event;
 
@@ -13,13 +13,15 @@ pub fn register(r: &mut CommandRegistry) {
         "write",
         "Save the file, or write to [path] (! to overwrite)",
         write,
-    );
+    )
+    .complete_args(ArgCompletion::Path);
     r.alias("w", "write");
 
     r.register("write_quit", "Save the file and quit", |cx| {
         write(cx)?;
         quit(cx)
-    });
+    })
+    .complete_args(ArgCompletion::Path);
     r.alias("wq", "write_quit");
 
     r.register("exit", "Save if there are changes, then quit (ZZ)", |cx| {
@@ -84,7 +86,8 @@ pub fn register(r: &mut CommandRegistry) {
             }
             cx.editor.reload().map_err(|e| e.to_string())
         },
-    );
+    )
+    .complete_args(ArgCompletion::Path);
     r.alias("e", "edit");
 }
 

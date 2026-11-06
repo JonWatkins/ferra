@@ -4,7 +4,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
-    text::Line,
+    text::{Line, Span},
     widgets::Widget,
 };
 use unicode_width::UnicodeWidthStr;
@@ -26,7 +26,7 @@ impl<'a> CommandLineView<'a> {
     /// Where the terminal cursor goes while typing a command.
     pub fn cursor_position(editor: &Editor, area: Rect) -> Position {
         // The prompt symbol is one cell wide.
-        let offset = 1 + editor.command_line.input().width();
+        let offset = 1 + editor.command_line.before_cursor().width();
         let x = (area.x as usize + offset).min(area.right().saturating_sub(1) as usize);
         Position::new(x as u16, area.y)
     }
@@ -37,7 +37,19 @@ impl Widget for CommandLineView<'_> {
         let line = if self.editor.mode() == Mode::Command {
             let line = &self.editor.command_line;
             let text = format!("{}{}", line.prompt().symbol(), line.input());
-            Line::styled(text, self.theme.get("ui.command-line"))
+            let mut spans = vec![Span::styled(text, self.theme.get("ui.command-line"))];
+            // While cycling completions, show which one this is.
+            if let Some(completion) = line.completion() {
+                spans.push(Span::styled(
+                    format!(
+                        "  ({}/{})",
+                        completion.index + 1,
+                        completion.candidates.len()
+                    ),
+                    self.theme.get("ui.message.info"),
+                ));
+            }
+            Line::from(spans)
         } else if let Some(message) = self.editor.message() {
             let scope = match message.severity {
                 Severity::Info => "ui.message.info",
@@ -84,6 +96,22 @@ mod tests {
         editor.open_search(false);
         editor.insert_text_char('x');
         assert_eq!(render(&editor).trim_end(), "?x");
+    }
+
+    #[test]
+    fn cursor_follows_the_prompt_cursor_and_completion_count_shows() {
+        let mut editor = Editor::default();
+        editor.open_command_line();
+        "wri".chars().for_each(|c| editor.insert_text_char(c));
+        editor.command_line.move_left();
+        let pos = CommandLineView::cursor_position(&editor, Rect::new(0, 0, 20, 1));
+        assert_eq!(pos, Position::new(3, 0), "between `wr` and `i`");
+
+        editor.command_line.move_end();
+        editor
+            .command_line
+            .start_completion(0, vec!["write".into(), "write_all".into()]);
+        assert_eq!(render(&editor).trim_end(), ":write  (1/2)");
     }
 
     #[test]

@@ -18,7 +18,7 @@ mod transform;
 pub mod windows;
 
 pub use buffers::BufferInfo;
-pub use command_line::{CommandLine, Prompt};
+pub use command_line::{CommandLine, Completion, CompletionContext, Prompt};
 pub use document::{Document, DocumentId, OpenInfo, SaveInfo};
 pub use files::UNSAVED_CHANGES;
 pub use message::{Message, Severity};

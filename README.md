@@ -56,6 +56,17 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
 (`ib`), `i{` `a{` (`iB`), `i[` `a[`, `i<` `a<`.
 
+## The command line
+
+The `:` and `/`/`?` prompts support:
+
+| Keys | Action |
+|------|--------|
+| `<Tab>` / `<S-Tab>` | Complete command names, file paths (`:e`, `:w`, `:sp`, `:vs`, `:files`) and buffer names (`:b`); again to cycle |
+| `<Up>` `<Down>` (`<C-p>` `<C-n>`) | History, matching what you've typed (`:e<Up>` recalls earlier `:e` commands). Separate for `:` and searches |
+| `<Left>` `<Right>`, `<Home>` `<End>` (`<C-b>` `<C-e>`) | Move the cursor |
+| `<Del>`, `<C-w>`, `<C-u>` | Delete a character / the word before the cursor / everything before it |
+
 ## Buffers and the picker
 
 | Keys / command | Action |

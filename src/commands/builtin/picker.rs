@@ -1,7 +1,7 @@
 //! Picker popups: the buffer list and the command palette, plus the
 //! commands that drive an open picker.
 
-use crate::commands::{CommandRegistry, Invocation};
+use crate::commands::{ArgCompletion, CommandRegistry, Invocation};
 use std::path::PathBuf;
 
 use crate::editor::picker::{Picker, PickerAction, PickerItem};
@@ -84,7 +84,8 @@ pub fn register(r: &mut CommandRegistry) {
             cx.editor.open_picker(Picker::new("Files", items));
             Ok(())
         },
-    );
+    )
+    .complete_args(ArgCompletion::Path);
     r.alias("files", "file_picker");
 
     r.register("command_palette", "Pick a command to run", |cx| {

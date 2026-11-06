@@ -4,9 +4,11 @@
 //! file contents; converting them to buffer text (line endings, final
 //! newline) is [`core::TextFormat`](crate::core::TextFormat)'s job.
 
+mod complete;
 mod error;
 mod walk;
 
+pub use complete::{complete_path, complete_path_in};
 pub use error::FileError;
 pub use walk::{FileList, WalkOptions, list_files};
 

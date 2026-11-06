@@ -76,13 +76,32 @@ pub struct Command {
     /// The command needs one more key as an argument (`f{char}`, `r{char}`).
     /// The input layer waits for it and passes it as `Context::char_arg`.
     pub takes_char: bool,
+    /// What `<Tab>` completes for this command's arguments on the `:` line.
+    pub arg_completion: ArgCompletion,
     handler: Handler,
+}
+
+/// What a command's arguments are, for `<Tab>` completion.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ArgCompletion {
+    #[default]
+    None,
+    /// File paths (`:e`, `:w`, `:vs`).
+    Path,
+    /// Open buffer names (`:b`).
+    Buffer,
 }
 
 impl Command {
     /// Marks the command as taking a character argument.
     pub fn takes_char(&mut self) -> &mut Self {
         self.takes_char = true;
+        self
+    }
+
+    /// Sets what `<Tab>` completes for the command's arguments.
+    pub fn complete_args(&mut self, completion: ArgCompletion) -> &mut Self {
+        self.arg_completion = completion;
         self
     }
 }
@@ -119,6 +138,7 @@ impl CommandRegistry {
             name: name.clone(),
             description: description.into(),
             takes_char: false,
+            arg_completion: ArgCompletion::None,
             handler: Box::new(handler),
         };
         self.commands.insert(name.clone(), command);
@@ -143,6 +163,19 @@ impl CommandRegistry {
     /// Whether the named command needs a character argument.
     pub fn takes_char(&self, name: &str) -> bool {
         self.get(name).is_some_and(|c| c.takes_char)
+    }
+
+    /// Every name a command can be run by: names and aliases, sorted.
+    pub fn all_names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self
+            .commands
+            .keys()
+            .chain(self.aliases.keys())
+            .map(String::as_str)
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
     /// All registered commands, sorted by name.
@@ -209,6 +242,14 @@ mod tests {
         assert!(registry.takes_char("find"));
         assert!(!registry.takes_char("plain"));
         assert!(!registry.takes_char("missing"));
+    }
+
+    #[test]
+    fn all_names_include_aliases() {
+        let mut registry = CommandRegistry::new();
+        registry.register("write", "", |_| Ok(()));
+        registry.alias("w", "write");
+        assert_eq!(registry.all_names(), ["w", "write"]);
     }
 
     #[test]

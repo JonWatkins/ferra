@@ -1,7 +1,7 @@
 //! Buffer commands: switching between and closing open buffers.
 //! (`:e` opens buffers, in `files.rs`; the picker is in `picker.rs`.)
 
-use crate::commands::CommandRegistry;
+use crate::commands::{ArgCompletion, CommandRegistry};
 use crate::editor::UNSAVED_CHANGES;
 
 pub fn register(r: &mut CommandRegistry) {
@@ -41,7 +41,8 @@ pub fn register(r: &mut CommandRegistry) {
             cx.editor.switch_to(id);
             Ok(())
         },
-    );
+    )
+    .complete_args(ArgCompletion::Buffer);
     r.alias("b", "buffer");
 
     r.register(

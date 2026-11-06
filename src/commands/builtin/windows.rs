@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::commands::{CommandRegistry, CommandResult, Context};
+use crate::commands::{ArgCompletion, CommandRegistry, CommandResult, Context};
 use crate::editor::windows::{Direction, SplitDirection};
 
 pub fn register(r: &mut CommandRegistry) {
@@ -10,7 +10,8 @@ pub fn register(r: &mut CommandRegistry) {
         "split_horizontal",
         "Split the window top and bottom, optionally opening [file]",
         |cx| split(cx, SplitDirection::Horizontal),
-    );
+    )
+    .complete_args(ArgCompletion::Path);
     r.alias("sp", "split_horizontal");
     r.alias("split", "split_horizontal");
 
@@ -18,7 +19,8 @@ pub fn register(r: &mut CommandRegistry) {
         "split_vertical",
         "Split the window side by side, optionally opening [file]",
         |cx| split(cx, SplitDirection::Vertical),
-    );
+    )
+    .complete_args(ArgCompletion::Path);
     r.alias("vs", "split_vertical");
     r.alias("vsplit", "split_vertical");
 

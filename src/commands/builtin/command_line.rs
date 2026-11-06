@@ -1,5 +1,6 @@
-use crate::commands::{CommandRegistry, Invocation};
-use crate::editor::Mode;
+use crate::commands::{ArgCompletion, CommandRegistry, CommandResult, Context, Invocation};
+use crate::editor::{CommandLine, CompletionContext, Editor, Mode};
+use crate::files;
 
 pub fn register(r: &mut CommandRegistry) {
     r.register(
@@ -50,16 +51,137 @@ pub fn register(r: &mut CommandRegistry) {
     );
     r.register(
         "command_line_backspace",
-        "Delete the last character, leaving command mode when empty",
+        "Delete the character before the cursor, leaving the prompt when it's empty",
         |cx| {
-            if cx.editor.command_line.pop().is_none() {
+            if cx.editor.command_line.is_empty() {
                 cx.editor.set_mode(Mode::Normal);
             } else {
-                cx.editor.update_search_preview();
+                edit(cx, |line| {
+                    line.pop();
+                });
             }
             Ok(())
         },
     );
+
+    type Edit = fn(&mut CommandLine);
+    let edits: [(&str, &str, Edit); 9] = [
+        (
+            "command_line_left",
+            "Move the prompt cursor left",
+            CommandLine::move_left,
+        ),
+        (
+            "command_line_right",
+            "Move the prompt cursor right",
+            CommandLine::move_right,
+        ),
+        (
+            "command_line_home",
+            "Move the prompt cursor to the start",
+            CommandLine::move_home,
+        ),
+        (
+            "command_line_end",
+            "Move the prompt cursor to the end",
+            CommandLine::move_end,
+        ),
+        (
+            "command_line_delete",
+            "Delete the character under the prompt cursor",
+            CommandLine::delete_forward,
+        ),
+        (
+            "command_line_delete_word",
+            "Delete the word before the prompt cursor",
+            CommandLine::delete_word_backward,
+        ),
+        (
+            "command_line_delete_to_start",
+            "Delete everything before the prompt cursor",
+            CommandLine::delete_to_start,
+        ),
+        (
+            "command_line_history_older",
+            "Show the previous prompt history entry starting with what's typed",
+            |line| {
+                line.history_older();
+            },
+        ),
+        (
+            "command_line_history_newer",
+            "Show the next (newer) prompt history entry",
+            |line| {
+                line.history_newer();
+            },
+        ),
+    ];
+    for (name, description, action) in edits {
+        r.register(name, description, move |cx| {
+            edit(cx, action);
+            Ok(())
+        });
+    }
+    r.register(
+        "command_line_complete",
+        "Complete the command, file or buffer name (again for the next match)",
+        |cx| complete(cx, 1),
+    );
+    r.register(
+        "command_line_complete_prev",
+        "Show the previous completion",
+        |cx| complete(cx, -1),
+    );
+}
+
+/// Applies an edit to the prompt, then updates a search's live preview.
+fn edit(cx: &mut Context, action: impl FnOnce(&mut CommandLine)) {
+    action(&mut cx.editor.command_line);
+    cx.editor.update_search_preview();
+}
+
+/// `<Tab>`: cycles an in-progress completion, or starts one for the word
+/// before the cursor.
+fn complete(cx: &mut Context, delta: isize) -> CommandResult {
+    let line = &mut cx.editor.command_line;
+    if line.prompt().is_search() || line.cycle_completion(delta) {
+        return Ok(());
+    }
+    let context = line.completion_context();
+    let candidates = candidates(cx.registry, cx.editor, &context);
+    cx.editor
+        .command_line
+        .start_completion(context.start, candidates);
+    Ok(())
+}
+
+/// What the word before the cursor could be: a command name, or an
+/// argument of the kind its command declares.
+fn candidates(
+    registry: &CommandRegistry,
+    editor: &Editor,
+    context: &CompletionContext,
+) -> Vec<String> {
+    let word = context.word.as_str();
+    let Some(command) = &context.command else {
+        return registry
+            .all_names()
+            .into_iter()
+            .filter(|name| name.starts_with(word))
+            .map(String::from)
+            .collect();
+    };
+    let name = command.trim_end_matches('!');
+    match registry.get(name).map(|c| c.arg_completion) {
+        Some(ArgCompletion::Path) => files::complete_path(word),
+        Some(ArgCompletion::Buffer) => editor
+            .buffers()
+            .into_iter()
+            .map(|b| b.name)
+            .filter(|name| name.contains(word))
+            .collect(),
+        Some(ArgCompletion::None) | None => Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +262,55 @@ mod tests {
         assert_eq!(e.mode(), Mode::Command);
         run(&mut e, "command_line_backspace", None);
         assert_eq!(e.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn backspace_at_the_start_of_a_non_empty_prompt_stays_open() {
+        let mut e = command_editor("", "ab");
+        run(&mut e, "command_line_home", None);
+        run(&mut e, "command_line_backspace", None);
+        assert_eq!(e.mode(), Mode::Command);
+        assert_eq!(e.command_line.input(), "ab");
+    }
+
+    #[test]
+    fn completes_command_names_and_cycles() {
+        let mut e = command_editor("", "write_a");
+        run(&mut e, "command_line_complete", None);
+        assert_eq!(e.command_line.input(), "write_all");
+        assert!(
+            e.command_line.completion().is_some(),
+            "write_all and write_all_quit"
+        );
+        run(&mut e, "command_line_complete", None);
+        assert_eq!(e.command_line.input(), "write_all_quit");
+        run(&mut e, "command_line_complete_prev", None);
+        assert_eq!(e.command_line.input(), "write_all");
+    }
+
+    #[test]
+    fn completes_buffer_names_for_b() {
+        let mut e = command_editor("", "b scr");
+        run(&mut e, "command_line_complete", None);
+        assert_eq!(e.command_line.input(), "b [scratch]");
+    }
+
+    #[test]
+    fn no_completion_for_plain_arguments_or_searches() {
+        let mut e = command_editor("", "goto_line 1");
+        run(&mut e, "command_line_complete", None);
+        assert_eq!(e.command_line.input(), "goto_line 1");
+    }
+
+    #[test]
+    fn history_through_commands() {
+        let mut e = command_editor("a\nb", "goto_line 2");
+        run(&mut e, "command_line_execute", None);
+        e.open_command_line();
+        run(&mut e, "command_line_history_older", None);
+        assert_eq!(e.command_line.input(), "goto_line 2");
+        run(&mut e, "command_line_history_newer", None);
+        assert_eq!(e.command_line.input(), "");
     }
 
     #[test]
