@@ -2,7 +2,7 @@
 //! `n`/`N`, `*`/`#`, and which pattern to highlight. A search typed after
 //! an operator (`d/foo<CR>`) is that operator's motion.
 
-use super::{Editor, Message, Mode, PendingOperator, Prompt};
+use super::{Editor, Message, Mode, PendingOperator, Prompt, Selection};
 use crate::core::Position;
 use crate::core::search::{Found, SearchPattern};
 
@@ -18,6 +18,9 @@ pub(super) struct SearchState {
     highlight: bool,
     /// The operator waiting for the search being typed (`d` of `d/foo`).
     operator: Option<PendingOperator>,
+    /// The visual selection the search extends (`v/foo`), as it was when
+    /// the prompt opened.
+    visual: Option<Selection>,
 }
 
 /// Where a search (`n`, `/foo<CR>`) lands.
@@ -53,11 +56,16 @@ impl Editor {
         self.command_line.open(Prompt::Command);
     }
 
-    /// `/` or `?`: opens a search prompt. A pending operator waits for it.
+    /// `/` or `?`: opens a search prompt. A pending operator waits for it;
+    /// a visual selection stays, and grows to the match.
     pub fn open_search(&mut self, forward: bool) {
         let operator = self.take_pending_operator();
+        let visual = self.selection().filter(|_| self.mode() == Mode::Visual);
         let origin = self.document.cursor();
         self.set_mode(Mode::Command);
+        // Still drawn while typing, following the previewed match.
+        self.selection = visual;
+        self.search.visual = visual;
         let prompt = if forward {
             Prompt::SearchForward
         } else {
@@ -67,6 +75,24 @@ impl Editor {
         self.search.origin = Some(origin);
         self.search.preview = None;
         self.search.operator = operator;
+    }
+
+    /// Leaves a prompt without running it (`<Esc>`): back to visual mode
+    /// with the selection as it was if the search started there, or else to
+    /// normal mode. The cursor goes back to where the search began.
+    pub fn leave_command_line(&mut self) {
+        self.return_from_search();
+    }
+
+    /// Closes the prompt, back in visual mode if the search began there.
+    fn return_from_search(&mut self) {
+        match self.search.visual.take() {
+            Some(selection) => {
+                self.set_mode(Mode::Visual);
+                self.selection = Some(selection);
+            }
+            None => self.set_mode(Mode::Normal),
+        }
     }
 
     /// The operator waiting for the search prompt, if any (for display).
@@ -107,7 +133,7 @@ impl Editor {
         let input = self.command_line.take();
         let origin = self.search.origin.take().unwrap_or(self.document.cursor());
         let operator = self.search.operator.take();
-        self.set_mode(Mode::Normal);
+        self.return_from_search();
         self.document.set_cursor(origin);
 
         let pattern = if input.is_empty() {
@@ -251,6 +277,7 @@ impl Editor {
         self.search.preview = None;
         // A cancelled `d/` cancels the `d` too.
         self.search.operator = None;
+        self.search.visual = None;
         if let Some(origin) = self.search.origin.take() {
             self.document.set_cursor(origin);
         }

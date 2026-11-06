@@ -298,6 +298,11 @@ black hole `"_`, skips all of these.
   moving. The usual exclusive rules apply, so `d/^foo` from a line start
   takes whole lines. `.` repeats it because the app records search prompts
   for `.`; only `:` prompts are left out.
+- In visual mode, `open_search` keeps the selection (so it's drawn, following
+  the preview) and remembers it. Finishing or cancelling the prompt goes
+  through `return_from_search` (`Editor::leave_command_line` for `<Esc>` and
+  backspacing out), which puts visual mode and the selection back; a finished
+  search then moves the cursor, extending it.
 
 ### The command line
 
@@ -527,8 +532,6 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 ## Known gaps / next steps
 
 - Visual block mode (`<C-v>`) and visual-mode `:` ranges (`:'<,'>`).
-- `/` in visual mode ends the selection rather than extending it to the
-  match (`v/foo<CR>`).
 - `:s` follow-ups: the `c` (confirm) flag, `&`/`:&&` to repeat the last
   substitution, and `:g/pattern/command`.
 - Alt keys that *are* bound can't be told apart from a fast Esc then that

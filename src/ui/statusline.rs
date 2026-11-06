@@ -61,10 +61,10 @@ impl Widget for StatusLine<'_> {
 
         let mode = self.editor.mode();
         let mode_label = match self.editor.selection() {
-            Some(selection) if selection.kind == SelectionKind::Line => " V-LINE ".to_string(),
             _ if mode == Mode::Command && self.editor.command_line.prompt().is_search() => {
                 " SEARCH ".to_string()
             }
+            Some(selection) if selection.kind == SelectionKind::Line => " V-LINE ".to_string(),
             _ => format!(" {mode} "),
         };
         let modified = if self.editor.document.is_modified() {

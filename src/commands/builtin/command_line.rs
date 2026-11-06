@@ -25,7 +25,7 @@ pub fn register(r: &mut CommandRegistry) {
         "command_line_cancel",
         "Leave the command line without running anything",
         |cx| {
-            cx.editor.set_mode(Mode::Normal);
+            cx.editor.leave_command_line();
             Ok(())
         },
     );
@@ -34,7 +34,7 @@ pub fn register(r: &mut CommandRegistry) {
         "Delete the character before the cursor, leaving the prompt when it's empty",
         |cx| {
             if cx.editor.command_line.is_empty() {
-                cx.editor.set_mode(Mode::Normal);
+                cx.editor.leave_command_line();
             } else {
                 edit(cx, |line| {
                     line.pop();
