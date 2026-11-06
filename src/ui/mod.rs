@@ -29,7 +29,7 @@ use ratatui::{
     layout::{Constraint, Layout},
 };
 
-use crate::config::Theme;
+use crate::config::{StatuslineMode, Theme};
 use std::collections::HashMap;
 
 use crate::editor::{DocumentId, Editor, Mode};
@@ -55,8 +55,20 @@ pub fn draw(
     ])
     .areas(area);
 
-    let window_cursor = windows::draw_windows(frame, editor, theme, main, views, syntax);
-    frame.render_widget(StatusLine::new(editor, theme, pending), status);
+    let window_cursor = match editor.options.statusline {
+        StatuslineMode::Windows => {
+            let per_window = windows::WindowStatus {
+                pending,
+                bottom_row: status,
+            };
+            windows::draw_windows(frame, editor, theme, main, views, syntax, Some(per_window))
+        }
+        StatuslineMode::Global => {
+            let cursor = windows::draw_windows(frame, editor, theme, main, views, syntax, None);
+            frame.render_widget(StatusLine::new(editor, theme, pending), status);
+            cursor
+        }
+    };
     frame.render_widget(CommandLineView::new(editor, theme), command);
 
     // The picker popup floats over the editor pane.

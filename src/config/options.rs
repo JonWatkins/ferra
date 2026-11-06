@@ -16,6 +16,8 @@ pub struct EditorOptions {
     pub auto_indent: bool,
     pub line_numbers: LineNumbers,
     pub cursorline: bool,
+    /// A status line under every window, or one for the whole screen.
+    pub statusline: StatuslineMode,
     pub scroll_off: usize,
     pub syntax_highlighting: bool,
     /// Milliseconds to wait for the rest of a key sequence that's also a
@@ -84,6 +86,17 @@ impl Default for EditorOptions {
     fn default() -> Self {
         super::Config::default().editor
     }
+}
+
+/// Where status lines go (Neovim's `laststatus`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatuslineMode {
+    /// Under every window, in place of the line between stacked windows
+    /// (`laststatus=2`, Neovim's default).
+    Windows,
+    /// One line at the bottom for the active window (`laststatus=3`).
+    Global,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

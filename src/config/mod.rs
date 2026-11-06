@@ -9,7 +9,7 @@ mod theme;
 
 pub use options::{
     CursorShape, CursorShapes, EditorOptions, FilePickerOptions, LineNumbers, SearchCase,
-    SearchOptions,
+    SearchOptions, StatuslineMode,
 };
 pub use theme::{StyleSpec, Theme};
 

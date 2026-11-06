@@ -1,5 +1,10 @@
-//! Drawing split windows: each window's editor pane, and the separators
-//! between them.
+//! Drawing split windows: each window's editor pane, the separators
+//! between them, and (with `statusline = "windows"`) each one's status line.
+//!
+//! A window's status line goes in the row right below it. That row is
+//! always either the separator below a stacked window or the screen's
+//! status row, so per-window status lines take no extra space: they replace
+//! the horizontal separators.
 
 use std::collections::HashMap;
 
@@ -8,7 +13,7 @@ use ratatui::{
     layout::{Position, Rect},
 };
 
-use super::{EditorView, ViewState};
+use super::{EditorView, StatusLine, ViewState};
 use crate::config::Theme;
 use crate::editor::windows::Area;
 use crate::editor::{DocumentId, Editor, WindowId};
@@ -17,6 +22,13 @@ use crate::syntax::Highlights;
 /// Scroll state per window, and per buffer within a window, so switching a
 /// window between buffers keeps each one's place.
 pub type Views = HashMap<(WindowId, DocumentId), ViewState>;
+
+/// Per-window status lines: the keys typed so far (for the active window's
+/// line) and the screen's status row, below the windows.
+pub struct WindowStatus<'a> {
+    pub pending: &'a str,
+    pub bottom_row: Rect,
+}
 
 /// Draws every window into `area` and returns where the terminal cursor
 /// goes (in the active window).
@@ -27,6 +39,7 @@ pub fn draw_windows(
     area: Rect,
     views: &mut Views,
     syntax: &HashMap<DocumentId, &Highlights>,
+    status: Option<WindowStatus>,
 ) -> Option<Position> {
     let windows = editor.windows();
     let area_cells = Area::new(area.x, area.y, area.width, area.height);
@@ -36,8 +49,23 @@ pub fn draw_windows(
 
     let separator_style = theme.get("ui.window.separator");
     let screen = frame.area();
+    if let Some(status) = &status {
+        // The status rows' background, including the cells between
+        // side-by-side windows' status lines.
+        frame.buffer_mut().set_style(
+            status.bottom_row.intersection(screen),
+            theme.get("ui.statusline"),
+        );
+    }
     for separator in separators {
         let a = separator.area;
+        if status.is_some() && !separator.vertical {
+            let rect = Rect::new(a.x, a.y, a.width, a.height).intersection(screen);
+            frame
+                .buffer_mut()
+                .set_style(rect, theme.get("ui.statusline"));
+            continue;
+        }
         let symbol = if separator.vertical { "│" } else { "─" };
         for y in a.y..a.y + a.height {
             for x in a.x..a.x + a.width {
@@ -79,6 +107,18 @@ pub fn draw_windows(
         frame.render_stateful_widget(view, rect, state);
         if active {
             cursor = state.cursor;
+        }
+
+        if let Some(status) = &status {
+            let line = Rect::new(rect.x, rect.y + rect.height, rect.width, 1).intersection(screen);
+            if line.height > 0 && line.width > 0 {
+                let widget = if active {
+                    StatusLine::new(editor, theme, status.pending)
+                } else {
+                    StatusLine::inactive(document, window_cursor, theme)
+                };
+                frame.render_widget(widget, line);
+            }
         }
     }
     cursor

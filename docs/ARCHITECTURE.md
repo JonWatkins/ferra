@@ -106,6 +106,15 @@ innermost split in the right direction that holds the window: growing takes
 cells from the windows after it first, then the ones before, and every
 window keeps at least one cell.
 
+Status lines are drawn per window by default (`statusline = "windows"`).
+A window's status line goes in the row right below it, which is always
+either the horizontal separator under it or the screen's status row, so
+the layout is the same in both modes: the UI just draws status lines where
+it would draw `─` separators. Windows side by side share the bottom row,
+each drawing in its own columns. `StatusLine::new` draws the active
+window's (mode, pending keys, position) and `StatusLine::inactive` the
+others' (name, `[+]`, their own cursor), in `ui.statusline.inactive`.
+
 Moving windows rearranges the tree. `exchange` (`<C-w>x`) and `rotate`
 (`<C-w>r`) reorder the children of the split holding the window, leaving
 the sizes where they were; rotating refuses when that split holds another
@@ -626,7 +635,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
   the same amount of text, as Vim does.
 - The `".` register (the last inserted text) and `"=` (the expression
   register).
-- Window-local options, and a statusline per window.
+- Window-local options, and a configurable status line format (Vim's
+  `statusline` `%`-items).
 - File listing runs on the UI thread. It's capped by `max-files`, but very
   large trees could be walked in the background and streamed into the picker.
 - External changes are only noticed on focus, buffer switches and

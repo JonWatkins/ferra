@@ -15,6 +15,9 @@ auto-indent = true
 line-numbers = "relative"
 # Highlight the line the cursor is on.
 cursorline = true
+# "windows": a status line under every window, the active one highlighted
+# (Neovim's default). "global": one status line at the bottom.
+statusline = "windows"
 # Minimum lines kept visible above/below the cursor when scrolling.
 scroll-off = 5
 # Colour code with tree-sitter (Rust, TOML, JSON, Python, JavaScript).
@@ -108,6 +111,8 @@ visual = "block"
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
 "ui.statusline.recording" = { fg = "#f7768e", bg = "#1f2229", modifiers = ["bold"] }
 "ui.statusline.modified" = { fg = "#e0af68", bg = "#1f2229", modifiers = ["bold"] }
+# The status lines of windows other than the active one.
+"ui.statusline.inactive" = { fg = "#6b7089", bg = "#1a1c22" }
 "ui.command-line" = "#d4d7dd"
 "ui.message.info" = "#a0a6b0"
 "ui.message.error" = { fg = "#f7768e", modifiers = ["bold"] }

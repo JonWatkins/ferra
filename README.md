@@ -196,6 +196,13 @@ Each window has its own cursor and scroll position, so two windows can show
 different parts of the same file. Edits show up in every window on that
 buffer.
 
+Like Neovim, every window has its own status line: the active one shows
+the mode and is highlighted, the others show their file and cursor
+position, dimmed. Between stacked windows the status line takes the place
+of the separator, so it costs no space. `statusline = "global"` under
+`[editor]` gives one status line for the whole screen instead (Neovim's
+`laststatus=3`).
+
 Window sizes are kept as proportions, so they survive resizing the terminal.
 Splitting or closing a window evens out its neighbours again, as Vim does.
 
@@ -259,6 +266,7 @@ expand-tab = true           # indent with spaces; false for tabs
 auto-indent = true          # new lines keep indentation
 line-numbers = "absolute"   # "absolute" | "relative" | "none"
 scroll-off = 8
+statusline = "global"       # one status line, not one per window
 key-timeout = 500           # ms to wait for the rest of a sequence (j of jk)
 
 [editor.cursor-shape]

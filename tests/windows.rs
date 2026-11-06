@@ -40,7 +40,11 @@ fn vertical_split_shows_both_windows_with_a_separator() {
 
 #[test]
 fn horizontal_split_stacks_windows() {
-    let mut app = plain_app();
+    // With one global status line, stacked windows have a separator line
+    // (per-window status lines replace it: see tests/statusline.rs).
+    let mut app = app_with_config(
+        "[editor]\nline-numbers = \"none\"\nauto-indent = false\nstatusline = \"global\"",
+    );
     keys(&mut app, "itop<Esc>:sp<CR>");
     // 7 rows: 5 for windows (2 + separator + 2), statusline, command line.
     let screen = render(&mut app, 10, 7);

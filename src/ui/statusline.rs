@@ -1,4 +1,6 @@
-//! The status line: mode indicator, document name, pending keys and position.
+//! Status lines. The active window's shows the mode, document name, pending
+//! keys and position; other windows' (with `statusline = "windows"`) show
+//! just their document's name and their cursor's position, dimmed.
 
 use ratatui::{
     buffer::Buffer,
@@ -11,26 +13,86 @@ use unicode_width::UnicodeWidthStr;
 
 use super::text::truncate_start;
 use crate::config::Theme;
-use crate::editor::{Editor, Mode, SelectionKind};
+use crate::core::Position;
+use crate::editor::{Document, Editor, Mode, SelectionKind};
 
 pub struct StatusLine<'a> {
-    editor: &'a Editor,
     theme: &'a Theme,
-    /// Partially typed count/key sequence, e.g. `"2g"`.
-    pending: &'a str,
+    kind: Kind<'a>,
+}
+
+enum Kind<'a> {
+    Active {
+        editor: &'a Editor,
+        /// Partially typed count/key sequence, e.g. `"2g"`.
+        pending: &'a str,
+    },
+    Inactive {
+        document: &'a Document,
+        cursor: Position,
+    },
 }
 
 impl<'a> StatusLine<'a> {
+    /// The active window's status line.
     pub fn new(editor: &'a Editor, theme: &'a Theme, pending: &'a str) -> Self {
         Self {
-            editor,
             theme,
-            pending,
+            kind: Kind::Active { editor, pending },
+        }
+    }
+
+    /// Another window's status line: its document and cursor.
+    pub fn inactive(document: &'a Document, cursor: Position, theme: &'a Theme) -> Self {
+        Self {
+            theme,
+            kind: Kind::Inactive { document, cursor },
         }
     }
 }
 
 impl Widget for StatusLine<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        match self.kind {
+            Kind::Active { editor, pending } => Active {
+                editor,
+                theme: self.theme,
+                pending,
+            }
+            .render(area, buf),
+            Kind::Inactive { document, cursor } => {
+                render_inactive(document, cursor, self.theme, area, buf);
+            }
+        }
+    }
+}
+
+/// ` name [+]` on the left and `row:col` on the right, dimmed.
+fn render_inactive(
+    document: &Document,
+    cursor: Position,
+    theme: &Theme,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    let style = theme.get("ui.statusline.inactive");
+    buf.set_style(area, style);
+    let right = Line::from(format!(" {}:{} ", cursor.row + 1, cursor.col + 1)).right_aligned();
+    let modified = if document.is_modified() { " [+]" } else { "" };
+    let budget = (area.width as usize).saturating_sub(right.width() + modified.width() + 2);
+    let name = truncate_start(&document.name(), budget);
+    Line::from(format!(" {name}{modified} ")).render(area, buf);
+    right.render(area, buf);
+}
+
+/// The fields the active status line reads.
+struct Active<'a> {
+    editor: &'a Editor,
+    theme: &'a Theme,
+    pending: &'a str,
+}
+
+impl Active<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let base = self.theme.get("ui.statusline");
         buf.set_style(area, base);
