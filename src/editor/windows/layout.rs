@@ -61,11 +61,34 @@ pub struct Separator {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Layout {
     Window(WindowId),
-    /// Children share the space equally, separated by one-cell lines.
+    /// Children share the space in proportion to their `weights` (one per
+    /// child), separated by one-cell lines. Equal weights share equally;
+    /// resizing sets them from cell sizes, so proportions survive the
+    /// terminal being resized.
     Split {
         direction: SplitDirection,
         children: Vec<Layout>,
+        weights: Vec<u32>,
     },
+}
+
+/// Splits `available` cells in proportion to `weights`, giving cells left
+/// over from rounding to the first children.
+fn share(available: u16, weights: &[u32]) -> Vec<u16> {
+    let total: u64 = weights.iter().map(|&w| u64::from(w.max(1))).sum();
+    let mut sizes: Vec<u16> = weights
+        .iter()
+        .map(|&w| (u64::from(available) * u64::from(w.max(1)) / total.max(1)) as u16)
+        .collect();
+    let mut left = available - sizes.iter().sum::<u16>();
+    for size in &mut sizes {
+        if left == 0 {
+            break;
+        }
+        *size += 1;
+        left -= 1;
+    }
+    sizes
 }
 
 impl Layout {
@@ -86,6 +109,7 @@ impl Layout {
                 *self = Layout::Split {
                     direction,
                     children: vec![Layout::Window(target), Layout::Window(new)],
+                    weights: vec![1, 1],
                 };
                 true
             }
@@ -93,11 +117,14 @@ impl Layout {
             Layout::Split {
                 direction: own,
                 children,
+                weights,
             } => {
                 if *own == direction
                     && let Some(i) = children.iter().position(|c| *c == Layout::Window(target))
                 {
+                    // Like Vim's `equalalways`, the windows share equally again.
                     children.insert(i + 1, Layout::Window(new));
+                    *weights = vec![1; children.len()];
                     return true;
                 }
                 children.iter_mut().any(|c| c.split(target, new, direction))
@@ -107,11 +134,15 @@ impl Layout {
 
     /// Removes window `target`, collapsing splits left with one child.
     pub fn remove(&mut self, target: WindowId) -> bool {
-        let Layout::Split { children, .. } = self else {
+        let Layout::Split {
+            children, weights, ..
+        } = self
+        else {
             return false;
         };
         let removed = if let Some(i) = children.iter().position(|c| *c == Layout::Window(target)) {
             children.remove(i);
+            *weights = vec![1; children.len()];
             true
         } else {
             children.iter_mut().any(|c| c.remove(target))
@@ -138,50 +169,136 @@ impl Layout {
         windows: &mut Vec<(WindowId, Area)>,
         separators: &mut Vec<Separator>,
     ) {
-        let (direction, children) = match self {
-            Layout::Window(id) => {
+        let Layout::Split {
+            direction,
+            children,
+            ..
+        } = self
+        else {
+            if let Layout::Window(id) = self {
                 windows.push((*id, area));
-                return;
             }
-            Layout::Split {
-                direction,
-                children,
-            } => (*direction, children),
+            return;
         };
-        let vertical = direction == SplitDirection::Vertical;
-        let total = if vertical { area.width } else { area.height };
-        let n = children.len() as u16;
-        let gaps = n.saturating_sub(1);
-        let available = total.saturating_sub(gaps);
+        let vertical = *direction == SplitDirection::Vertical;
+        let (areas, lines) = self.child_areas(area);
+        for (child, child_area) in children.iter().zip(areas) {
+            child.arrange_into(child_area, windows, separators);
+        }
+        separators.extend(lines.into_iter().map(|area| Separator { area, vertical }));
+    }
 
-        // `offset` is where the next child starts. With too little room for
-        // every separator, later windows get no space; nothing is ever
-        // placed outside `area`.
+    /// A split's children's areas within `area`, and the separator lines
+    /// between them. With too little room for every separator, later
+    /// windows get no space; nothing is ever placed outside `area`.
+    fn child_areas(&self, area: Area) -> (Vec<Area>, Vec<Area>) {
+        let Layout::Split {
+            direction,
+            children,
+            weights,
+        } = self
+        else {
+            return (vec![area], Vec::new());
+        };
+        let vertical = *direction == SplitDirection::Vertical;
+        let total = if vertical { area.width } else { area.height };
+        let n = children.len();
+        let available = total.saturating_sub(n.saturating_sub(1) as u16);
+        let sizes = share(available, weights);
+
+        let mut areas = Vec::with_capacity(n);
+        let mut lines = Vec::new();
+        // Where the next child starts.
         let mut offset: u16 = 0;
-        for (i, child) in children.iter().enumerate() {
-            let i = i as u16;
-            // Share the space evenly, giving any remainder to the first ones.
-            let size = (available / n + u16::from(i < available % n)).min(total - offset);
-            let child_area = if vertical {
+        for (i, &size) in sizes.iter().enumerate() {
+            let size = size.min(total - offset);
+            areas.push(if vertical {
                 Area::new(area.x + offset, area.y, size, area.height)
             } else {
                 Area::new(area.x, area.y + offset, area.width, size)
-            };
-            child.arrange_into(child_area, windows, separators);
+            });
             offset += size;
-
             if i + 1 < n && offset < total {
-                let line = if vertical {
+                lines.push(if vertical {
                     Area::new(area.x + offset, area.y, 1, area.height)
                 } else {
                     Area::new(area.x, area.y + offset, area.width, 1)
-                };
-                separators.push(Separator {
-                    area: line,
-                    vertical,
                 });
                 offset += 1;
             }
+        }
+        (areas, lines)
+    }
+
+    /// Resizes window `target` along `axis` (`Horizontal`: its height,
+    /// `Vertical`: its width), in the innermost split of that direction
+    /// holding it. `want` gets the current size and the most it can have,
+    /// and returns the size wanted. Growing takes cells from the windows
+    /// after it first, then the ones before; shrinking gives them to the
+    /// next window (or the previous, for the last). Returns `false` if no
+    /// split in that direction holds the window.
+    pub fn resize(
+        &mut self,
+        target: WindowId,
+        axis: SplitDirection,
+        area: Area,
+        want: &dyn Fn(u16, u16) -> u16,
+    ) -> bool {
+        self.resize_in(target, axis, area, want) == Some(true)
+    }
+
+    /// `None`: `target` isn't in this subtree. `Some(done)`: it is, and
+    /// whether a split has resized it yet.
+    fn resize_in(
+        &mut self,
+        target: WindowId,
+        axis: SplitDirection,
+        area: Area,
+        want: &dyn Fn(u16, u16) -> u16,
+    ) -> Option<bool> {
+        let (areas, _) = self.child_areas(area);
+        let Layout::Split {
+            direction,
+            children,
+            weights,
+        } = self
+        else {
+            return (*self == Layout::Window(target)).then_some(false);
+        };
+        for (i, (child, child_area)) in children.iter_mut().zip(&areas).enumerate() {
+            let Some(done) = child.resize_in(target, axis, *child_area, want) else {
+                continue;
+            };
+            if done || *direction != axis {
+                return Some(done);
+            }
+            let size_of = |a: &Area| {
+                if axis == SplitDirection::Vertical {
+                    a.width
+                } else {
+                    a.height
+                }
+            };
+            let mut sizes: Vec<u16> = areas.iter().map(size_of).collect();
+            let others = sizes.len() as u16 - 1;
+            let total: u16 = sizes.iter().sum();
+            let most = total.saturating_sub(others).max(1);
+            let wanted = want(sizes[i], most).clamp(1, most);
+            resize_child(&mut sizes, i, wanted);
+            *weights = sizes.iter().map(|&s| u32::from(s.max(1))).collect();
+            return Some(true);
+        }
+        None
+    }
+
+    /// `<C-w>=`: every split shares its space equally again.
+    pub fn equalize(&mut self) {
+        if let Layout::Split {
+            children, weights, ..
+        } = self
+        {
+            *weights = vec![1; children.len()];
+            children.iter_mut().for_each(Layout::equalize);
         }
     }
 
@@ -230,6 +347,26 @@ impl Layout {
     }
 }
 
+/// Makes `sizes[i]` equal `wanted`, taking cells from (or giving them to)
+/// the others, which keep at least one cell each.
+fn resize_child(sizes: &mut [u16], i: usize, wanted: u16) {
+    if wanted > sizes[i] {
+        let mut need = wanted - sizes[i];
+        let order: Vec<usize> = (i + 1..sizes.len()).chain((0..i).rev()).collect();
+        for j in order {
+            let spare = sizes[j].saturating_sub(1).min(need);
+            sizes[j] -= spare;
+            need -= spare;
+        }
+        sizes[i] = wanted - need;
+    } else {
+        let spare = sizes[i] - wanted;
+        let receiver = if i + 1 < sizes.len() { i + 1 } else { i - 1 };
+        sizes[receiver] += spare;
+        sizes[i] = wanted;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,7 +387,8 @@ mod tests {
             layout,
             Layout::Split {
                 direction: SplitDirection::Vertical,
-                children: vec![leaf(0), leaf(1)]
+                children: vec![leaf(0), leaf(1)],
+                weights: vec![1, 1],
             }
         );
         assert!(
@@ -357,5 +495,119 @@ mod tests {
         assert_eq!(layout.neighbor(w(2), Direction::Up), Some(w(1)));
         assert_eq!(layout.neighbor(w(0), Direction::Left), None);
         assert_eq!(layout.neighbor(w(0), Direction::Down), None);
+    }
+
+    fn heights(layout: &Layout, area: Area) -> Vec<u16> {
+        layout
+            .arrange(area)
+            .0
+            .iter()
+            .map(|(_, a)| a.height)
+            .collect()
+    }
+
+    fn stack(n: u64) -> Layout {
+        let mut layout = leaf(0);
+        for i in 1..n {
+            layout.split(w(i - 1), w(i), SplitDirection::Horizontal);
+        }
+        layout
+    }
+
+    #[test]
+    fn share_splits_in_proportion() {
+        assert_eq!(share(10, &[1, 1]), [5, 5]);
+        assert_eq!(share(10, &[1, 1, 1]), [4, 3, 3]);
+        assert_eq!(share(12, &[1, 2]), [4, 8]);
+        assert_eq!(share(5, &[3, 0]), [4, 1], "a zero weight counts as one");
+    }
+
+    #[test]
+    fn growing_takes_from_the_next_window_first() {
+        let mut layout = stack(3);
+        let area = Area::new(0, 0, 10, 32); // 30 rows: 10 each
+        assert!(layout.resize(w(0), SplitDirection::Horizontal, area, &|h, _| h + 5));
+        assert_eq!(heights(&layout, area), [15, 5, 10]);
+        // More than the next has: the rest comes from the one after.
+        assert!(layout.resize(w(0), SplitDirection::Horizontal, area, &|h, _| h + 6));
+        assert_eq!(heights(&layout, area), [21, 1, 8]);
+    }
+
+    #[test]
+    fn the_last_window_grows_from_the_one_before() {
+        let mut layout = stack(2);
+        let area = Area::new(0, 0, 10, 21);
+        layout.resize(w(1), SplitDirection::Horizontal, area, &|h, _| h + 4);
+        assert_eq!(heights(&layout, area), [6, 14]);
+    }
+
+    #[test]
+    fn shrinking_gives_to_the_next_window_and_keeps_one_row() {
+        let mut layout = stack(2);
+        let area = Area::new(0, 0, 10, 21);
+        layout.resize(w(0), SplitDirection::Horizontal, area, &|h, _| {
+            h.saturating_sub(100)
+        });
+        assert_eq!(heights(&layout, area), [1, 19]);
+        layout.resize(w(0), SplitDirection::Horizontal, area, &|_, most| most);
+        assert_eq!(
+            heights(&layout, area),
+            [19, 1],
+            "maximised: the other keeps one row"
+        );
+    }
+
+    #[test]
+    fn proportions_survive_a_new_area() {
+        let mut layout = stack(2);
+        layout.resize(
+            w(0),
+            SplitDirection::Horizontal,
+            Area::new(0, 0, 10, 11),
+            &|_, _| 3,
+        );
+        assert_eq!(heights(&layout, Area::new(0, 0, 10, 11)), [3, 7]);
+        assert_eq!(heights(&layout, Area::new(0, 0, 10, 21)), [6, 14]);
+    }
+
+    #[test]
+    fn resizing_needs_a_split_in_that_direction() {
+        let mut layout = stack(2);
+        let area = Area::new(0, 0, 10, 21);
+        assert!(!layout.resize(w(0), SplitDirection::Vertical, area, &|x, _| x + 1));
+        assert!(!leaf(0).resize(w(0), SplitDirection::Horizontal, area, &|x, _| x + 1));
+    }
+
+    #[test]
+    fn the_innermost_matching_split_is_resized() {
+        // [0 | 1]
+        // [  | 2]  — resizing 2's width changes the outer split.
+        let mut layout = leaf(0);
+        layout.split(w(0), w(1), SplitDirection::Vertical);
+        layout.split(w(1), w(2), SplitDirection::Horizontal);
+        let area = Area::new(0, 0, 21, 21);
+        layout.resize(w(2), SplitDirection::Vertical, area, &|x, _| x + 4);
+        let widths: Vec<u16> = layout
+            .arrange(area)
+            .0
+            .iter()
+            .map(|(_, a)| a.width)
+            .collect();
+        assert_eq!(widths, [6, 14, 14]);
+        layout.resize(w(2), SplitDirection::Horizontal, area, &|_, _| 5);
+        assert_eq!(heights(&layout, area), [21, 15, 5]);
+    }
+
+    #[test]
+    fn equalize_and_new_windows_share_equally() {
+        let mut layout = stack(2);
+        let area = Area::new(0, 0, 10, 21);
+        layout.resize(w(0), SplitDirection::Horizontal, area, &|_, _| 3);
+        layout.equalize();
+        assert_eq!(heights(&layout, area), [10, 10]);
+
+        layout.resize(w(0), SplitDirection::Horizontal, area, &|_, _| 3);
+        layout.split(w(1), w(2), SplitDirection::Horizontal);
+        assert_eq!(heights(&layout, Area::new(0, 0, 10, 32)), [10, 10, 10]);
     }
 }

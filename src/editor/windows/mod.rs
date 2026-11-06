@@ -12,6 +12,8 @@ mod layout;
 
 pub use layout::{Area, Direction, Layout, Separator, SplitDirection};
 
+use std::cell::Cell;
+
 use super::{Document, DocumentId, Editor, Mode};
 use crate::core::Position;
 
@@ -34,7 +36,13 @@ pub struct Windows {
     windows: Vec<Window>,
     active: WindowId,
     last_id: u64,
+    /// Where the windows were last drawn, so resizing can work in cells.
+    /// Set by the UI while drawing (hence the `Cell`).
+    area: Cell<Area>,
 }
+
+/// The area assumed before anything is drawn (tests, a first command).
+const DEFAULT_AREA: Area = Area::new(0, 0, 80, 22);
 
 impl Default for Windows {
     fn default() -> Self {
@@ -47,6 +55,7 @@ impl Default for Windows {
             }],
             active: WindowId(0),
             last_id: 0,
+            area: Cell::new(DEFAULT_AREA),
         }
     }
 }
@@ -68,6 +77,16 @@ impl Windows {
         self.windows.iter().find(|w| w.id == id)
     }
 
+    /// Records where the windows are drawn (the UI calls this).
+    pub fn note_area(&self, area: Area) {
+        self.area.set(area);
+    }
+
+    /// Each window's current size, as last drawn.
+    pub fn sizes(&self) -> Vec<(WindowId, Area)> {
+        self.layout.arrange(self.area.get()).0
+    }
+
     fn get_mut(&mut self, id: WindowId) -> Option<&mut Window> {
         self.windows.iter_mut().find(|w| w.id == id)
     }
@@ -86,6 +105,21 @@ impl Editor {
         let window = self.windows.get(id)?;
         let document = self.document_by_id(window.document)?;
         Some((document, window.cursor))
+    }
+
+    /// Resizes the active window's height (`Horizontal`) or width
+    /// (`Vertical`); `want` maps the current size and the most it can be to
+    /// the size wanted. Like Vim, does nothing (returning `false`) when no
+    /// split in that direction holds the window.
+    pub fn resize_window(&mut self, axis: SplitDirection, want: impl Fn(u16, u16) -> u16) -> bool {
+        let active = self.windows.active;
+        let area = self.windows.area.get();
+        self.windows.layout.resize(active, axis, area, &want)
+    }
+
+    /// `<C-w>=`: makes every window the same size again.
+    pub fn equalize_windows(&mut self) {
+        self.windows.layout.equalize();
     }
 
     /// `:split` / `:vsplit`: opens a new window on the current buffer, at

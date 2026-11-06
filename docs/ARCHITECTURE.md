@@ -97,8 +97,14 @@ active one, so its before-save hooks run.
 
 `editor/windows/` holds split windows. A `Window` is a view onto a buffer:
 a `DocumentId` and its own cursor. `Layout` is a tree of horizontal and
-vertical splits whose children share space equally, separated by one-cell
-lines.
+vertical splits, separated by one-cell lines. Each split's children share
+its space by weight: equal after a split or close, and set from actual cell
+sizes when a window is resized, so sizes are proportions that survive the
+terminal changing size. Resizing works in cells, so the UI records the area
+it drew the windows in (`Windows::note_area`). `Layout::resize` changes the
+innermost split in the right direction that holds the window: growing takes
+cells from the windows after it first, then the ones before, and every
+window keeps at least one cell.
 
 - `Layout::arrange` computes window and separator areas in plain cells, with
   no UI types. Directional moves (`<C-w>h`) use the same geometry on a fixed
@@ -613,7 +619,7 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
   the same amount of text, as Vim does.
 - The `".` register (the last inserted text) and `"=` (the expression
   register).
-- Resizing windows (`<C-w>+`, `<C-w>>`, `<C-w>=`) and moving them around.
+- Moving windows around (`<C-w>H`, `<C-w>x`, `<C-w>r`).
 - Window-local options, and a statusline per window.
 - File listing runs on the UI thread. It's capped by `max-files`, but very
   large trees could be walked in the background and streamed into the picker.

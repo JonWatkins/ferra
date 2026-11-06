@@ -1,4 +1,4 @@
-//! Window commands: splitting, moving between and closing windows.
+//! Window commands: splitting, moving between, resizing and closing windows.
 
 use std::path::PathBuf;
 
@@ -62,6 +62,77 @@ pub fn register(r: &mut CommandRegistry) {
     });
     r.alias("only", "window_only");
     r.alias("on", "window_only");
+
+    r.register(
+        "window_taller",
+        "Make the window [count] lines taller (<C-w>+)",
+        |cx| grow(cx, SplitDirection::Horizontal, true),
+    );
+    r.register(
+        "window_shorter",
+        "Make the window [count] lines shorter (<C-w>-)",
+        |cx| grow(cx, SplitDirection::Horizontal, false),
+    );
+    r.register(
+        "window_wider",
+        "Make the window [count] columns wider (<C-w>>)",
+        |cx| grow(cx, SplitDirection::Vertical, true),
+    );
+    r.register(
+        "window_narrower",
+        "Make the window [count] columns narrower (<C-w><)",
+        |cx| grow(cx, SplitDirection::Vertical, false),
+    );
+    r.register(
+        "window_max_height",
+        "Make the window as tall as possible, or [count] lines (<C-w>_)",
+        |cx| set_size(cx, SplitDirection::Horizontal),
+    );
+    r.register(
+        "window_max_width",
+        "Make the window as wide as possible, or [count] columns (<C-w>|)",
+        |cx| set_size(cx, SplitDirection::Vertical),
+    );
+    r.register(
+        "window_equalize",
+        "Make every window the same size (<C-w>=)",
+        |cx| {
+            cx.editor.equalize_windows();
+            Ok(())
+        },
+    );
+    r.register(
+        "resize",
+        "Set the window's height: [N] lines, +N/-N more or fewer, or as tall as possible",
+        |cx| {
+            resize(
+                cx,
+                SplitDirection::Horizontal,
+                cx.args.first().map(String::as_str),
+            )
+        },
+    );
+    r.alias("res", "resize");
+    r.register(
+        "vertical",
+        "Run the next command for widths/side by side: vertical resize [N], vertical split",
+        |cx| {
+            let (command, rest) = cx.args.split_first().ok_or("Usage: vertical resize [N]")?;
+            match command.as_str() {
+                "resize" | "res" => resize(
+                    cx,
+                    SplitDirection::Vertical,
+                    rest.first().map(String::as_str),
+                ),
+                "split" | "sp" | "new" => {
+                    cx.editor.split_window(SplitDirection::Vertical);
+                    Ok(())
+                }
+                other => Err(format!("Not supported after :vertical: {other}")),
+            }
+        },
+    );
+    r.alias("vert", "vertical");
 }
 
 /// Splits, then opens the file argument (if any) in the new window.
@@ -71,6 +142,54 @@ fn split(cx: &mut Context, direction: SplitDirection) -> CommandResult {
         let path = PathBuf::from(cx.args.join(" "));
         cx.editor.open(&path).map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+/// `<C-w>+ - > <`: grows or shrinks by the count.
+fn grow(cx: &mut Context, axis: SplitDirection, bigger: bool) -> CommandResult {
+    let n = u16::try_from(cx.count()).unwrap_or(u16::MAX);
+    cx.editor.resize_window(axis, |current, _| {
+        if bigger {
+            current.saturating_add(n)
+        } else {
+            current.saturating_sub(n)
+        }
+    });
+    Ok(())
+}
+
+/// `<C-w>_` / `<C-w>|`: the count as the size, or as big as possible.
+fn set_size(cx: &mut Context, axis: SplitDirection) -> CommandResult {
+    let count = cx.count.map(|n| u16::try_from(n).unwrap_or(u16::MAX));
+    cx.editor
+        .resize_window(axis, |_, most| count.unwrap_or(most));
+    Ok(())
+}
+
+/// `:resize [N | +N | -N]`, and `:vertical resize`.
+fn resize(cx: &mut Context, axis: SplitDirection, arg: Option<&str>) -> CommandResult {
+    let parse = |digits: &str| {
+        digits
+            .parse::<u16>()
+            .map_err(|_| format!("Invalid size: {}", arg.unwrap_or_default()))
+    };
+    match arg {
+        None => cx.editor.resize_window(axis, |_, most| most),
+        Some(arg) => {
+            if let Some(n) = arg.strip_prefix('+') {
+                let n = parse(n)?;
+                cx.editor
+                    .resize_window(axis, |current, _| current.saturating_add(n))
+            } else if let Some(n) = arg.strip_prefix('-') {
+                let n = parse(n)?;
+                cx.editor
+                    .resize_window(axis, |current, _| current.saturating_sub(n))
+            } else {
+                let n = parse(arg)?;
+                cx.editor.resize_window(axis, |_, _| n)
+            }
+        }
+    };
     Ok(())
 }
 

@@ -180,12 +180,21 @@ unsaved changes.
 | `<C-w>h` `j` `k` `l` (or arrows), `<C-w>w` | Move to the window in that direction / the next one |
 | `<C-w>c`, `:close` | Close the window (its buffer stays open) |
 | `<C-w>o`, `:only` | Close every other window |
+| `<C-w>+` `<C-w>-` | Taller / shorter by [count] lines (`5<C-w>+`) |
+| `<C-w>>` `<C-w><` | Wider / narrower by [count] columns |
+| `<C-w>_` `<C-w>\|` | As tall / as wide as possible (or [count] lines / columns) |
+| `<C-w>=` | Make every window the same size |
+| `:resize N`, `:res +N`, `:res -N` | Set the height, or change it (`:resize` alone: as tall as possible) |
+| `:vertical resize N` | The same for the width (`:vert res +5`) |
 | `:q`, `<C-w>q` | Close the window; quits from the last one |
 | `:qa` | Quit (refuses while any buffer has unsaved changes; `:qa!` doesn't) |
 
 Each window has its own cursor and scroll position, so two windows can show
 different parts of the same file. Edits show up in every window on that
 buffer.
+
+Window sizes are kept as proportions, so they survive resizing the terminal.
+Splitting or closing a window evens out its neighbours again, as Vim does.
 
 ## Files
 

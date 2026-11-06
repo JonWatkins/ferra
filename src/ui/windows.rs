@@ -29,10 +29,10 @@ pub fn draw_windows(
     syntax: &HashMap<DocumentId, &Highlights>,
 ) -> Option<Position> {
     let windows = editor.windows();
-    let (placed, separators) =
-        windows
-            .layout()
-            .arrange(Area::new(area.x, area.y, area.width, area.height));
+    let area_cells = Area::new(area.x, area.y, area.width, area.height);
+    // Resizing works in cells, so the editor needs to know the real size.
+    windows.note_area(area_cells);
+    let (placed, separators) = windows.layout().arrange(area_cells);
 
     let separator_style = theme.get("ui.window.separator");
     let screen = frame.area();
