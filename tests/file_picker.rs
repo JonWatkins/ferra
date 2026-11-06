@@ -61,7 +61,10 @@ fn it_opens_at_once_and_fills_in_from_the_background() {
     );
     assert!(app.editor().picker().unwrap().loading().is_none());
     let screen = render(&mut app, 60, 12).rows.join("\n");
-    assert!(screen.contains(" Files ") && !screen.contains("listing"), "{screen}");
+    assert!(
+        screen.contains(" Files ") && !screen.contains("listing"),
+        "{screen}"
+    );
 
     keys(&mut app, "main<CR>");
     assert_eq!(text(&app), "src/main.rs");

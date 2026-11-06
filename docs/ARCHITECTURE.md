@@ -112,8 +112,15 @@ either the horizontal separator under it or the screen's status row, so
 the layout is the same in both modes: the UI just draws status lines where
 it would draw `─` separators. Windows side by side share the bottom row,
 each drawing in its own columns. `StatusLine::new` draws the active
-window's (mode, pending keys, position) and `StatusLine::inactive` the
-others' (name, `[+]`, their own cursor), in `ui.statusline.inactive`.
+window's and `StatusLine::inactive` the others' (name, `[+]`, their own
+cursor), in `ui.statusline.inactive`.
+
+The active status line is built from `[editor.statusline-layout]`: lists
+of `StatusElement`s for the left, center and right (Helix's design rather
+than Vim's `%`-format strings). Each element renders to one styled span,
+possibly empty. A file name gets the width all the other elements leave,
+shortened from the left, so everything else always stays visible; the
+center is centred between the other two when there's room.
 
 Moving windows rearranges the tree. `exchange` (`<C-w>x`) and `rotate`
 (`<C-w>r`) reorder the children of the split holding the window, leaving
@@ -799,8 +806,8 @@ status, branches and history.
 - `.` repeating a visual operation on the same amount of text, as Vim does
   (it replays the keys, so it repeats the motion instead).
 - `"=` (the expression register).
-- Window-local options, and a configurable status line format (Vim's
-  `statusline` `%`-items).
+- Window-local options, and per-window or plugin-supplied status line
+  elements (the layout is one setting for the active window).
 - External changes are only noticed on focus, buffer switches and
   `:checktime`, not by watching files; and by mtime only, so a change within
   the filesystem's timestamp resolution of our own write can be missed.

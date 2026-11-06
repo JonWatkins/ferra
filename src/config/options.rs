@@ -18,6 +18,8 @@ pub struct EditorOptions {
     pub cursorline: bool,
     /// A status line under every window, or one for the whole screen.
     pub statusline: StatuslineMode,
+    /// What the active window's status line shows, and where.
+    pub statusline_layout: StatuslineLayout,
     pub scroll_off: usize,
     pub syntax_highlighting: bool,
     /// Milliseconds to wait for the rest of a key sequence that's also a
@@ -102,6 +104,53 @@ impl<'de> Deserialize<'de> for FallbackEncoding {
             .map(FallbackEncoding)
             .ok_or_else(|| serde::de::Error::custom(format!("unknown encoding: {label}")))
     }
+}
+
+/// The `[editor.statusline-layout]` section: the elements on the left, in
+/// the center and on the right of the active window's status line, like
+/// Helix's `[editor.statusline]`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StatuslineLayout {
+    pub left: Vec<StatusElement>,
+    #[serde(default)]
+    pub center: Vec<StatusElement>,
+    pub right: Vec<StatusElement>,
+}
+
+/// One piece of the status line. Elements with nothing to show (`modified`
+/// in an unmodified buffer, `file-encoding` for plain UTF-8) take no space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StatusElement {
+    /// `NORMAL`, `INSERT`, `V-LINE`, ...
+    Mode,
+    /// The buffer's path, shortened from the left to fit the space left.
+    FileName,
+    /// Just the file's name, without its directory.
+    FileBaseName,
+    /// `[+]` when there are unsaved changes.
+    Modified,
+    /// `line:column`.
+    Position,
+    /// How far through the file the cursor is.
+    PositionPercentage,
+    /// How many lines the buffer has.
+    TotalLines,
+    /// The language (`rust`).
+    FileType,
+    /// The encoding, when it isn't plain UTF-8.
+    FileEncoding,
+    /// `LF` or `CRLF`.
+    FileLineEnding,
+    /// Keys typed so far for a command (`2d`).
+    PendingKeys,
+    /// `recording @a` while recording a macro.
+    Recording,
+    /// A `│` between elements.
+    Separator,
+    /// A space.
+    Spacer,
 }
 
 /// Where status lines go (Neovim's `laststatus`).

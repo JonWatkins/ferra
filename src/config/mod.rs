@@ -11,7 +11,7 @@ mod theme;
 pub use languages::{CommentTokens, FileType, Languages};
 pub use options::{
     CursorShape, CursorShapes, EditorOptions, FallbackEncoding, FilePickerOptions, LineNumbers,
-    SearchCase, SearchOptions, StatuslineMode,
+    SearchCase, SearchOptions, StatusElement, StatuslineLayout, StatuslineMode,
 };
 pub use theme::{StyleSpec, Theme};
 
@@ -173,5 +173,20 @@ mod tests {
             Config::from_toml("[editor"),
             Err(ConfigError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn statusline_layouts_are_checked() {
+        let config = Config::from_toml(
+            "[editor.statusline-layout]\nleft = [\"mode\"]\nright = [\"position\"]",
+        )
+        .unwrap();
+        assert_eq!(config.editor.statusline_layout.left, [StatusElement::Mode]);
+        assert!(config.editor.statusline_layout.center.is_empty());
+
+        let error = Config::from_toml("[editor.statusline-layout]\nleft = [\"clock\"]")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("clock"), "{error}");
     }
 }

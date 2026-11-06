@@ -35,6 +35,15 @@ clipboard = "registers"
 # saved back in the encoding they were read in. "utf-8" refuses other files.
 fallback-encoding = "windows-1252"
 
+# What the active window's status line shows, left, center and right.
+# Elements: mode, file-name, file-base-name, modified, position,
+# position-percentage, total-lines, file-type, file-encoding (only when not
+# plain UTF-8), file-line-ending, pending-keys, recording, separator, spacer.
+[editor.statusline-layout]
+left = ["mode", "file-name", "modified"]
+center = []
+right = ["recording", "pending-keys", "file-encoding", "file-type", "position"]
+
 [editor.search]
 # "smart" (case-insensitive unless the pattern has a capital), "sensitive"
 # or "insensitive".

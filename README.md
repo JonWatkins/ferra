@@ -208,6 +208,22 @@ of the separator, so it costs no space. `statusline = "global"` under
 `[editor]` gives one status line for the whole screen instead (Neovim's
 `laststatus=3`).
 
+What the active status line shows is up to you, as in Helix: list elements
+for its left, center and right.
+
+```toml
+[editor.statusline-layout]
+left = ["mode", "file-base-name", "modified"]
+center = ["file-type"]
+right = ["file-line-ending", "separator", "position-percentage", "position"]
+```
+
+Elements: `mode`, `file-name` (shortened from the left to fit),
+`file-base-name`, `modified`, `position`, `position-percentage`,
+`total-lines`, `file-type`, `file-encoding` (only when not plain UTF-8),
+`file-line-ending`, `pending-keys`, `recording`, `separator` and `spacer`.
+Elements with nothing to show take no space.
+
 Window sizes are kept as proportions, so they survive resizing the terminal.
 Splitting or closing a window evens out its neighbours again, as Vim does.
 
