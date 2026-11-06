@@ -26,73 +26,84 @@ impl EditStamp {
     }
 }
 
-/// The last change, split so that `.` with a count can replace its count.
+/// A recorded key, and whether the input layer took it as (part of) a
+/// count, which `.` with a count replaces. Only the input layer can tell:
+/// the `2` in `d2w` is a count, the one in `i2<Esc>` or `f2` isn't.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordedKey {
+    pub key: KeyPress,
+    pub count: bool,
+}
+
+/// The last change, as recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LastChange {
-    /// A `"x` register prefix, kept on replay.
-    register: Vec<KeyPress>,
-    /// The count typed before the change (`3` in `3x`), if any.
-    count: Option<usize>,
-    /// Everything after the leading register and count.
-    body: Vec<KeyPress>,
+    keys: Vec<RecordedKey>,
 }
 
 impl LastChange {
-    /// Splits recorded keys into leading register/count and the rest.
-    pub fn parse(keys: &[KeyPress]) -> Self {
-        let mut register = Vec::new();
-        let mut count: Option<usize> = None;
-        let mut i = 0;
-        while i < keys.len() {
-            let key = keys[i];
-            match key.as_text() {
-                Some('"') if i + 1 < keys.len() => {
-                    register.extend_from_slice(&keys[i..i + 2]);
-                    i += 2;
-                }
-                Some(c) if c.is_ascii_digit() && (c != '0' || count.is_some()) => {
-                    let digit = c.to_digit(10).expect("ascii digit") as usize;
-                    count = Some(count.unwrap_or(0).saturating_mul(10).saturating_add(digit));
-                    i += 1;
-                }
-                _ => break,
-            }
-        }
-        Self {
-            register,
-            count,
-            body: keys[i..].to_vec(),
-        }
+    pub fn new(keys: Vec<RecordedKey>) -> Self {
+        Self { keys }
     }
 
-    /// The keys after the register and count (`p` in `"13p`).
-    pub fn body(&self) -> &[KeyPress] {
-        &self.body
+    /// Where a leading `"x` register prefix starts (counts may come before
+    /// it: `2"add`).
+    fn register_index(&self) -> Option<usize> {
+        let i = self.keys.iter().position(|k| !k.count)?;
+        (self.keys[i].key.as_text() == Some('"') && i + 1 < self.keys.len()).then_some(i)
+    }
+
+    /// The keys without counts or a leading register (`p` in `"13p`).
+    pub fn body(&self) -> Vec<KeyPress> {
+        let skip = self.register_index().map_or(0, |i| i + 2);
+        self.keys
+            .iter()
+            .enumerate()
+            .filter(|&(i, k)| !k.count && i >= skip)
+            .map(|(_, k)| k.key)
+            .collect()
     }
 
     /// Moves a `"1`-`"8` register prefix on to the next number, so `"1p`
     /// then `.` `.` pastes `"1`, `"2`, `"3` (Vim's way of going back
     /// through older deletes).
     pub fn advance_numbered_register(&mut self) {
-        if let [_, key] = self.register.as_mut_slice()
-            && let Some(digit @ '1'..='8') = key.as_text()
-        {
-            *key = KeyPress::plain(KeyCode::Char((digit as u8 + 1) as char));
+        let Some(i) = self.register_index() else {
+            return;
+        };
+        let name = &mut self.keys[i + 1].key;
+        if let Some(digit @ '1'..='8') = name.as_text() {
+            *name = KeyPress::plain(KeyCode::Char((digit as u8 + 1) as char));
         }
     }
 
-    /// The keys to replay. A `count` replaces the original one.
+    /// Replaces every count in the change with `count`, for this and later
+    /// replays.
+    pub fn set_count(&mut self, count: usize) {
+        let digits = count.to_string();
+        let digits = digits.chars().map(|c| RecordedKey {
+            key: KeyPress::plain(KeyCode::Char(c)),
+            count: true,
+        });
+        let rest = self.keys.iter().copied().filter(|k| !k.count);
+        self.keys = digits.chain(rest).collect();
+    }
+
+    /// The keys to replay. A `count` replaces every count in the change,
+    /// before the operator or after it, as in Vim: after `d2w`, `3.` is
+    /// `3dw`, deleting three words.
     pub fn keys(&self, count: Option<usize>) -> Vec<KeyPress> {
-        let count = count
-            .or(self.count)
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-        let digits = count.chars().map(|c| KeyPress::plain(KeyCode::Char(c)));
-        self.register
-            .iter()
-            .copied()
-            .chain(digits)
-            .chain(self.body.iter().copied())
+        let Some(count) = count else {
+            return self.keys.iter().map(|k| k.key).collect();
+        };
+        let digits = count
+            .to_string()
+            .chars()
+            .map(|c| KeyPress::plain(KeyCode::Char(c)))
+            .collect::<Vec<_>>();
+        digits
+            .into_iter()
+            .chain(self.keys.iter().filter(|k| !k.count).map(|k| k.key))
             .collect()
     }
 }
@@ -100,7 +111,7 @@ impl LastChange {
 /// Watches key sequences and keeps the last one that changed the text.
 #[derive(Debug, Default)]
 pub struct ChangeRecorder {
-    keys: Vec<KeyPress>,
+    keys: Vec<RecordedKey>,
     at_start: EditStamp,
     /// `:` commands aren't repeatable, as in Vim.
     used_command_line: bool,
@@ -119,7 +130,14 @@ impl ChangeRecorder {
     }
 
     pub fn push(&mut self, key: KeyPress) {
-        self.keys.push(key);
+        self.keys.push(RecordedKey { key, count: false });
+    }
+
+    /// The key just pushed was taken as a count.
+    pub fn mark_count(&mut self) {
+        if let Some(last) = self.keys.last_mut() {
+            last.count = true;
+        }
     }
 
     pub fn note_command_line(&mut self) {
@@ -134,7 +152,7 @@ impl ChangeRecorder {
     pub fn finish(&mut self, stamp: EditStamp) {
         let changed = stamp.edited_since(self.at_start);
         if changed && !self.used_command_line && !self.replayed && !self.keys.is_empty() {
-            self.last_change = Some(LastChange::parse(&self.keys));
+            self.last_change = Some(LastChange::new(std::mem::take(&mut self.keys)));
         }
         self.keys.clear();
     }
@@ -158,50 +176,60 @@ mod tests {
         parse_keys(notation).unwrap()
     }
 
-    fn replayed(change: &LastChange, count: Option<usize>) -> Vec<KeyPress> {
-        change.keys(count)
-    }
-
-    #[test]
-    fn parse_splits_count_and_body() {
-        let change = LastChange::parse(&keys("12dw"));
-        assert_eq!(change.count, Some(12));
-        assert_eq!(change.body, keys("dw"));
-    }
-
-    #[test]
-    fn leading_zero_is_a_motion_not_a_count() {
-        let change = LastChange::parse(&keys("0D"));
-        assert_eq!(change.count, None);
-        assert_eq!(change.body, keys("0D"));
-    }
-
-    #[test]
-    fn register_is_kept_either_side_of_the_count() {
-        for notation in ["\"a2dd", "2\"add"] {
-            let change = LastChange::parse(&keys(notation));
-            assert_eq!(change.register, keys("\"a"), "{notation}");
-            assert_eq!(change.count, Some(2), "{notation}");
-            assert_eq!(change.body, keys("dd"), "{notation}");
+    /// A change from notation in which `#` marks the next key as a count
+    /// (`#2d#3w` is `2d3w` with both digits counts).
+    fn change(notation: &str) -> LastChange {
+        let mut recorded = Vec::new();
+        let mut count = false;
+        for part in notation.split_inclusive('#') {
+            let (text, marks_next) = match part.strip_suffix('#') {
+                Some(text) => (text, true),
+                None => (part, false),
+            };
+            if text.is_empty() {
+                count = marks_next;
+                continue;
+            }
+            for (i, key) in keys(text).into_iter().enumerate() {
+                recorded.push(RecordedKey {
+                    key,
+                    count: count && i == 0,
+                });
+            }
+            count = marks_next;
         }
+        LastChange::new(recorded)
     }
 
     #[test]
-    fn replay_uses_original_or_replacement_count() {
-        let change = LastChange::parse(&keys("\"a3x"));
-        assert_eq!(replayed(&change, None), keys("\"a3x"));
-        assert_eq!(replayed(&change, Some(5)), keys("\"a5x"));
-
-        let change = LastChange::parse(&keys("x"));
-        assert_eq!(replayed(&change, None), keys("x"));
-        assert_eq!(replayed(&change, Some(10)), keys("10x"));
+    fn replay_without_a_count_is_as_recorded() {
+        assert_eq!(change("#2d#3w").keys(None), keys("2d3w"));
+        assert_eq!(change("i42<Esc>").keys(None), keys("i42<Esc>"));
     }
 
     #[test]
-    fn digits_after_the_command_are_body() {
-        let change = LastChange::parse(&keys("i42<Esc>"));
-        assert_eq!(change.count, None);
-        assert_eq!(change.body, keys("i42<Esc>"));
+    fn a_count_replaces_every_count() {
+        assert_eq!(
+            change("d#2w").keys(Some(3)),
+            keys("3dw"),
+            "after the operator"
+        );
+        assert_eq!(change("#2d#3w").keys(Some(5)), keys("5dw"), "both sides");
+        assert_eq!(change("#1#2x").keys(Some(4)), keys("4x"), "several digits");
+        assert_eq!(change("x").keys(Some(10)), keys("10x"));
+    }
+
+    #[test]
+    fn digits_that_arent_counts_stay() {
+        assert_eq!(change("ci2<Esc>").keys(Some(3)), keys("3ci2<Esc>"));
+        assert_eq!(change("df2").keys(Some(3)), keys("3df2"));
+    }
+
+    #[test]
+    fn registers_are_kept_and_found_either_side_of_a_count() {
+        assert_eq!(change("\"a#2dd").keys(Some(4)), keys("4\"add"));
+        assert_eq!(change("#2\"add").body(), keys("dd"));
+        assert_eq!(change("\"a#2dd").body(), keys("dd"));
     }
 
     /// `edits` edits into buffer 0.
@@ -221,6 +249,20 @@ mod tests {
     }
 
     #[test]
+    fn recorded_counts_are_marked() {
+        let mut recorder = ChangeRecorder::default();
+        recorder.begin(stamp(0));
+        for key in keys("d2w") {
+            recorder.push(key);
+            if key.as_text() == Some('2') {
+                recorder.mark_count();
+            }
+        }
+        recorder.finish(stamp(1));
+        assert_eq!(recorder.last_change(), Some(&change("d#2w")));
+    }
+
+    #[test]
     fn switching_buffers_is_not_a_change() {
         let mut recorder = ChangeRecorder::default();
         record(&mut recorder, "x", 0, 1);
@@ -231,7 +273,7 @@ mod tests {
             document: DocumentId(1),
             edits: 5,
         });
-        assert_eq!(recorder.last_change(), Some(&LastChange::parse(&keys("x"))));
+        assert_eq!(recorder.last_change(), Some(&change("x")));
     }
 
     #[test]
@@ -240,10 +282,7 @@ mod tests {
         record(&mut recorder, "dw", 0, 1);
         record(&mut recorder, "j", 1, 1);
         record(&mut recorder, "u", 1, 1);
-        assert_eq!(
-            recorder.last_change(),
-            Some(&LastChange::parse(&keys("dw")))
-        );
+        assert_eq!(recorder.last_change(), Some(&change("dw")));
     }
 
     #[test]
@@ -261,19 +300,32 @@ mod tests {
         recorder.note_replay();
         recorder.finish(stamp(3));
 
-        assert_eq!(recorder.last_change(), Some(&LastChange::parse(&keys("x"))));
+        assert_eq!(recorder.last_change(), Some(&change("x")));
     }
 
     #[test]
     fn numbered_registers_advance() {
-        let mut change = LastChange::parse(&keys("\"1p"));
-        change.advance_numbered_register();
-        assert_eq!(change.keys(None), keys("\"2p"));
-        let mut change = LastChange::parse(&keys("\"9p"));
-        change.advance_numbered_register();
-        assert_eq!(change.keys(None), keys("\"9p"), "9 is the last");
-        let mut change = LastChange::parse(&keys("\"ap"));
-        change.advance_numbered_register();
-        assert_eq!(change.keys(None), keys("\"ap"));
+        let mut c = change("\"1p");
+        c.advance_numbered_register();
+        assert_eq!(c.keys(None), keys("\"2p"));
+        let mut c = change("#3\"1p");
+        c.advance_numbered_register();
+        assert_eq!(c.keys(None), keys("3\"2p"), "after a count");
+        let mut c = change("\"9p");
+        c.advance_numbered_register();
+        assert_eq!(c.keys(None), keys("\"9p"), "9 is the last");
+        let mut c = change("\"ap");
+        c.advance_numbered_register();
+        assert_eq!(c.keys(None), keys("\"ap"));
+    }
+
+    #[test]
+    fn set_count_sticks_for_later_replays() {
+        let mut c = change("#2d#3w");
+        c.set_count(4);
+        assert_eq!(c.keys(None), keys("4dw"));
+        c.set_count(7);
+        assert_eq!(c.keys(None), keys("7dw"), "the new digits are counts too");
+        assert_eq!(c.body(), keys("dw"));
     }
 }

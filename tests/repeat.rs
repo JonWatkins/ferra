@@ -179,3 +179,35 @@ fn switching_buffers_is_not_the_last_change() {
     keys(&mut app, ".");
     assert_eq!(text(&app), "a", "`.` repeats the x, in this buffer");
 }
+
+#[test]
+fn a_count_on_dot_replaces_the_count_after_the_operator() {
+    let mut app = app();
+    keys(&mut app, "ia b c d e f g h<Esc>0");
+    keys(&mut app, "d2w");
+    assert_eq!(text(&app), "c d e f g h");
+    keys(&mut app, "3.");
+    assert_eq!(text(&app), "f g h", "three words, not six");
+}
+
+#[test]
+fn a_count_on_dot_replaces_counts_on_both_sides() {
+    let mut app = app();
+    keys(&mut app, "i1 2 3 4 5 6 7 8 9 10<Esc>0");
+    keys(&mut app, "2d3w");
+    assert_eq!(text(&app), "7 8 9 10", "2d3w is six words");
+    keys(&mut app, "1.");
+    assert_eq!(text(&app), "8 9 10");
+    keys(&mut app, ".");
+    assert_eq!(text(&app), "9 10", "the new count sticks, as in Vim");
+}
+
+#[test]
+fn digits_that_arent_counts_survive_a_count_on_dot() {
+    let mut app = app();
+    keys(&mut app, "ia2b2c2d2e<Esc>0");
+    keys(&mut app, "df2");
+    assert_eq!(text(&app), "b2c2d2e");
+    keys(&mut app, "2.");
+    assert_eq!(text(&app), "d2e", "still finds 2s, now the second one");
+}

@@ -46,6 +46,8 @@ pub struct InputHandler {
     held: String,
     /// A command waiting for its character argument (after `f`, `t`, `r`).
     awaiting_char: Option<AwaitingChar>,
+    /// The last key handled was taken as a digit of a count.
+    took_count: bool,
 }
 
 #[derive(Debug)]
@@ -64,6 +66,7 @@ impl InputHandler {
     /// insert mode, typing `jx` inserts "jx", and `jj` inserts "j" and
     /// waits on the second `j`.
     pub fn handle(&mut self, key: KeyPress, mode: Mode, keymap: &Keymap) -> Vec<Outcome> {
+        self.took_count = false;
         if let Some(waiting) = self.awaiting_char.take() {
             // Any printable key is the argument, even one bound to a command
             // (`f:` finds a colon). Anything else (`<Esc>`) cancels.
@@ -108,6 +111,7 @@ impl InputHandler {
         {
             let count = self.count.unwrap_or(0).saturating_mul(10);
             self.count = Some(count.saturating_add(digit));
+            self.took_count = true;
             return vec![Outcome::Pending];
         }
 
@@ -191,6 +195,12 @@ impl InputHandler {
         // The time is up for the rest too.
         outcomes.extend(self.timeout(mode, keymap));
         outcomes
+    }
+
+    /// Whether the last key handled was taken as a digit of a count (the
+    /// `2` of `d2w`), as opposed to text or a character argument.
+    pub fn took_count(&self) -> bool {
+        self.took_count
     }
 
     /// Clears any partially typed register, count or key sequence.
@@ -592,5 +602,18 @@ mod tests {
             vec![Outcome::InsertChar('a'), Outcome::InsertChar('b')],
             "`b` starts `bcd`, but its time is up too"
         );
+    }
+
+    #[test]
+    fn took_count_reports_count_digits_only() {
+        let mut handler = InputHandler::default();
+        feed(&mut handler, Mode::Normal, "2");
+        assert!(handler.took_count());
+        feed(&mut handler, Mode::Normal, "j");
+        assert!(!handler.took_count());
+        feed(&mut handler, Mode::Insert, "2");
+        assert!(!handler.took_count(), "typed text");
+        feed(&mut handler, Mode::Normal, "0");
+        assert!(!handler.took_count(), "a leading 0 is a motion");
     }
 }

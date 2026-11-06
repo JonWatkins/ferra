@@ -438,8 +438,12 @@ level: only the app sees keys.
 
 Recording keys rather than commands makes every change repeatable,
 including insert sessions and future plugin commands, without each command
-having to support it. A leading count is stored separately so `3.`
-replaces it, and a `"x` register prefix is kept. A sequence counts as a change
+having to support it. Each recorded key notes whether the input layer took
+it as a count (`InputHandler::took_count`, in normal and operator-pending
+mode only), since only it can tell the `2` of `d2w` from the `2` of `i2` or
+`f2`. So `3.` drops every count digit and puts `3` first (`d2w` becomes
+`3dw`, as in Vim), and keeps the new count for later `.`. A `"x` register
+prefix is kept. A sequence counts as a change
 when it edited the buffer it started in (`EditStamp`: buffer and edit
 count), so switching buffers never does. If the change was a paste
 from `"1`-`"8`, `.` moves the prefix on one number first, so `"1pu.u.`
@@ -626,8 +630,6 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 - Alt keys that *are* bound can't be told apart from a fast Esc then that
   key (terminals send the same bytes), so binding `<A-j>` in insert mode
   means a quick `<Esc>j` runs it.
-- `.` with a count only replaces a count typed *before* the change: after
-  `d2w`, `3.` replays as `3d2w` (six words) where Vim deletes three.
 - Language-aware indentation (tree-sitter indent queries), and `=` to
   re-indent. Auto-indent currently copies the previous line and reacts to
   brackets only.

@@ -421,7 +421,13 @@ impl App {
         if let Some(key) = key {
             self.changes.push(key);
         }
+        // Counts are marked so `.` with a count can replace them all. Only
+        // normal-mode counts (not a visual selection's motion counts).
+        let counts_count = matches!(self.editor.mode(), Mode::Normal | Mode::OperatorPending);
         handle(self);
+        if key.is_some() && counts_count && self.input.took_count() {
+            self.changes.mark_count();
+        }
         // `:` commands and picker choices aren't repeated by `.`; a search
         // is, as an operator's motion (`d/foo<CR>`).
         let at_colon_prompt =
@@ -562,13 +568,18 @@ impl App {
             return;
         };
         let pastes = matches!(
-            self.keymap.lookup(Mode::Normal, change.body()),
+            self.keymap.lookup(Mode::Normal, &change.body()),
             Lookup::Command("paste_after" | "paste_before")
         );
         if pastes {
             change.advance_numbered_register();
         }
-        let keys = change.keys(count);
+        // As in Vim, a count given to `.` becomes the change's count, so a
+        // later `.` without one uses it too.
+        if let Some(count) = count {
+            change.set_count(count);
+        }
+        let keys = change.keys(None);
         self.changes.note_replay();
         self.replaying = true;
         for key in keys {

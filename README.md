@@ -39,7 +39,7 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `"/`, `":`, `"%` | Read-only registers: the last search, the last `:` command, the file name (`"%p`) |
 | Normal  | `"1`-`"9`, `"-` | Recent deletes of a line or more (`"1` newest), and the last delete within a line. `"1p` then `.` pastes `"2`, `"3`... |
 | Normal  | `u` `<C-r>` | Undo / redo |
-| Normal  | `.` | Repeat the last change (`3.` replaces its count) |
+| Normal  | `.` | Repeat the last change (`3.` replaces its counts: after `d2w`, deletes three words; later `.` keep the 3) |
 | Normal  | `q{a-z}` … `q` | Record a macro (`qA` appends); the statusline shows `recording @a` |
 | Normal  | `@{a-z}`, `@@`, `@:` | Play a macro (`10@a`), the last one, or the last `:` command |
 | Normal  | `m{a-z}`, `m{A-Z}` | Set a mark in this buffer / a global mark that jumps across buffers |
