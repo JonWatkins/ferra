@@ -242,8 +242,24 @@ to a line.
 
 ## Syntax highlighting
 
-Rust, TOML, JSON, Python and JavaScript are highlighted with tree-sitter,
-detected from the file name. Colours are theme scopes (`keyword`,
+These languages are highlighted with tree-sitter, out of the box: Rust,
+Python, JavaScript (with JSX), TypeScript, TSX, Go, C, C++, Bash, TOML,
+JSON, YAML, HTML, CSS and Markdown (headings, lists, code blocks and quotes;
+not yet emphasis or links). The status line shows the language.
+
+A file's language comes from its name (`Makefile`, `.bashrc`), its extension,
+or for scripts without one, the `#!` line (`#!/usr/bin/env python3`). The
+rules are the `[languages]` table in the config, so you can add your own:
+
+```toml
+[languages.python]
+extensions = ["py", "pyi", "star"]   # replaces the list, so keep the defaults
+
+[languages.bash]
+file-names = [".bashrc", "my-tool"]
+```
+
+Colours are theme scopes (`keyword`,
 `function`, `string`, `comment`, `type`...), each falling back to its
 parent, so `function.method` uses `function` unless you set it:
 

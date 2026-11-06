@@ -4,9 +4,11 @@
 //! single source of truth. A user config is deep-merged on top, so users only
 //! write what they want to change.
 
+mod languages;
 mod options;
 mod theme;
 
+pub use languages::{FileType, Languages};
 pub use options::{
     CursorShape, CursorShapes, EditorOptions, FilePickerOptions, LineNumbers, SearchCase,
     SearchOptions, StatuslineMode,
@@ -35,6 +37,8 @@ static DEFAULT: LazyLock<Config> =
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub editor: EditorOptions,
+    /// Which files are in which language.
+    pub languages: Languages,
     pub theme: Theme,
     pub keys: Keymap,
     /// Commands to run when events fire: `before-save = ["trim_trailing_whitespace"]`.

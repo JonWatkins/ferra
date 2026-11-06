@@ -136,3 +136,66 @@ fn selection_and_search_draw_over_syntax_colours() {
         "and shows the selection"
     );
 }
+
+#[test]
+fn a_script_without_an_extension_is_recognised_by_its_shebang() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app();
+    app.open(&file(
+        &dir,
+        "deploy",
+        "#!/usr/bin/env bash\nif true; then echo hi; fi\n",
+    ));
+    assert!(
+        status_row(&mut app).contains(" bash "),
+        "{}",
+        status_row(&mut app)
+    );
+    assert!(
+        !cells_in(&mut app, 1, KEYWORD).is_empty(),
+        "`if` is a keyword"
+    );
+}
+
+#[test]
+fn typing_a_shebang_into_a_new_file_picks_the_language() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app();
+    app.open(&dir.path().join("new-script"));
+    assert!(!status_row(&mut app).contains(" bash "));
+    keys(&mut app, "i#!/bin/sh<Esc>");
+    assert!(status_row(&mut app).contains(" bash "));
+}
+
+#[test]
+fn config_can_add_file_names_and_extensions() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app_with_config("[languages.python]\nextensions = [\"py\", \"star\"]");
+    app.open(&file(&dir, "BUILD.star", "def f():\n    return 1\n"));
+    assert!(
+        status_row(&mut app).contains(" python "),
+        "{}",
+        status_row(&mut app)
+    );
+}
+
+#[test]
+fn new_languages_are_highlighted() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, text, language) in [
+        ("main.go", "func main() {}\n", "go"),
+        ("app.ts", "function f(): void {}\n", "typescript"),
+        ("lib.c", "int f(void) { return 0; }\n", "c"),
+    ] {
+        let mut app = app();
+        app.open(&file(&dir, name, text));
+        assert!(
+            status_row(&mut app).contains(&format!(" {language} ")),
+            "{name}"
+        );
+        assert!(
+            !cells_in(&mut app, 0, KEYWORD).is_empty(),
+            "{name} has keywords coloured"
+        );
+    }
+}

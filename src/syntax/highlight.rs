@@ -132,7 +132,7 @@ mod tests {
         let mut config = HighlightConfiguration::new(
             (rust.grammar)(),
             rust.name,
-            rust.highlights,
+            &rust.highlight_query(),
             rust.injections,
             rust.locals,
         )

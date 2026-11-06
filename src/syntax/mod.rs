@@ -1,6 +1,7 @@
 //! Syntax highlighting with tree-sitter.
 //!
-//! [`SyntaxEngine`] picks a language from a document's path, highlights the
+//! [`SyntaxEngine`] picks a language for a document (by the `[languages]`
+//! config: file name, extension or `#!` line), highlights the
 //! whole document, and caches the result until the text changes. The UI
 //! styles each [`Span`] with the theme scope named by its highlight
 //! (`keyword`, `function.method`, ...).
@@ -13,13 +14,14 @@ mod highlight;
 mod languages;
 
 pub use highlight::{HIGHLIGHT_NAMES, Highlights, Span};
-pub use languages::{LANGUAGES, LanguageDef, detect};
+pub use languages::{LANGUAGES, LanguageDef, language};
 
 use std::cell::OnceCell;
 use std::collections::HashMap;
 
 use tree_sitter_highlight::{HighlightConfiguration, Highlighter};
 
+use crate::config::Languages;
 use crate::editor::{Document, DocumentId};
 
 /// Documents larger than this (in chars) aren't highlighted, so opening a
@@ -53,22 +55,26 @@ impl SyntaxEngine {
     /// Highlights for `document`, recomputed only if its text or language
     /// changed. `None` if the language is unknown, the document is too
     /// large, or highlighting failed.
-    pub fn highlights(&mut self, document: &Document) -> Option<&Highlights> {
-        self.refresh(document);
+    pub fn highlights(
+        &mut self,
+        document: &Document,
+        languages: &Languages,
+    ) -> Option<&Highlights> {
+        self.refresh(document, languages);
         self.get(document.id())
     }
 
     /// Brings `document`'s cached highlights up to date. Call this for each
     /// document on screen, then `get` them all (several windows can show
     /// different documents at once).
-    pub fn refresh(&mut self, document: &Document) {
+    pub fn refresh(&mut self, document: &Document, languages: &Languages) {
         let id = document.id();
-        let Some((index, language)) = LANGUAGES.iter().enumerate().find(|(_, l)| {
-            document
-                .path()
-                .and_then(detect)
-                .is_some_and(|d| d.name == l.name)
-        }) else {
+        let name = languages.detect(document.path(), &document.buffer().line(0));
+        let Some((index, language)) = LANGUAGES
+            .iter()
+            .enumerate()
+            .find(|(_, l)| Some(l.name) == name)
+        else {
             self.cache.remove(&id);
             return;
         };
@@ -101,6 +107,13 @@ impl SyntaxEngine {
                 highlights,
             },
         );
+    }
+
+    /// `highlights` with the default `[languages]` table.
+    #[cfg(test)]
+    pub fn highlights_default(&mut self, document: &Document) -> Option<&Highlights> {
+        let languages = crate::config::Config::default().languages;
+        self.highlights(document, &languages)
     }
 
     /// The cached highlights for document `id` (see `refresh`).
@@ -139,7 +152,7 @@ fn load(language: &LanguageDef) -> Result<HighlightConfiguration, String> {
     let mut config = HighlightConfiguration::new(
         (language.grammar)(),
         language.name,
-        language.highlights,
+        &language.highlight_query(),
         language.injections,
         language.locals,
     )
@@ -172,17 +185,17 @@ mod tests {
         let mut engine = SyntaxEngine::default();
         assert!(
             engine
-                .highlights(&document("a.rs", "fn main() {}"))
+                .highlights_default(&document("a.rs", "fn main() {}"))
                 .is_some()
         );
         assert!(
             engine
-                .highlights(&document("a.txt", "fn main() {}"))
+                .highlights_default(&document("a.txt", "fn main() {}"))
                 .is_none()
         );
         assert!(
             engine
-                .highlights(&Document::with_text("fn main() {}"))
+                .highlights_default(&Document::with_text("fn main() {}"))
                 .is_none(),
             "no path"
         );
@@ -196,11 +209,28 @@ mod tests {
             ("a.json", "{\"a\": [1, true, null]}"),
             ("a.py", "def f(x):\n    return \"s\""),
             ("a.js", "function f() { return 'x'; }"),
+            ("a.jsx", "const a = <div className=\"x\">hi</div>;"),
+            ("a.ts", "function f(x: number): string { return 'x'; }"),
+            ("a.tsx", "const a = (x: number) => <b>{x}</b>;"),
+            ("a.go", "package main\nfunc main() {}"),
+            ("a.c", "int main(void) { return 0; }"),
+            ("a.cpp", "class A { public: int x; };"),
+            ("a.sh", "if [ -n \"$x\" ]; then echo hi; fi"),
+            ("a.md", "# Heading\n\nText"),
+            ("a.yml", "key: value"),
+            ("a.html", "<p class=\"x\">hi</p>"),
+            ("a.css", "body { color: red; }"),
+            ("script", "#!/bin/bash\necho hi"),
         ];
+        assert_eq!(
+            samples.len(),
+            LANGUAGES.len() + 2,
+            "a sample per language (plus jsx and a #! script)"
+        );
         let mut engine = SyntaxEngine::default();
         for (name, text) in samples {
             let doc = document(name, text);
-            let highlights = engine.highlights(&doc).unwrap();
+            let highlights = engine.highlights_default(&doc).unwrap();
             assert!(!highlights.line(0).is_empty(), "{name} has no highlights");
         }
     }
@@ -209,7 +239,7 @@ mod tests {
     fn retain_drops_closed_documents() {
         let mut engine = SyntaxEngine::default();
         let doc = document("a.rs", "fn x() {}");
-        engine.highlights(&doc);
+        engine.highlights_default(&doc);
         assert_eq!(engine.cached_count(), 1);
         engine.retain(&[doc.id()]);
         assert_eq!(engine.cached_count(), 1);
@@ -221,11 +251,11 @@ mod tests {
     fn cache_follows_text_changes() {
         let mut engine = SyntaxEngine::default();
         let mut doc = document("a.rs", "x");
-        let before = engine.highlights(&doc).unwrap().line(0).to_vec();
+        let before = engine.highlights_default(&doc).unwrap().line(0).to_vec();
         doc.insert(crate::core::Position::new(0, 0), "fn ");
-        let after = engine.highlights(&doc).unwrap().line(0).to_vec();
+        let after = engine.highlights_default(&doc).unwrap().line(0).to_vec();
         assert_ne!(before, after);
         doc.undo();
-        assert_eq!(engine.highlights(&doc).unwrap().line(0), before);
+        assert_eq!(engine.highlights_default(&doc).unwrap().line(0), before);
     }
 }

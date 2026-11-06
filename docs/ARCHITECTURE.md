@@ -178,8 +178,18 @@ finds `src/main.rs` before `domain/lib.rs`.
 
 `syntax/` wraps tree-sitter:
 
-- `languages.rs` lists each language: name, extensions/file names, grammar
-  and queries. Adding a language is one entry plus its grammar crate.
+- `languages.rs` lists each built-in language by name: its grammar and
+  queries. A language built on another (TypeScript on JavaScript, C++ on C)
+  lists its own highlight query first and the base one after, joined, so its
+  patterns win. Adding a language is one entry, its grammar crate, and a
+  `[languages.name]` table in the default config.
+- Which file is in which language is config, not code:
+  `config::Languages` (the `[languages]` table, shaped like Helix's
+  `languages.toml`) matches the exact file name, then the extension, then
+  the interpreter on a `#!` first line (via `env`, ignoring flags and
+  version suffixes). The editor holds the table so the syntax engine and the
+  status line agree, and detection reruns as you type, so writing a `#!`
+  into a new file picks its language.
 - `highlight.rs` runs `tree-sitter-highlight` and turns its events into
   spans per line, in char columns. `HIGHLIGHT_NAMES` are the names queries'
   captures are mapped to, and they double as theme scopes.
@@ -662,7 +672,10 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
   previous tree), and highlighting only the visible part of very large
   files. Language injections (e.g. regex or SQL inside strings) are turned
   off.
-- More languages, and choosing a language for files without an extension.
+- Loading grammars and queries at runtime, Helix-style, instead of
+  compiling them in (each adds to the binary: 15 languages make it about
+  17 MB in release, up from 8 MB with 5). Markdown's inline grammar
+  (emphasis, links) needs injections.
 - `.` and macros replay keys without timing, so a short binding that ran
   because the key timeout passed (`g` alongside `gg`) replays as waiting
   for the longer one. Text typed by a timeout in insert mode replays fine.

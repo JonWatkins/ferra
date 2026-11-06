@@ -412,7 +412,7 @@ mod tests {
         std::fs::write(&path, "fn main() {}").unwrap();
         let (doc, _) = Document::open(&path).unwrap();
         let mut engine = crate::syntax::SyntaxEngine::default();
-        let highlights = engine.highlights(&doc);
+        let highlights = engine.highlights_default(&doc);
 
         let mut theme = Theme::default();
         theme.set("keyword", Style::new().fg(ratatui::style::Color::Magenta));

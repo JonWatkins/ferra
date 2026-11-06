@@ -100,10 +100,8 @@ impl Active<'_> {
         let cursor = self.editor.document.cursor();
         let language = self
             .editor
-            .document
-            .path()
-            .and_then(crate::syntax::detect)
-            .map(|l| format!(" {} ", l.name))
+            .language_of(&self.editor.document)
+            .map(|name| format!(" {name} "))
             .unwrap_or_default();
         let recording = self
             .editor

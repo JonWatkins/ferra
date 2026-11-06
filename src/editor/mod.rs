@@ -76,6 +76,8 @@ pub struct Editor {
     last_id: u64,
     pub command_line: CommandLine,
     pub options: EditorOptions,
+    /// Which files are in which language (`[languages]` config).
+    pub languages: crate::config::Languages,
     pub registers: Registers,
     /// The last `f`/`t`/`F`/`T`, for `;` and `,`.
     pub last_char_search: Option<CharSearch>,
@@ -302,6 +304,12 @@ impl Editor {
         if self.mode == Mode::Insert {
             self.typed.pop();
         }
+    }
+
+    /// The language `document` is in, if any (by name, extension or `#!`).
+    pub fn language_of(&self, document: &Document) -> Option<&str> {
+        self.languages
+            .detect(document.path(), &document.buffer().line(0))
     }
 
     /// Queues keys for `:normal` to run at `at`.

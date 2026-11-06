@@ -20,7 +20,7 @@ cursorline = true
 statusline = "windows"
 # Minimum lines kept visible above/below the cursor when scrolling.
 scroll-off = 5
-# Colour code with tree-sitter (Rust, TOML, JSON, Python, JavaScript).
+# Colour code with tree-sitter (the languages in [languages] below).
 syntax-highlighting = true
 # Milliseconds to wait for the next key of a sequence before giving up: a
 # half-typed insert-mode binding (the j of jk) is typed as text, and a key
@@ -55,6 +55,65 @@ picker = "bar"
 # While an operator (d, c, y) waits for a motion.
 operator = "underline"
 visual = "block"
+
+# Which files are in which language, for syntax highlighting. Files are
+# matched by exact file name, then extension, then the interpreter on a
+# `#!` first line (`python` also matches `python3.12`). Add your own:
+#
+#   [languages.bash]
+#   file-names = [".bashrc", "my-script"]
+[languages.rust]
+extensions = ["rs"]
+
+[languages.toml]
+extensions = ["toml"]
+file-names = ["Cargo.lock", "Pipfile"]
+
+[languages.json]
+extensions = ["json", "jsonc"]
+file-names = [".prettierrc", ".eslintrc"]
+
+[languages.python]
+extensions = ["py", "pyi"]
+shebangs = ["python"]
+
+[languages.javascript]
+extensions = ["js", "mjs", "cjs", "jsx"]
+shebangs = ["node"]
+
+[languages.typescript]
+extensions = ["ts", "mts", "cts"]
+shebangs = ["deno", "ts-node"]
+
+[languages.tsx]
+extensions = ["tsx"]
+
+[languages.go]
+extensions = ["go"]
+
+[languages.c]
+extensions = ["c", "h"]
+
+[languages.cpp]
+extensions = ["cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++"]
+
+[languages.bash]
+extensions = ["sh", "bash", "zsh"]
+file-names = [".bashrc", ".bash_profile", ".bash_aliases", ".profile", ".zshrc", ".zprofile", ".zshenv", "PKGBUILD"]
+shebangs = ["sh", "bash", "zsh", "dash"]
+
+[languages.markdown]
+extensions = ["md", "markdown"]
+
+[languages.yaml]
+extensions = ["yaml", "yml"]
+file-names = [".clang-format"]
+
+[languages.html]
+extensions = ["html", "htm"]
+
+[languages.css]
+extensions = ["css"]
 
 # Theme styles are keyed by scope. Lookups fall back to the parent scope, so
 # "ui.linenr.selected" falls back to "ui.linenr".

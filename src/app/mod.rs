@@ -64,8 +64,10 @@ impl App {
             commands.on_run_commands(kind, hook_commands);
         }
 
+        let mut editor = Editor::new(config.editor);
+        editor.languages = config.languages;
         let mut app = Self {
-            editor: Editor::new(config.editor),
+            editor,
             commands,
             keymap: config.keys,
             theme: config.theme,
@@ -337,7 +339,7 @@ impl App {
         if self.editor.options.syntax_highlighting {
             for &id in &shown {
                 if let Some(document) = self.editor.document_by_id(id) {
-                    self.syntax.refresh(document);
+                    self.syntax.refresh(document, &self.editor.languages);
                 }
             }
             for &id in &shown {
