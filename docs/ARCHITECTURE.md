@@ -348,7 +348,13 @@ where they change, so marks elsewhere on them stay put.
   untouched file round-trips byte for byte.
 - `files` is the only module that touches the disk. Writes go to a temp file
   in the same directory, are fsynced, then renamed over the target. Existing
-  permissions are copied and symlinks are followed.
+  permissions are copied and symlinks are followed. A rename gives the file
+  a new identity, so (like Vim's `backupcopy=auto`) the file is overwritten
+  in place instead when it has other hard-linked names, when its owner or
+  group can't be kept (the temp file is `chown`ed to match, and if that's
+  refused), or when the directory doesn't allow a temp file. In-place
+  writes copy the original to a backup first and put it back if writing
+  fails.
 - `Document` holds the path, format and two pieces of save state:
   - **Modified tracking:** `History` gives each committed state a
     `Revision`. The document is modified when its revision differs from the
@@ -780,9 +786,8 @@ status, branches and history.
 - External changes are only noticed on focus, buffer switches and
   `:checktime`, not by watching files; and by mtime only, so a change within
   the filesystem's timestamp resolution of our own write can be missed.
-- Writing through hard links keeps the old inode's other names pointing at
-  the old contents (the rename replaces the file). Vim's `backupcopy`
-  handles this; we don't yet.
+- Extended attributes and ACLs (e.g. macOS file tags) aren't carried over
+  by the rename used for ordinary saves.
 - Non-UTF-8 encodings are refused rather than supported.
 - Clipboard over SSH (OSC 52), and recording pastes into macros and `.`
   (both currently replay without the pasted text).

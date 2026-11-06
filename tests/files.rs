@@ -244,3 +244,24 @@ fn statusline_shows_file_name_and_modified_marker() {
     let status = render(&mut app, 80, 5).rows[3].clone();
     assert!(!status.contains("[+]"), "{status:?}");
 }
+
+#[cfg(unix)]
+#[test]
+fn saving_a_hard_linked_file_updates_every_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.txt");
+    let other = dir.path().join("same-notes.txt");
+    fs::write(&path, "first\n").unwrap();
+    fs::hard_link(&path, &other).unwrap();
+
+    let mut app = open(&path);
+    keys(&mut app, "A!<Esc>");
+    cmd(&mut app, "w");
+    assert!(message(&app).ends_with("written"), "{}", message(&app));
+    assert_eq!(read(&other), "first!\n");
+
+    // A second save still sees no change on disk it didn't make.
+    keys(&mut app, "A?<Esc>");
+    cmd(&mut app, "w");
+    assert_eq!(read(&other), "first!?\n");
+}
