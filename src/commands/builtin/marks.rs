@@ -40,7 +40,19 @@ fn goto_mark(cx: &mut Context, motion: &'static Motion) -> CommandResult {
         if cx.editor.take_pending_operator().is_some() {
             return Err("Mark is in another buffer".into());
         }
+        cx.editor.push_jump();
         cx.editor.switch_to(document);
+        let doc = &mut cx.editor.document;
+        let target = if motion.name == motions::MARK_LINE.name {
+            position.with_col(crate::core::motion::first_non_blank(
+                doc.buffer(),
+                position.row,
+            ))
+        } else {
+            position
+        };
+        doc.set_cursor(target);
+        return Ok(());
     }
     let args = MotionArgs {
         count: None,

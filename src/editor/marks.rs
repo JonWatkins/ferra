@@ -24,6 +24,24 @@ impl Editor {
     /// The buffer and position of mark `name`.
     pub fn mark_target(&self, name: char) -> Result<(DocumentId, Position), String> {
         let not_set = || format!("Mark not set: {name}");
+        match name {
+            // Where the cursor was before the last jump.
+            '\'' | '`' => {
+                let jump = self.last_jump_origin().ok_or_else(not_set)?;
+                let document = self.document_by_id(jump.document).ok_or_else(not_set)?;
+                // Clamped, since the text may have changed since.
+                let buffer = document.buffer();
+                let row = jump.position.row.min(buffer.line_count() - 1);
+                let col = jump.position.col.min(buffer.line_len(row));
+                return Ok((jump.document, Position::new(row, col)));
+            }
+            // The last change in this buffer.
+            '.' => {
+                let position = self.document.last_change().ok_or_else(not_set)?;
+                return Ok((self.document.id(), position));
+            }
+            _ => {}
+        }
         let document = match name {
             'a'..='z' => &self.document,
             'A'..='Z' => {

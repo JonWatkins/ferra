@@ -17,12 +17,18 @@ impl Editor {
     /// already open.
     pub fn open(&mut self, path: &Path) -> Result<(), FileError> {
         if let Some(id) = self.find_open_path(path) {
+            if id != self.document.id() {
+                self.push_jump();
+            }
             self.switch_to(id);
             let name = self.document.name().into_owned();
             self.set_message(Message::info(format!("\"{name}\"")));
             return Ok(());
         }
         let (mut document, info) = Document::open(path)?;
+        if !self.document.is_pristine_scratch() {
+            self.push_jump();
+        }
         // A file replacing the untouched starting buffer takes its number,
         // so the first file opened is buffer 1, as in Vim.
         let id = if self.document.is_pristine_scratch() {

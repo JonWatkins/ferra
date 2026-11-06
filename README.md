@@ -42,6 +42,9 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `@{a-z}`, `@@`, `@:` | Play a macro (`10@a`), the last one, or the last `:` command |
 | Normal  | `m{a-z}`, `m{A-Z}` | Set a mark in this buffer / a global mark that jumps across buffers |
 | Normal  | `'{mark}`, `` `{mark} `` | Jump to a mark's line / exact position (also after operators: `d'a`) |
+| Normal  | `''`, ` `` ` | Back to where the cursor was before the last jump (again to toggle) |
+| Normal  | `<C-o>`, `<C-i>` / `<Tab>` | Back / forward through the jump list, across buffers (`3<C-o>`) |
+| Normal  | `g;`, `g,` | Older / newer place in the change list; `'.` is the last change |
 | Normal  | `/` `?` | Search forward / backward (regex; matches preview as you type) |
 | Normal  | `n` `N` | Next / previous match |
 | Normal  | `*` `#` | Search forward / backward for the word under the cursor |

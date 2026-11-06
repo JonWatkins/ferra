@@ -46,6 +46,8 @@ pub struct Motion {
     pub kind: MotionKind,
     /// Vertical motions keep the remembered ("sticky") column.
     pub vertical: bool,
+    /// A big move that's recorded in the jump list (`gg`, `%`, marks...).
+    pub jump: bool,
     pub target: TargetFn,
 }
 
@@ -61,8 +63,14 @@ impl Motion {
             description,
             kind,
             vertical: false,
+            jump: false,
             target,
         }
+    }
+
+    const fn jump(mut self) -> Self {
+        self.jump = true;
+        self
     }
 
     const fn vertical(mut self) -> Self {
@@ -135,7 +143,8 @@ pub const FILE_START: Motion = Motion::new(
     "Go to first line, or line [count]",
     Linewise,
     |b, _, a| Some(line_start(b, a.count.map_or(0, |n| n.saturating_sub(1)))),
-);
+)
+.jump();
 pub const FILE_END: Motion = Motion::new(
     "goto_file_end",
     "Go to last line, or line [count]",
@@ -144,25 +153,29 @@ pub const FILE_END: Motion = Motion::new(
         let row = a.count.map_or(last_row(b), |n| n.saturating_sub(1));
         Some(line_start(b, row))
     },
-);
+)
+.jump();
 pub const MATCHING_BRACKET: Motion = Motion::new(
     "goto_matching_bracket",
     "Jump to the matching bracket (%)",
     Inclusive,
     |b, p, _| motion::matching_bracket(b, p),
-);
+)
+.jump();
 pub const NEXT_PARAGRAPH: Motion = Motion::new(
     "goto_next_paragraph",
     "Move to the empty line after the paragraph (})",
     Exclusive,
     |b, p, a| Some(motion::paragraph_forward(b, p, a.n())),
-);
+)
+.jump();
 pub const PREV_PARAGRAPH: Motion = Motion::new(
     "goto_prev_paragraph",
     "Move to the empty line before the paragraph ({)",
     Exclusive,
     |b, p, a| Some(motion::paragraph_backward(b, p, a.n())),
-);
+)
+.jump();
 
 /// `f`, `t`, `F`, `T`: forward searches include the found character in an
 /// operator's range, backward ones don't, as in Vim.
@@ -196,10 +209,11 @@ pub const TILL_CHAR_BACKWARD: Motion = Motion::new(
 pub const MARK_LINE: Motion = Motion::new("mark_line", "", Linewise, |b, _, a| {
     let mark = a.target?;
     Some(line_start(b, mark.row))
-});
+})
+.jump();
 
 /// `` `a ``: the mark's exact position (exclusive). Not bound directly.
-pub const MARK_EXACT: Motion = Motion::new("mark_exact", "", Exclusive, |_, _, a| a.target);
+pub const MARK_EXACT: Motion = Motion::new("mark_exact", "", Exclusive, |_, _, a| a.target).jump();
 
 /// `cw`: like `ce`, not `dw` (Vim special case). Not bound directly.
 const CHANGE_WORD: Motion = Motion::new("change_word", "", Inclusive, |b, p, a| {
@@ -288,6 +302,7 @@ pub fn register(r: &mut CommandRegistry) {
             .parse()
             .map_err(|_| "goto_line: invalid line number")?;
         let target = line_start(cx.editor.document.buffer(), line.saturating_sub(1));
+        cx.editor.push_jump();
         cx.editor.document.set_cursor(target);
         Ok(())
     });
@@ -368,6 +383,10 @@ fn move_cursor(editor: &mut Editor, motion: &Motion, args: MotionArgs) {
     let Some(target) = (motion.target)(doc.buffer(), cursor, args) else {
         return;
     };
+    if motion.jump {
+        editor.push_jump();
+    }
+    let doc = &mut editor.document;
     if motion.vertical {
         doc.move_vertical(target.row as isize - cursor.row as isize);
     } else {

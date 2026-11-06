@@ -124,6 +124,7 @@ impl Editor {
             cursor = found.start_position();
             wrapped |= w;
         }
+        self.push_jump();
         self.document.set_cursor(cursor);
 
         let message = if !wrapped {

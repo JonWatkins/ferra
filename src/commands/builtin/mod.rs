@@ -9,6 +9,7 @@ mod editing;
 mod ex_commands;
 mod files;
 mod history;
+mod jumps;
 mod macros;
 mod marks;
 mod modes;
@@ -37,6 +38,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     ex_commands::register(registry);
     marks::register(registry);
     macros::register(registry);
+    jumps::register(registry);
     modes::register(registry);
     command_line::register(registry);
 }

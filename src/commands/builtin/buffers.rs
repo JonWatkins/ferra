@@ -10,6 +10,7 @@ pub fn register(r: &mut CommandRegistry) {
         "Switch to the next buffer ([count] times)",
         |cx| {
             let n = cx.count() as isize;
+            cx.editor.push_jump();
             cx.editor.switch_relative(n);
             Ok(())
         },
@@ -22,6 +23,7 @@ pub fn register(r: &mut CommandRegistry) {
         "Switch to the previous buffer ([count] times)",
         |cx| {
             let n = cx.count() as isize;
+            cx.editor.push_jump();
             cx.editor.switch_relative(-n);
             Ok(())
         },
@@ -38,6 +40,7 @@ pub fn register(r: &mut CommandRegistry) {
                 return Err("Argument required: a buffer number or name".into());
             }
             let id = cx.editor.find_buffer(&query)?;
+            cx.editor.push_jump();
             cx.editor.switch_to(id);
             Ok(())
         },
@@ -49,6 +52,7 @@ pub fn register(r: &mut CommandRegistry) {
         "buffer_alternate",
         "Switch to the most recently used other buffer",
         |cx| {
+            cx.editor.push_jump();
             if cx.editor.switch_alternate() {
                 Ok(())
             } else {

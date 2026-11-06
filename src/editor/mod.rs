@@ -7,6 +7,7 @@ mod buffers;
 mod command_line;
 mod document;
 mod files;
+mod jumps;
 mod marks;
 mod message;
 mod mode;
@@ -22,6 +23,7 @@ pub use buffers::BufferInfo;
 pub use command_line::{CommandLine, Completion, CompletionContext, Prompt};
 pub use document::{Document, DocumentId, OpenInfo, SaveInfo};
 pub use files::UNSAVED_CHANGES;
+pub use jumps::{Jump, JumpList};
 pub use message::{Message, Severity};
 pub use mode::Mode;
 pub use operator::{Operator, PendingOperator};
@@ -82,6 +84,8 @@ pub struct Editor {
     macro_request: Option<MacroRequest>,
     /// The register a macro is being recorded into.
     recording_macro: Option<char>,
+    jumps: JumpList,
+    last_jump_origin: Option<Jump>,
     /// Which buffer each global mark (`A`-`Z`) is in.
     global_marks: std::collections::HashMap<char, DocumentId>,
     last_selection: Option<selection::LastSelection>,

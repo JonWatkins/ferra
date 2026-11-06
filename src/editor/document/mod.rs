@@ -50,6 +50,10 @@ pub struct Document {
     text_version: u64,
     /// Local marks (`ma`), kept in place as the text changes.
     marks: marks::Marks,
+    /// Where recent changes were, oldest first (`g;`, `g,`, `'.`).
+    changes: Vec<Position>,
+    /// Which change `g;`/`g,` is at; `None` until they're used after an edit.
+    change_index: Option<usize>,
 }
 
 impl Document {
@@ -98,6 +102,46 @@ impl Document {
 
     pub fn cursor(&self) -> Position {
         self.cursor
+    }
+
+    /// Remembers where a change happened. Changes on the same line as the
+    /// last one (typing a word, say) update it rather than adding another.
+    fn record_change(&mut self, at: Position) {
+        match self.changes.last_mut() {
+            Some(last) if last.row == at.row => *last = at,
+            _ => {
+                self.changes.push(at);
+                if self.changes.len() > 100 {
+                    self.changes.remove(0);
+                }
+            }
+        }
+        self.change_index = None;
+    }
+
+    /// Where the last change was (`'.`).
+    pub fn last_change(&self) -> Option<Position> {
+        self.changes.last().map(|&p| self.clamp(p))
+    }
+
+    /// `g;` (`older`) / `g,`: the next change position in that direction,
+    /// clamped into the buffer. `None` at either end of the list.
+    pub fn step_change(&mut self, older: bool, count: usize) -> Option<Position> {
+        let last = self.changes.len().checked_sub(1)?;
+        let index = match (self.change_index, older) {
+            // The first `g;` goes to the newest change itself.
+            (None, true) => last.checked_sub(count.max(1) - 1)?,
+            (None, false) => return None,
+            (Some(i), true) => i.checked_sub(count.max(1))?,
+            (Some(i), false) => i.checked_add(count.max(1)).filter(|&i| i <= last)?,
+        };
+        self.change_index = Some(index);
+        Some(self.clamp(self.changes[index]))
+    }
+
+    fn clamp(&self, position: Position) -> Position {
+        let row = position.row.min(self.buffer.line_count() - 1);
+        Position::new(row, position.col.min(self.buffer.line_len(row)))
     }
 
     /// Sets mark `name` at the cursor.
@@ -163,6 +207,7 @@ impl Document {
         }
         let end = self.buffer.insert_text(at, text);
         self.marks.after_insert(at, end);
+        self.record_change(at);
         self.edit_count += 1;
         self.text_version += 1;
         self.history.record(Change::Insert {
@@ -180,6 +225,7 @@ impl Document {
         }
         let text = self.buffer.delete_range(start, end);
         self.marks.after_delete(start, end);
+        self.record_change(start);
         self.edit_count += 1;
         self.text_version += 1;
         self.history.record(Change::Delete {
@@ -446,6 +492,27 @@ mod tests {
         doc.delete_lines(0, 1);
         assert_eq!(doc.mark('m'), Some(Position::new(1, 0)));
         assert_eq!(doc.mark('x'), None);
+    }
+
+    #[test]
+    fn change_list_records_and_steps() {
+        let mut doc = Document::with_text("a\nb\nc\nd");
+        assert_eq!(doc.step_change(true, 1), None, "no changes yet");
+        for row in [0, 2, 3] {
+            doc.set_cursor(Position::new(row, 0));
+            doc.insert_str("x");
+        }
+        doc.insert_str("y");
+        assert_eq!(
+            doc.last_change(),
+            Some(Position::new(3, 1)),
+            "same line: updated"
+        );
+        assert_eq!(doc.step_change(true, 1), Some(Position::new(3, 1)));
+        assert_eq!(doc.step_change(true, 1), Some(Position::new(2, 0)));
+        assert_eq!(doc.step_change(true, 5), None, "past the oldest");
+        assert_eq!(doc.step_change(false, 1), Some(Position::new(3, 1)));
+        assert_eq!(doc.step_change(false, 1), None, "past the newest");
     }
 
     #[test]

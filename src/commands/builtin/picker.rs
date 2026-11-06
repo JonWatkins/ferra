@@ -135,6 +135,9 @@ pub fn register(r: &mut CommandRegistry) {
         "Choose the selected picker item",
         |cx| match cx.editor.accept_picker() {
             Some(PickerAction::SwitchBuffer(id)) => {
+                if id != cx.editor.document.id() {
+                    cx.editor.push_jump();
+                }
                 cx.editor.switch_to(id);
                 Ok(())
             }
