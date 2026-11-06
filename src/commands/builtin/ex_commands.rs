@@ -1,9 +1,11 @@
-//! Line-range commands: `:s` (substitute), `:d` and `:y`.
+//! Line-range commands: `:s` (substitute), `:d`, `:y`, and `:g` (run a
+//! command on every matching line).
 //!
 //! Each works on the range given before it (`:%s/a/b/`, `:5,10d`), or the
-//! cursor's line when there isn't one.
+//! cursor's line when there isn't one (`:g`: the whole file).
 
-use crate::commands::ex::{Substitute, parse_substitute};
+use super::command_line::run_command_line;
+use crate::commands::ex::{Flags, Global, Substitute, parse_global, parse_substitute};
 use crate::commands::{CommandRegistry, CommandResult, Context};
 use crate::core::search::{CaseMode, SearchPattern};
 use crate::core::{Position, Range, motion};
@@ -12,10 +14,44 @@ use crate::editor::{Message, Operator};
 pub fn register(r: &mut CommandRegistry) {
     r.register(
         "substitute",
-        "Replace matches in [range]: s/pattern/replacement/[g i I n e]",
+        "Replace matches in [range]: s/pattern/replacement/[g c i I n e]",
         substitute,
     );
     r.alias("s", "substitute");
+    r.register(
+        "repeat_substitute",
+        "Repeat the last :s on [range] or this line, without its flags (&, :&)",
+        |cx| repeat_substitute(cx, false),
+    );
+    r.alias("&", "repeat_substitute");
+    r.register(
+        "substitute_confirm",
+        "Answer a :s///c question: y, n, a (all), q (quit) or l (this one, then quit)",
+        |cx| {
+            let answer = cx.char_arg.ok_or("missing answer")?;
+            if cx.editor.answer_confirm(answer) {
+                cx.editor.request_char("substitute_confirm");
+            }
+            Ok(())
+        },
+    )
+    .takes_char();
+    r.register(
+        "repeat_substitute_with_flags",
+        "Repeat the last :s on [range] or this line, with its flags (:&&)",
+        |cx| repeat_substitute(cx, true),
+    );
+    r.alias("&&", "repeat_substitute_with_flags");
+    r.register(
+        "repeat_substitute_everywhere",
+        "Repeat the last :s on every line, with its flags and the last search (g&)",
+        |cx| {
+            cx.range = Some((0, cx.editor.document.buffer().line_count() - 1));
+            let mut last = last_substitute(cx)?;
+            last.pattern.clear();
+            run_substitute(cx, last)
+        },
+    );
 
     r.register(
         "delete_range",
@@ -38,6 +74,94 @@ pub fn register(r: &mut CommandRegistry) {
     });
     r.alias("y", "yank_range");
     r.alias("yank", "yank_range");
+
+    r.register(
+        "global",
+        "Run a : command on each line in [range] matching a pattern: g/pattern/command (g! or v: not matching)",
+        |cx| {
+            let invert = cx.bang;
+            global(cx, invert)
+        },
+    );
+    r.alias("g", "global");
+    r.register(
+        "vglobal",
+        "Run a : command on each line in [range] not matching a pattern: v/pattern/command",
+        |cx| global(cx, true),
+    );
+    r.alias("v", "vglobal");
+}
+
+/// `:g/pattern/command`: finds the matching lines first, then runs
+/// `command` with the cursor on each in turn, skipping lines an earlier run
+/// deleted. With `invert`, the lines that don't match. With no command, it
+/// reports how many lines match and goes to the last. One undo step.
+fn global(cx: &mut Context, invert: bool) -> CommandResult {
+    if cx.editor.document.is_tracking_rows() {
+        return Err("Cannot use :g inside :g".into());
+    }
+    let Global { pattern, command } = parse_global(cx.arg_text)?;
+    let case = cx.editor.options.search.case.into();
+    let pattern = if pattern.is_empty() {
+        let last = cx
+            .editor
+            .last_search_pattern()
+            .ok_or("No previous search pattern")?;
+        SearchPattern::new(last.source(), case)?
+    } else {
+        SearchPattern::new(&pattern, case)?
+    };
+
+    let doc = &cx.editor.document;
+    let (first, last) = cx.range.unwrap_or((0, doc.buffer().line_count() - 1));
+    let rows: Vec<usize> = (first..=last)
+        .filter(|&row| {
+            let line = doc.buffer().line(row);
+            let matched = pattern.is_match(&line);
+            matched != invert
+        })
+        .collect();
+    let source = pattern.source().to_string();
+    cx.editor.set_last_search(pattern);
+    let Some(&last_row) = rows.last() else {
+        return Err(format!("Pattern not found: {source}"));
+    };
+    if command.is_empty() {
+        let doc = &mut cx.editor.document;
+        let col = motion::first_non_blank(doc.buffer(), last_row);
+        doc.set_cursor(Position::new(last_row, col));
+        let lines = if rows.len() == 1 { "line" } else { "lines" };
+        cx.editor
+            .set_message(Message::info(format!("{} matching {lines}", rows.len())));
+        return Ok(());
+    }
+
+    let lines_before = cx.editor.document.buffer().line_count();
+    let count = rows.len();
+    cx.editor.document.track_rows(rows);
+    let mut result = Ok(());
+    for index in 0..count {
+        let Some(row) = cx.editor.document.tracked_row(index) else {
+            continue;
+        };
+        let doc = &mut cx.editor.document;
+        doc.set_cursor(Position::new(row, 0));
+        if let Err(error) = run_command_line(cx, &command) {
+            result = Err(error);
+            break;
+        }
+    }
+    cx.editor.document.stop_tracking_rows();
+    result?;
+
+    let lines_after = cx.editor.document.buffer().line_count();
+    if lines_after < lines_before {
+        let fewer = lines_before - lines_after;
+        let lines = if fewer == 1 { "line" } else { "lines" };
+        cx.editor
+            .set_message(Message::info(format!("{fewer} fewer {lines}")));
+    }
+    Ok(())
 }
 
 /// The command's range as whole lines, or the cursor's line.
@@ -47,12 +171,41 @@ fn lines(cx: &Context) -> Range {
     Range::Lines { first, last }
 }
 
+/// `:s/pattern/replacement/flags`, or with no arguments, `:&`.
 fn substitute(cx: &mut Context) -> CommandResult {
+    if cx.arg_text.trim().is_empty() {
+        return repeat_substitute(cx, false);
+    }
+    let parsed = parse_substitute(cx.arg_text)?;
+    cx.editor.last_substitute = Some(cx.arg_text.to_string());
+    run_substitute(cx, parsed)
+}
+
+/// The last `:s`, parsed again.
+fn last_substitute(cx: &Context) -> Result<Substitute, String> {
+    let text = cx
+        .editor
+        .last_substitute
+        .as_deref()
+        .ok_or("No previous substitute regular expression")?;
+    parse_substitute(text)
+}
+
+/// `&` / `:&` (no flags) and `:&&` (same flags): the last `:s` again.
+fn repeat_substitute(cx: &mut Context, keep_flags: bool) -> CommandResult {
+    let mut last = last_substitute(cx)?;
+    if !keep_flags {
+        last.flags = Flags::default();
+    }
+    run_substitute(cx, last)
+}
+
+fn run_substitute(cx: &mut Context, parsed: Substitute) -> CommandResult {
     let Substitute {
         pattern,
         replacement,
         flags,
-    } = parse_substitute(cx.arg_text)?;
+    } = parsed;
 
     let case = match flags.ignore_case {
         Some(true) => CaseMode::Insensitive,
@@ -72,6 +225,12 @@ fn substitute(cx: &mut Context) -> CommandResult {
     let Range::Lines { first, last } = lines(cx) else {
         unreachable!("lines() always gives a line range")
     };
+    if flags.confirm && !flags.count_only {
+        cx.editor
+            .begin_confirm(pattern, replacement, flags.global, (first, last))?;
+        cx.editor.request_char("substitute_confirm");
+        return Ok(());
+    }
     let doc = &mut cx.editor.document;
     let mut substitutions = 0;
     let mut changed_lines = 0;

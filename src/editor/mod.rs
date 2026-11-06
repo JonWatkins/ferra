@@ -17,6 +17,7 @@ pub mod registers;
 mod search;
 pub use search::{SearchDone, SearchHit};
 mod block;
+mod confirm;
 mod selection;
 mod transform;
 pub mod windows;
@@ -69,6 +70,10 @@ pub struct Editor {
     pub registers: Registers,
     /// The last `f`/`t`/`F`/`T`, for `;` and `,`.
     pub last_char_search: Option<CharSearch>,
+    /// The arguments of the last `:s` (`/a/b/g`), for `&` and `:&&`.
+    pub last_substitute: Option<String>,
+    /// A `:s///c` waiting for y/n/a/q/l answers.
+    confirm: Option<confirm::ConfirmSession>,
     mode: Mode,
     pending_operator: Option<PendingOperator>,
     selection: Option<Selection>,
@@ -184,7 +189,8 @@ impl Editor {
     /// one step.
     pub fn finish_command(&mut self) {
         self.enforce_cursor_rules();
-        if self.mode != Mode::Insert {
+        // A `:s///c` session undoes as one step, across its answers.
+        if self.mode != Mode::Insert && self.confirm.is_none() {
             self.document.commit();
         }
     }

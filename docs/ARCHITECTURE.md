@@ -371,6 +371,22 @@ with no command goes to its last line, which is what makes `:42` work.
 into the `regex` crate's. It edits from the bottom of the range upwards, so
 a replacement that adds line breaks doesn't shift the rows still to be
 processed, and it sets the last search so `n` and highlighting follow.
+The last `:s` arguments are kept on the editor (`last_substitute`), so `&`,
+`:&&` and `g&` parse them again with different flags or patterns.
+
+`:s///c` opens a `ConfirmSession` (`editor/confirm.rs`) that walks forward
+through the matches, one at a time, with `SearchPattern::next_replacement`
+expanding the replacement for that match. Answers arrive as the next key
+(`request_char("substitute_confirm")`), so there's no extra mode. While a
+session is open, `finish_command` leaves the undo step open, so the whole
+session undoes at once; a non-character key (`<Esc>`) ends it.
+
+`:g` finds the matching rows first, then asks the document to track them
+(`Document::track_rows`): insertions and deletions shift tracked rows, and
+rows whose line is deleted are forgotten. It then runs the command with
+the cursor on each remaining row, through the same `run_command_line` as
+the `:` prompt. It's one command, so it's one undo step, and `:g` inside
+`:g` is refused.
 
 ### Repeat (`.`)
 
@@ -569,8 +585,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 - Visual block mode: `>`/`<` shift whole lines (Vim shifts from the
   block's left edge), a tab partly inside a block is taken whole (Vim splits
   it into spaces), and `gv` doesn't remember `$`.
-- `:s` follow-ups: the `c` (confirm) flag, `&`/`:&&` to repeat the last
-  substitution, and `:g/pattern/command`.
+- `:normal` (to run normal-mode keys from `:g`), and `~` in a replacement
+  (the previous replacement).
 - Alt keys that *are* bound can't be told apart from a fast Esc then that
   key (terminals send the same bytes), so binding `<A-j>` in insert mode
   means a quick `<Esc>j` runs it.

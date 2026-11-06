@@ -116,7 +116,7 @@ pub fn register(r: &mut CommandRegistry) {
 
 /// Runs `[range] name[!] [arguments]`. A range on its own (`:42`, `:$`)
 /// goes to its last line.
-fn run_command_line(cx: &mut Context, input: &str) -> CommandResult {
+pub(super) fn run_command_line(cx: &mut Context, input: &str) -> CommandResult {
     let doc = &cx.editor.document;
     let range_context = RangeContext {
         cursor_row: doc.cursor().row,

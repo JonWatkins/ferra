@@ -74,6 +74,35 @@ impl SearchPattern {
         &self.source
     }
 
+    /// The first match in `line` starting at or after char column `from`
+    /// (empty matches included), as `(start, end)` char columns, with
+    /// `replacement` (`regex` syntax) expanded for it. Anchors like `^`
+    /// still see the whole line.
+    pub fn next_replacement(
+        &self,
+        line: &str,
+        from: usize,
+        replacement: &str,
+    ) -> Option<(usize, usize, String)> {
+        let byte_from = match line.char_indices().nth(from) {
+            Some((i, _)) => i,
+            None if from == line.chars().count() => line.len(),
+            None => return None,
+        };
+        let captures = self.regex.captures_at(line, byte_from)?;
+        let found = captures.get(0)?;
+        let mut text = String::new();
+        captures.expand(replacement, &mut text);
+        let start = line[..found.start()].chars().count();
+        let end = start + found.as_str().chars().count();
+        Some((start, end, text))
+    }
+
+    /// Whether `line` has a match.
+    pub fn is_match(&self, line: &str) -> bool {
+        self.regex.is_match(line)
+    }
+
     /// Non-empty matches in `line`, as `(start, end)` char columns.
     pub fn matches_in_line(&self, line: &str) -> Vec<(usize, usize)> {
         let mut cols = CharCols::new(line);

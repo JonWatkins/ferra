@@ -510,6 +510,13 @@ impl App {
             }
         }
 
+        // A `:s///c` question answered with a key that isn't a character
+        // (`<Esc>`) ends the session.
+        if self.editor.is_confirming() && !self.input.is_awaiting_char() {
+            self.editor.cancel_confirm();
+            self.editor.finish_command();
+        }
+
         // Keep e.g. `d` or `df` on display while waiting for the rest.
         if self.editor.mode() != Mode::OperatorPending && !self.input.is_awaiting_char() {
             self.input.release_held();

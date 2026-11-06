@@ -57,6 +57,9 @@ pub struct Document {
     changes: Vec<Position>,
     /// Which change `g;`/`g,` is at; `None` until they're used after an edit.
     change_index: Option<usize>,
+    /// Rows being followed through edits (`:g` visits them); `None` once
+    /// a row's line is deleted.
+    tracked_rows: Option<Vec<Option<usize>>>,
 }
 
 impl Document {
@@ -210,6 +213,7 @@ impl Document {
         }
         let end = self.buffer.insert_text(at, text);
         self.marks.after_insert(at, end);
+        self.track_insert(at, end);
         self.record_change(at);
         self.edit_count += 1;
         self.text_version += 1;
@@ -228,6 +232,7 @@ impl Document {
         }
         let text = self.buffer.delete_range(start, end);
         self.marks.after_delete(start, end);
+        self.track_delete(start, end);
         self.record_change(start);
         self.edit_count += 1;
         self.text_version += 1;
@@ -301,6 +306,62 @@ impl Document {
         } else {
             self.insert(Position::new(row, 0), "\n");
             self.set_cursor(Position::new(row, 0));
+        }
+    }
+
+    // --- Tracked rows -----------------------------------------------------
+
+    /// Starts following `rows` through edits: they shift as lines are
+    /// added or removed above them, and are forgotten when their line is
+    /// deleted. Used by `:g`, which runs a command on each matching line.
+    pub fn track_rows(&mut self, rows: Vec<usize>) {
+        self.tracked_rows = Some(rows.into_iter().map(Some).collect());
+    }
+
+    /// Where tracked row `index` is now, or `None` if its line was deleted.
+    pub fn tracked_row(&self, index: usize) -> Option<usize> {
+        self.tracked_rows.as_ref()?.get(index).copied().flatten()
+    }
+
+    pub fn is_tracking_rows(&self) -> bool {
+        self.tracked_rows.is_some()
+    }
+
+    pub fn stop_tracking_rows(&mut self) {
+        self.tracked_rows = None;
+    }
+
+    fn track_insert(&mut self, at: Position, end: Position) {
+        let added = end.row - at.row;
+        if added == 0 {
+            return;
+        }
+        for row in self.tracked_rows.iter_mut().flatten().flatten() {
+            if *row > at.row {
+                *row += added;
+            }
+        }
+    }
+
+    fn track_delete(&mut self, start: Position, end: Position) {
+        let removed = end.row - start.row;
+        if removed == 0 {
+            return;
+        }
+        // Deleting from a line start to a line start removes whole lines;
+        // otherwise the end row's remainder joins the start row, so it's the
+        // later rows that go.
+        let gone = if start.col == 0 && end.col == 0 {
+            start.row..end.row
+        } else {
+            start.row + 1..end.row + 1
+        };
+        for slot in self.tracked_rows.iter_mut().flatten() {
+            match *slot {
+                Some(row) if gone.contains(&row) => *slot = None,
+                Some(row) if row > start.row => *slot = Some(row - removed),
+                _ => {}
+            }
         }
     }
 
@@ -537,5 +598,27 @@ mod tests {
         doc.insert(pos(0, 0), "");
         doc.delete(pos(0, 1), pos(0, 1));
         assert!(!doc.undo());
+    }
+
+    #[test]
+    fn tracked_rows_follow_edits_and_forget_deleted_lines() {
+        let mut doc = Document::with_text("0\n1\n2\n3\n4");
+        doc.track_rows(vec![1, 2, 4]);
+        doc.delete_lines(2, 2);
+        assert_eq!(
+            (doc.tracked_row(0), doc.tracked_row(1), doc.tracked_row(2)),
+            (Some(1), None, Some(3))
+        );
+        doc.insert(Position::new(0, 1), "\nnew");
+        assert_eq!((doc.tracked_row(0), doc.tracked_row(2)), (Some(2), Some(4)));
+        // Deleting the last line deletes from the previous line's end.
+        doc.delete_lines(4, 4);
+        assert_eq!(doc.tracked_row(2), None);
+        // Joining lines: the joined line goes.
+        doc.track_rows(vec![0, 1]);
+        doc.delete(Position::new(0, 1), Position::new(1, 0));
+        assert_eq!((doc.tracked_row(0), doc.tracked_row(1)), (Some(0), None));
+        doc.stop_tracking_rows();
+        assert!(!doc.is_tracking_rows());
     }
 }

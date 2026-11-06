@@ -20,6 +20,8 @@ pub struct Flags {
     pub count_only: bool,
     /// `e`: no error when nothing matches.
     pub no_error: bool,
+    /// `c`: ask before each replacement.
+    pub confirm: bool,
 }
 
 /// Parses the text after `:s`: a delimiter (any punctuation), the pattern,
@@ -83,7 +85,8 @@ fn parse_flags(text: &str) -> Result<Flags, String> {
             'I' => flags.ignore_case = Some(false),
             'n' => flags.count_only = true,
             'e' => flags.no_error = true,
-            _ => return Err(format!("Unknown flag '{c}' (use g, i, I, n or e)")),
+            'c' => flags.confirm = true,
+            _ => return Err(format!("Unknown flag '{c}' (use g, c, i, I, n or e)")),
         }
     }
     Ok(flags)

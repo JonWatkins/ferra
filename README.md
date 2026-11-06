@@ -107,10 +107,29 @@ regex syntax as search:
 :s#/usr#/opt#        any punctuation works as the delimiter
 ```
 
-Flags: `g` every match on the line, `i`/`I` ignore/respect case, `n` count
-only, `e` no error if nothing matches. An empty pattern reuses the last
-search, and the substituted pattern becomes the search for `n`. The whole
-substitution is one undo step.
+Flags: `g` every match on the line, `c` confirm each one, `i`/`I`
+ignore/respect case, `n` count only, `e` no error if nothing matches. An
+empty pattern reuses the last search, and the substituted pattern becomes the
+search for `n`. The whole substitution is one undo step, even with `c`.
+
+With `c`, each match is shown with `replace with … (y/n/a/q/l)?`: `y`
+replaces it, `n` skips it, `a` replaces it and all the rest, `l` replaces it
+and stops, `q` or `<Esc>` stops.
+
+`&` (or `:&`, or `:s` alone) repeats the last substitution on this line
+without its flags; `:&&` keeps them; `g&` repeats it on every line, with its
+flags, for the last search. They take ranges too (`:%&&`).
+
+`:[range]g/pattern/command` runs a `:` command on every line matching the
+pattern (the whole file by default); `:v` or `:g!` on every line that
+doesn't. The lines are found first, so deleting some doesn't skip others:
+
+```text
+:g/TODO/d            delete every line with TODO
+:v/\S/d              delete blank lines
+:g/^fn/s/foo/bar/g   substitute only on lines starting with fn
+:g/pattern           count matching lines and go to the last
+```
 
 Ranges work before any `:` command: `%` (the whole file), `5`, `5,10`, `.`
 (this line), `$` (the last), offsets like `.+3` and `$-1`, and `'<,'>` (the
