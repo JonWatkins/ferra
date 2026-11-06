@@ -30,7 +30,12 @@ fn main() -> color_eyre::Result<ExitCode> {
     };
 
     let mut app = App::new(config);
+    // Plugins load before files open, so their `opened` hooks see them.
+    let plugin_error = terminal_editor::config::config_dir().and_then(|dir| app.load_plugins(&dir));
     app.open_all(&files);
+    if let Some(error) = plugin_error {
+        app.editor_mut().set_message(Message::error(error));
+    }
     // Shown last so it isn't hidden by the file's "opened" message.
     if let Some(error) = config_error {
         app.editor_mut()

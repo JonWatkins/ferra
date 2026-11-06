@@ -303,19 +303,43 @@ There are two delivery styles:
 (`CommandRegistry::on_run_commands`), and unknown command names are
 reported at startup, like the keymap.
 
+## Lua plugins
+
+`plugins/` embeds Lua 5.4 through `mlua`, with Lua bundled so users need
+nothing installed. `PluginHost` owns the Lua state and sets up the global
+`editor` table. While a file loads, `editor.command`, `editor.on` and
+`editor.map` only record registrations, keeping each Lua function in the
+Lua registry. `PluginHost::install` then adds them to the same
+`CommandRegistry` and `Keymap` the built-ins use. Each plugin command or
+hook is an ordinary Rust closure holding the Lua state and the function's
+registry key, so plugin commands get the palette, `:` execution, key
+binding, undo, `.` and hooks with no special cases.
+
+A callback runs inside `Lua::scope` (`plugins/api.rs`). The `ctx` methods
+are scoped functions that borrow the command's `Context` through a
+`RefCell`, so Lua can reach the editor only for the duration of the call: a
+`ctx` saved and used later gives a Lua error, not undefined behaviour.
+`ctx:run` executes any command, including other plugin commands, re-entering
+Lua safely. Lua errors become the command's error (first line, without the
+traceback).
+
+Loading order: `init.lua`, then `plugins/*.lua` by name, so later files can
+override earlier commands and bindings. Errors are collected per file; a
+broken file doesn't stop the rest. `main` loads plugins before opening the
+startup files, so `opened` hooks see them.
+
 ## Plugin roadmap
 
-Done so far: named commands, runtime keybinding, and event hooks. Still to do:
+Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
-1. **Scripting runtime.** Lua (via `mlua`) is the likely first choice because
-   it's familiar to Neovim users. A plugin's `register_command` and `on`
-   calls map straight onto `CommandRegistry::register` and
-   `CommandRegistry::on`. Handlers are deliberately not `Send`, so a
-   non-thread-safe Lua state can live inside them.
+1. **A wider API**, driven by real plugins: selections, registers, search,
+   buffers, options, and creating pickers from Lua.
 2. **Plugin UI.** Statusline segments and gutter columns become lists of
    components that plugins can contribute to.
-3. **Isolation.** If sandboxing becomes a goal, a WASM runtime can sit behind
-   the same command and hook interfaces.
+3. **Registering at runtime.** Registrations made inside a callback (rather
+   than while loading) are collected but not yet installed.
+4. **Isolation.** If sandboxing untrusted plugins becomes a goal, a WASM
+   runtime could sit behind the same command and hook interfaces.
 
 ## Configuration
 

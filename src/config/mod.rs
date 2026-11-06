@@ -105,6 +105,11 @@ impl Config {
     }
 }
 
+/// The directory holding `config.toml`, `init.lua` and `plugins/`.
+pub fn config_dir() -> Option<PathBuf> {
+    default_path().and_then(|p| p.parent().map(Path::to_path_buf))
+}
+
 /// `$XDG_CONFIG_HOME/terminal-editor/config.toml`, falling back to
 /// `~/.config/terminal-editor/config.toml`.
 pub fn default_path() -> Option<PathBuf> {

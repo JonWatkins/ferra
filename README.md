@@ -153,5 +153,56 @@ before-save = ["trim_trailing_whitespace"]
 Events: `opened`, `before-save`, `after-save`, `mode-changed`,
 `buffer-changed`. A `before-save` command that fails cancels the save.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the
-plugin roadmap.
+## Lua plugins
+
+Put Lua files in `~/.config/terminal-editor/plugins/` (loaded in name order,
+after `~/.config/terminal-editor/init.lua`). Plugins register commands,
+hooks and key bindings through the global `editor` table:
+
+```lua
+-- ~/.config/terminal-editor/plugins/todo.lua
+editor.command("todo", "Insert a TODO comment above the cursor", function(ctx)
+  local row = ctx:cursor()
+  local indent = ctx:line(row):match("^%s*")
+  ctx:insert_line(row, indent .. "// TODO: ")
+end)
+editor.map("normal", "<Space>t", "todo")
+
+editor.on("before-save", function(ctx, event)
+  for row = 1, ctx:line_count() do
+    ctx:set_line(row, (ctx:line(row):gsub("%s+$", "")))
+  end
+end)
+```
+
+`editor.command(name, [description,] fn)`, `editor.on(event, fn)` and
+`editor.map(mode, keys, command)` are available while loading. Callbacks get
+a `ctx`:
+
+| `ctx` method | |
+|--------------|---|
+| `line(row)`, `line_count()`, `text()` | Read the buffer (rows and columns start at 1) |
+| `set_line(row, text)`, `insert_line(row, text)`, `delete_line(row)`, `insert(text)` | Edit it (undoable, repeatable with `.`) |
+| `cursor()`, `set_cursor(row, col)` | The cursor |
+| `path()`, `mode()` | The file and the current mode |
+| `message(text)` | Show a message |
+| `run(name, ...)` | Run any command, with arguments |
+
+Plus `ctx.count` and `ctx.args`. Hooks also get an `event` table (`kind`,
+and `path` or `from`/`to` where relevant). Raising a Lua `error` cancels the
+command (or the save, in a `before-save` hook) and shows the message, with
+the file and line it came from; use `error("message", 0)` for messages meant
+for users. A
+plugin that fails to load is reported without stopping the others. Plugin
+commands appear in the command palette and can override built-in ones.
+
+[`examples/plugins/toolkit.lua`](examples/plugins/toolkit.lua) is a
+complete example (`:todo`, `:duplicate_line`, `:sort_paragraph`,
+`:word_count`, `:insert_date` and an after-save hook). Try it with:
+
+```sh
+mkdir -p ~/.config/terminal-editor/plugins
+ln -s "$PWD/examples/plugins/toolkit.lua" ~/.config/terminal-editor/plugins/
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.

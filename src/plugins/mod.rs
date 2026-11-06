@@ -1,0 +1,192 @@
+//! Lua plugins.
+//!
+//! Plugins are Lua files loaded at startup: `init.lua` in the config
+//! directory, then every `plugins/*.lua` in name order. They use a global
+//! `editor` table to register commands, hooks and key bindings:
+//!
+//! ```lua
+//! editor.command("hello", "Insert a greeting", function(ctx)
+//!   ctx:insert("hello from Lua")
+//! end)
+//! editor.on("before-save", function(ctx, event) ... end)
+//! editor.map("normal", "<Space>h", "hello")
+//! ```
+//!
+//! Registrations made while a file loads are collected, then installed into
+//! the command registry and keymap, the same ones built-in commands use. A
+//! callback gets a `ctx` object (see `api.rs`) that's only valid during the
+//! call, so a plugin can never hold on to the editor.
+
+mod api;
+
+use std::cell::RefCell;
+use std::path::Path;
+use std::rc::Rc;
+
+use mlua::{Function, Lua, RegistryKey, Value};
+
+use crate::commands::CommandRegistry;
+use crate::editor::Mode;
+use crate::events::EventKind;
+use crate::input::{Keymap, parse_keys};
+
+/// What plugins asked for while loading, waiting to be installed.
+#[derive(Default)]
+struct Registrations {
+    commands: Vec<(String, String, RegistryKey)>,
+    hooks: Vec<(EventKind, String, RegistryKey)>,
+    maps: Vec<(String, String, String)>,
+}
+
+pub struct PluginHost {
+    lua: Rc<Lua>,
+    pending: Rc<RefCell<Registrations>>,
+    /// The file being loaded, used to name hooks in error messages.
+    current: Rc<RefCell<String>>,
+}
+
+impl PluginHost {
+    pub fn new() -> Result<Self, String> {
+        let host = Self {
+            lua: Rc::new(Lua::new()),
+            pending: Rc::default(),
+            current: Rc::default(),
+        };
+        host.install_globals().map_err(|e| api::describe(&e))?;
+        Ok(host)
+    }
+
+    /// Runs a plugin's source. Its registrations are kept for `install`.
+    pub fn load(&self, name: &str, source: &str) -> Result<(), String> {
+        *self.current.borrow_mut() = name.to_string();
+        self.lua
+            .load(source)
+            .set_name(format!("@{name}"))
+            .exec()
+            .map_err(|e| format!("{name}: {}", api::describe(&e)))
+    }
+
+    /// Loads `init.lua` and then `plugins/*.lua` (in name order) from
+    /// `config_dir`. Returns the errors, one per failing file; the other
+    /// files still load.
+    pub fn load_dir(&self, config_dir: &Path) -> Vec<String> {
+        let mut files = Vec::new();
+        let init = config_dir.join("init.lua");
+        if init.is_file() {
+            files.push(init);
+        }
+        if let Ok(entries) = std::fs::read_dir(config_dir.join("plugins")) {
+            let mut plugins: Vec<_> = entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|e| e == "lua"))
+                .collect();
+            plugins.sort();
+            files.extend(plugins);
+        }
+
+        let mut errors = Vec::new();
+        for path in files {
+            let name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            );
+            let result = std::fs::read_to_string(&path)
+                .map_err(|e| format!("{name}: {e}"))
+                .and_then(|source| self.load(&name, &source));
+            if let Err(error) = result {
+                errors.push(error);
+            }
+        }
+        errors
+    }
+
+    /// Installs everything registered since the last call into `registry`
+    /// and `keymap`. Returns problems, such as a binding to an unknown mode.
+    pub fn install(&self, registry: &mut CommandRegistry, keymap: &mut Keymap) -> Vec<String> {
+        let pending = std::mem::take(&mut *self.pending.borrow_mut());
+        let mut errors = Vec::new();
+
+        for (name, description, key) in pending.commands {
+            let lua = self.lua.clone();
+            let key = Rc::new(key);
+            registry.register(name, description, move |cx| api::call(&lua, &key, cx, None));
+        }
+        for (kind, source, key) in pending.hooks {
+            let lua = self.lua.clone();
+            let key = Rc::new(key);
+            registry.on(kind, source, move |cx, event| {
+                api::call(&lua, &key, cx, Some(event))
+            });
+        }
+        for (mode, keys, command) in pending.maps {
+            let Some(mode_value) = Mode::ALL.iter().find(|m| m.id() == mode) else {
+                errors.push(format!("editor.map: unknown mode '{mode}'"));
+                continue;
+            };
+            match parse_keys(&keys) {
+                Ok(parsed) => keymap.bind(*mode_value, &parsed, command.clone()),
+                Err(e) => errors.push(format!("editor.map: invalid keys '{keys}': {e}")),
+            }
+            if !registry.contains(&command) {
+                errors.push(format!("editor.map: unknown command '{command}'"));
+            }
+        }
+        errors
+    }
+
+    /// The global `editor` table plugins register through.
+    fn install_globals(&self) -> mlua::Result<()> {
+        let lua = &self.lua;
+        let editor = lua.create_table()?;
+        editor.set("version", env!("CARGO_PKG_VERSION"))?;
+
+        let pending = self.pending.clone();
+        editor.set(
+            "command",
+            lua.create_function(
+                move |lua, (name, second, third): (String, Value, Option<Function>)| {
+                    // editor.command(name, fn) or editor.command(name, description, fn)
+                    let (description, function) = match (second, third) {
+                        (Value::Function(f), None) => (String::new(), f),
+                        (Value::String(d), Some(f)) => (d.to_str()?.to_string(), f),
+                        _ => {
+                            return Err(mlua::Error::runtime(
+                                "usage: editor.command(name, [description,] function)",
+                            ));
+                        }
+                    };
+                    let key = lua.create_registry_value(function)?;
+                    pending.borrow_mut().commands.push((name, description, key));
+                    Ok(())
+                },
+            )?,
+        )?;
+
+        let pending = self.pending.clone();
+        let current = self.current.clone();
+        editor.set(
+            "on",
+            lua.create_function(move |lua, (event, function): (String, Function)| {
+                let kind: EventKind = toml::Value::String(event.clone())
+                    .try_into()
+                    .map_err(|_| mlua::Error::runtime(format!("unknown event '{event}'")))?;
+                let key = lua.create_registry_value(function)?;
+                let source = current.borrow().clone();
+                pending.borrow_mut().hooks.push((kind, source, key));
+                Ok(())
+            })?,
+        )?;
+
+        let pending = self.pending.clone();
+        editor.set(
+            "map",
+            lua.create_function(move |_, (mode, keys, command): (String, String, String)| {
+                pending.borrow_mut().maps.push((mode, keys, command));
+                Ok(())
+            })?,
+        )?;
+
+        lua.globals().set("editor", editor)
+    }
+}

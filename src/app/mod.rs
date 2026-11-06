@@ -17,6 +17,7 @@ use crate::config::{Config, Theme};
 use crate::editor::{DocumentId, Editor, Message, Mode};
 use crate::events;
 use crate::input::{InputHandler, KeyPress, Keymap, Outcome};
+use crate::plugins::PluginHost;
 use crate::syntax::SyntaxEngine;
 use crate::ui::{self, ViewState};
 
@@ -37,6 +38,8 @@ pub struct App {
     view_document: DocumentId,
     changes: ChangeRecorder,
     syntax: SyntaxEngine,
+    /// The Lua runtime, created when the first plugin loads.
+    plugins: Option<PluginHost>,
     /// True while `.` feeds the last change back in, so it isn't re-recorded.
     replaying: bool,
 }
@@ -71,6 +74,7 @@ impl App {
             view_document: DocumentId::default(),
             changes: ChangeRecorder::default(),
             syntax: SyntaxEngine::default(),
+            plugins: None,
             replaying: false,
         };
         app.validate_keymap();
@@ -111,6 +115,53 @@ impl App {
 
     pub fn commands_mut(&mut self) -> &mut CommandRegistry {
         &mut self.commands
+    }
+
+    /// Loads Lua plugins from `config_dir`: `init.lua`, then `plugins/*.lua`.
+    /// Problems are shown on the message line (and returned, so they can be
+    /// shown again after startup messages); a broken plugin doesn't stop the
+    /// others, or the editor, from loading.
+    pub fn load_plugins(&mut self, config_dir: &std::path::Path) -> Option<String> {
+        let has_plugins =
+            config_dir.join("init.lua").is_file() || config_dir.join("plugins").is_dir();
+        if !has_plugins {
+            return None;
+        }
+        let mut errors = match self.plugin_host() {
+            Ok(host) => host.load_dir(config_dir),
+            Err(error) => vec![error],
+        };
+        errors.extend(self.install_plugins());
+        if errors.is_empty() {
+            return None;
+        }
+        let text = format!("Plugin errors: {}", errors.join("; "));
+        self.editor.set_message(Message::error(text.clone()));
+        Some(text)
+    }
+
+    /// Loads one plugin from source (`name` is used in error messages).
+    pub fn load_plugin(&mut self, name: &str, source: &str) -> Result<(), String> {
+        self.plugin_host()?.load(name, source)?;
+        let errors = self.install_plugins();
+        match errors.is_empty() {
+            true => Ok(()),
+            false => Err(errors.join("; ")),
+        }
+    }
+
+    fn plugin_host(&mut self) -> Result<&PluginHost, String> {
+        if self.plugins.is_none() {
+            self.plugins = Some(PluginHost::new()?);
+        }
+        Ok(self.plugins.as_ref().expect("just created"))
+    }
+
+    fn install_plugins(&mut self) -> Vec<String> {
+        match &self.plugins {
+            Some(host) => host.install(&mut self.commands, &mut self.keymap),
+            None => Vec::new(),
+        }
     }
 
     /// Opens files at startup, one buffer each, showing the first.
