@@ -4,7 +4,7 @@ use std::io::{self, stdout};
 
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{DisableBracketedPaste, EnableBracketedPaste},
+    event::{DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange},
     execute,
 };
 
@@ -31,4 +31,15 @@ pub fn enable_bracketed_paste() -> io::Result<()> {
 
 pub fn disable_bracketed_paste() -> io::Result<()> {
     execute!(stdout(), DisableBracketedPaste)
+}
+
+/// Asks the terminal to report focus changes, so the editor can check for
+/// files changed by other programs when it comes back into focus. (tmux
+/// needs `set -g focus-events on` to pass these through.)
+pub fn enable_focus_reporting() -> io::Result<()> {
+    execute!(stdout(), EnableFocusChange)
+}
+
+pub fn disable_focus_reporting() -> io::Result<()> {
+    execute!(stdout(), DisableFocusChange)
 }

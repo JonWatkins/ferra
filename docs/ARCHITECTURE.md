@@ -294,6 +294,16 @@ black hole `"_`, skips all of these.
   - **External changes:** the file's mtime at read/write time. A save
     refuses to overwrite a file whose mtime has changed since, or an
     existing file the document never read, unless forced with `!`.
+- Noticing external changes: `Document::disk_state` compares the file's
+  mtime with the one it last read or wrote (`Changed`, `Deleted`).
+  `Editor::check_disk_changes` runs on `FocusGained` (the app turns on
+  terminal focus reporting) and `:checktime`, and `switch_to` checks the
+  buffer it switches to. An unmodified buffer reloads with
+  `Document::reload_in_place`, which replaces only the part of the text
+  between the common prefix and suffix, as one undo step, so the cursor and
+  marks outside it stay put and `u` undoes it. `:e!` uses the same reload.
+  A modified buffer (or a deleted file) gets one warning;
+  `acknowledge_disk_state` stops it repeating until the file changes again.
 - On the `:` line, a trailing `!` sets `Invocation::bang`, which file
   commands use to override those checks.
 
@@ -575,8 +585,9 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 - Window-local options, and a statusline per window.
 - File listing runs on the UI thread. It's capped by `max-files`, but very
   large trees could be walked in the background and streamed into the picker.
-- Asking before overwriting on external changes, and reloading
-  automatically when the file changes and there are no local edits.
+- External changes are only noticed on focus, buffer switches and
+  `:checktime`, not by watching files; and by mtime only, so a change within
+  the filesystem's timestamp resolution of our own write can be missed.
 - Writing through hard links keeps the old inode's other names pointing at
   the old contents (the rename replaces the file). Vim's `backupcopy`
   handles this; we don't yet.

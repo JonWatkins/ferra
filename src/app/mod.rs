@@ -195,6 +195,7 @@ impl App {
     /// Runs the event loop until the user quits.
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         terminal::enable_bracketed_paste()?;
+        terminal::enable_focus_reporting()?;
         let mut shape = None;
         // When a half-typed key sequence gives up waiting.
         let mut deadline: Option<Instant> = None;
@@ -234,6 +235,7 @@ impl App {
             }
             deadline = self.key_deadline();
         }
+        terminal::disable_focus_reporting()?;
         terminal::disable_bracketed_paste()?;
         terminal::restore_cursor_shape()
     }
@@ -246,8 +248,16 @@ impl App {
                 }
             }
             Event::Paste(text) => self.handle_paste(&text),
+            Event::FocusGained => self.handle_focus_gained(),
             _ => {}
         }
+    }
+
+    /// The terminal came back into focus: another program may have changed
+    /// open files meanwhile. Public so tests can trigger it.
+    pub fn handle_focus_gained(&mut self) {
+        self.editor.check_disk_changes();
+        self.dispatch_events();
     }
 
     /// Text pasted into the terminal (bracketed paste). It goes in exactly as

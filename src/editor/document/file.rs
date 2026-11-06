@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use super::Document;
-use crate::core::{Buffer, TextFormat};
+use crate::core::{Buffer, Position, TextFormat};
 use crate::files::{self, FileError};
 
 /// What was found when opening a file, for the status message.
@@ -15,6 +15,17 @@ pub struct OpenInfo {
     pub lines: usize,
     pub bytes: usize,
     pub format: TextFormat,
+}
+
+/// How the file on disk compares with what the document last read or wrote.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiskState {
+    /// Nothing new (or no file to compare with, or already reported).
+    Unchanged,
+    /// Another program changed (or created) the file.
+    Changed,
+    /// The file is gone.
+    Deleted,
 }
 
 /// What was written by a save, for the status message.
@@ -67,6 +78,77 @@ impl Document {
         self.path.as_deref()
     }
 
+    /// Whether another program changed or deleted the file since it was
+    /// read or written. A state already reported with
+    /// [`Document::acknowledge_disk_state`] reads as unchanged until the
+    /// file changes again.
+    pub fn disk_state(&self) -> DiskState {
+        let Some(path) = &self.path else {
+            return DiskState::Unchanged;
+        };
+        let now = files::modified_time(path);
+        if now == self.disk_modified || self.disk_acknowledged == Some(now) {
+            return DiskState::Unchanged;
+        }
+        match now {
+            Some(_) => DiskState::Changed,
+            None => DiskState::Deleted,
+        }
+    }
+
+    /// Stops [`Document::disk_state`] reporting the file's current state, so
+    /// a warning about it is shown once.
+    pub fn acknowledge_disk_state(&mut self) {
+        self.disk_acknowledged = self.path.as_deref().map(files::modified_time);
+    }
+
+    /// Brings in the file's current contents as one undoable change, so
+    /// `u` gets the old text back. Only the changed part of the text is
+    /// replaced, so the cursor and marks outside it stay put. Returns
+    /// `None` if the file no longer exists (the document is left alone).
+    pub fn reload_in_place(&mut self) -> Result<Option<OpenInfo>, FileError> {
+        let path = self.path.clone().ok_or(FileError::NoFileName)?;
+        let Some(contents) = files::read(&path)? else {
+            return Ok(None);
+        };
+        let (text, format) = TextFormat::decode(&contents.text);
+        let cursor = self.cursor;
+
+        self.history.commit();
+        let old: Vec<char> = self.buffer.text().chars().collect();
+        let new: Vec<char> = text.chars().collect();
+        let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+        let room = old.len().min(new.len()) - prefix;
+        let suffix = old
+            .iter()
+            .rev()
+            .zip(new.iter().rev())
+            .take(room)
+            .take_while(|(a, b)| a == b)
+            .count();
+        if old != new {
+            let start = position_at(&old, prefix);
+            let end = position_at(&old, old.len() - suffix);
+            let replacement: String = new[prefix..new.len() - suffix].iter().collect();
+            self.delete(start, end);
+            self.insert(start, &replacement);
+        }
+        self.history.commit();
+
+        self.saved_revision = self.history.revision();
+        self.disk_modified = contents.modified;
+        self.disk_acknowledged = None;
+        self.format = format;
+        self.set_cursor(cursor);
+        Ok(Some(OpenInfo {
+            new_file: false,
+            lines: line_count(&contents.text, self),
+            bytes: contents.text.len(),
+            format,
+            path,
+        }))
+    }
+
     pub fn format(&self) -> TextFormat {
         self.format
     }
@@ -110,6 +192,7 @@ impl Document {
             self.path = Some(path.clone());
             self.saved_revision = self.history.revision();
             self.disk_modified = modified;
+            self.disk_acknowledged = None;
         }
         Ok(SaveInfo {
             lines: line_count(&contents, self),
@@ -117,6 +200,14 @@ impl Document {
             path,
         })
     }
+}
+
+/// The position of char `index` in `text`.
+fn position_at(text: &[char], index: usize) -> Position {
+    let before = &text[..index];
+    let row = before.iter().filter(|&&c| c == '\n').count();
+    let col = before.iter().rev().take_while(|&&c| c != '\n').count();
+    Position::new(row, col)
 }
 
 /// Lines as Vim counts them: an empty file has none.
@@ -311,5 +402,55 @@ mod tests {
         fs::remove_file(&path).unwrap();
         doc.save(None, false).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "a\n");
+    }
+
+    #[test]
+    fn disk_state_notices_changes_once_acknowledged() {
+        let fx = Fixture::new();
+        let path = fx.file("a.txt", "one\n");
+        let (mut doc, _) = Document::open(&path).unwrap();
+        assert_eq!(doc.disk_state(), DiskState::Unchanged);
+        touch_externally(&path, "two\n");
+        assert_eq!(doc.disk_state(), DiskState::Changed);
+        doc.acknowledge_disk_state();
+        assert_eq!(doc.disk_state(), DiskState::Unchanged, "reported once");
+        fs::remove_file(&path).unwrap();
+        assert_eq!(doc.disk_state(), DiskState::Deleted, "a new state is new");
+        assert_eq!(Document::with_text("x").disk_state(), DiskState::Unchanged);
+    }
+
+    #[test]
+    fn reload_in_place_replaces_only_the_changed_middle() {
+        let fx = Fixture::new();
+        let path = fx.file("a.txt", "keep\nold line\nkeep too\n");
+        let (mut doc, _) = Document::open(&path).unwrap();
+        doc.set_cursor(Position::new(2, 3));
+        touch_externally(&path, "keep\nnew\nkeep too\n");
+        let info = doc.reload_in_place().unwrap().unwrap();
+        assert_eq!(doc.buffer().text(), "keep\nnew\nkeep too");
+        assert_eq!(doc.cursor(), Position::new(2, 3));
+        assert!(!doc.is_modified());
+        assert_eq!(doc.disk_state(), DiskState::Unchanged);
+        assert_eq!(info.lines, 3);
+        assert!(doc.undo());
+        assert_eq!(doc.buffer().text(), "keep\nold line\nkeep too");
+    }
+
+    #[test]
+    fn reload_in_place_of_a_deleted_file_leaves_the_text() {
+        let fx = Fixture::new();
+        let path = fx.file("a.txt", "text\n");
+        let (mut doc, _) = Document::open(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert!(doc.reload_in_place().unwrap().is_none());
+        assert_eq!(doc.buffer().text(), "text");
+    }
+
+    #[test]
+    fn position_at_counts_rows_and_columns() {
+        let text: Vec<char> = "ab\ncd".chars().collect();
+        assert_eq!(position_at(&text, 0), Position::new(0, 0));
+        assert_eq!(position_at(&text, 2), Position::new(0, 2));
+        assert_eq!(position_at(&text, 4), Position::new(1, 1));
     }
 }

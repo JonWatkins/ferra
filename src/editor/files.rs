@@ -1,9 +1,11 @@
 //! Opening and saving at the editor level: replacing the document and
-//! reporting the result on the message line.
+//! reporting the result on the message line. Also noticing when another
+//! program changes an open file: an unmodified buffer reloads itself, a
+//! modified one gets a warning (and `:w` refuses until `:w!` or `:e!`).
 
 use std::path::Path;
 
-use super::{Document, Editor, Message, Mode, OpenInfo, SaveInfo};
+use super::{DiskState, Document, Editor, Message, Mode, OpenInfo, SaveInfo};
 use crate::core::LineEnding;
 use crate::events::Event;
 use crate::files::FileError;
@@ -43,21 +45,93 @@ impl Editor {
         Ok(())
     }
 
-    /// Re-reads the active buffer's file, discarding unsaved changes.
+    /// `:e!`: re-reads the active buffer's file, discarding unsaved changes.
+    /// The reload is one undo step, so `u` brings the discarded text back.
     pub fn reload(&mut self) -> Result<(), FileError> {
         let path = self
             .document
             .path()
             .ok_or(FileError::NoFileName)?
             .to_path_buf();
-        let (mut document, info) = Document::open(&path)?;
-        document.set_id(self.document.id());
-        document.follow_version_of(&self.document);
-        self.document = document;
         self.set_mode(Mode::Normal);
+        let info = match self.document.reload_in_place()? {
+            Some(info) => info,
+            None => {
+                // The file is gone: start again from an empty new file.
+                let (mut document, info) = Document::open(&path)?;
+                document.set_id(self.document.id());
+                document.follow_version_of(&self.document);
+                self.document = document;
+                info
+            }
+        };
+        self.enforce_cursor_rules();
         self.set_message(Message::info(describe_open(&info)));
         self.emit(Event::Opened { path: info.path });
         Ok(())
+    }
+
+    /// Checks every buffer's file for changes made by other programs (when
+    /// the terminal regains focus, and `:checktime`).
+    pub fn check_disk_changes(&mut self) {
+        let mut reports: Vec<DiskReport> = check_document(&mut self.document).into_iter().collect();
+        if matches!(reports.first(), Some(DiskReport::Reloaded(_))) {
+            self.after_active_reload();
+        }
+        for document in &mut self.background {
+            reports.extend(check_document(document));
+        }
+        self.show_disk_reports(&reports);
+    }
+
+    /// Checks the active buffer's file (after switching to it).
+    pub(super) fn check_active_disk(&mut self) {
+        if let Some(report) = check_document(&mut self.document) {
+            if matches!(report, DiskReport::Reloaded(_)) {
+                self.after_active_reload();
+            }
+            self.show_disk_reports(&[report]);
+        }
+    }
+
+    fn after_active_reload(&mut self) {
+        self.enforce_cursor_rules();
+        self.emit(Event::BufferChanged);
+    }
+
+    /// Problems first; otherwise what was reloaded.
+    fn show_disk_reports(&mut self, reports: &[DiskReport]) {
+        let problem = reports.iter().find_map(|report| match report {
+            DiskReport::Reloaded(_) => None,
+            DiskReport::Conflict(name) => Some(format!(
+                "\"{name}\" changed on disk: :e! loads it, :w! keeps your version"
+            )),
+            DiskReport::Deleted(name) => Some(format!(
+                "\"{name}\" was deleted on disk (:w writes it again)"
+            )),
+            DiskReport::Failed(error) => Some(error.clone()),
+        });
+        if let Some(problem) = problem {
+            self.set_message(Message::error(problem));
+            return;
+        }
+        let reloaded: Vec<&str> = reports
+            .iter()
+            .filter_map(|r| match r {
+                DiskReport::Reloaded(name) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        match reloaded.as_slice() {
+            [] => {}
+            [name] => self.set_message(Message::info(format!(
+                "\"{name}\" reloaded: changed on disk"
+            ))),
+            names => self.set_message(Message::info(format!(
+                "{} buffers reloaded: changed on disk",
+                names.len()
+            ))),
+        }
     }
 
     /// Saves the document (see [`Document::save`]) and reports what was written.
@@ -67,6 +141,34 @@ impl Editor {
         self.emit(Event::AfterSave { path: info.path });
         Ok(())
     }
+}
+
+/// What checking one buffer's file found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DiskReport {
+    Reloaded(String),
+    /// Changed on disk, but the buffer has unsaved changes too.
+    Conflict(String),
+    Deleted(String),
+    Failed(String),
+}
+
+/// Reloads `document` if its file changed and it has no unsaved changes;
+/// otherwise notes the problem once.
+fn check_document(document: &mut Document) -> Option<DiskReport> {
+    let name = document.name().into_owned();
+    let report = match document.disk_state() {
+        DiskState::Unchanged => return None,
+        DiskState::Changed if !document.is_modified() => match document.reload_in_place() {
+            Ok(Some(_)) => return Some(DiskReport::Reloaded(name)),
+            Ok(None) => DiskReport::Deleted(name),
+            Err(error) => DiskReport::Failed(error.to_string()),
+        },
+        DiskState::Changed => DiskReport::Conflict(name),
+        DiskState::Deleted => DiskReport::Deleted(name),
+    };
+    document.acknowledge_disk_state();
+    Some(report)
 }
 
 /// `"src/main.rs" 12L, 340B`, plus `[New]`, `[CRLF]` or `[noeol]` when relevant.

@@ -48,6 +48,7 @@ impl Editor {
         };
         let document = self.background.remove(index);
         self.activate(document);
+        self.check_active_disk();
         true
     }
 

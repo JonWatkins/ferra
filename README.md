@@ -161,13 +161,21 @@ buffer.
 | `:wq`, `:x`, `ZZ` | Save and quit (`:x`/`ZZ` only write if there are changes) |
 | `:q` | Quit; refuses if there are unsaved changes |
 | `:q!`, `ZQ` | Quit, discarding changes |
-| `:e path` / `:e!` | Open a file in a new buffer (or switch to it) / reload the current one |
+| `:e path` / `:e!` | Open a file in a new buffer (or switch to it) / reload the current one (`u` brings back what it discarded) |
+| `:checktime` | Check every open file for changes made by other programs |
 
 A trailing `!` overrides safety checks: unsaved changes, a file that changed
 on disk since it was read, or writing over an existing file. Saves are
 atomic and keep line endings (LF/CRLF), a missing final newline, file
 permissions and symlinks. Files that aren't UTF-8 are refused rather than
 risk corrupting them.
+
+When another program changes an open file (git, a formatter), the editor
+notices when its terminal comes back into focus or you switch to that
+buffer. A buffer without unsaved changes reloads itself, keeping the cursor
+and marks (`u` undoes the reload). One with unsaved changes keeps them and
+warns you: `:e!` loads the new version, `:w!` keeps yours. In tmux, focus
+events need `set -g focus-events on`; `:checktime` works everywhere.
 
 Search patterns use Rust [regex syntax](https://docs.rs/regex/latest/regex/#syntax),
 plus Vim's `\<` and `\>` word boundaries. Case is "smart" by default

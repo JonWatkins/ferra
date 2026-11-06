@@ -23,7 +23,7 @@ pub mod windows;
 
 pub use buffers::BufferInfo;
 pub use command_line::{CommandLine, Completion, CompletionContext, Prompt};
-pub use document::{Document, DocumentId, OpenInfo, SaveInfo};
+pub use document::{DiskState, Document, DocumentId, OpenInfo, SaveInfo};
 pub use files::UNSAVED_CHANGES;
 pub use jumps::{Jump, JumpList};
 pub use message::{Message, Severity};

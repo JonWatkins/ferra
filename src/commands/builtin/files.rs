@@ -65,6 +65,16 @@ pub fn register(r: &mut CommandRegistry) {
     r.alias("xa", "write_all_quit");
 
     r.register(
+        "check_disk_changes",
+        "Reload buffers whose files changed on disk; warn about modified ones",
+        |cx| {
+            cx.editor.check_disk_changes();
+            Ok(())
+        },
+    );
+    r.alias("checktime", "check_disk_changes");
+
+    r.register(
         "force_quit",
         "Quit, discarding unsaved changes (ZQ)",
         |cx| {

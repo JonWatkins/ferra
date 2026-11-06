@@ -1,7 +1,7 @@
 mod file;
 mod marks;
 
-pub use file::{OpenInfo, SaveInfo};
+pub use file::{DiskState, OpenInfo, SaveInfo};
 
 use std::borrow::Cow;
 use std::path::PathBuf;
@@ -42,6 +42,9 @@ pub struct Document {
     /// The file's modified time when last read or written, to detect
     /// changes made by other programs.
     disk_modified: Option<SystemTime>,
+    /// The file's modified time (or `None`: deleted) when a change on disk
+    /// was last reported, so it's reported once.
+    disk_acknowledged: Option<Option<SystemTime>>,
     /// Counts edits made through `insert`/`delete` (not undo/redo), so the
     /// app can tell whether a command sequence changed the text.
     edit_count: u64,
