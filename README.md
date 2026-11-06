@@ -184,6 +184,9 @@ unsaved changes.
 | `<C-w>>` `<C-w><` | Wider / narrower by [count] columns |
 | `<C-w>_` `<C-w>\|` | As tall / as wide as possible (or [count] lines / columns) |
 | `<C-w>=` | Make every window the same size |
+| `<C-w>x` | Swap with the next window in the row or column |
+| `<C-w>r` `<C-w>R` | Rotate the windows in the row or column down / up |
+| `<C-w>H` `J` `K` `L` | Move the window to the far left / bottom / top / right (full height or width) |
 | `:resize N`, `:res +N`, `:res -N` | Set the height, or change it (`:resize` alone: as tall as possible) |
 | `:vertical resize N` | The same for the width (`:vert res +5`) |
 | `:q`, `<C-w>q` | Close the window; quits from the last one |

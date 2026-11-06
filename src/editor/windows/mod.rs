@@ -117,6 +117,38 @@ impl Editor {
         self.windows.layout.resize(active, axis, area, &want)
     }
 
+    /// `<C-w>x`: swaps the active window with the next one in its row or
+    /// column. The cursor stays in place on screen, so it ends up in the
+    /// other window, as in Vim.
+    pub fn exchange_window(&mut self) -> Result<(), String> {
+        let active = self.windows.active;
+        let other = self
+            .windows
+            .layout
+            .exchange(active)
+            .ok_or("No window to exchange with in this row or column")?;
+        self.focus_window(other);
+        Ok(())
+    }
+
+    /// `<C-w>r` / `<C-w>R`: rotates the windows in the active one's row or
+    /// column.
+    pub fn rotate_windows(&mut self, forward: bool) -> Result<(), String> {
+        let active = self.windows.active;
+        if self.windows.layout.rotate(active, forward) {
+            Ok(())
+        } else {
+            Err("Can't rotate: this row or column has windows split the other way".into())
+        }
+    }
+
+    /// `<C-w>H`/`J`/`K`/`L`: moves the active window to an edge of the
+    /// screen, full height or full width.
+    pub fn move_window_to_edge(&mut self, edge: Direction) {
+        let active = self.windows.active;
+        self.windows.layout.move_to_edge(active, edge);
+    }
+
     /// `<C-w>=`: makes every window the same size again.
     pub fn equalize_windows(&mut self) {
         self.windows.layout.equalize();

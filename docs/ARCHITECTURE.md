@@ -106,6 +106,13 @@ innermost split in the right direction that holds the window: growing takes
 cells from the windows after it first, then the ones before, and every
 window keeps at least one cell.
 
+Moving windows rearranges the tree. `exchange` (`<C-w>x`) and `rotate`
+(`<C-w>r`) reorder the children of the split holding the window, leaving
+the sizes where they were; rotating refuses when that split holds another
+split, as Vim does. `move_to_edge` (`<C-w>H` and friends) removes the window
+and wraps the rest of the tree in a new split with the window on that side,
+or joins the root split if it already runs that way.
+
 - `Layout::arrange` computes window and separator areas in plain cells, with
   no UI types. Directional moves (`<C-w>h`) use the same geometry on a fixed
   nominal area, since direction only depends on relative positions. Nothing
@@ -619,7 +626,6 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
   the same amount of text, as Vim does.
 - The `".` register (the last inserted text) and `"=` (the expression
   register).
-- Moving windows around (`<C-w>H`, `<C-w>x`, `<C-w>r`).
 - Window-local options, and a statusline per window.
 - File listing runs on the UI thread. It's capped by `max-files`, but very
   large trees could be walked in the background and streamed into the picker.

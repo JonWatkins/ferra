@@ -94,6 +94,48 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| set_size(cx, SplitDirection::Vertical),
     );
     r.register(
+        "window_exchange",
+        "Swap the window with the next one in its row or column (<C-w>x)",
+        |cx| cx.editor.exchange_window(),
+    );
+    r.register(
+        "window_rotate_down",
+        "Rotate the windows in this row or column down/right (<C-w>r)",
+        |cx| cx.editor.rotate_windows(true),
+    );
+    r.register(
+        "window_rotate_up",
+        "Rotate the windows in this row or column up/left (<C-w>R)",
+        |cx| cx.editor.rotate_windows(false),
+    );
+    for (name, description, edge) in [
+        (
+            "window_move_far_left",
+            "Move the window to the far left, full height (<C-w>H)",
+            Direction::Left,
+        ),
+        (
+            "window_move_far_right",
+            "Move the window to the far right, full height (<C-w>L)",
+            Direction::Right,
+        ),
+        (
+            "window_move_top",
+            "Move the window to the top, full width (<C-w>K)",
+            Direction::Up,
+        ),
+        (
+            "window_move_bottom",
+            "Move the window to the bottom, full width (<C-w>J)",
+            Direction::Down,
+        ),
+    ] {
+        r.register(name, description, move |cx| {
+            cx.editor.move_window_to_edge(edge);
+            Ok(())
+        });
+    }
+    r.register(
         "window_equalize",
         "Make every window the same size (<C-w>=)",
         |cx| {

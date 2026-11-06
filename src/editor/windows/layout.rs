@@ -291,6 +291,90 @@ impl Layout {
         None
     }
 
+    /// The split directly holding window `target`.
+    fn parent_mut(&mut self, target: WindowId) -> Option<&mut Layout> {
+        let holds = matches!(self, Layout::Split { children, .. }
+            if children.contains(&Layout::Window(target)));
+        if holds {
+            return Some(self);
+        }
+        match self {
+            Layout::Window(_) => None,
+            Layout::Split { children, .. } => {
+                children.iter_mut().find_map(|c| c.parent_mut(target))
+            }
+        }
+    }
+
+    /// `<C-w>x`: swaps window `target` with the next window in its row or
+    /// column (the previous one, for the last). Sizes stay where they are.
+    /// Returns the other window, or `None` if the neighbour is a split.
+    pub fn exchange(&mut self, target: WindowId) -> Option<WindowId> {
+        let Layout::Split { children, .. } = self.parent_mut(target)? else {
+            return None;
+        };
+        let i = children.iter().position(|c| *c == Layout::Window(target))?;
+        let j = if i + 1 < children.len() { i + 1 } else { i - 1 };
+        let Layout::Window(other) = children[j] else {
+            return None;
+        };
+        children.swap(i, j);
+        Some(other)
+    }
+
+    /// `<C-w>r` (`forward`) / `<C-w>R`: rotates the windows in `target`'s
+    /// row or column one place. Only works when they're all windows, as in
+    /// Vim. Sizes stay where they are.
+    pub fn rotate(&mut self, target: WindowId, forward: bool) -> bool {
+        let Some(Layout::Split { children, .. }) = self.parent_mut(target) else {
+            return false;
+        };
+        if children.iter().any(|c| matches!(c, Layout::Split { .. })) {
+            return false;
+        }
+        if forward {
+            children.rotate_right(1);
+        } else {
+            children.rotate_left(1);
+        }
+        true
+    }
+
+    /// `<C-w>H`/`J`/`K`/`L`: moves window `target` to that edge of the whole
+    /// layout, full height (left, right) or full width (top, bottom).
+    pub fn move_to_edge(&mut self, target: WindowId, edge: Direction) -> bool {
+        if *self == Layout::Window(target) || !self.remove(target) {
+            return false;
+        }
+        let (direction, first) = match edge {
+            Direction::Left => (SplitDirection::Vertical, true),
+            Direction::Right => (SplitDirection::Vertical, false),
+            Direction::Up => (SplitDirection::Horizontal, true),
+            Direction::Down => (SplitDirection::Horizontal, false),
+        };
+        let rest = std::mem::replace(self, Layout::Window(target));
+        // A split already running that way takes the window as a child.
+        let mut children = match rest {
+            Layout::Split {
+                direction: own,
+                children,
+                ..
+            } if own == direction => children,
+            other => vec![other],
+        };
+        if first {
+            children.insert(0, Layout::Window(target));
+        } else {
+            children.push(Layout::Window(target));
+        }
+        *self = Layout::Split {
+            direction,
+            weights: vec![1; children.len()],
+            children,
+        };
+        true
+    }
+
     /// `<C-w>=`: every split shares its space equally again.
     pub fn equalize(&mut self) {
         if let Layout::Split {
@@ -609,5 +693,73 @@ mod tests {
         layout.resize(w(0), SplitDirection::Horizontal, area, &|_, _| 3);
         layout.split(w(1), w(2), SplitDirection::Horizontal);
         assert_eq!(heights(&layout, Area::new(0, 0, 10, 32)), [10, 10, 10]);
+    }
+
+    #[test]
+    fn exchange_swaps_with_the_next_or_previous_window() {
+        let mut layout = stack(3);
+        assert_eq!(layout.exchange(w(0)), Some(w(1)));
+        assert_eq!(layout.windows(), [w(1), w(0), w(2)]);
+        assert_eq!(
+            layout.exchange(w(2)),
+            Some(w(0)),
+            "the last swaps backwards"
+        );
+        assert_eq!(layout.windows(), [w(1), w(2), w(0)]);
+        assert_eq!(leaf(0).exchange(w(0)), None, "nothing to swap with");
+    }
+
+    #[test]
+    fn exchange_wont_swap_with_a_split() {
+        // [0 | 1/2]
+        let mut layout = leaf(0);
+        layout.split(w(0), w(1), SplitDirection::Vertical);
+        layout.split(w(1), w(2), SplitDirection::Horizontal);
+        assert_eq!(layout.exchange(w(0)), None);
+        assert_eq!(layout.exchange(w(1)), Some(w(2)), "within the column");
+    }
+
+    #[test]
+    fn rotate_both_ways_but_not_across_nested_splits() {
+        let mut layout = stack(3);
+        assert!(layout.rotate(w(0), true));
+        assert_eq!(layout.windows(), [w(2), w(0), w(1)]);
+        assert!(layout.rotate(w(0), false));
+        assert_eq!(layout.windows(), [w(0), w(1), w(2)]);
+
+        let mut nested = leaf(0);
+        nested.split(w(0), w(1), SplitDirection::Vertical);
+        nested.split(w(1), w(2), SplitDirection::Horizontal);
+        assert!(!nested.rotate(w(0), true));
+    }
+
+    #[test]
+    fn move_to_edges() {
+        // Stacked 0/1/2: move 2 to the far left as a full-height column.
+        let mut layout = stack(3);
+        assert!(layout.move_to_edge(w(2), Direction::Left));
+        let area = Area::new(0, 0, 21, 21);
+        let (windows, _) = layout.arrange(area);
+        assert_eq!(windows[0], (w(2), Area::new(0, 0, 10, 21)));
+        assert_eq!(layout.windows(), [w(2), w(0), w(1)]);
+
+        // Then to the bottom: a full-width row below the rest.
+        assert!(layout.move_to_edge(w(2), Direction::Down));
+        assert_eq!(layout.windows(), [w(0), w(1), w(2)]);
+        let Layout::Split {
+            direction,
+            children,
+            ..
+        } = &layout
+        else {
+            panic!()
+        };
+        assert_eq!(*direction, SplitDirection::Horizontal);
+        assert_eq!(children.len(), 3, "joined the existing stack");
+
+        assert!(
+            !leaf(0).move_to_edge(w(0), Direction::Left),
+            "a lone window"
+        );
     }
 }
