@@ -7,6 +7,7 @@
 //! their own commands through the same [`CommandRegistry::register`] API.
 
 mod builtin;
+pub mod ex;
 mod hooks;
 
 use std::collections::HashMap;
@@ -33,6 +34,11 @@ pub struct Invocation<'a> {
     pub bang: bool,
     /// The key typed after a command that takes one (the `x` in `fx`).
     pub char_arg: Option<char>,
+    /// Lines given before a `:` command (`:5,10d`), 0-based and inclusive.
+    pub range: Option<(usize, usize)>,
+    /// Everything after the command name, untouched (`:s/a b/c/` keeps its
+    /// spaces; `args` splits on whitespace).
+    pub arg_text: &'a str,
 }
 
 impl<'a> Invocation<'a> {
@@ -61,6 +67,8 @@ pub struct Context<'a> {
     pub args: &'a [String],
     pub bang: bool,
     pub char_arg: Option<char>,
+    pub range: Option<(usize, usize)>,
+    pub arg_text: &'a str,
 }
 
 impl Context<'_> {
@@ -202,6 +210,8 @@ impl CommandRegistry {
             args: invocation.args,
             bang: invocation.bang,
             char_arg: invocation.char_arg,
+            range: invocation.range,
+            arg_text: invocation.arg_text,
         };
         (command.handler)(&mut cx)
     }
@@ -278,6 +288,8 @@ mod tests {
             args: &args,
             bang: false,
             char_arg: Some('z'),
+            range: None,
+            arg_text: "x",
         };
         registry
             .execute("check", &mut Editor::default(), invocation)

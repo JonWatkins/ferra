@@ -66,6 +66,8 @@ impl CommandRegistry {
                 args: &[],
                 bang: false,
                 char_arg: None,
+                range: None,
+                arg_text: "",
             };
             (hook.handler)(&mut cx, event)
                 .map_err(|e| format!("{} hook ({}): {e}", event.kind().id(), hook.source))?;

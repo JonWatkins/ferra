@@ -87,6 +87,21 @@ impl Editor {
         self.search_next(1, false)
     }
 
+    /// Makes `pattern` the last search (as `:s` does), so `n` finds it and
+    /// its matches are highlighted.
+    pub fn set_last_search(&mut self, pattern: SearchPattern) {
+        self.search.last = Some(LastSearch {
+            pattern,
+            forward: true,
+        });
+        self.search.highlight = true;
+    }
+
+    /// The last search pattern, if any.
+    pub fn last_search_pattern(&self) -> Option<&SearchPattern> {
+        self.search.last.as_ref().map(|l| &l.pattern)
+    }
+
     /// `n` (or `N` with `reverse`): jumps to the `count`th next match of the
     /// last search.
     pub fn search_next(&mut self, count: usize, reverse: bool) -> Result<(), String> {

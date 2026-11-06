@@ -280,6 +280,22 @@ two:
 Any other edit ends completion and history browsing. Edits at a search
 prompt re-run the live preview.
 
+### Ranges and `:s`
+
+`command_line_execute` parses `[range] name[!] [arguments]`
+(`commands/ex/`, pure functions with their own tests). The range becomes
+`Invocation::range` (0-based, inclusive rows). The text after the name is
+passed untouched as `Invocation::arg_text`, as well as split into `args`,
+because `:s` patterns can contain spaces. The command name stops at the first
+character that can't be part of a name, so `s/a/b/` needs no space. A range
+with no command goes to its last line, which is what makes `:42` work.
+
+`:s` (`commands/builtin/ex_commands.rs`) compiles the pattern as a
+`SearchPattern` and translates Vim's replacement syntax (`&`, `\1`, `\n`)
+into the `regex` crate's. It edits from the bottom of the range upwards, so
+a replacement that adds line breaks doesn't shift the rows still to be
+processed, and it sets the last search so `n` and highlighting follow.
+
 ### Repeat (`.`)
 
 `app/repeat.rs` records the keys of each command sequence that starts and
@@ -413,7 +429,9 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 ## Known gaps / next steps
 
 - Visual block mode (`<C-v>`) and visual-mode `:` ranges (`:'<,'>`).
-- Search as a motion for operators (`d/foo`) and search history.
+- Search as a motion for operators (`d/foo`).
+- `:s` follow-ups: the `c` (confirm) flag, `&`/`:&&` to repeat the last
+  substitution, and `:g/pattern/command`.
 - `Esc` immediately followed by another key in the same terminal read is
   parsed as Alt+key (this is how terminals encode Alt). Vim uses a short
   `ttimeout` to tell them apart; we don't yet. It only shows up with very

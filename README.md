@@ -67,6 +67,30 @@ The `:` and `/`/`?` prompts support:
 | `<Left>` `<Right>`, `<Home>` `<End>` (`<C-b>` `<C-e>`) | Move the cursor |
 | `<Del>`, `<C-w>`, `<C-u>` | Delete a character / the word before the cursor / everything before it |
 
+## Substitute and ranges
+
+`:[range]s/pattern/replacement/[flags]` replaces matches, using the same
+regex syntax as search:
+
+```text
+:s/foo/bar/          first `foo` on this line
+:%s/foo/bar/g        every `foo` in the file
+:5,10s/\s+$//        trailing spaces on lines 5-10
+:s/(\w+), (\w+)/\2, \1/   swap two words (\1, \2 = groups; & = whole match)
+:s#/usr#/opt#        any punctuation works as the delimiter
+```
+
+Flags: `g` every match on the line, `i`/`I` ignore/respect case, `n` count
+only, `e` no error if nothing matches. An empty pattern reuses the last
+search, and the substituted pattern becomes the search for `n`. The whole
+substitution is one undo step.
+
+Ranges work before any `:` command: `%` (the whole file), `5`, `5,10`, `.`
+(this line), `$` (the last), offsets like `.+3` and `$-1`, and `'<,'>` (the
+last visual selection; `:` in visual mode fills it in). A range alone jumps
+to its line (`:42`, `:$`). `:[range]d` and `:[range]y` delete or yank whole
+lines.
+
 ## Buffers and the picker
 
 | Keys / command | Action |

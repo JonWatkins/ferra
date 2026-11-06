@@ -37,7 +37,13 @@ pub fn register(r: &mut CommandRegistry) {
         Ok(())
     });
     r.register("command_mode", "Enter command-line mode", |cx| {
+        // From visual mode the command applies to the selected lines, as in
+        // Vim: the prompt starts with the `'<,'>` range.
+        let from_visual = cx.editor.take_selection().is_some();
         cx.editor.open_command_line();
+        if from_visual {
+            "'<,'>".chars().for_each(|c| cx.editor.command_line.push(c));
+        }
         Ok(())
     });
 }

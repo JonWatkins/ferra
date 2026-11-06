@@ -149,6 +149,13 @@ impl Editor {
         true
     }
 
+    /// First and last rows of the last visual selection (`'<` and `'>`).
+    pub fn last_visual_rows(&self) -> Option<(usize, usize)> {
+        let last = self.last_selection?;
+        let (a, b) = (last.selection.anchor.row, last.cursor.row);
+        Some((a.min(b), a.max(b)))
+    }
+
     /// Called by `set_mode` when leaving visual mode.
     pub(super) fn end_selection(&mut self) {
         if let Some(selection) = self.selection.take() {

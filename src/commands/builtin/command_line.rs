@@ -1,3 +1,4 @@
+use crate::commands::ex::{RangeContext, parse_range};
 use crate::commands::{ArgCompletion, CommandRegistry, CommandResult, Context, Invocation};
 use crate::editor::{CommandLine, CompletionContext, Editor, Mode};
 use crate::files;
@@ -12,33 +13,7 @@ pub fn register(r: &mut CommandRegistry) {
             }
             let input = cx.editor.command_line.take();
             cx.editor.set_mode(Mode::Normal);
-
-            let mut parts = input.split_whitespace();
-            let Some(name) = parts.next() else {
-                return Ok(());
-            };
-
-            // `:42` jumps to line 42, as in Vim.
-            if name.chars().all(|c| c.is_ascii_digit()) {
-                let args = [name.to_string()];
-                return cx
-                    .registry
-                    .execute("goto_line", cx.editor, Invocation::with_args(&args));
-            }
-
-            // A trailing `!` (`:q!`, `:w!`) forces the command, unless a
-            // command is literally registered with the `!` in its name.
-            let (name, bang) = match name.strip_suffix('!') {
-                Some(base) if !cx.registry.contains(name) => (base, true),
-                _ => (name, false),
-            };
-            let args: Vec<String> = parts.map(String::from).collect();
-            let invocation = Invocation {
-                args: &args,
-                bang,
-                ..Invocation::default()
-            };
-            cx.registry.execute(name, cx.editor, invocation)
+            run_command_line(cx, &input)
         },
     );
     r.register(
@@ -132,6 +107,58 @@ pub fn register(r: &mut CommandRegistry) {
         "Show the previous completion",
         |cx| complete(cx, -1),
     );
+}
+
+/// Runs `[range] name[!] [arguments]`. A range on its own (`:42`, `:$`)
+/// goes to its last line.
+fn run_command_line(cx: &mut Context, input: &str) -> CommandResult {
+    let doc = &cx.editor.document;
+    let range_context = RangeContext {
+        cursor_row: doc.cursor().row,
+        line_count: doc.buffer().line_count(),
+        visual: cx.editor.last_visual_rows(),
+    };
+    let (range, rest) = parse_range(input, &range_context)?;
+    let rest = rest.trim_start();
+
+    // The name is a run of letters, digits and `_` (so `s/a/b/` needs no
+    // space), or failing that the first word (for aliases like `q!`).
+    let name_len = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name_len = if name_len == 0 {
+        rest.find(char::is_whitespace).unwrap_or(rest.len())
+    } else {
+        name_len
+    };
+    let (name, after) = rest.split_at(name_len);
+    if name.is_empty() {
+        if let Some((_, last)) = range {
+            let line = (last + 1).to_string();
+            return cx
+                .registry
+                .execute("goto_line", cx.editor, Invocation::with_args(&[line]));
+        }
+        return Ok(());
+    }
+
+    // A `!` straight after the name forces the command (`:q!`, `:w!`),
+    // unless a command is literally registered with the `!` in its name.
+    let (name, bang, after) = match after.strip_prefix('!') {
+        Some(rest) if !cx.registry.contains(&format!("{name}!")) => (name.to_string(), true, rest),
+        Some(rest) => (format!("{name}!"), false, rest),
+        None => (name.to_string(), false, after),
+    };
+    let arg_text = after.trim_start();
+    let args: Vec<String> = arg_text.split_whitespace().map(String::from).collect();
+    let invocation = Invocation {
+        args: &args,
+        bang,
+        range,
+        arg_text,
+        ..Invocation::default()
+    };
+    cx.registry.execute(&name, cx.editor, invocation)
 }
 
 /// Applies an edit to the prompt, then updates a search's live preview.
@@ -231,6 +258,22 @@ mod tests {
         let mut e = command_editor("a\nb\nc", "2");
         run(&mut e, "command_line_execute", None);
         assert_eq!(e.document.cursor().row, 1);
+    }
+
+    #[test]
+    fn ranges_on_their_own_go_to_a_line() {
+        for (input, row) in [("$", 2), ("1", 0), ("2,3", 2), ("%", 2)] {
+            let mut e = command_editor("a\nb\nc", input);
+            run(&mut e, "command_line_execute", None);
+            assert_eq!(e.document.cursor().row, row, "{input}");
+        }
+    }
+
+    #[test]
+    fn names_end_at_punctuation() {
+        let mut e = command_editor("a", "goto_line3");
+        run(&mut e, "command_line_execute", None);
+        assert_eq!(e.message().unwrap().text, "Unknown command: goto_line3");
     }
 
     #[test]

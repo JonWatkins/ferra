@@ -84,6 +84,20 @@ impl SearchPattern {
             .collect()
     }
 
+    /// Replaces the first match in `line` (or every match, with `all`),
+    /// with `replacement` in `regex` syntax (`$0`, `${1}`). Returns the new
+    /// text and how many matches were replaced.
+    pub fn replace(&self, line: &str, replacement: &str, all: bool) -> (String, usize) {
+        let limit = if all { 0 } else { 1 };
+        let count = self
+            .regex
+            .find_iter(line)
+            .take(if all { usize::MAX } else { 1 })
+            .count();
+        let replaced = self.regex.replacen(line, limit, replacement).into_owned();
+        (replaced, count)
+    }
+
     /// The next match after `from` (or before it, searching backwards),
     /// wrapping around the buffer if `wrap` is set.
     pub fn find(
@@ -215,6 +229,16 @@ mod tests {
     fn whole_word_escapes_regex_characters() {
         let p = SearchPattern::whole_word("a.b");
         assert_eq!(p.matches_in_line("a.b axb"), vec![(0, 3)]);
+    }
+
+    #[test]
+    fn replace_first_or_all() {
+        let p = pattern("o");
+        assert_eq!(p.replace("foo boo", "0", false), ("f0o boo".into(), 1));
+        assert_eq!(p.replace("foo boo", "0", true), ("f00 b00".into(), 4));
+        assert_eq!(p.replace("xyz", "0", true), ("xyz".into(), 0));
+        let groups = pattern(r"(\w+)@(\w+)");
+        assert_eq!(groups.replace("me@host", "${2}:${1}", false).0, "host:me");
     }
 
     #[test]

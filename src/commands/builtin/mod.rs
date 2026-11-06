@@ -6,6 +6,7 @@
 mod buffers;
 mod command_line;
 mod editing;
+mod ex_commands;
 mod files;
 mod history;
 mod modes;
@@ -31,6 +32,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     search::register(registry);
     picker::register(registry);
     windows::register(registry);
+    ex_commands::register(registry);
     modes::register(registry);
     command_line::register(registry);
 }

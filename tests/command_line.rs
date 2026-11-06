@@ -44,7 +44,11 @@ fn command_history_with_prefix_matching() {
     keys(&mut app, "<Esc>");
 
     keys(&mut app, ":go<Up><Up>");
-    assert_eq!(input(&app), "goto_line 1", "only entries starting with `go`");
+    assert_eq!(
+        input(&app),
+        "goto_line 1",
+        "only entries starting with `go`"
+    );
     keys(&mut app, "<Down><Down>");
     assert_eq!(input(&app), "go", "back to what was typed");
     keys(&mut app, "<Esc>:<C-p><CR>");
