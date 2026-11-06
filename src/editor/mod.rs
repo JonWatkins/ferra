@@ -17,6 +17,7 @@ pub mod registers;
 mod search;
 pub use search::{SearchDone, SearchHit};
 mod block;
+mod comment;
 mod confirm;
 mod selection;
 mod transform;

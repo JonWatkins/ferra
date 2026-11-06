@@ -62,12 +62,17 @@ visual = "block"
 #
 #   [languages.bash]
 #   file-names = [".bashrc", "my-script"]
+#
+# `comment` (or `block-comment` for languages without line comments) is what
+# gc uses to comment lines out.
 [languages.rust]
 extensions = ["rs"]
+comment = "//"
 
 [languages.toml]
 extensions = ["toml"]
 file-names = ["Cargo.lock", "Pipfile"]
+comment = "#"
 
 [languages.json]
 extensions = ["json", "jsonc"]
@@ -76,44 +81,56 @@ file-names = [".prettierrc", ".eslintrc"]
 [languages.python]
 extensions = ["py", "pyi"]
 shebangs = ["python"]
+comment = "#"
 
 [languages.javascript]
 extensions = ["js", "mjs", "cjs", "jsx"]
 shebangs = ["node"]
+comment = "//"
 
 [languages.typescript]
 extensions = ["ts", "mts", "cts"]
 shebangs = ["deno", "ts-node"]
+comment = "//"
 
 [languages.tsx]
 extensions = ["tsx"]
+comment = "//"
 
 [languages.go]
 extensions = ["go"]
+comment = "//"
 
 [languages.c]
 extensions = ["c", "h"]
+comment = "//"
 
 [languages.cpp]
 extensions = ["cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++"]
+comment = "//"
 
 [languages.bash]
 extensions = ["sh", "bash", "zsh"]
 file-names = [".bashrc", ".bash_profile", ".bash_aliases", ".profile", ".zshrc", ".zprofile", ".zshenv", "PKGBUILD"]
 shebangs = ["sh", "bash", "zsh", "dash"]
+comment = "#"
 
 [languages.markdown]
 extensions = ["md", "markdown"]
+block-comment = ["<!--", "-->"]
 
 [languages.yaml]
 extensions = ["yaml", "yml"]
 file-names = [".clang-format"]
+comment = "#"
 
 [languages.html]
 extensions = ["html", "htm"]
+block-comment = ["<!--", "-->"]
 
 [languages.css]
 extensions = ["css"]
+block-comment = ["/*", "*/"]
 
 # Theme styles are keyed by scope. Lookups fall back to the parent scope, so
 # "ui.linenr.selected" falls back to "ui.linenr".
@@ -226,6 +243,7 @@ extensions = ["css"]
 "gu" = "operator_lowercase"
 "gU" = "operator_uppercase"
 "g~" = "operator_toggle_case"
+"gc" = "operator_comment"
 "~" = "toggle_case_char"
 "J" = "join_lines"
 "x" = "delete_char"
@@ -351,6 +369,8 @@ extensions = ["css"]
 "N" = "search_prev"
 "iw" = "inner_word"
 "aw" = "around_word"
+"ip" = "inner_paragraph"
+"ap" = "around_paragraph"
 "i\"" = "inner_double_quote"
 "a\"" = "around_double_quote"
 "i'" = "inner_single_quote"
@@ -400,6 +420,7 @@ extensions = ["css"]
 "u" = "operator_lowercase"
 "U" = "operator_uppercase"
 "~" = "operator_toggle_case"
+"gc" = "operator_comment"
 "J" = "join_lines"
 "D" = "visual_delete_to_end"
 "X" = "visual_delete_lines"
@@ -447,6 +468,8 @@ extensions = ["css"]
 "{" = "goto_prev_paragraph"
 "iw" = "inner_word"
 "aw" = "around_word"
+"ip" = "inner_paragraph"
+"ap" = "around_paragraph"
 "i\"" = "inner_double_quote"
 "a\"" = "around_double_quote"
 "i'" = "inner_single_quote"

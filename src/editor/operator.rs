@@ -1,5 +1,5 @@
-//! Operators (`d`, `c`, `y`, `>`, `<`, `gu`, `gU`, `g~`) and applying them to
-//! ranges.
+//! Operators (`d`, `c`, `y`, `>`, `<`, `gu`, `gU`, `g~`, `gc`) and applying
+//! them to ranges.
 
 use super::registers::{Register, StoreKind};
 use super::transform::CaseChange;
@@ -16,6 +16,8 @@ pub enum Operator {
     Lowercase,
     Uppercase,
     ToggleCase,
+    /// `gc`: toggles comments on the lines the range touches.
+    Comment,
 }
 
 /// An operator waiting for a motion or text object (operator-pending mode).
@@ -86,6 +88,10 @@ impl Editor {
                 self.change_case(range, change);
                 return Ok(());
             }
+            Operator::Comment => {
+                let (first, last) = range.rows();
+                return self.toggle_comment(first, last);
+            }
             Operator::Delete | Operator::Change | Operator::Yank => {}
         }
 
@@ -142,7 +148,8 @@ impl Editor {
                 | Operator::Outdent
                 | Operator::Lowercase
                 | Operator::Uppercase
-                | Operator::ToggleCase,
+                | Operator::ToggleCase
+                | Operator::Comment,
                 _,
             ) => unreachable!("handled before touching registers"),
         }

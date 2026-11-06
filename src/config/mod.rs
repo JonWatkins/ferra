@@ -8,7 +8,7 @@ mod languages;
 mod options;
 mod theme;
 
-pub use languages::{FileType, Languages};
+pub use languages::{CommentTokens, FileType, Languages};
 pub use options::{
     CursorShape, CursorShapes, EditorOptions, FilePickerOptions, LineNumbers, SearchCase,
     SearchOptions, StatuslineMode,

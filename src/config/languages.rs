@@ -22,6 +22,18 @@ pub struct FileType {
     /// Interpreters in a `#!` first line (`bash`, `python`). Version
     /// suffixes match too: `python` covers `python3.12`.
     pub shebangs: Vec<String>,
+    /// What starts a line comment (`//`, `#`), for `gc`.
+    pub comment: Option<String>,
+    /// What wraps a block comment (`["<!--", "-->"]`), for `gc` in
+    /// languages without line comments.
+    pub block_comment: Option<[String; 2]>,
+}
+
+/// How `gc` comments a line: a prefix, and for block comments a suffix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentTokens {
+    pub start: String,
+    pub end: Option<String>,
 }
 
 /// Language name to how its files are recognised. Sorted, so when two
@@ -68,6 +80,23 @@ impl Languages {
             .iter()
             .find(|(_, file_type)| matches(file_type))
             .map(|(name, _)| name.as_str())
+    }
+
+    /// How `language` comments a line: its line comment, or else its block
+    /// comment around the line.
+    pub fn comment_tokens(&self, language: &str) -> Option<CommentTokens> {
+        let file_type = self.0.get(language)?;
+        if let Some(start) = &file_type.comment {
+            return Some(CommentTokens {
+                start: start.clone(),
+                end: None,
+            });
+        }
+        let [start, end] = file_type.block_comment.clone()?;
+        Some(CommentTokens {
+            start,
+            end: Some(end),
+        })
     }
 
     /// Every configured language name.

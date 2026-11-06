@@ -180,6 +180,37 @@ pub(super) fn find_close(
     None
 }
 
+/// `ip`: the lines around the cursor that are all text, or all blank
+/// (whitespace-only lines count as blank). `ap` (`around`) adds the blank
+/// lines after a paragraph, or before it if none follow; on blank lines, it
+/// adds the paragraph after them.
+pub fn paragraph(buffer: &Buffer, pos: Position, around: bool) -> Option<Range> {
+    let blank = |row: usize| buffer.line(row).trim().is_empty();
+    // The run of lines like `row` (blank or not) that contains it.
+    let run = |row: usize| {
+        let kind = blank(row);
+        let first = (0..row)
+            .rev()
+            .take_while(|&r| blank(r) == kind)
+            .last()
+            .unwrap_or(row);
+        let last = (row + 1..buffer.line_count())
+            .take_while(|&r| blank(r) == kind)
+            .last()
+            .unwrap_or(row);
+        (first, last)
+    };
+    let (mut first, mut last) = run(pos.row);
+    if around {
+        if last + 1 < buffer.line_count() {
+            last = run(last + 1).1;
+        } else if !blank(pos.row) && first > 0 {
+            first = run(first - 1).0;
+        }
+    }
+    Some(Range::Lines { first, last })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +311,33 @@ mod tests {
     fn bracketed_across_lines_charwise() {
         let inner = |b: &Buffer, p| bracketed(b, p, '[', ']', false);
         assert_eq!(select("[1,\n2]", pos(1, 0), inner).unwrap(), "1,\n2");
+    }
+
+    #[test]
+    fn paragraphs() {
+        // 0 a, 1 b, 2 "", 3 "  ", 4 c, 5 d
+        let b = Buffer::from_text("a\nb\n\n  \nc\nd");
+        let lines = |first, last| Some(Range::Lines { first, last });
+        assert_eq!(paragraph(&b, Position::new(1, 0), false), lines(0, 1));
+        assert_eq!(
+            paragraph(&b, Position::new(0, 0), true),
+            lines(0, 3),
+            "with the blanks after"
+        );
+        assert_eq!(
+            paragraph(&b, Position::new(2, 0), false),
+            lines(2, 3),
+            "the blank run"
+        );
+        assert_eq!(
+            paragraph(&b, Position::new(3, 0), true),
+            lines(2, 5),
+            "blanks and the next paragraph"
+        );
+        assert_eq!(
+            paragraph(&b, Position::new(5, 0), true),
+            lines(2, 5),
+            "last paragraph: the blanks before it"
+        );
     }
 }

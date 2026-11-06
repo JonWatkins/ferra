@@ -28,6 +28,7 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `r` + char | Replace characters (`3rx`) |
 | Normal  | `>` `<` + motion, `>>` `<<` | Indent / outdent lines (`>ip`, `3>>`; visual `>` `<`) |
 | Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |
+| Normal  | `gcc`, `gc` + motion (`gcap`, `gcj`), visual `gc` | Toggle comments on those lines, using the file's language |
 | Normal  | `~` | Toggle case under the cursor and move on |
 | Normal  | `J` | Join lines (`3J`, visual `J`) |
 | Normal  | `i` `a` `I` `A` `o` `O` | Enter insert mode |
@@ -70,7 +71,7 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Insert  | `<C-r>{register}` | Insert a register's text (`<C-r>"` the last yank, `<C-r>.` the last insert, `<C-r>+` the clipboard) |
 | Command | `<CR>` / `<Esc>` | Run / cancel |
 
-Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
+Text objects: `iw` `aw`, `ip` `ap` (paragraph), `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
 (`ib`), `i{` `a{` (`iB`), `i[` `a[`, `i<` `a<`.
 
 **System clipboard:** `"+` (and `"*`) is the system clipboard: `"+yy`

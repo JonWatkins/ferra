@@ -111,6 +111,7 @@ impl Editor {
     ) -> Result<(), String> {
         let tab = self.options.tab_width;
         match operator {
+            Operator::Comment => return self.toggle_comment(block.first, block.last),
             Operator::Indent | Operator::Outdent => {
                 let lines = Range::Lines {
                     first: block.first,

@@ -47,6 +47,11 @@ pub fn register(r: &mut CommandRegistry) {
         "Toggle case over a motion or text object (g~)",
         |cx| begin(cx, Operator::ToggleCase),
     );
+    r.register(
+        "operator_comment",
+        "Toggle comments on the lines of a motion or text object (gc, gcc)",
+        |cx| begin(cx, Operator::Comment),
+    );
 
     r.register(
         "delete_char",

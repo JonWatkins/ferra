@@ -93,12 +93,25 @@ const SINGLE_QUOTES: [TextObject; 2] = quote_objects!(
     "single quotes",
     '\''
 );
+const PARAGRAPH: [TextObject; 2] = [
+    object(
+        "inner_paragraph",
+        "The paragraph (or run of blank lines) under the cursor",
+        |b, p, _| text_object::paragraph(b, p, false),
+    ),
+    object(
+        "around_paragraph",
+        "The paragraph plus the blank lines after it",
+        |b, p, _| text_object::paragraph(b, p, true),
+    ),
+];
 const BACKTICKS: [TextObject; 2] =
     quote_objects!("inner_backtick", "around_backtick", "backticks", '`');
 
 pub fn register(r: &mut CommandRegistry) {
-    let groups: [&'static [TextObject]; 9] = [
+    let groups: [&'static [TextObject]; 10] = [
         &WORD,
+        &PARAGRAPH,
         std::slice::from_ref(&LINE),
         &PARENS,
         &BRACES,
