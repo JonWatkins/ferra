@@ -84,9 +84,10 @@ impl App {
                 None => return self.fail("No previous command line"),
             }
         } else {
-            match self.editor.registers.get(Some(register)) {
-                Some(contents) => contents.text.clone(),
-                None => return self.fail(&format!("Register {register} is empty")),
+            match self.editor.registers.read(Some(register)) {
+                Ok(Some(contents)) => contents.text,
+                Ok(None) => return self.fail(&format!("Register {register} is empty")),
+                Err(error) => return self.fail(&error),
             }
         };
         let keys = match parse_keys(&text) {

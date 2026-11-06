@@ -7,12 +7,34 @@
 //! | `A`-`Z`  | Appends to the lowercase register. |
 //! | `0`      | The last yank into the unnamed register. |
 //! | `_`      | Black hole. Writes are discarded. |
+//! | `+`, `*` | The system clipboard (both the same here). |
 
 use std::collections::HashMap;
+use std::fmt;
+
+use serde::Deserialize;
+
+use crate::clipboard::Clipboard;
 
 pub const UNNAMED: char = '"';
 pub const YANK: char = '0';
 pub const BLACK_HOLE: char = '_';
+pub const CLIPBOARD: char = '+';
+pub const SELECTION: char = '*';
+
+/// How the system clipboard is used (`clipboard` in `[editor]`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipboardMode {
+    /// Only `"+` and `"*` use the system clipboard.
+    #[default]
+    Registers,
+    /// Every yank and delete also goes to the system clipboard, and `p`
+    /// pastes from it (Vim's `clipboard=unnamedplus`).
+    Unnamed,
+    /// Never touch the system clipboard; `"+` is an ordinary register.
+    Off,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Register {
@@ -54,12 +76,69 @@ pub enum StoreKind {
     Delete,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default)]
 pub struct Registers {
     registers: HashMap<char, Register>,
+    clipboard: Option<Box<dyn Clipboard>>,
+    mode: ClipboardMode,
+    /// A clipboard write that failed, for the app to report. Failures never
+    /// cancel the yank or delete they're part of.
+    clipboard_error: Option<String>,
+}
+
+impl fmt::Debug for Registers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Registers")
+            .field("registers", &self.registers)
+            .field("mode", &self.mode)
+            .field("has_clipboard", &self.clipboard.is_some())
+            .finish()
+    }
 }
 
 impl Registers {
+    /// Connects the system clipboard, used as `mode` says.
+    pub fn set_clipboard(&mut self, clipboard: Box<dyn Clipboard>, mode: ClipboardMode) {
+        self.clipboard = Some(clipboard);
+        self.mode = mode;
+    }
+
+    /// The last clipboard write that failed, if any (taken once).
+    pub fn take_clipboard_error(&mut self) -> Option<String> {
+        self.clipboard_error.take()
+    }
+
+    /// Whether register `name` is backed by the system clipboard right now.
+    fn uses_clipboard(&self, name: Option<char>) -> bool {
+        self.clipboard.is_some()
+            && match self.mode {
+                ClipboardMode::Off => false,
+                ClipboardMode::Registers => matches!(name, Some(CLIPBOARD | SELECTION)),
+                ClipboardMode::Unnamed => {
+                    matches!(name, None | Some(UNNAMED | CLIPBOARD | SELECTION))
+                }
+            }
+    }
+
+    /// Reads a register for pasting. Clipboard registers come from the
+    /// system clipboard, where text ending in a line break pastes as whole
+    /// lines (as in Vim).
+    pub fn read(&mut self, name: Option<char>) -> Result<Option<Register>, String> {
+        if self.uses_clipboard(name) {
+            let clipboard = self.clipboard.as_mut().expect("checked by uses_clipboard");
+            let text = clipboard.get()?.replace("\r\n", "\n");
+            if text.is_empty() && name.is_none() {
+                // Nothing on the clipboard: fall back to the unnamed register.
+                return Ok(self.get(None).cloned());
+            }
+            return Ok(Some(match text.strip_suffix('\n') {
+                Some(lines) => Register::linewise(lines),
+                None => Register::charwise(text),
+            }));
+        }
+        Ok(self.get(name).cloned())
+    }
+
     /// Reads a register; `None` means the unnamed register.
     pub fn get(&self, name: Option<char>) -> Option<&Register> {
         let name = name.unwrap_or(UNNAMED).to_ascii_lowercase();
@@ -93,9 +172,24 @@ impl Registers {
         value: Register,
         kind: StoreKind,
     ) -> Result<(), String> {
+        if self.uses_clipboard(name) {
+            let text = if value.linewise {
+                format!("{}\n", value.text)
+            } else {
+                value.text.clone()
+            };
+            let clipboard = self.clipboard.as_mut().expect("checked by uses_clipboard");
+            if let Err(error) = clipboard.set(&text) {
+                self.clipboard_error = Some(error);
+            }
+        }
         let name = name.unwrap_or(UNNAMED);
         let value = match name {
             BLACK_HOLE => return Ok(()),
+            CLIPBOARD | SELECTION => {
+                self.registers.insert(CLIPBOARD, value.clone());
+                value
+            }
             UNNAMED => {
                 if kind == StoreKind::Yank {
                     self.registers.insert(YANK, value.clone());
@@ -192,6 +286,93 @@ mod tests {
         assert_eq!(text(&r, Some('q')), Some("ix<Esc>"));
         assert_eq!(text(&r, None), Some("yanked"));
         assert!(r.set('%', Register::charwise("x")).is_err());
+    }
+
+    fn with_clipboard(mode: ClipboardMode) -> (Registers, crate::clipboard::MemoryClipboard) {
+        let clipboard = crate::clipboard::MemoryClipboard::default();
+        let mut r = Registers::default();
+        r.set_clipboard(Box::new(clipboard.clone()), mode);
+        (r, clipboard)
+    }
+
+    #[test]
+    fn plus_register_uses_the_system_clipboard() {
+        let (mut r, clipboard) = with_clipboard(ClipboardMode::Registers);
+        r.store(Some('+'), Register::linewise("a line"), StoreKind::Yank)
+            .unwrap();
+        assert_eq!(
+            clipboard.contents(),
+            "a line\n",
+            "lines end with a line break"
+        );
+        assert_eq!(text(&r, None), Some("a line"), "also the unnamed register");
+
+        clipboard.set_contents("from another app");
+        assert_eq!(
+            r.read(Some('*')).unwrap(),
+            Some(Register::charwise("from another app"))
+        );
+        clipboard.set_contents("two\r\nlines\r\n");
+        assert_eq!(
+            r.read(Some('+')).unwrap(),
+            Some(Register::linewise("two\nlines"))
+        );
+    }
+
+    #[test]
+    fn plain_yanks_leave_the_clipboard_alone_by_default() {
+        let (mut r, clipboard) = with_clipboard(ClipboardMode::Registers);
+        r.store(None, Register::charwise("internal"), StoreKind::Yank)
+            .unwrap();
+        assert_eq!(clipboard.contents(), "");
+        assert_eq!(r.read(None).unwrap(), Some(Register::charwise("internal")));
+    }
+
+    #[test]
+    fn unnamed_mode_syncs_every_yank_and_paste() {
+        let (mut r, clipboard) = with_clipboard(ClipboardMode::Unnamed);
+        r.store(None, Register::charwise("shared"), StoreKind::Delete)
+            .unwrap();
+        assert_eq!(clipboard.contents(), "shared");
+        clipboard.set_contents("outside");
+        assert_eq!(r.read(None).unwrap(), Some(Register::charwise("outside")));
+        r.store(Some('a'), Register::charwise("named"), StoreKind::Yank)
+            .unwrap();
+        assert_eq!(
+            clipboard.contents(),
+            "outside",
+            "named registers stay internal"
+        );
+    }
+
+    #[test]
+    fn off_mode_makes_plus_an_ordinary_register() {
+        let (mut r, clipboard) = with_clipboard(ClipboardMode::Off);
+        r.store(Some('+'), Register::charwise("kept"), StoreKind::Yank)
+            .unwrap();
+        assert_eq!(clipboard.contents(), "");
+        assert_eq!(r.read(Some('+')).unwrap(), Some(Register::charwise("kept")));
+    }
+
+    struct BrokenClipboard;
+    impl Clipboard for BrokenClipboard {
+        fn get(&mut self) -> Result<String, String> {
+            Err("no display".into())
+        }
+        fn set(&mut self, _: &str) -> Result<(), String> {
+            Err("no display".into())
+        }
+    }
+
+    #[test]
+    fn clipboard_failures_dont_lose_the_text() {
+        let mut r = Registers::default();
+        r.set_clipboard(Box::new(BrokenClipboard), ClipboardMode::Registers);
+        r.store(Some('+'), Register::charwise("safe"), StoreKind::Yank)
+            .unwrap();
+        assert_eq!(r.take_clipboard_error().as_deref(), Some("no display"));
+        assert_eq!(text(&r, None), Some("safe"));
+        assert!(r.read(Some('+')).is_err(), "reading reports the failure");
     }
 
     #[test]

@@ -19,6 +19,9 @@ cursorline = true
 scroll-off = 5
 # Colour code with tree-sitter (Rust, TOML, JSON, Python, JavaScript).
 syntax-highlighting = true
+# The system clipboard: "registers" (only "+ and "* use it), "unnamed"
+# (every yank and delete goes to it, and p pastes from it) or "off".
+clipboard = "registers"
 
 [editor.search]
 # "smart" (case-insensitive unless the pattern has a capital), "sensitive"

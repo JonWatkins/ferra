@@ -60,6 +60,13 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
 (`ib`), `i{` `a{` (`iB`), `i[` `a[`, `i<` `a<`.
 
+**System clipboard:** `"+` (and `"*`) is the system clipboard: `"+yy`
+copies a line out, `"+p` pastes text in (text ending in a line break pastes
+as whole lines). Set `clipboard = "unnamed"` under `[editor]` to make every
+yank, delete and `p` use it, or `"off"` to never touch it. Pasting into the
+terminal (Cmd/Ctrl+V) inserts the text exactly as copied, with no
+auto-indent, as one undo step.
+
 Macros are stored in their register as key notation (`A;<Esc>j`), so
 `"ap` pastes one to edit and `"ay$` yanks it back. Playback stops at the
 first failing command.

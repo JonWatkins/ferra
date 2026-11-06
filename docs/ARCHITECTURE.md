@@ -333,6 +333,23 @@ and doesn't move marks, so positions are clamped when used. `'` and `` ` ``
 are motions whose target comes from the mark (`MotionArgs::target`), so they
 work after operators and in visual mode.
 
+### Clipboard and pasting
+
+`clipboard::Clipboard` is a two-method trait (`get`, `set`). The app gives
+the registers a `LazySystemClipboard` (the `arboard` crate, connected on
+first use, so startup and tests never talk to the OS); tests use
+`MemoryClipboard`. `Registers` decides which register names use it, per
+`ClipboardMode`: `"+`/`"*` only (default), also the unnamed register, or
+never. Pastes go through `Registers::read`, which can fail and returns an
+owned value. Text ending in a line break reads as linewise, as in Vim. A
+failed clipboard write never cancels the yank or delete: the text is still
+stored, and the error is reported after the command.
+
+Bracketed paste is on while the editor runs. `Event::Paste` goes to
+`App::handle_paste`, bypassing key bindings and auto-indent. A paste that
+brings its own indentation replaces the auto-indent on an otherwise blank
+line.
+
 ### Commands that take a character
 
 A command registered with `.takes_char()` (`f`, `t`, `F`, `T`, `r`) gets
@@ -477,6 +494,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
   the old contents (the rename replaces the file). Vim's `backupcopy`
   handles this; we don't yet.
 - Non-UTF-8 encodings are refused rather than supported.
+- Clipboard over SSH (OSC 52), and recording pastes into macros and `.`
+  (both currently replay without the pasted text).
 - Incremental syntax parsing (feeding edits to tree-sitter and reusing the
   previous tree), and highlighting only the visible part of very large
   files. Language injections (e.g. regex or SQL inside strings) are turned

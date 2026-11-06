@@ -13,6 +13,7 @@ use repeat::ChangeRecorder;
 use crossterm::event::{self, Event};
 use ratatui::{DefaultTerminal, Frame};
 
+use crate::clipboard::{Clipboard, LazySystemClipboard};
 use crate::commands::{CommandRegistry, Invocation};
 use crate::config::{Config, Theme};
 use crate::editor::{DocumentId, Editor, Message, Mode};
@@ -75,6 +76,10 @@ impl App {
             plugins: None,
             replaying: false,
         };
+        let mode = app.editor.options.clipboard;
+        app.editor
+            .registers
+            .set_clipboard(Box::new(LazySystemClipboard::default()), mode);
         app.validate_keymap();
         if !unknown_hook_commands.is_empty() {
             unknown_hook_commands.sort();
@@ -189,6 +194,7 @@ impl App {
 
     /// Runs the event loop until the user quits.
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+        terminal::enable_bracketed_paste()?;
         let mut shape = None;
         while !self.should_quit() {
             terminal.draw(|frame| self.draw(frame))?;
@@ -216,15 +222,74 @@ impl App {
                 handled += 1;
             }
         }
+        terminal::disable_bracketed_paste()?;
         terminal::restore_cursor_shape()
     }
 
     fn handle_event(&mut self, event: Event) {
-        if let Event::Key(event) = event
-            && let Some(key) = KeyPress::from_event(event)
-        {
-            self.handle_key(key);
+        match event {
+            Event::Key(event) => {
+                if let Some(key) = KeyPress::from_event(event) {
+                    self.handle_key(key);
+                }
+            }
+            Event::Paste(text) => self.handle_paste(&text),
+            _ => {}
         }
+    }
+
+    /// Text pasted into the terminal (bracketed paste). It goes in exactly as
+    /// copied: no auto-indent, no key bindings, one undo step.
+    ///
+    /// In insert mode it's typed at the cursor (and joins the insert
+    /// session); on a line that's only indentation so far, a paste with its
+    /// own indentation replaces it. In normal and visual mode it's put in before the cursor,
+    /// like `P`. Prompts and pickers take the first line.
+    pub fn handle_paste(&mut self, text: &str) {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        self.input.reset();
+        let edits_before = self.editor.document.edit_count();
+        match self.editor.mode() {
+            Mode::Insert => {
+                // On a line that's only (auto-)indentation so far, a paste
+                // that brings its own indentation replaces it rather than
+                // adding to it.
+                let doc = &mut self.editor.document;
+                let cursor = doc.cursor();
+                let line = doc.buffer().line(cursor.row);
+                let only_indent_before =
+                    cursor.col > 0 && line.chars().take(cursor.col).all(char::is_whitespace);
+                if only_indent_before && text.starts_with([' ', '\t']) {
+                    doc.delete(cursor.with_col(0), cursor);
+                    doc.set_cursor(cursor.with_col(0));
+                }
+                doc.insert_str(&text);
+            }
+            Mode::Command | Mode::Picker => {
+                let first_line = text.lines().next().unwrap_or_default();
+                first_line
+                    .chars()
+                    .for_each(|c| self.editor.insert_text_char(c));
+            }
+            Mode::Normal | Mode::Visual | Mode::OperatorPending => {
+                self.editor.set_mode(Mode::Normal);
+                let doc = &mut self.editor.document;
+                let end = doc.insert(doc.cursor(), &text);
+                doc.set_cursor(end.with_col(end.col.saturating_sub(1)));
+                self.editor.finish_command();
+            }
+        }
+        if self.editor.document.edit_count() != edits_before {
+            self.editor.emit(events::Event::BufferChanged);
+        }
+        self.dispatch_events();
+    }
+
+    /// Replaces the clipboard behind `"+` (the system one by default).
+    /// Tests use an in-memory clipboard.
+    pub fn use_clipboard(&mut self, clipboard: Box<dyn Clipboard>) {
+        let mode = self.editor.options.clipboard;
+        self.editor.registers.set_clipboard(clipboard, mode);
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -377,6 +442,9 @@ impl App {
         if let Err(error) = self.commands.execute(command, &mut self.editor, invocation) {
             self.editor.set_message(Message::error(error));
             self.note_command_failure();
+        }
+        if let Some(error) = self.editor.registers.take_clipboard_error() {
+            self.editor.set_message(Message::error(error));
         }
         if self.editor.mode() == Mode::OperatorPending {
             self.input.hold_last_sequence();

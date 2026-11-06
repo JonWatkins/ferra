@@ -2,6 +2,7 @@ use serde::Deserialize;
 
 use crate::core::search::CaseMode;
 use crate::editor::Mode;
+use crate::editor::registers::ClipboardMode;
 use crate::files::WalkOptions;
 
 /// Behavioural options from the `[editor]` config section.
@@ -17,6 +18,8 @@ pub struct EditorOptions {
     pub cursorline: bool,
     pub scroll_off: usize,
     pub syntax_highlighting: bool,
+    /// How the system clipboard is used: "registers", "unnamed" or "off".
+    pub clipboard: ClipboardMode,
     pub cursor_shape: CursorShapes,
     pub search: SearchOptions,
     pub file_picker: FilePickerOptions,
