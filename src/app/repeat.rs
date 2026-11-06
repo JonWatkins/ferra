@@ -7,7 +7,24 @@
 //! commands means every way of changing text is repeatable, including
 //! insert sessions and future plugin commands, with no extra work.
 
+use crate::editor::DocumentId;
 use crate::input::{KeyCode, KeyPress};
+
+/// The active buffer and how many edits it has had. Comparing two stamps
+/// tells whether a key sequence edited text: a sequence that ends in another
+/// buffer (`]b`, `:e`) didn't, even though the edit counts differ.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct EditStamp {
+    pub document: DocumentId,
+    pub edits: u64,
+}
+
+impl EditStamp {
+    /// Whether the same buffer is active and has been edited since `earlier`.
+    pub fn edited_since(self, earlier: EditStamp) -> bool {
+        self.document == earlier.document && self.edits != earlier.edits
+    }
+}
 
 /// The last change, split so that `.` with a count can replace its count.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +101,7 @@ impl LastChange {
 #[derive(Debug, Default)]
 pub struct ChangeRecorder {
     keys: Vec<KeyPress>,
-    edits_at_start: u64,
+    at_start: EditStamp,
     /// `:` commands aren't repeatable, as in Vim.
     used_command_line: bool,
     /// The sequence was `.` itself, which must not replace the last change.
@@ -93,10 +110,10 @@ pub struct ChangeRecorder {
 }
 
 impl ChangeRecorder {
-    /// Starts a new sequence, given the document's current edit count.
-    pub fn begin(&mut self, edit_count: u64) {
+    /// Starts a new sequence.
+    pub fn begin(&mut self, stamp: EditStamp) {
         self.keys.clear();
-        self.edits_at_start = edit_count;
+        self.at_start = stamp;
         self.used_command_line = false;
         self.replayed = false;
     }
@@ -114,8 +131,8 @@ impl ChangeRecorder {
     }
 
     /// Ends the sequence. It becomes the last change if it edited the text.
-    pub fn finish(&mut self, edit_count: u64) {
-        let changed = edit_count != self.edits_at_start;
+    pub fn finish(&mut self, stamp: EditStamp) {
+        let changed = stamp.edited_since(self.at_start);
         if changed && !self.used_command_line && !self.replayed && !self.keys.is_empty() {
             self.last_change = Some(LastChange::parse(&self.keys));
         }
@@ -187,12 +204,34 @@ mod tests {
         assert_eq!(change.body, keys("i42<Esc>"));
     }
 
+    /// `edits` edits into buffer 0.
+    fn stamp(edits: u64) -> EditStamp {
+        EditStamp {
+            document: DocumentId(0),
+            edits,
+        }
+    }
+
     fn record(recorder: &mut ChangeRecorder, notation: &str, edits_before: u64, edits_after: u64) {
-        recorder.begin(edits_before);
+        recorder.begin(stamp(edits_before));
         for key in keys(notation) {
             recorder.push(key);
         }
-        recorder.finish(edits_after);
+        recorder.finish(stamp(edits_after));
+    }
+
+    #[test]
+    fn switching_buffers_is_not_a_change() {
+        let mut recorder = ChangeRecorder::default();
+        record(&mut recorder, "x", 0, 1);
+        recorder.begin(stamp(1));
+        recorder.push(keys("]")[0]);
+        recorder.push(keys("b")[0]);
+        recorder.finish(EditStamp {
+            document: DocumentId(1),
+            edits: 5,
+        });
+        assert_eq!(recorder.last_change(), Some(&LastChange::parse(&keys("x"))));
     }
 
     #[test]
@@ -212,15 +251,15 @@ mod tests {
         let mut recorder = ChangeRecorder::default();
         record(&mut recorder, "x", 0, 1);
 
-        recorder.begin(1);
+        recorder.begin(stamp(1));
         recorder.push(keys(":")[0]);
         recorder.note_command_line();
-        recorder.finish(2);
+        recorder.finish(stamp(2));
 
-        recorder.begin(2);
+        recorder.begin(stamp(2));
         recorder.push(keys(".")[0]);
         recorder.note_replay();
-        recorder.finish(3);
+        recorder.finish(stamp(3));
 
         assert_eq!(recorder.last_change(), Some(&LastChange::parse(&keys("x"))));
     }

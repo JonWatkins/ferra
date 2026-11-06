@@ -159,3 +159,23 @@ fn failed_change_is_not_recorded() {
     keys(&mut app, ".");
     assert_eq!(text(&app), "c", "repeats x, not the failed dfz");
 }
+
+#[test]
+fn switching_buffers_is_not_the_last_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "aaa\n").unwrap();
+    std::fs::write(&b, "bbb\n").unwrap();
+    let mut app = app();
+    app.open(&a);
+    keys(&mut app, "x");
+    keys(&mut app, &format!(":e {}<CR>", b.display()));
+    keys(&mut app, "xx");
+    // The buffers have had different numbers of edits, which used to make
+    // `]b` look like an edit.
+    keys(&mut app, "]b");
+    assert_eq!(text(&app), "aa");
+    keys(&mut app, ".");
+    assert_eq!(text(&app), "a", "`.` repeats the x, in this buffer");
+}

@@ -8,7 +8,7 @@ mod terminal;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use repeat::ChangeRecorder;
+use repeat::{ChangeRecorder, EditStamp};
 
 use crossterm::event::{self, Event};
 use ratatui::{DefaultTerminal, Frame};
@@ -270,7 +270,7 @@ impl App {
     pub fn handle_paste(&mut self, text: &str) {
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         self.input.reset();
-        let edits_before = self.editor.document.edit_count();
+        let before = self.edit_stamp();
         match self.editor.mode() {
             Mode::Insert => {
                 // On a line that's only (auto-)indentation so far, a paste
@@ -301,7 +301,7 @@ impl App {
                 self.editor.finish_command();
             }
         }
-        if self.editor.document.edit_count() != edits_before {
+        if self.edit_stamp().edited_since(before) {
             self.editor.emit(events::Event::BufferChanged);
         }
         self.dispatch_events();
@@ -402,13 +402,20 @@ impl App {
         ])
     }
 
+    fn edit_stamp(&self) -> EditStamp {
+        EditStamp {
+            document: self.editor.document.id(),
+            edits: self.editor.document.edit_count(),
+        }
+    }
+
     /// Runs `handle`, recording keys for `.` and firing change events.
     fn tracked(&mut self, key: Option<KeyPress>, handle: impl FnOnce(&mut Self)) {
-        let edits_before = self.editor.document.edit_count();
+        let before = self.edit_stamp();
 
         // Record each sequence from idle to idle, for `.`.
         if self.is_idle() {
-            self.changes.begin(edits_before);
+            self.changes.begin(before);
         }
         if let Some(key) = key {
             self.changes.push(key);
@@ -422,10 +429,10 @@ impl App {
             self.changes.note_command_line();
         }
         if self.is_idle() {
-            self.changes.finish(self.editor.document.edit_count());
+            self.changes.finish(self.edit_stamp());
         }
 
-        if self.editor.document.edit_count() != edits_before {
+        if self.edit_stamp().edited_since(before) {
             self.editor.emit(events::Event::BufferChanged);
         }
         self.dispatch_events();

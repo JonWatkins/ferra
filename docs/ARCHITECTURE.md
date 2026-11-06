@@ -386,7 +386,9 @@ level: only the app sees keys.
 Recording keys rather than commands makes every change repeatable,
 including insert sessions and future plugin commands, without each command
 having to support it. A leading count is stored separately so `3.`
-replaces it, and a `"x` register prefix is kept. If the change was a paste
+replaces it, and a `"x` register prefix is kept. A sequence counts as a change
+when it edited the buffer it started in (`EditStamp`: buffer and edit
+count), so switching buffers never does. If the change was a paste
 from `"1`-`"8`, `.` moves the prefix on one number first, so `"1pu.u.`
 steps back through older deletes.
 
