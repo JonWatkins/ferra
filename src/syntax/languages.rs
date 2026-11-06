@@ -24,12 +24,37 @@ impl LanguageDef {
     }
 }
 
+/// The upstream Markdown injections, with `include-children` on the inline
+/// one: the `inline` node has hidden children, and without it the inline
+/// grammar is given nothing to parse.
+const MARKDOWN_INJECTIONS: &str = r#"
+(fenced_code_block
+  (info_string (language) @injection.language)
+  (code_fence_content) @injection.content)
+
+((html_block) @injection.content
+  (#set! injection.language "html"))
+
+((minus_metadata) @injection.content
+  (#set! injection.language "yaml"))
+
+((plus_metadata) @injection.content
+  (#set! injection.language "toml"))
+
+((inline) @injection.content
+  (#set! injection.language "markdown_inline")
+  (#set! injection.include-children))
+"#;
+
 pub const LANGUAGES: &[LanguageDef] = &[
     LanguageDef {
         name: "rust",
         grammar: || tree_sitter_rust::LANGUAGE.into(),
         highlights: &[tree_sitter_rust::HIGHLIGHTS_QUERY],
-        injections: tree_sitter_rust::INJECTIONS_QUERY,
+        // Rust's injections re-highlight every macro call's contents as
+        // Rust: 2.5x slower on macro-heavy files, for little gain (literals
+        // inside macros are coloured anyway). Left off.
+        injections: "",
         locals: "",
     },
     LanguageDef {
@@ -122,7 +147,16 @@ pub const LANGUAGES: &[LanguageDef] = &[
         name: "markdown",
         grammar: || tree_sitter_md::LANGUAGE.into(),
         highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
-        injections: "",
+        injections: MARKDOWN_INJECTIONS,
+        locals: "",
+    },
+    LanguageDef {
+        // Markdown's inline syntax (emphasis, links, code spans): a second
+        // grammar the block grammar injects into each paragraph.
+        name: "markdown_inline",
+        grammar: || tree_sitter_md::INLINE_LANGUAGE.into(),
+        highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_INLINE],
+        injections: tree_sitter_md::INJECTION_QUERY_INLINE,
         locals: "",
     },
     LanguageDef {
@@ -148,6 +182,10 @@ pub const LANGUAGES: &[LanguageDef] = &[
     },
 ];
 
+/// Languages only ever reached by injection from another one, so they have
+/// no `[languages]` entry.
+pub const INJECTION_ONLY: &[&str] = &["markdown_inline"];
+
 /// The built-in language called `name`.
 pub fn language(name: &str) -> Option<&'static LanguageDef> {
     LANGUAGES.iter().find(|l| l.name == name)
@@ -170,7 +208,11 @@ mod tests {
     fn the_default_config_and_the_grammars_list_the_same_languages() {
         let config = Config::default();
         let mut configured: Vec<&str> = config.languages.names().collect();
-        let mut built_in: Vec<&str> = LANGUAGES.iter().map(|l| l.name).collect();
+        let mut built_in: Vec<&str> = LANGUAGES
+            .iter()
+            .map(|l| l.name)
+            .filter(|name| !INJECTION_ONLY.contains(name))
+            .collect();
         configured.sort_unstable();
         built_in.sort_unstable();
         assert_eq!(configured, built_in);

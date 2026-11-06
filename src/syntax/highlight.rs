@@ -34,6 +34,12 @@ pub const HIGHLIGHT_NAMES: &[&str] = &[
     "string",
     "string.special",
     "tag",
+    "text.emphasis",
+    "text.literal",
+    "text.reference",
+    "text.strong",
+    "text.title",
+    "text.uri",
     "type",
     "type.builtin",
     "variable",
@@ -73,14 +79,18 @@ impl Highlights {
     }
 }
 
-/// Highlights `text` (lines separated by `\n`) with `config`.
-pub fn highlight(
-    highlighter: &mut Highlighter,
-    config: &HighlightConfiguration,
-    text: &str,
+/// Highlights `text` (lines separated by `\n`) with `config`. Text in
+/// another language inside it (a Markdown code block, `<script>` in HTML)
+/// is highlighted with the configuration `inject` gives for that language's
+/// name, if any.
+pub fn highlight<'a>(
+    highlighter: &'a mut Highlighter,
+    config: &'a HighlightConfiguration,
+    text: &'a str,
+    inject: impl Fn(&str) -> Option<&'a HighlightConfiguration> + 'a,
 ) -> Result<Highlights, String> {
     let events = highlighter
-        .highlight(config, text.as_bytes(), None, None, |_| None)
+        .highlight(config, text.as_bytes(), None, None, inject)
         .map_err(|e| format!("highlighting failed: {e}"))?;
 
     let mut lines: Vec<Vec<Span>> = vec![Vec::new()];
@@ -143,7 +153,8 @@ mod tests {
 
     /// `(text, highlight name)` for each span on `row`.
     fn spans(text: &str, row: usize) -> Vec<(String, &'static str)> {
-        let highlights = highlight(&mut Highlighter::new(), &rust_config(), text).unwrap();
+        let highlights =
+            highlight(&mut Highlighter::new(), &rust_config(), text, |_| None).unwrap();
         let line: Vec<char> = text.split('\n').nth(row).unwrap().chars().collect();
         highlights
             .line(row)
@@ -163,7 +174,8 @@ mod tests {
     #[test]
     fn function_names_and_one_line_per_row() {
         let text = "fn main() {}\n\nstruct Foo;";
-        let highlights = highlight(&mut Highlighter::new(), &rust_config(), text).unwrap();
+        let highlights =
+            highlight(&mut Highlighter::new(), &rust_config(), text, |_| None).unwrap();
         assert_eq!(highlights.line_count(), 3);
         assert!(highlights.line(1).is_empty(), "blank line");
         assert!(spans(text, 0).contains(&("main".into(), "function")));

@@ -14,7 +14,7 @@ mod highlight;
 mod languages;
 
 pub use highlight::{HIGHLIGHT_NAMES, Highlights, Span};
-pub use languages::{LANGUAGES, LanguageDef, language};
+pub use languages::{INJECTION_ONLY, LANGUAGES, LanguageDef, language};
 
 use std::cell::OnceCell;
 use std::collections::HashMap;
@@ -90,13 +90,23 @@ impl SyntaxEngine {
         let highlights = if document.buffer().len_chars() > MAX_HIGHLIGHT_CHARS {
             None
         } else {
-            self.configs[index]
+            let text = document.buffer().text();
+            let configs = &self.configs;
+            // Languages inside this one (a code block's, `<script>`'s),
+            // by name or file extension (`js`, `py`), loaded on first use.
+            let inject = move |name: &str| {
+                let index = injected_language(name, languages)?;
+                configs[index]
+                    .get_or_init(|| load(&LANGUAGES[index]))
+                    .as_ref()
+                    .ok()
+            };
+            configs[index]
                 .get_or_init(|| load(language))
                 .as_ref()
                 .ok()
                 .and_then(|config| {
-                    highlight::highlight(&mut self.highlighter, config, &document.buffer().text())
-                        .ok()
+                    highlight::highlight(&mut self.highlighter, config, &text, inject).ok()
                 })
         };
         self.cache.insert(
@@ -146,6 +156,19 @@ impl SyntaxEngine {
             })
             .collect()
     }
+}
+
+/// The built-in language an injection names: by name (`rust`,
+/// `markdown_inline`), or by one of the extensions in `[languages]` (`js`,
+/// `py`, `sh`), ignoring case.
+fn injected_language(name: &str, languages: &Languages) -> Option<usize> {
+    let name = name.trim().to_ascii_lowercase();
+    if let Some(index) = LANGUAGES.iter().position(|l| l.name == name) {
+        return Some(index);
+    }
+    let path = std::path::PathBuf::from(format!("x.{name}"));
+    let language = languages.detect(Some(&path), "")?;
+    LANGUAGES.iter().position(|l| l.name == language)
 }
 
 fn load(language: &LanguageDef) -> Result<HighlightConfiguration, String> {
@@ -224,7 +247,7 @@ mod tests {
         ];
         assert_eq!(
             samples.len(),
-            LANGUAGES.len() + 2,
+            LANGUAGES.len() - INJECTION_ONLY.len() + 2,
             "a sample per language (plus jsx and a #! script)"
         );
         let mut engine = SyntaxEngine::default();
@@ -257,5 +280,68 @@ mod tests {
         assert_ne!(before, after);
         doc.undo();
         assert_eq!(engine.highlights_default(&doc).unwrap().line(0), before);
+    }
+
+    /// The highlight names on `row` of `doc`, in order.
+    fn names_on(engine: &mut SyntaxEngine, doc: &Document, row: usize) -> Vec<&'static str> {
+        engine
+            .highlights_default(doc)
+            .unwrap()
+            .line(row)
+            .iter()
+            .map(Span::name)
+            .collect()
+    }
+
+    #[test]
+    fn markdown_inline_syntax_comes_from_the_injected_grammar() {
+        let mut engine = SyntaxEngine::default();
+        let doc = document("a.md", "# Title\n\nSome **bold**, *it* and `code`.\n");
+        assert!(names_on(&mut engine, &doc, 0).contains(&"text.title"));
+        let prose = names_on(&mut engine, &doc, 2);
+        for name in ["text.strong", "text.emphasis", "text.literal"] {
+            assert!(prose.contains(&name), "{name} in {prose:?}");
+        }
+    }
+
+    #[test]
+    fn code_blocks_are_highlighted_in_their_language() {
+        let mut engine = SyntaxEngine::default();
+        let doc = document(
+            "a.md",
+            "```rust\nfn main() {}\n```\n\n```py\ndef f(): pass\n```\n",
+        );
+        assert!(
+            names_on(&mut engine, &doc, 1).contains(&"keyword"),
+            "rust `fn`"
+        );
+        assert!(
+            names_on(&mut engine, &doc, 5).contains(&"keyword"),
+            "`py` by extension"
+        );
+    }
+
+    #[test]
+    fn html_script_and_style_are_highlighted() {
+        let mut engine = SyntaxEngine::default();
+        let doc = document(
+            "a.html",
+            "<script>\nconst x = 1;\n</script>\n<style>\np { color: red; }\n</style>\n",
+        );
+        assert!(
+            names_on(&mut engine, &doc, 1).contains(&"keyword"),
+            "js `const`"
+        );
+        assert!(
+            names_on(&mut engine, &doc, 4).contains(&"property"),
+            "css `color`"
+        );
+    }
+
+    #[test]
+    fn unknown_injected_languages_are_left_plain() {
+        let mut engine = SyntaxEngine::default();
+        let doc = document("a.md", "```brainfunk\n+++.\n```\n");
+        assert!(engine.highlights_default(&doc).is_some(), "no failure");
     }
 }

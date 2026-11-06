@@ -247,8 +247,11 @@ to a line.
 
 These languages are highlighted with tree-sitter, out of the box: Rust,
 Python, JavaScript (with JSX), TypeScript, TSX, Go, C, C++, Bash, TOML,
-JSON, YAML, HTML, CSS and Markdown (headings, lists, code blocks and quotes;
-not yet emphasis or links). The status line shows the language.
+JSON, YAML, HTML, CSS and Markdown. The status line shows the language.
+
+Languages inside other languages are highlighted too: Markdown's bold,
+italics, links and code spans, fenced code blocks in their own language
+(` ```rust `, ` ```py `), and `<script>` and `<style>` in HTML.
 
 A file's language comes from its name (`Makefile`, `.bashrc`), its extension,
 or for scripts without one, the `#!` line (`#!/usr/bin/env python3`). The

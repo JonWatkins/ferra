@@ -199,3 +199,25 @@ fn new_languages_are_highlighted() {
         );
     }
 }
+
+#[test]
+fn markdown_shows_emphasis_and_highlights_code_blocks() {
+    use ratatui::style::Modifier;
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app();
+    app.open(&file(
+        &dir,
+        "notes.md",
+        "Some **bold** text\n```rust\nfn x() {}\n```\n",
+    ));
+    let mut terminal = Terminal::new(TestBackend::new(40, 7)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer();
+    // Text starts at screen column 5, after the gutter: "bold" is 12..16.
+    // (The gutter's current line number is bold too, so skip it.)
+    let bold: Vec<u16> = (5..40)
+        .filter(|&x| buffer[(x, 0)].modifier.contains(Modifier::BOLD))
+        .collect();
+    assert_eq!(bold, vec![12, 13, 14, 15], "**bold**");
+    assert_eq!(buffer[(5, 2)].fg, KEYWORD, "`fn` in the rust code block");
+}

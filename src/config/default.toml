@@ -167,6 +167,13 @@ block-comment = ["/*", "*/"]
 "tag" = "#f7768e"
 "operator" = "#89ddff"
 "punctuation" = "#9aa5ce"
+# Markdown and other prose.
+"text.title" = { fg = "#7aa2f7", modifiers = ["bold"] }
+"text.strong" = { modifiers = ["bold"] }
+"text.emphasis" = { modifiers = ["italic"] }
+"text.literal" = "#9ece6a"
+"text.uri" = { fg = "#7dcfff", modifiers = ["underlined"] }
+"text.reference" = "#7dcfff"
 "ui.window.separator" = "#3b4048"
 "ui.popup" = { fg = "#d4d7dd", bg = "#1f2229" }
 "ui.popup.border" = "#4b5263"

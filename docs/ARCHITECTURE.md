@@ -190,6 +190,15 @@ finds `src/main.rs` before `domain/lib.rs`.
   version suffixes). The editor holds the table so the syntax engine and the
   status line agree, and detection reruns as you type, so writing a `#!`
   into a new file picks its language.
+- Injections (a language inside another) are resolved by
+  `injected_language`: the name the query gives (`rust`,
+  `markdown_inline`) or an extension from `[languages]` (`py`, `js`), so
+  Markdown code fences work with either. Injected grammars load lazily from
+  the same compiled set. Markdown is two grammars: blocks, and an
+  injection-only inline grammar (`INJECTION_ONLY`) for emphasis, links and
+  code spans; its injection query is ours, adding `include-children`
+  because the `inline` node has hidden children. Rust's macro injections
+  are off for speed.
 - `highlight.rs` runs `tree-sitter-highlight` and turns its events into
   spans per line, in char columns. `HIGHLIGHT_NAMES` are the names queries'
   captures are mapped to, and they double as theme scopes.
@@ -779,12 +788,11 @@ status, branches and history.
   (both currently replay without the pasted text).
 - Incremental syntax parsing (feeding edits to tree-sitter and reusing the
   previous tree), and highlighting only the visible part of very large
-  files. Language injections (e.g. regex or SQL inside strings) are turned
-  off.
+  files. That would also make Rust's macro injections affordable (they're
+  off: 2.5x slower on macro-heavy files).
 - Loading grammars and queries at runtime, Helix-style, instead of
   compiling them in (each adds to the binary: 15 languages make it about
-  17 MB in release, up from 8 MB with 5). Markdown's inline grammar
-  (emphasis, links) needs injections.
+  17 MB in release, up from 8 MB with 5).
 - `.` and macros replay keys without timing, so a short binding that ran
   because the key timeout passed (`g` alongside `gg`) replays as waiting
   for the longer one. Text typed by a timeout in insert mode replays fine.
