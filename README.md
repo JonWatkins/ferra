@@ -140,6 +140,12 @@ Keys use the same notation as config and macros (`A;<lt>Esc>0x` types
 `A;`, presses Esc, then `0x`); text that isn't valid notation, like
 `i<div>`, is typed as it is.
 
+`|` puts several commands on one line: `:%s/a/b/g | w`. `:g`, `:v` and
+`:normal` take everything after them, so `:g/TODO/s/TODO/DONE/ | normal A!`
+runs both commands on each TODO line. In `:s`, a `|` inside the pattern or
+replacement is regex alternation (`:s/cat|dog/pet/g`); only one after it
+starts the next command. In other commands, `\|` is a literal `|`.
+
 Ranges work before any `:` command: `%` (the whole file), `5`, `5,10`, `.`
 (this line), `$` (the last), offsets like `.+3` and `$-1`, and `'<,'>` (the
 last visual selection; `:` in visual mode fills it in). A range alone jumps

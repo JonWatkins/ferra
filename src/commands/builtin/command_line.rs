@@ -1,4 +1,4 @@
-use crate::commands::ex::{RangeContext, parse_range};
+use crate::commands::ex::{Bar, RangeContext, parse_range, split_bar};
 use crate::commands::{ArgCompletion, CommandRegistry, CommandResult, Context, Invocation};
 use crate::editor::{CommandLine, CompletionContext, Editor, Mode, SearchDone};
 use crate::files;
@@ -131,7 +131,9 @@ pub(super) fn run_command_line(cx: &mut Context, input: &str) -> CommandResult {
     let name_len = rest
         .find(|c: char| !(c.is_alphanumeric() || c == '_'))
         .unwrap_or(rest.len());
-    let name_len = if name_len == 0 {
+    let name_len = if rest.starts_with('|') {
+        0
+    } else if name_len == 0 {
         rest.find(char::is_whitespace).unwrap_or(rest.len())
     } else {
         name_len
@@ -140,11 +142,14 @@ pub(super) fn run_command_line(cx: &mut Context, input: &str) -> CommandResult {
     if name.is_empty() {
         if let Some((_, last)) = range {
             let line = (last + 1).to_string();
-            return cx
-                .registry
-                .execute("goto_line", cx.editor, Invocation::with_args(&[line]));
+            cx.registry
+                .execute("goto_line", cx.editor, Invocation::with_args(&[line]))?;
         }
-        return Ok(());
+        // `:5 | d`: a range alone, then another command.
+        return match rest.trim_start().strip_prefix('|').map(str::trim) {
+            Some(next) if !next.is_empty() => run_command_line(cx, next),
+            _ => Ok(()),
+        };
     }
 
     // A `!` straight after the name forces the command (`:q!`, `:w!`),
@@ -154,7 +159,11 @@ pub(super) fn run_command_line(cx: &mut Context, input: &str) -> CommandResult {
         Some(rest) => (format!("{name}!"), false, rest),
         None => (name.to_string(), false, after),
     };
-    let arg_text = after.trim_start();
+    // `|` ends this command and starts the next, unless the command takes
+    // it as part of its arguments (`:g`, `:normal`, `:s` patterns).
+    let bar = cx.registry.get(&name).map_or(Bar::Separates, |c| c.bar);
+    let (arg_text, next) = split_bar(after.trim_start(), bar);
+    let arg_text = arg_text.as_str();
     let args: Vec<String> = arg_text.split_whitespace().map(String::from).collect();
     let invocation = Invocation {
         args: &args,
@@ -163,7 +172,11 @@ pub(super) fn run_command_line(cx: &mut Context, input: &str) -> CommandResult {
         arg_text,
         ..Invocation::default()
     };
-    cx.registry.execute(&name, cx.editor, invocation)
+    cx.registry.execute(&name, cx.editor, invocation)?;
+    match next.map(str::trim) {
+        Some(next) if !next.is_empty() => run_command_line(cx, next),
+        _ => Ok(()),
+    }
 }
 
 /// Applies an edit to the prompt, then updates a search's live preview.

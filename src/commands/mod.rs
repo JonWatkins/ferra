@@ -86,6 +86,8 @@ pub struct Command {
     pub takes_char: bool,
     /// What `<Tab>` completes for this command's arguments on the `:` line.
     pub arg_completion: ArgCompletion,
+    /// How `|` in its arguments is treated on the `:` line.
+    pub bar: ex::Bar,
     handler: Handler,
 }
 
@@ -104,6 +106,13 @@ impl Command {
     /// Marks the command as taking a character argument.
     pub fn takes_char(&mut self) -> &mut Self {
         self.takes_char = true;
+        self
+    }
+
+    /// Sets how `|` in the command's arguments is treated (separating
+    /// commands, by default).
+    pub fn bar(&mut self, bar: ex::Bar) -> &mut Self {
+        self.bar = bar;
         self
     }
 
@@ -147,6 +156,7 @@ impl CommandRegistry {
             description: description.into(),
             takes_char: false,
             arg_completion: ArgCompletion::None,
+            bar: ex::Bar::default(),
             handler: Box::new(handler),
         };
         self.commands.insert(name.clone(), command);

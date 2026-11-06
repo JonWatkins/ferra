@@ -5,7 +5,7 @@
 //! cursor's line when there isn't one (`:g`: the whole file).
 
 use super::command_line::run_command_line;
-use crate::commands::ex::{Flags, Global, Substitute, parse_global, parse_substitute};
+use crate::commands::ex::{Bar, Flags, Global, Substitute, parse_global, parse_substitute};
 use crate::commands::{CommandRegistry, CommandResult, Context};
 use crate::core::search::{CaseMode, SearchPattern};
 use crate::core::{Position, Range, motion};
@@ -16,7 +16,8 @@ pub fn register(r: &mut CommandRegistry) {
         "substitute",
         "Replace matches in [range]: s/pattern/replacement/[g c i I n e]",
         substitute,
-    );
+    )
+    .bar(Bar::AfterPattern);
     r.alias("s", "substitute");
     r.register(
         "repeat_substitute",
@@ -95,7 +96,8 @@ pub fn register(r: &mut CommandRegistry) {
             }
             Ok(())
         },
-    );
+    )
+    .bar(Bar::Argument);
     r.alias("norm", "normal");
 
     r.register(
@@ -105,13 +107,15 @@ pub fn register(r: &mut CommandRegistry) {
             let invert = cx.bang;
             global(cx, invert)
         },
-    );
+    )
+    .bar(Bar::Argument);
     r.alias("g", "global");
     r.register(
         "vglobal",
         "Run a : command on each line in [range] not matching a pattern: v/pattern/command",
         |cx| global(cx, true),
-    );
+    )
+    .bar(Bar::Argument);
     r.alias("v", "vglobal");
 }
 
