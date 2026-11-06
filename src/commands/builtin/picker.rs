@@ -206,6 +206,9 @@ fn register_preview(text: &str) -> String {
 
 /// `3 lines` for linewise text; nothing for a piece of a line.
 fn register_detail(value: &crate::editor::Register) -> String {
+    if value.blockwise {
+        return "block".into();
+    }
     if !value.linewise {
         return String::new();
     }

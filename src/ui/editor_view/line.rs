@@ -5,24 +5,8 @@
 //! the next tab stop). Everything that maps between the two goes through
 //! here, so the cursor, text and highlights always line up.
 
-use unicode_width::UnicodeWidthChar;
-
-/// Cells taken by `c` when it starts at display column `col`.
-fn char_width(c: char, col: usize, tab_width: usize) -> usize {
-    if c == '\t' {
-        let tab = tab_width.max(1);
-        tab - col % tab
-    } else {
-        c.width().unwrap_or(0)
-    }
-}
-
-/// The display column of the character at `char_col`.
-pub fn display_col(line: &str, char_col: usize, tab_width: usize) -> usize {
-    line.chars()
-        .take(char_col)
-        .fold(0, |col, c| col + char_width(c, col, tab_width))
-}
+use crate::core::columns::char_width;
+pub use crate::core::columns::display_col;
 
 /// The part of `line` visible when scrolled `left` cells, `width` cells wide,
 /// ready to draw: tabs are expanded to spaces.

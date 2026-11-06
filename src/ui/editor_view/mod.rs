@@ -39,6 +39,7 @@ pub struct EditorView<'a> {
     options: &'a EditorOptions,
     theme: &'a Theme,
     selection: Option<Range>,
+    block: Option<crate::core::Block>,
     search: Option<&'a SearchPattern>,
     syntax: Option<&'a Highlights>,
     /// The cursor to draw around; a window's own cursor when it isn't active.
@@ -54,6 +55,7 @@ impl<'a> EditorView<'a> {
             options,
             theme,
             selection: None,
+            block: None,
             search: None,
             syntax: None,
             cursor: None,
@@ -82,6 +84,12 @@ impl<'a> EditorView<'a> {
     /// Highlights matches of `search` (the active or last search, if any).
     pub fn search(mut self, search: Option<&'a SearchPattern>) -> Self {
         self.search = search;
+        self
+    }
+
+    /// Highlights a visual block selection (drawn instead of `selection`).
+    pub fn block(mut self, block: Option<crate::core::Block>) -> Self {
+        self.block = block;
         self
     }
 
@@ -192,7 +200,14 @@ impl StatefulWidget for EditorView<'_> {
                 }
             }
             // The selection is drawn last, so it wins over search matches.
-            if let Some(range) = self.selection
+            if let Some(block) = self.block {
+                if block.rows().contains(&row) {
+                    let (from, to) = block.chars_in(line_text, tab_width);
+                    if from < to {
+                        highlight(from, to, self.theme.get("ui.selection"));
+                    }
+                }
+            } else if let Some(range) = self.selection
                 && let Some((from, to)) = selection::selected_cols(range, row, text.line_len(row))
             {
                 highlight(from, to, self.theme.get("ui.selection"));
@@ -305,6 +320,41 @@ mod tests {
         };
         assert_eq!(highlighted(0), vec![1, 2, 3], "b, c and the line break");
         assert_eq!(highlighted(1), vec![0], "d");
+    }
+
+    #[test]
+    fn highlights_a_block_column_by_column() {
+        let doc = Document::with_text("abcd\na\n\tx");
+        let mut theme = Theme::default();
+        theme.set("ui.selection", Style::new().bg(ratatui::style::Color::Blue));
+        let block = crate::core::Block {
+            first: 0,
+            last: 2,
+            left: 1,
+            right: 2,
+            to_eol: false,
+        };
+        let area = Rect::new(0, 0, 8, 3);
+        let mut buf = Buffer::empty(area);
+        // A selection range is ignored when there's a block.
+        let lines = Range::Lines { first: 0, last: 2 };
+        EditorView::new(&doc, &options(LineNumbers::None), &theme)
+            .selection(Some(lines))
+            .block(Some(block))
+            .render(area, &mut buf, &mut ViewState::default());
+
+        let highlighted = |y: u16| -> Vec<u16> {
+            (0..8)
+                .filter(|&x| buf[(x, y)].bg == ratatui::style::Color::Blue)
+                .collect()
+        };
+        assert_eq!(highlighted(0), vec![1, 2], "b and c");
+        assert!(highlighted(1).is_empty(), "too short to reach the block");
+        assert_eq!(
+            highlighted(2),
+            vec![0, 1, 2, 3],
+            "the whole tab it cuts into"
+        );
     }
 
     #[test]

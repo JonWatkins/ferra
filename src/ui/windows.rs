@@ -73,6 +73,7 @@ pub fn draw_windows(
             } else {
                 None
             })
+            .block(editor.selection_block().filter(|_| active))
             .search(editor.search_highlight())
             .syntax(syntax.get(&document.id()).copied());
         frame.render_stateful_widget(view, rect, state);

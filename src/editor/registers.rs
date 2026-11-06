@@ -51,6 +51,8 @@ pub struct Register {
     pub text: String,
     /// Linewise content (from `dd`, `yy`, ...) is pasted as whole lines.
     pub linewise: bool,
+    /// A visual block: one line of `text` per row, pasted as a column.
+    pub blockwise: bool,
 }
 
 impl Register {
@@ -58,6 +60,7 @@ impl Register {
         Self {
             text: text.into(),
             linewise: false,
+            blockwise: false,
         }
     }
 
@@ -65,13 +68,27 @@ impl Register {
         Self {
             text: text.into(),
             linewise: true,
+            blockwise: false,
+        }
+    }
+
+    /// A block's rows, joined with line breaks.
+    pub fn blockwise(rows: &[String]) -> Self {
+        Self {
+            text: rows.join("\n"),
+            linewise: false,
+            blockwise: true,
         }
     }
 
     /// `self` followed by `other`. Mixing in a linewise part makes the result
     /// linewise, with the parts on separate lines.
     fn appended(&self, other: &Register) -> Register {
-        if self.linewise || other.linewise {
+        if self.blockwise || other.blockwise {
+            let text = format!("{}\n{}", self.text, other.text);
+            let rows: Vec<String> = text.split('\n').map(str::to_string).collect();
+            Register::blockwise(&rows)
+        } else if self.linewise || other.linewise {
             Register::linewise(format!("{}\n{}", self.text, other.text))
         } else {
             Register::charwise(format!("{}{}", self.text, other.text))

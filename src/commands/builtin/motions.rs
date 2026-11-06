@@ -397,6 +397,7 @@ fn move_cursor(editor: &mut Editor, motion: &Motion, args: MotionArgs) {
     } else {
         doc.set_cursor(target);
     }
+    editor.note_block_motion(motion.name == LINE_END.name, motion.vertical);
 }
 
 /// `2d3w` deletes six words: counts before and after the operator multiply.

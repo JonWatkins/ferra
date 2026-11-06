@@ -256,6 +256,29 @@ black hole `"_`, skips all of these.
 - The editor pane highlights the selection (`ui.selection`), including one
   cell for a selected line break so selected empty lines are visible.
 
+### Visual block mode
+
+- `SelectionKind::Block` is a third kind of selection. Its shape is a
+  `core::Block`: rows, plus first and last *display* columns, so it lines up
+  on screen with tabs and wide characters (`core/columns.rs` converts
+  between character and display columns, for the UI too). A character partly
+  inside the block (a tab) counts as inside. `to_eol` (`$`) makes each row
+  run to its own end; motions report through `Editor::note_block_motion`,
+  and only `$` and vertical moves keep it.
+- `Selection::range` gives a block's whole lines, so line-based commands
+  (`J`, `:`, `X`, `Y`, `>`) work unchanged. Character operators check
+  `Editor::take_block` first and go to `editor/block.rs`, which edits row
+  by row from the bottom up so earlier rows' positions stay put.
+- Yanks store a `blockwise` register (one line per row). Pasting one
+  inserts each row at the same display column on successive lines, padding
+  short lines and adding lines at the end, and padding pieces to the block's
+  width when text follows.
+- `I`, `A` and `c` type on the first row only, with a `BlockInsert` noting
+  where and which other rows. When insert mode ends (`set_mode`), the text
+  typed on that row is copied to the others, inside the same undo step as
+  the insert session. Typing that leaves the row (a line break) copies
+  nothing, as in Vim.
+
 ### Files
 
 - `core::TextFormat` splits file contents into buffer text (always `\n`, no
@@ -531,7 +554,9 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 ## Known gaps / next steps
 
-- Visual block mode (`<C-v>`) and visual-mode `:` ranges (`:'<,'>`).
+- Visual block mode: `>`/`<` shift whole lines (Vim shifts from the
+  block's left edge), a tab partly inside a block is taken whole (Vim splits
+  it into spaces), and `gv` doesn't remember `$`.
 - `:s` follow-ups: the `c` (confirm) flag, `&`/`:&&` to repeat the last
   substitution, and `:g/pattern/command`.
 - Alt keys that *are* bound can't be told apart from a fast Esc then that

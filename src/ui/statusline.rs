@@ -65,6 +65,7 @@ impl Widget for StatusLine<'_> {
                 " SEARCH ".to_string()
             }
             Some(selection) if selection.kind == SelectionKind::Line => " V-LINE ".to_string(),
+            Some(selection) if selection.kind == SelectionKind::Block => " V-BLOCK ".to_string(),
             _ => format!(" {mode} "),
         };
         let modified = if self.editor.document.is_modified() {

@@ -5,7 +5,9 @@
 //! configuration. It's the most stable layer and the one that plugins will
 //! eventually build on.
 
+mod block;
 mod buffer;
+pub mod columns;
 mod history;
 pub mod motion;
 mod position;
@@ -14,6 +16,7 @@ pub mod search;
 pub mod text_format;
 pub mod text_object;
 
+pub use block::Block;
 pub use buffer::Buffer;
 pub use history::{Change, History, Revision};
 pub use position::Position;

@@ -16,6 +16,7 @@ pub mod picker;
 pub mod registers;
 mod search;
 pub use search::{SearchDone, SearchHit};
+mod block;
 mod selection;
 mod transform;
 pub mod windows;
@@ -90,6 +91,11 @@ pub struct Editor {
     /// Which buffer each global mark (`A`-`Z`) is in.
     global_marks: std::collections::HashMap<char, DocumentId>,
     last_selection: Option<selection::LastSelection>,
+    /// `$` in visual block mode: every row runs to its end.
+    block_to_eol: bool,
+    /// Text typed by `I`/`A`/`c` on a block's first row, copied to the
+    /// others when insert mode ends.
+    block_insert: Option<block::BlockInsert>,
     message: Option<Message>,
     should_quit: bool,
 }
@@ -124,6 +130,15 @@ impl Editor {
             });
         }
 
+        if previous == Mode::Insert {
+            // `I`/`A` on a block: copy what was typed to the other rows.
+            let block_insert = self.block_insert.take();
+            if mode == Mode::Normal
+                && let Some(insert) = block_insert
+            {
+                self.finish_block_insert(insert);
+            }
+        }
         if previous == Mode::Insert && mode == Mode::Normal {
             // Like Vim, leaving insert mode steps back onto the last typed char.
             let cursor = self.document.cursor();

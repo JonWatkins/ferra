@@ -88,6 +88,9 @@ pub fn register(r: &mut CommandRegistry) {
 
 /// Starts an operator, or in visual mode applies it to the selection.
 fn begin(cx: &mut Context, operator: Operator) -> CommandResult {
+    if let Some(block) = cx.editor.take_block() {
+        return cx.editor.apply_block_operator(operator, block, cx.register);
+    }
     if let Some(range) = cx.editor.take_selection() {
         return cx.editor.apply_operator(operator, range, cx.register);
     }
@@ -121,6 +124,10 @@ fn paste(cx: &mut Context, after: bool) -> CommandResult {
         return visual::replace_selection(cx, register, after);
     }
     let count = cx.count();
+    if register.blockwise {
+        cx.editor.paste_block(&register, after, count);
+        return Ok(());
+    }
     let doc = &mut cx.editor.document;
     let cursor = doc.cursor();
 

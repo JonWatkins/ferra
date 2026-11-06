@@ -52,13 +52,18 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Visual  | `/` `?` | Search extends the selection to the match (`v/foo<CR>d`); `<Esc>` keeps the selection as it was |
 | Normal  | `d/foo<CR>`, `y?bar<CR>`, `dn`, `cN` | Searches work as motions after an operator: up to (not including) the match; `d2/x` uses the second match |
 | Normal  | `*` `#` | Search forward / backward for the word under the cursor |
-| Normal  | `v` `V` `gv` | Select characters / lines / reselect the last selection |
+| Normal  | `v` `V` `<C-v>` `gv` | Select characters / lines / a block / reselect the last selection |
 | Visual  | motions, text objects | Extend the selection / select an object (`viw`, `vi(`) |
 | Visual  | `d` `x` `c` `s` `y` | Delete / change / yank the selection |
 | Visual  | `D` `X` `C` `S` `Y` | Same, on whole lines |
 | Visual  | `p` `P` | Replace the selection (`p` keeps the replaced text, so it can swap) |
-| Visual  | `o` | Move to the other end of the selection |
-| Visual  | `v` `V` `<Esc>` | Switch selection kind / leave |
+| Visual  | `o` | Move to the other end of the selection (`O`: other side of the row, in a block) |
+| Visual  | `v` `V` `<C-v>` `<Esc>` | Switch selection kind / leave |
+| Block   | `d` `y` `c` `u` `U` `~` | Act on the rectangle; `y` then `p` pastes it back as a column |
+| Block   | `I` `A` | Type on the first row; `<Esc>` copies it to every row (`A` pads short rows) |
+| Block   | `$` | Extend every row to its own end (`$A;` appends to each line) |
+| Block   | `D` `C` | Delete / change from the block to each row's end |
+| Block   | `p` | A one-line register fills every row; a block replaces it column for column |
 | Normal  | `:` | Command line |
 | Normal  | `3j`, `2dd`, `3u`, ... | Counts work with every command |
 | Insert  | `<Esc>` | Back to normal mode |

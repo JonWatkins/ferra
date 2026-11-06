@@ -1,6 +1,7 @@
 //! Visual mode: entering and leaving it, and the commands that only make
 //! sense on a selection. Operators (`d`, `c`, `y`), motions and text objects
-//! handle visual mode themselves, since a selection is just another range.
+//! handle visual mode themselves, since a selection is just another range
+//! (block selections have their own path, in `editor/block.rs`).
 
 use crate::commands::{CommandRegistry, CommandResult, Context};
 use crate::core::{Position, Range, motion};
@@ -23,6 +24,46 @@ pub fn register(r: &mut CommandRegistry) {
             cx.editor.toggle_visual(SelectionKind::Line);
             Ok(())
         },
+    );
+    r.register(
+        "visual_block_mode",
+        "Select a rectangle (<C-v>); again to leave",
+        |cx| {
+            cx.editor.toggle_visual(SelectionKind::Block);
+            Ok(())
+        },
+    );
+    r.register(
+        "swap_selection_sides",
+        "In a block, move the cursor to the other side of its row (O)",
+        |cx| {
+            if cx.editor.selection_block().is_some() {
+                cx.editor.swap_block_sides();
+            } else {
+                cx.editor.swap_selection_ends();
+            }
+            Ok(())
+        },
+    );
+    r.register(
+        "visual_insert",
+        "Insert before the selection; on every row of a block (I)",
+        |cx| visual_insert(cx, false),
+    );
+    r.register(
+        "visual_append",
+        "Append after the selection; on every row of a block (A)",
+        |cx| visual_insert(cx, true),
+    );
+    r.register(
+        "visual_delete_to_end",
+        "Delete the selected lines; in a block, to the end of each row (D)",
+        |cx| to_end_or_lines(cx, Operator::Delete),
+    );
+    r.register(
+        "visual_change_to_end",
+        "Change the selected lines; in a block, to the end of each row (C)",
+        |cx| to_end_or_lines(cx, Operator::Change),
     );
     r.register(
         "swap_selection_ends",
@@ -55,6 +96,44 @@ pub fn register(r: &mut CommandRegistry) {
     });
 }
 
+/// `I` / `A`: in a block, types on every row. Otherwise inserts before the
+/// start of the selection, or appends after its end.
+fn visual_insert(cx: &mut Context, append: bool) -> CommandResult {
+    if let Some(block) = cx.editor.selection_block() {
+        cx.editor.block_insert(block, append);
+        return Ok(());
+    }
+    let Some(range) = cx.editor.take_selection() else {
+        return Ok(());
+    };
+    let doc = &mut cx.editor.document;
+    let at = match (range, append) {
+        (Range::Chars { start, .. }, false) => start,
+        (Range::Chars { end, .. }, true) => end,
+        (Range::Lines { first, .. }, false) => {
+            Position::new(first, motion::first_non_blank(doc.buffer(), first))
+        }
+        (Range::Lines { last, .. }, true) => doc.buffer().line_end(last),
+    };
+    doc.set_cursor(at);
+    cx.editor.set_mode(crate::editor::Mode::Insert);
+    Ok(())
+}
+
+/// `D` / `C`: whole lines, or in a block, from the block to each row's end.
+fn to_end_or_lines(cx: &mut Context, operator: Operator) -> CommandResult {
+    match cx.editor.take_block() {
+        Some(block) => {
+            let block = crate::core::Block {
+                to_eol: true,
+                ..block
+            };
+            cx.editor.apply_block_operator(operator, block, cx.register)
+        }
+        None => operate_on_selected_lines(cx, operator),
+    }
+}
+
 /// `D`, `X`, `Y`, `C`, `S` in visual mode act on whole lines even in a
 /// characterwise selection.
 fn operate_on_selected_lines(cx: &mut Context, operator: Operator) -> CommandResult {
@@ -76,6 +155,9 @@ pub(super) fn replace_selection(
     register: Register,
     keep_replaced: bool,
 ) -> CommandResult {
+    if let Some(block) = cx.editor.take_block() {
+        return replace_block(cx, block, register, keep_replaced);
+    }
     let Some(range) = cx.editor.take_selection() else {
         return Ok(());
     };
@@ -122,6 +204,50 @@ pub(super) fn replace_selection(
             }
         }
     }
+    Ok(())
+}
+
+/// `p` / `P` on a block: a one-line register fills every row; a block
+/// replaces it column for column; anything else goes in at the top left.
+fn replace_block(
+    cx: &mut Context,
+    block: crate::core::Block,
+    register: Register,
+    keep_replaced: bool,
+) -> CommandResult {
+    let target = if keep_replaced {
+        None
+    } else {
+        Some(BLACK_HOLE)
+    };
+    if register.blockwise || register.linewise || register.text.contains('\n') {
+        cx.editor
+            .apply_block_operator(Operator::Delete, block, target)?;
+        let count = cx.count();
+        if register.blockwise {
+            cx.editor.paste_block(&register, false, count);
+        } else {
+            let doc = &mut cx.editor.document;
+            let at = doc.cursor();
+            let text = if register.linewise {
+                format!("\n{}\n", register.text)
+            } else {
+                register.text.clone()
+            };
+            doc.insert(at, &text);
+        }
+        return Ok(());
+    }
+    // With `p` the replaced block goes to the unnamed register.
+    let rows = cx.editor.block_text(block);
+    if keep_replaced && rows.iter().any(|r| !r.is_empty()) {
+        let replaced = Register::blockwise(&rows);
+        cx.editor
+            .registers
+            .store(None, replaced, crate::editor::registers::StoreKind::Delete)?;
+    }
+    cx.editor
+        .fill_block(block, &register.text.repeat(cx.count()));
     Ok(())
 }
 

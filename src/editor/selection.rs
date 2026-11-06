@@ -13,6 +13,9 @@ pub enum SelectionKind {
     Char,
     /// `V`: whole lines from anchor to cursor.
     Line,
+    /// `<C-v>`: a rectangle with the anchor and cursor at opposite corners
+    /// (see [`Editor::selection_block`]).
+    Block,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +25,8 @@ pub struct Selection {
 }
 
 impl Selection {
-    /// The text covered when the cursor is at `cursor`.
+    /// The text covered when the cursor is at `cursor`. A block gives its
+    /// whole lines, for commands that act on lines (`J`, `:`, `X`).
     pub fn range(&self, buffer: &Buffer, cursor: Position) -> Range {
         let (start, end) = if self.anchor <= cursor {
             (self.anchor, cursor)
@@ -30,7 +34,7 @@ impl Selection {
             (cursor, self.anchor)
         };
         match self.kind {
-            SelectionKind::Line => Range::Lines {
+            SelectionKind::Line | SelectionKind::Block => Range::Lines {
                 first: start.row,
                 last: end.row,
             },
@@ -73,6 +77,7 @@ impl Editor {
                 let anchor = self.document.cursor();
                 self.set_mode(Mode::Visual);
                 self.selection = Some(Selection { anchor, kind });
+                self.block_to_eol = false;
             }
         }
     }
