@@ -36,8 +36,17 @@ pub use transform::CaseChange;
 pub use windows::{Window, WindowId, Windows};
 
 use crate::config::EditorOptions;
+use crate::core::Position;
 use crate::core::motion::CharSearch;
 use crate::events::Event;
+
+/// Keys for `:normal` to run, with the cursor at `at`. The app runs them
+/// after the command (or after `:g`, which queues one run per line).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NormalRun {
+    pub keys: String,
+    pub at: Position,
+}
 
 /// A request from `q`/`@` for the app, which records and replays keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +83,10 @@ pub struct Editor {
     pub last_substitute: Option<String>,
     /// A `:s///c` waiting for y/n/a/q/l answers.
     confirm: Option<confirm::ConfirmSession>,
+    /// `:normal` runs waiting for the app.
+    normal_queue: Vec<NormalRun>,
+    /// Keeps the undo step open across commands (`:normal` over a range).
+    undo_held: bool,
     mode: Mode,
     pending_operator: Option<PendingOperator>,
     selection: Option<Selection>,
@@ -190,7 +203,7 @@ impl Editor {
     pub fn finish_command(&mut self) {
         self.enforce_cursor_rules();
         // A `:s///c` session undoes as one step, across its answers.
-        if self.mode != Mode::Insert && self.confirm.is_none() {
+        if self.mode != Mode::Insert && self.confirm.is_none() && !self.undo_held {
             self.document.commit();
         }
     }
@@ -263,6 +276,36 @@ impl Editor {
 
     pub fn take_char_request(&mut self) -> Option<String> {
         self.char_request.take()
+    }
+
+    /// Queues keys for `:normal` to run at `at`.
+    pub fn queue_normal(&mut self, keys: &str, at: Position) {
+        self.normal_queue.push(NormalRun {
+            keys: keys.to_string(),
+            at,
+        });
+    }
+
+    pub fn take_normal_queue(&mut self) -> Vec<NormalRun> {
+        std::mem::take(&mut self.normal_queue)
+    }
+
+    /// Holds the undo step open across commands, until released (which
+    /// closes it).
+    pub fn hold_undo(&mut self, held: bool) {
+        self.undo_held = held;
+        if !held {
+            self.finish_command();
+        }
+    }
+
+    /// Stops row tracking in every buffer (a `:normal` that switched
+    /// buffers part-way).
+    pub fn stop_tracking_rows_everywhere(&mut self) {
+        self.document.stop_tracking_rows();
+        for document in &mut self.background {
+            document.stop_tracking_rows();
+        }
     }
 
     pub fn request_macro(&mut self, request: MacroRequest) {

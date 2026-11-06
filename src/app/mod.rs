@@ -2,6 +2,7 @@
 //! runs the event loop.
 
 mod macros;
+mod normal;
 mod repeat;
 mod terminal;
 
@@ -548,6 +549,10 @@ impl App {
         }
         if let Some(request) = self.editor.take_macro_request() {
             self.handle_macro_request(request);
+        }
+        let runs = self.editor.take_normal_queue();
+        if !runs.is_empty() {
+            self.run_normal(runs);
         }
     }
 

@@ -388,6 +388,13 @@ the cursor on each remaining row, through the same `run_command_line` as
 the `:` prompt. It's one command, so it's one undo step, and `:g` inside
 `:g` is refused.
 
+`:normal` can't feed keys itself (only the app can), so it queues a
+`NormalRun` (keys and position) per line, and `:g` calling it once per line
+just adds to the queue. After the command, the app (`app/normal.rs`) plays
+the queue like a macro: the rows are tracked through the edits the keys
+make, a failing command stops the run, an unfinished one gets an `<Esc>`,
+and `Editor::hold_undo` keeps the undo step open across every key.
+
 ### Repeat (`.`)
 
 `app/repeat.rs` records the keys of each command sequence that starts and
@@ -585,8 +592,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 - Visual block mode: `>`/`<` shift whole lines (Vim shifts from the
   block's left edge), a tab partly inside a block is taken whole (Vim splits
   it into spaces), and `gv` doesn't remember `$`.
-- `:normal` (to run normal-mode keys from `:g`), and `~` in a replacement
-  (the previous replacement).
+- `~` in a replacement (the previous replacement), and `|` to put several
+  `:` commands on one line.
 - Alt keys that *are* bound can't be told apart from a fast Esc then that
   key (terminals send the same bytes), so binding `<A-j>` in insert mode
   means a quick `<Esc>j` runs it.

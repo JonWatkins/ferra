@@ -129,7 +129,16 @@ doesn't. The lines are found first, so deleting some doesn't skip others:
 :v/\S/d              delete blank lines
 :g/^fn/s/foo/bar/g   substitute only on lines starting with fn
 :g/pattern           count matching lines and go to the last
+:g/^fn/normal >>     indent every line starting with fn
 ```
+
+`:[range]normal keys` (`:norm`) runs normal-mode keys as if typed: on each
+line of the range from its start, or at the cursor with no range.
+`:%normal A;` appends `;` to every line. An unfinished command (still in
+insert mode) ends as if with `<Esc>`, and the whole run is one undo step.
+Keys use the same notation as config and macros (`A;<lt>Esc>0x` types
+`A;`, presses Esc, then `0x`); text that isn't valid notation, like
+`i<div>`, is typed as it is.
 
 Ranges work before any `:` command: `%` (the whole file), `5`, `5,10`, `.`
 (this line), `$` (the last), offsets like `.+3` and `$-1`, and `'<,'>` (the

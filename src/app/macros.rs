@@ -26,6 +26,26 @@ pub(super) struct MacroState {
     last_played: Option<char>,
 }
 
+impl MacroState {
+    /// Starts playing keys that aren't typed (a macro, `:normal`): they
+    /// aren't recorded, and a failing command stops them.
+    pub(super) fn begin_playback(&mut self) {
+        self.depth += 1;
+    }
+
+    pub(super) fn end_playback(&mut self) {
+        self.depth -= 1;
+        if self.depth == 0 {
+            self.failed = false;
+        }
+    }
+
+    /// A command failed during playback.
+    pub(super) fn failed(&self) -> bool {
+        self.failed
+    }
+}
+
 impl App {
     /// Called for every key the user presses.
     pub(super) fn record_macro_key(&mut self, key: KeyPress) {

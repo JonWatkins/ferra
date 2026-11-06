@@ -76,6 +76,29 @@ pub fn register(r: &mut CommandRegistry) {
     r.alias("yank", "yank_range");
 
     r.register(
+        "normal",
+        "Run normal-mode keys on each line in [range], or at the cursor: normal A;",
+        |cx| {
+            if cx.arg_text.is_empty() {
+                return Ok(());
+            }
+            match cx.range {
+                Some((first, last)) => {
+                    for row in first..=last {
+                        cx.editor.queue_normal(cx.arg_text, Position::new(row, 0));
+                    }
+                }
+                None => {
+                    let cursor = cx.editor.document.cursor();
+                    cx.editor.queue_normal(cx.arg_text, cursor);
+                }
+            }
+            Ok(())
+        },
+    );
+    r.alias("norm", "normal");
+
+    r.register(
         "global",
         "Run a : command on each line in [range] matching a pattern: g/pattern/command (g! or v: not matching)",
         |cx| {
