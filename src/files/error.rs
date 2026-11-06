@@ -7,9 +7,11 @@ use std::path::{Path, PathBuf};
 pub enum FileError {
     /// Saving a document that has never had a path.
     NoFileName,
-    /// The file isn't UTF-8; opening it could corrupt it on save.
-    NotUtf8 {
+    /// The file's bytes aren't valid in its encoding (opening), or the text
+    /// has characters its encoding can't represent (saving).
+    Encoding {
         path: PathBuf,
+        message: String,
     },
     /// The file changed on disk after it was read.
     ChangedOnDisk {
@@ -38,11 +40,9 @@ impl fmt::Display for FileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FileError::NoFileName => f.write_str("No file name"),
-            FileError::NotUtf8 { path } => write!(
-                f,
-                "\"{}\" is not valid UTF-8; refusing to open it",
-                path.display()
-            ),
+            FileError::Encoding { path, message } => {
+                write!(f, "\"{}\" {message}", path.display())
+            }
             FileError::ChangedOnDisk { path } => write!(
                 f,
                 "\"{}\" has changed on disk since it was read (add ! to overwrite)",

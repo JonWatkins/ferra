@@ -7,6 +7,7 @@ edition = "2024"
 arboard = "3.7.0"
 color-eyre = "0.6.5"
 crossterm = "0.29.0"
+encoding_rs = "0.8.44"
 ignore = "0.4.34"
 mlua = { version = "0.12.2", features = ["lua54", "vendored"] }
 ratatui = "0.30.2"

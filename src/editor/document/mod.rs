@@ -39,6 +39,9 @@ pub struct Document {
     format: TextFormat,
     /// The history revision that matches the file on disk.
     saved_revision: Revision,
+    /// The encoding the file on disk is in; a different one in `format`
+    /// (from `:fileencoding`) is an unsaved change.
+    saved_encoding: crate::core::FileEncoding,
     /// The file's modified time when last read or written, to detect
     /// changes made by other programs.
     disk_modified: Option<SystemTime>,
@@ -81,7 +84,9 @@ impl Document {
     /// Whether there are changes not yet saved. Undoing back to the saved
     /// state counts as unmodified again.
     pub fn is_modified(&self) -> bool {
-        self.history.has_pending() || self.history.revision() != self.saved_revision
+        self.history.has_pending()
+            || self.history.revision() != self.saved_revision
+            || self.format.encoding != self.saved_encoding
     }
 
     pub fn id(&self) -> DocumentId {

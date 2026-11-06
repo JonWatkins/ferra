@@ -221,6 +221,7 @@ Splitting or closing a window evens out its neighbours again, as Vim does.
 | `:q!`, `ZQ` | Quit, discarding changes |
 | `:e path` / `:e!` | Open a file in a new buffer (or switch to it) / reload the current one (`u` brings back what it discarded) |
 | `:checktime` | Check every open file for changes made by other programs |
+| `:fenc`, `:fenc utf-8` | Show the file's encoding, or convert it (saved on `:w`) |
 
 A trailing `!` overrides safety checks: unsaved changes, a file that changed
 on disk since it was read, or writing over an existing file. Saves are
@@ -228,8 +229,16 @@ atomic and keep line endings (LF/CRLF), a missing final newline, file
 permissions and symlinks. Hard-linked files, files owned by someone else,
 and files in read-only directories are saved in place, so every name still
 sees the change and the owner stays the same (the original is backed up
-until the write succeeds). Files that aren't UTF-8 are refused rather than
-risk corrupting them.
+until the write succeeds).
+
+Files keep their encoding. A byte-order mark (UTF-8 or UTF-16) is
+recognised and kept; otherwise valid UTF-8 is UTF-8, and anything else is
+read as Windows-1252 (Latin-1 plus a few symbols), set by
+`fallback-encoding` under `[editor]` (`"shift_jis"`, `"gbk"`..., or
+`"utf-8"` to refuse such files). The encoding shows in the status line when
+it isn't plain UTF-8, and saving writes it back the same way. A character
+the encoding can't hold stops the save with a message (convert with
+`:fenc utf-8`), so nothing is silently replaced.
 
 When another program changes an open file (git, a formatter), the editor
 notices when its terminal comes back into focus or you switch to that

@@ -103,6 +103,13 @@ impl Active<'_> {
             .language_of(&self.editor.document)
             .map(|name| format!(" {name} "))
             .unwrap_or_default();
+        // Only shown when it isn't plain UTF-8, so it stands out.
+        let encoding = self.editor.document.format().encoding;
+        let encoding = if encoding.is_plain_utf8() {
+            String::new()
+        } else {
+            format!(" {} ", encoding.name())
+        };
         let recording = self
             .editor
             .recording_macro()
@@ -114,6 +121,7 @@ impl Active<'_> {
                 format!("{} ", self.pending),
                 self.theme.get("ui.statusline.pending"),
             ),
+            Span::raw(encoding),
             Span::raw(language),
             Span::raw(format!(" {}:{} ", cursor.row + 1, cursor.col + 1)),
         ])

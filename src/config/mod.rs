@@ -10,8 +10,8 @@ mod theme;
 
 pub use languages::{CommentTokens, FileType, Languages};
 pub use options::{
-    CursorShape, CursorShapes, EditorOptions, FilePickerOptions, LineNumbers, SearchCase,
-    SearchOptions, StatuslineMode,
+    CursorShape, CursorShapes, EditorOptions, FallbackEncoding, FilePickerOptions, LineNumbers,
+    SearchCase, SearchOptions, StatuslineMode,
 };
 pub use theme::{StyleSpec, Theme};
 

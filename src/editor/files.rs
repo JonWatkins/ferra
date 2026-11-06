@@ -27,7 +27,8 @@ impl Editor {
             self.set_message(Message::info(format!("\"{name}\"")));
             return Ok(());
         }
-        let (mut document, info) = Document::open(path)?;
+        let fallback = self.options.fallback_encoding.0;
+        let (mut document, info) = Document::open_with(path, fallback)?;
         if !self.document.is_pristine_scratch() {
             self.push_jump();
         }
@@ -54,11 +55,15 @@ impl Editor {
             .ok_or(FileError::NoFileName)?
             .to_path_buf();
         self.set_mode(Mode::Normal);
-        let info = match self.document.reload_in_place()? {
+        let info = match self
+            .document
+            .reload_in_place(self.options.fallback_encoding.0)?
+        {
             Some(info) => info,
             None => {
                 // The file is gone: start again from an empty new file.
-                let (mut document, info) = Document::open(&path)?;
+                let fallback = self.options.fallback_encoding.0;
+                let (mut document, info) = Document::open_with(&path, fallback)?;
                 document.set_id(self.document.id());
                 document.follow_version_of(&self.document);
                 self.document = document;
@@ -74,19 +79,23 @@ impl Editor {
     /// Checks every buffer's file for changes made by other programs (when
     /// the terminal regains focus, and `:checktime`).
     pub fn check_disk_changes(&mut self) {
-        let mut reports: Vec<DiskReport> = check_document(&mut self.document).into_iter().collect();
+        let mut reports: Vec<DiskReport> =
+            check_document(&mut self.document, self.options.fallback_encoding.0)
+                .into_iter()
+                .collect();
         if matches!(reports.first(), Some(DiskReport::Reloaded(_))) {
             self.after_active_reload();
         }
+        let fallback = self.options.fallback_encoding.0;
         for document in &mut self.background {
-            reports.extend(check_document(document));
+            reports.extend(check_document(document, fallback));
         }
         self.show_disk_reports(&reports);
     }
 
     /// Checks the active buffer's file (after switching to it).
     pub(super) fn check_active_disk(&mut self) {
-        if let Some(report) = check_document(&mut self.document) {
+        if let Some(report) = check_document(&mut self.document, self.options.fallback_encoding.0) {
             if matches!(report, DiskReport::Reloaded(_)) {
                 self.after_active_reload();
             }
@@ -155,11 +164,14 @@ enum DiskReport {
 
 /// Reloads `document` if its file changed and it has no unsaved changes;
 /// otherwise notes the problem once.
-fn check_document(document: &mut Document) -> Option<DiskReport> {
+fn check_document(
+    document: &mut Document,
+    fallback: &'static crate::core::Encoding,
+) -> Option<DiskReport> {
     let name = document.name().into_owned();
     let report = match document.disk_state() {
         DiskState::Unchanged => return None,
-        DiskState::Changed if !document.is_modified() => match document.reload_in_place() {
+        DiskState::Changed if !document.is_modified() => match document.reload_in_place(fallback) {
             Ok(Some(_)) => return Some(DiskReport::Reloaded(name)),
             Ok(None) => DiskReport::Deleted(name),
             Err(error) => DiskReport::Failed(error.to_string()),
@@ -178,6 +190,9 @@ fn describe_open(info: &OpenInfo) -> String {
         return format!("\"{path}\" [New]");
     }
     let mut text = format!("\"{path}\" {}L, {}B", info.lines, info.bytes);
+    if !info.format.encoding.is_plain_utf8() {
+        text.push_str(&format!(" [{}]", info.format.encoding.name()));
+    }
     if info.format.line_ending == LineEnding::Crlf {
         text.push_str(" [CRLF]");
     }
@@ -223,6 +238,7 @@ mod tests {
         let crlf_noeol = TextFormat {
             line_ending: LineEnding::Crlf,
             final_newline: false,
+            ..TextFormat::default()
         };
         assert_eq!(
             describe_open(&open_info(false, crlf_noeol, 8)),

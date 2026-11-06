@@ -25,6 +25,8 @@ pub struct EditorOptions {
     pub key_timeout: u64,
     /// How the system clipboard is used: "registers", "unnamed" or "off".
     pub clipboard: ClipboardMode,
+    /// The encoding for files that aren't UTF-8 and have no byte-order mark.
+    pub fallback_encoding: FallbackEncoding,
     pub cursor_shape: CursorShapes,
     pub search: SearchOptions,
     pub file_picker: FilePickerOptions,
@@ -85,6 +87,20 @@ impl From<SearchCase> for CaseMode {
 impl Default for EditorOptions {
     fn default() -> Self {
         super::Config::default().editor
+    }
+}
+
+/// An encoding named in config (`"windows-1252"`, `"shift_jis"`, `"utf-8"`
+/// to refuse files that aren't UTF-8), checked when the config is loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FallbackEncoding(pub &'static crate::core::Encoding);
+
+impl<'de> Deserialize<'de> for FallbackEncoding {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let label = String::deserialize(deserializer)?;
+        crate::core::Encoding::for_label(label.trim().as_bytes())
+            .map(FallbackEncoding)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown encoding: {label}")))
     }
 }
 

@@ -1,7 +1,7 @@
 //! Reading and writing files on disk.
 //!
 //! This is the only module that touches the filesystem. It deals in raw
-//! file contents; converting them to buffer text (line endings, final
+//! bytes; converting them to buffer text (encoding, line endings, final
 //! newline) is [`core::TextFormat`](crate::core::TextFormat)'s job.
 
 mod complete;
@@ -17,26 +17,23 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-/// A file's contents and when it was last modified.
+/// A file's bytes and when it was last modified.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileContents {
-    pub text: String,
+    pub bytes: Vec<u8>,
     pub modified: Option<SystemTime>,
 }
 
-/// Reads a UTF-8 text file. Returns `Ok(None)` if it doesn't exist, so a
-/// new file can be created by opening its path and saving.
+/// Reads a file. Returns `Ok(None)` if it doesn't exist, so a new file can
+/// be created by opening its path and saving.
 pub fn read(path: &Path) -> Result<Option<FileContents>, FileError> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(FileError::io(path, source)),
     };
-    let text = String::from_utf8(bytes).map_err(|_| FileError::NotUtf8 {
-        path: path.to_path_buf(),
-    })?;
     Ok(Some(FileContents {
-        text,
+        bytes,
         modified: modified_time(path),
     }))
 }
@@ -59,7 +56,7 @@ pub fn modified_time(path: &Path) -> Option<SystemTime> {
 /// lose something: when it has other hard-linked names, when its owner or
 /// group can't be kept, or when no temporary file can be made next to it
 /// (a read-only directory). See [`write_in_place`].
-pub fn write(path: &Path, contents: &str) -> Result<Option<SystemTime>, FileError> {
+pub fn write(path: &Path, contents: &[u8]) -> Result<Option<SystemTime>, FileError> {
     let target = resolve_symlink(path);
     let dir = match target.parent() {
         Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
@@ -89,7 +86,7 @@ pub fn write(path: &Path, contents: &str) -> Result<Option<SystemTime>, FileErro
     }
 
     let result = (|| {
-        temp.write_all(contents.as_bytes())?;
+        temp.write_all(contents)?;
         temp.sync_all()?;
         if let Some(existing) = &existing {
             fs::set_permissions(&temp_path, existing.permissions())?;
@@ -141,7 +138,7 @@ fn keep_owner(_: &Path, _: &fs::Metadata) -> bool {
 /// first (next to it, or failing that in the system temp directory). If
 /// writing fails, the original is put back; if even that fails, the error
 /// says where the backup is.
-fn write_in_place(target: &Path, dir: &Path, contents: &str) -> io::Result<()> {
+fn write_in_place(target: &Path, dir: &Path, contents: &[u8]) -> io::Result<()> {
     let (backup_path, backup) = create_temp_file(dir, target)
         .or_else(|_| create_temp_file(&std::env::temp_dir(), target))?;
     drop(backup);
@@ -152,7 +149,7 @@ fn write_in_place(target: &Path, dir: &Path, contents: &str) -> io::Result<()> {
 
     let written = (|| {
         let mut file = OpenOptions::new().write(true).truncate(true).open(target)?;
-        file.write_all(contents.as_bytes())?;
+        file.write_all(contents)?;
         file.sync_all()
     })();
     match written {
@@ -227,9 +224,9 @@ mod tests {
     fn write_then_read_round_trips() {
         let dir = dir();
         let path = dir.path().join("a.txt");
-        let modified = write(&path, "hello\n").unwrap();
+        let modified = write(&path, b"hello\n").unwrap();
         let contents = read(&path).unwrap().unwrap();
-        assert_eq!(contents.text, "hello\n");
+        assert_eq!(contents.bytes, b"hello\n");
         assert_eq!(contents.modified, modified);
     }
 
@@ -237,19 +234,20 @@ mod tests {
     fn write_replaces_existing_contents_and_leaves_no_temp_files() {
         let dir = dir();
         let path = dir.path().join("a.txt");
-        write(&path, "first version, longer").unwrap();
-        write(&path, "second").unwrap();
+        write(&path, b"first version, longer").unwrap();
+        write(&path, b"second").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "second");
         let entries: Vec<_> = fs::read_dir(dir.path()).unwrap().collect();
         assert_eq!(entries.len(), 1, "temp file left behind");
     }
 
     #[test]
-    fn invalid_utf8_is_refused() {
+    fn any_bytes_are_read_as_they_are() {
+        // Decoding them is TextFormat's job.
         let dir = dir();
         let path = dir.path().join("bin");
         fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
-        assert!(matches!(read(&path), Err(FileError::NotUtf8 { .. })));
+        assert_eq!(read(&path).unwrap().unwrap().bytes, [0xff, 0xfe, 0x00]);
     }
 
     #[test]
@@ -262,7 +260,7 @@ mod tests {
     fn writing_into_missing_directory_is_an_error() {
         let dir = dir();
         let path = dir.path().join("missing").join("a.txt");
-        let err = write(&path, "x").unwrap_err();
+        let err = write(&path, b"x").unwrap_err();
         assert!(err.to_string().contains("a.txt"), "{err}");
     }
 
@@ -272,9 +270,9 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = dir();
         let path = dir.path().join("script.sh");
-        fs::write(&path, "old").unwrap();
+        fs::write(&path, b"old").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
-        write(&path, "new").unwrap();
+        write(&path, b"new").unwrap();
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o750);
     }
@@ -285,10 +283,10 @@ mod tests {
         let dir = dir();
         let real = dir.path().join("real.txt");
         let link = dir.path().join("link.txt");
-        fs::write(&real, "old").unwrap();
+        fs::write(&real, b"old").unwrap();
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
-        write(&link, "new").unwrap();
+        write(&link, b"new").unwrap();
         assert!(
             fs::symlink_metadata(&link)
                 .unwrap()
@@ -305,11 +303,11 @@ mod tests {
         let dir = dir();
         let path = dir.path().join("a.txt");
         let other = dir.path().join("b.txt");
-        fs::write(&path, "old\n").unwrap();
+        fs::write(&path, b"old\n").unwrap();
         fs::hard_link(&path, &other).unwrap();
         let inode = fs::metadata(&path).unwrap().ino();
 
-        write(&path, "new\n").unwrap();
+        write(&path, b"new\n").unwrap();
         assert_eq!(
             fs::read_to_string(&other).unwrap(),
             "new\n",
@@ -331,10 +329,10 @@ mod tests {
         let locked = dir.path().join("locked");
         fs::create_dir(&locked).unwrap();
         let path = locked.join("a.txt");
-        fs::write(&path, "old\n").unwrap();
+        fs::write(&path, b"old\n").unwrap();
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
 
-        let result = write(&path, "new\n");
+        let result = write(&path, b"new\n");
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
         result.unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "new\n");
@@ -349,7 +347,7 @@ mod tests {
         let locked = dir.path().join("locked");
         fs::create_dir(&locked).unwrap();
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
-        let result = write(&locked.join("new.txt"), "x");
+        let result = write(&locked.join("new.txt"), b"x");
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
         assert!(result.is_err());
     }
@@ -358,15 +356,15 @@ mod tests {
     fn in_place_writes_leave_no_backups_whether_or_not_they_work() {
         let dir = dir();
         let path = dir.path().join("a.txt");
-        fs::write(&path, "original\n").unwrap();
+        fs::write(&path, b"original\n").unwrap();
         // A directory can't be copied as a backup, so this fails before
         // writing anything. (A write failing halfway, which restores the
         // backup, can't easily be simulated.)
         let not_a_file = dir.path().join("sub");
         fs::create_dir(&not_a_file).unwrap();
-        assert!(write_in_place(&not_a_file, dir.path(), "x").is_err());
+        assert!(write_in_place(&not_a_file, dir.path(), b"x").is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "original\n");
-        write_in_place(&path, dir.path(), "replaced\n").unwrap();
+        write_in_place(&path, dir.path(), b"replaced\n").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "replaced\n");
         assert_eq!(
             fs::read_dir(dir.path()).unwrap().count(),

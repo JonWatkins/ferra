@@ -21,4 +21,4 @@ pub use buffer::Buffer;
 pub use history::{Change, History, Revision};
 pub use position::Position;
 pub use range::{MotionKind, Range};
-pub use text_format::{LineEnding, TextFormat};
+pub use text_format::{DEFAULT_FALLBACK, Encoding, FileEncoding, LineEnding, TextFormat};

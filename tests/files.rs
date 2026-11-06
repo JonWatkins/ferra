@@ -212,12 +212,38 @@ fn line_endings_and_missing_final_newline_are_preserved() {
 }
 
 #[test]
-fn non_utf8_file_is_refused() {
+fn non_utf8_files_open_with_the_fallback_and_save_back_exactly() {
+    let ws = Workspace::new();
+    let path = ws.path("latin.txt");
+    let bytes = [b'c', b'a', b'f', 0xe9, b'\n'];
+    fs::write(&path, bytes).unwrap();
+    let mut app = open(&path);
+    assert_eq!(text(&app), "café");
+    assert!(
+        message(&app).contains("[windows-1252]"),
+        "{}",
+        message(&app)
+    );
+    keys(&mut app, "A!<Esc>");
+    cmd(&mut app, "w");
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        [b'c', b'a', b'f', 0xe9, b'!', b'\n']
+    );
+}
+
+#[test]
+fn a_utf8_fallback_refuses_other_files() {
     let ws = Workspace::new();
     let path = ws.path("image.bin");
     fs::write(&path, [0x89, b'P', b'N', b'G', 0xff]).unwrap();
-    let mut app = open(&path);
-    assert!(message(&app).contains("not valid UTF-8"));
+    let mut app = common::app_with_config("[editor]\nfallback-encoding = \"utf-8\"");
+    app.open(&path);
+    assert!(
+        message(&app).contains("not valid UTF-8"),
+        "{}",
+        message(&app)
+    );
     assert_eq!(text(&app), "");
     cmd(&mut app, "w");
     assert_eq!(
@@ -225,6 +251,74 @@ fn non_utf8_file_is_refused() {
         "No file name",
         "must not offer to overwrite it"
     );
+}
+
+#[test]
+fn byte_order_marks_and_utf16_round_trip() {
+    let ws = Workspace::new();
+    let bom = ws.path("bom.txt");
+    fs::write(&bom, b"\xEF\xBB\xBFhello\n").unwrap();
+    let mut app = open(&bom);
+    assert_eq!(text(&app), "hello", "the mark isn't in the text");
+    keys(&mut app, "A!<Esc>");
+    cmd(&mut app, "w");
+    assert_eq!(fs::read(&bom).unwrap(), b"\xEF\xBB\xBFhello!\n");
+
+    let wide = ws.path("wide.txt");
+    fs::write(&wide, b"\xFF\xFEh\x00i\x00").unwrap();
+    let mut app = open(&wide);
+    assert_eq!(text(&app), "hi");
+    keys(&mut app, "A!<Esc>");
+    cmd(&mut app, "w");
+    assert_eq!(fs::read(&wide).unwrap(), b"\xFF\xFEh\x00i\x00!\x00");
+}
+
+#[test]
+fn fileencoding_converts_and_counts_as_a_change() {
+    let ws = Workspace::new();
+    let path = ws.path("latin.txt");
+    fs::write(&path, [0xe9, b'\n']).unwrap();
+    let mut app = open(&path);
+    cmd(&mut app, "fenc");
+    assert_eq!(message(&app), "windows-1252");
+    cmd(&mut app, "fenc utf-8");
+    assert!(app.editor().document.is_modified());
+    cmd(&mut app, "q");
+    assert_eq!(message(&app), UNSAVED_CHANGES, "converting isn't saved yet");
+    cmd(&mut app, "w");
+    assert_eq!(fs::read(&path).unwrap(), "é\n".as_bytes());
+    assert!(!app.editor().document.is_modified());
+}
+
+#[test]
+fn characters_the_encoding_lacks_stop_the_save() {
+    let ws = Workspace::new();
+    let path = ws.path("latin.txt");
+    fs::write(&path, [0xe9, b'\n']).unwrap();
+    let mut app = open(&path);
+    keys(&mut app, "A 日<Esc>");
+    cmd(&mut app, "w");
+    assert!(message(&app).contains("has no '日'"), "{}", message(&app));
+    assert_eq!(
+        fs::read(&path).unwrap(),
+        [0xe9, b'\n'],
+        "the file is untouched"
+    );
+    cmd(&mut app, "fenc utf-8");
+    cmd(&mut app, "w");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "é 日\n");
+}
+
+#[test]
+fn unknown_encodings_are_reported() {
+    let mut app = app();
+    cmd(&mut app, "fenc klingon");
+    assert_eq!(message(&app), "Unknown encoding: klingon");
+    let error =
+        terminal_editor::config::Config::from_toml("[editor]\nfallback-encoding = \"klingon\"")
+            .unwrap_err()
+            .to_string();
+    assert!(error.contains("unknown encoding: klingon"), "{error}");
 }
 
 #[test]

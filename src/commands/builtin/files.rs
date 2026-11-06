@@ -5,7 +5,8 @@
 use std::path::PathBuf;
 
 use crate::commands::{ArgCompletion, CommandRegistry, CommandResult, Context};
-use crate::editor::UNSAVED_CHANGES;
+use crate::core::FileEncoding;
+use crate::editor::{Message, UNSAVED_CHANGES};
 use crate::events::Event;
 
 pub fn register(r: &mut CommandRegistry) {
@@ -73,6 +74,28 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.alias("checktime", "check_disk_changes");
+
+    r.register(
+        "file_encoding",
+        "Show the file's encoding, or save it in [encoding] from now on (utf-8, utf-8-bom, latin1, utf-16le...)",
+        |cx| {
+            let Some(label) = cx.args.first() else {
+                let name = cx.editor.document.format().encoding.name();
+                cx.editor.set_message(Message::info(name));
+                return Ok(());
+            };
+            let encoding = FileEncoding::from_label(label)
+                .ok_or_else(|| format!("Unknown encoding: {label}"))?;
+            cx.editor.document.set_encoding(encoding);
+            cx.editor.set_message(Message::info(format!(
+                "Will save as {} (:w to write)",
+                encoding.name()
+            )));
+            Ok(())
+        },
+    );
+    r.alias("fileencoding", "file_encoding");
+    r.alias("fenc", "file_encoding");
 
     r.register(
         "force_quit",
@@ -316,10 +339,15 @@ mod tests {
     fn edit_reports_open_errors() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bin");
-        fs::write(&path, [0xff, 0xfe]).unwrap();
+        // A UTF-16 byte-order mark, then half a surrogate pair: broken.
+        fs::write(&path, [0xff, 0xfe, 0x00, 0xd8]).unwrap();
         let mut editor = Editor::default();
         run(&mut editor, "edit", &[path.to_str().unwrap()], false);
-        assert!(message(&editor).contains("not valid UTF-8"));
+        assert!(
+            message(&editor).contains("not valid UTF-16LE"),
+            "{}",
+            message(&editor)
+        );
         assert_eq!(editor.document.path(), None, "document unchanged");
     }
 }

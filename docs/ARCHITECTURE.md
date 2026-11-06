@@ -343,9 +343,17 @@ where they change, so marks elsewhere on them stay put.
 
 ### Files
 
-- `core::TextFormat` splits file contents into buffer text (always `\n`, no
-  final newline) and the format to write back (LF/CRLF, final newline). An
-  untouched file round-trips byte for byte.
+- `core::TextFormat` splits file contents into buffer text (always UTF-8
+  and `\n`, no final newline) and the format to write back (encoding and
+  byte-order mark, LF/CRLF, final newline). An untouched file round-trips
+  byte for byte. Encodings use `encoding_rs`: a byte-order mark decides,
+  then valid UTF-8, then the configured fallback (Windows-1252, where every
+  byte means something). Decoding refuses bytes invalid in the chosen
+  encoding, and encoding refuses characters it can't hold, rather than
+  substitute anything. UTF-16 is encoded by hand, since `encoding_rs`
+  follows the web standard of never producing it. The document remembers
+  the encoding the file has on disk, so `:fenc` converting it counts as an
+  unsaved change.
 - `files` is the only module that touches the disk. Writes go to a temp file
   in the same directory, are fsynced, then renamed over the target. Existing
   permissions are copied and symlinks are followed. A rename gives the file
@@ -788,7 +796,8 @@ status, branches and history.
   the filesystem's timestamp resolution of our own write can be missed.
 - Extended attributes and ACLs (e.g. macOS file tags) aren't carried over
   by the rename used for ordinary saves.
-- Non-UTF-8 encodings are refused rather than supported.
+- Guessing legacy encodings (telling Shift-JIS from Windows-1252 by
+  content): files that aren't UTF-8 use the one configured fallback.
 - Clipboard over SSH (OSC 52), and recording pastes into macros and `.`
   (both currently replay without the pasted text).
 - Incremental syntax parsing (feeding edits to tree-sitter and reusing the

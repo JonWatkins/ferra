@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use super::Document;
-use crate::core::{Buffer, Position, TextFormat};
+use crate::core::{Buffer, DEFAULT_FALLBACK, Encoding, FileEncoding, Position, TextFormat};
 use crate::files::{self, FileError};
 
 /// What was found when opening a file, for the status message.
@@ -38,8 +38,18 @@ pub struct SaveInfo {
 
 impl Document {
     /// Opens `path`. A path that doesn't exist yet gives an empty document
-    /// that will create the file when saved.
+    /// that will create the file when saved. Files that aren't UTF-8 (and
+    /// have no byte-order mark) are read as Windows-1252.
     pub fn open(path: &Path) -> Result<(Document, OpenInfo), FileError> {
+        Self::open_with(path, DEFAULT_FALLBACK)
+    }
+
+    /// [`Document::open`], reading files that aren't UTF-8 (and have no
+    /// byte-order mark) as `fallback`.
+    pub fn open_with(
+        path: &Path,
+        fallback: &'static Encoding,
+    ) -> Result<(Document, OpenInfo), FileError> {
         let path = path.to_path_buf();
         let Some(contents) = files::read(&path)? else {
             let document = Document {
@@ -56,19 +66,20 @@ impl Document {
             return Ok((document, info));
         };
 
-        let (text, format) = TextFormat::decode(&contents.text);
+        let (text, format) = decode(&path, &contents.bytes, fallback)?;
         let document = Document {
             buffer: Buffer::from_text(&text),
             path: Some(path.clone()),
             format,
+            saved_encoding: format.encoding,
             disk_modified: contents.modified,
             ..Document::default()
         };
         let info = OpenInfo {
             path,
             new_file: false,
-            lines: line_count(&contents.text, &document),
-            bytes: contents.text.len(),
+            lines: line_count(contents.bytes.is_empty(), &document),
+            bytes: contents.bytes.len(),
             format,
         };
         Ok((document, info))
@@ -106,12 +117,15 @@ impl Document {
     /// `u` gets the old text back. Only the changed part of the text is
     /// replaced, so the cursor and marks outside it stay put. Returns
     /// `None` if the file no longer exists (the document is left alone).
-    pub fn reload_in_place(&mut self) -> Result<Option<OpenInfo>, FileError> {
+    pub fn reload_in_place(
+        &mut self,
+        fallback: &'static Encoding,
+    ) -> Result<Option<OpenInfo>, FileError> {
         let path = self.path.clone().ok_or(FileError::NoFileName)?;
         let Some(contents) = files::read(&path)? else {
             return Ok(None);
         };
-        let (text, format) = TextFormat::decode(&contents.text);
+        let (text, format) = decode(&path, &contents.bytes, fallback)?;
         let cursor = self.cursor;
 
         self.history.commit();
@@ -139,11 +153,12 @@ impl Document {
         self.disk_modified = contents.modified;
         self.disk_acknowledged = None;
         self.format = format;
+        self.saved_encoding = format.encoding;
         self.set_cursor(cursor);
         Ok(Some(OpenInfo {
             new_file: false,
-            lines: line_count(&contents.text, self),
-            bytes: contents.text.len(),
+            lines: line_count(contents.bytes.is_empty(), self),
+            bytes: contents.bytes.len(),
             format,
             path,
         }))
@@ -151,6 +166,12 @@ impl Document {
 
     pub fn format(&self) -> TextFormat {
         self.format
+    }
+
+    /// `:fileencoding`: saves in `encoding` from now on. Like Vim, that's a
+    /// change: the document is modified until it's saved.
+    pub fn set_encoding(&mut self, encoding: FileEncoding) {
+        self.format.encoding = encoding;
     }
 
     /// Saves to `target`, or to the document's own path if `None`.
@@ -185,17 +206,24 @@ impl Document {
         }
 
         self.history.commit();
-        let contents = self.format.encode(&self.buffer.text());
+        let contents = self
+            .format
+            .encode_bytes(&self.buffer.text())
+            .map_err(|message| FileError::Encoding {
+                path: path.clone(),
+                message,
+            })?;
         let modified = files::write(&path, &contents)?;
 
         if is_own_file {
             self.path = Some(path.clone());
             self.saved_revision = self.history.revision();
+            self.saved_encoding = self.format.encoding;
             self.disk_modified = modified;
             self.disk_acknowledged = None;
         }
         Ok(SaveInfo {
-            lines: line_count(&contents, self),
+            lines: line_count(contents.is_empty(), self),
             bytes: contents.len(),
             path,
         })
@@ -211,8 +239,20 @@ fn position_at(text: &[char], index: usize) -> Position {
 }
 
 /// Lines as Vim counts them: an empty file has none.
-fn line_count(contents: &str, document: &Document) -> usize {
-    if contents.is_empty() {
+/// Decodes a file's bytes, as a file error naming `path`.
+fn decode(
+    path: &Path,
+    bytes: &[u8],
+    fallback: &'static Encoding,
+) -> Result<(String, TextFormat), FileError> {
+    TextFormat::decode_bytes(bytes, fallback).map_err(|message| FileError::Encoding {
+        path: path.to_path_buf(),
+        message,
+    })
+}
+
+fn line_count(empty: bool, document: &Document) -> usize {
+    if empty {
         0
     } else {
         document.buffer.line_count()
@@ -426,7 +466,7 @@ mod tests {
         let (mut doc, _) = Document::open(&path).unwrap();
         doc.set_cursor(Position::new(2, 3));
         touch_externally(&path, "keep\nnew\nkeep too\n");
-        let info = doc.reload_in_place().unwrap().unwrap();
+        let info = doc.reload_in_place(DEFAULT_FALLBACK).unwrap().unwrap();
         assert_eq!(doc.buffer().text(), "keep\nnew\nkeep too");
         assert_eq!(doc.cursor(), Position::new(2, 3));
         assert!(!doc.is_modified());
@@ -442,7 +482,7 @@ mod tests {
         let path = fx.file("a.txt", "text\n");
         let (mut doc, _) = Document::open(&path).unwrap();
         fs::remove_file(&path).unwrap();
-        assert!(doc.reload_in_place().unwrap().is_none());
+        assert!(doc.reload_in_place(DEFAULT_FALLBACK).unwrap().is_none());
         assert_eq!(doc.buffer().text(), "text");
     }
 
