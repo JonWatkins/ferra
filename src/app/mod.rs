@@ -404,8 +404,11 @@ impl App {
             self.changes.push(key);
         }
         handle(self);
-        // `:` commands and picker choices aren't repeated by `.`.
-        if matches!(self.editor.mode(), Mode::Command | Mode::Picker) {
+        // `:` commands and picker choices aren't repeated by `.`; a search
+        // is, as an operator's motion (`d/foo<CR>`).
+        let at_colon_prompt =
+            self.editor.mode() == Mode::Command && !self.editor.command_line.prompt().is_search();
+        if at_colon_prompt || self.editor.mode() == Mode::Picker {
             self.changes.note_command_line();
         }
         if self.is_idle() {

@@ -1,6 +1,6 @@
 use crate::commands::ex::{RangeContext, parse_range};
 use crate::commands::{ArgCompletion, CommandRegistry, CommandResult, Context, Invocation};
-use crate::editor::{CommandLine, CompletionContext, Editor, Mode};
+use crate::editor::{CommandLine, CompletionContext, Editor, Mode, SearchDone};
 use crate::files;
 
 pub fn register(r: &mut CommandRegistry) {
@@ -9,7 +9,12 @@ pub fn register(r: &mut CommandRegistry) {
         "Run the command typed on the command line",
         |cx| {
             if cx.editor.command_line.prompt().is_search() {
-                return cx.editor.finish_search();
+                return match cx.editor.finish_search()? {
+                    SearchDone::Moved => Ok(()),
+                    SearchDone::Operator { operator, target } => {
+                        super::search::operate_to(cx, operator, target)
+                    }
+                };
             }
             let input = cx.editor.command_line.take();
             cx.editor.set_mode(Mode::Normal);

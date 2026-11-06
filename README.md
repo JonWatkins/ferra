@@ -49,6 +49,7 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `g;`, `g,` | Older / newer place in the change list; `'.` is the last change |
 | Normal  | `/` `?` | Search forward / backward (regex; matches preview as you type) |
 | Normal  | `n` `N` | Next / previous match |
+| Normal  | `d/foo<CR>`, `y?bar<CR>`, `dn`, `cN` | Searches work as motions after an operator: up to (not including) the match; `d2/x` uses the second match |
 | Normal  | `*` `#` | Search forward / backward for the word under the cursor |
 | Normal  | `v` `V` `gv` | Select characters / lines / reselect the last selection |
 | Visual  | motions, text objects | Extend the selection / select an object (`viw`, `vi(`) |

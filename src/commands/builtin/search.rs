@@ -1,36 +1,36 @@
 //! Search commands. Typing at the prompt and finishing or cancelling it go
 //! through the shared command-line commands (`command_line.rs`).
+//!
+//! After an operator, searches are motions: `d/foo<CR>` deletes up to the
+//! match, `yn` yanks up to the next one.
 
-use crate::commands::CommandRegistry;
+use super::motions::{self, MotionArgs};
+use crate::commands::{CommandRegistry, CommandResult, Context};
+use crate::core::Position;
+use crate::editor::PendingOperator;
 
 pub fn register(r: &mut CommandRegistry) {
     r.register("search_forward", "Search forward for a pattern (/)", |cx| {
-        cx.editor.open_search(true);
+        open_search(cx, true);
         Ok(())
     });
     r.register(
         "search_backward",
         "Search backward for a pattern (?)",
         |cx| {
-            cx.editor.open_search(false);
+            open_search(cx, false);
             Ok(())
         },
     );
     r.register(
         "search_next",
         "Jump to the next match of the last search (n)",
-        |cx| {
-            let n = cx.count();
-            cx.editor.search_next(n, false)
-        },
+        |cx| search_next(cx, false),
     );
     r.register(
         "search_prev",
         "Jump to the previous match of the last search (N)",
-        |cx| {
-            let n = cx.count();
-            cx.editor.search_next(n, true)
-        },
+        |cx| search_next(cx, true),
     );
     r.register(
         "search_word_forward",
@@ -58,6 +58,57 @@ pub fn register(r: &mut CommandRegistry) {
     );
     r.alias("noh", "clear_search_highlight");
     r.alias("nohlsearch", "clear_search_highlight");
+}
+
+/// `/` or `?`. After an operator, a count typed before the `/` (`d2/x`)
+/// joins the operator's, choosing which match.
+fn open_search(cx: &mut Context, forward: bool) {
+    if let Some(operator) = cx.editor.pending_operator()
+        && cx.count.is_some()
+    {
+        let count = motions::multiply_counts(operator.count, cx.count);
+        cx.editor
+            .begin_operator(operator.operator, count, operator.register);
+    }
+    cx.editor.open_search(forward);
+}
+
+/// `n`/`N`: moves to the next match, or with an operator waiting (`dn`),
+/// applies it up to there.
+fn search_next(cx: &mut Context, reverse: bool) -> CommandResult {
+    let Some(operator) = cx.editor.pending_operator() else {
+        let n = cx.count();
+        return cx.editor.search_next(n, reverse);
+    };
+    let count = motions::multiply_counts(operator.count, cx.count).unwrap_or(1);
+    let hit = match cx.editor.find_next(count, reverse) {
+        Ok(hit) => hit,
+        Err(error) => {
+            // No match: the operator is cancelled, as with any failed motion.
+            cx.editor.take_pending_operator();
+            return Err(error);
+        }
+    };
+    cx.editor.take_pending_operator();
+    cx.editor.report_search(&hit);
+    operate_to(cx, operator, hit.position)
+}
+
+/// Applies `operator` from the cursor up to a search match.
+pub(super) fn operate_to(
+    cx: &mut Context,
+    operator: PendingOperator,
+    target: Position,
+) -> CommandResult {
+    // The count already chose which match; don't apply it again.
+    cx.editor
+        .begin_operator(operator.operator, None, operator.register);
+    let args = MotionArgs {
+        target: Some(target),
+        ..MotionArgs::default()
+    };
+    cx.count = None;
+    motions::run(cx, &motions::SEARCH_MATCH, args)
 }
 
 #[cfg(test)]

@@ -1,7 +1,8 @@
 //! Searching from the editor: the `/` and `?` prompts with live preview,
-//! `n`/`N`, `*`/`#`, and which pattern to highlight.
+//! `n`/`N`, `*`/`#`, and which pattern to highlight. A search typed after
+//! an operator (`d/foo<CR>`) is that operator's motion.
 
-use super::{Editor, Message, Mode, Prompt};
+use super::{Editor, Message, Mode, PendingOperator, Prompt};
 use crate::core::Position;
 use crate::core::search::{Found, SearchPattern};
 
@@ -15,6 +16,28 @@ pub(super) struct SearchState {
     /// Whether the last search is highlighted (`:noh` turns it off until the
     /// next search).
     highlight: bool,
+    /// The operator waiting for the search being typed (`d` of `d/foo`).
+    operator: Option<PendingOperator>,
+}
+
+/// Where a search (`n`, `/foo<CR>`) lands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchHit {
+    pub position: Position,
+    pub wrapped: bool,
+    pub forward: bool,
+}
+
+/// What finishing a search prompt did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchDone {
+    /// The cursor moved to the match.
+    Moved,
+    /// An operator was waiting: it should now act up to `target`.
+    Operator {
+        operator: PendingOperator,
+        target: Position,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -30,8 +53,9 @@ impl Editor {
         self.command_line.open(Prompt::Command);
     }
 
-    /// `/` or `?`: opens a search prompt.
+    /// `/` or `?`: opens a search prompt. A pending operator waits for it.
     pub fn open_search(&mut self, forward: bool) {
+        let operator = self.take_pending_operator();
         let origin = self.document.cursor();
         self.set_mode(Mode::Command);
         let prompt = if forward {
@@ -42,6 +66,12 @@ impl Editor {
         self.command_line.open(prompt);
         self.search.origin = Some(origin);
         self.search.preview = None;
+        self.search.operator = operator;
+    }
+
+    /// The operator waiting for the search prompt, if any (for display).
+    pub fn search_operator(&self) -> Option<PendingOperator> {
+        self.search.operator
     }
 
     /// Re-runs the search being typed: moves the cursor to the first match
@@ -70,11 +100,13 @@ impl Editor {
     }
 
     /// `<CR>` at a search prompt: searches for the typed pattern, or the last
-    /// one if nothing was typed.
-    pub fn finish_search(&mut self) -> Result<(), String> {
+    /// one if nothing was typed. With an operator waiting, the cursor stays
+    /// put and the operator's target is returned instead.
+    pub fn finish_search(&mut self) -> Result<SearchDone, String> {
         let forward = self.command_line.prompt() == Prompt::SearchForward;
         let input = self.command_line.take();
         let origin = self.search.origin.take().unwrap_or(self.document.cursor());
+        let operator = self.search.operator.take();
         self.set_mode(Mode::Normal);
         self.document.set_cursor(origin);
 
@@ -84,7 +116,18 @@ impl Editor {
             SearchPattern::new(&input, self.options.search.case.into())?
         };
         self.search.last = Some(LastSearch { pattern, forward });
-        self.search_next(1, false)
+        let Some(operator) = operator else {
+            self.search_next(1, false)?;
+            return Ok(SearchDone::Moved);
+        };
+        // `d2/foo` deletes up to the second match.
+        let hit = self.find_next(operator.count.unwrap_or(1), false)?;
+        self.search.highlight = true;
+        self.report_search(&hit);
+        Ok(SearchDone::Operator {
+            operator,
+            target: hit.position,
+        })
     }
 
     /// Makes `pattern` the last search (as `:s` does), so `n` finds it and
@@ -105,38 +148,54 @@ impl Editor {
     /// `n` (or `N` with `reverse`): jumps to the `count`th next match of the
     /// last search.
     pub fn search_next(&mut self, count: usize, reverse: bool) -> Result<(), String> {
-        let last = self.last_search()?.clone();
-        let forward = last.forward != reverse;
+        let hit = self.find_next(count, reverse)?;
         self.search.highlight = true;
+        self.push_jump();
+        self.document.set_cursor(hit.position);
+        self.report_search(&hit);
+        Ok(())
+    }
 
-        let mut cursor = self.document.cursor();
+    /// Where `n` (or `N`) would go, `count` matches on, without moving.
+    pub fn find_next(&self, count: usize, reverse: bool) -> Result<SearchHit, String> {
+        let last = self.last_search()?;
+        let forward = last.forward != reverse;
+        let mut position = self.document.cursor();
         let mut wrapped = false;
         for _ in 0..count.max(1) {
             let Found { found, wrapped: w } = last
                 .pattern
                 .find(
                     self.document.buffer(),
-                    cursor,
+                    position,
                     forward,
                     self.options.search.wrap,
                 )
                 .ok_or_else(|| not_found(&last.pattern, self.options.search.wrap))?;
-            cursor = found.start_position();
+            position = found.start_position();
             wrapped |= w;
         }
-        self.push_jump();
-        self.document.set_cursor(cursor);
+        Ok(SearchHit {
+            position,
+            wrapped,
+            forward,
+        })
+    }
 
-        let message = if !wrapped {
-            let symbol = if forward { '/' } else { '?' };
+    /// Shows the pattern searched for, or that the search wrapped.
+    pub fn report_search(&mut self, hit: &SearchHit) {
+        let Some(last) = self.search.last.as_ref() else {
+            return;
+        };
+        let message = if !hit.wrapped {
+            let symbol = if hit.forward { '/' } else { '?' };
             format!("{symbol}{}", last.pattern.source())
-        } else if forward {
+        } else if hit.forward {
             "Search hit BOTTOM, continuing at TOP".to_string()
         } else {
             "Search hit TOP, continuing at BOTTOM".to_string()
         };
         self.set_message(Message::info(message));
-        Ok(())
     }
 
     /// `*` (or `#` backwards): searches for the whole word under (or after)
@@ -190,6 +249,8 @@ impl Editor {
     /// wasn't completed puts the cursor back where it started.
     pub(super) fn end_search_prompt(&mut self) {
         self.search.preview = None;
+        // A cancelled `d/` cancels the `d` too.
+        self.search.operator = None;
         if let Some(origin) = self.search.origin.take() {
             self.document.set_cursor(origin);
         }
@@ -373,5 +434,48 @@ mod tests {
         );
         e.finish_search().unwrap();
         assert!(e.search_highlight().is_none());
+    }
+
+    #[test]
+    fn a_waiting_operator_gets_the_target_instead_of_a_move() {
+        use crate::editor::Operator;
+        let mut e = editor("alpha beta beta");
+        e.begin_operator(Operator::Delete, Some(2), None);
+        type_search(&mut e, true, "beta");
+        assert_eq!(
+            e.search_operator().map(|o| o.operator),
+            Some(Operator::Delete)
+        );
+        let done = e.finish_search().unwrap();
+        let SearchDone::Operator { operator, target } = done else {
+            panic!("expected an operator target, got {done:?}");
+        };
+        assert_eq!(operator.count, Some(2));
+        assert_eq!(target, pos(0, 11), "the second match");
+        assert_eq!(e.document.cursor(), pos(0, 0), "the cursor stays put");
+        assert_eq!(e.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn cancelling_drops_the_waiting_operator() {
+        use crate::editor::Operator;
+        let mut e = editor("alpha beta");
+        e.begin_operator(Operator::Delete, None, None);
+        type_search(&mut e, true, "beta");
+        e.set_mode(Mode::Normal);
+        assert!(e.search_operator().is_none());
+        assert!(e.pending_operator().is_none());
+    }
+
+    #[test]
+    fn find_next_doesnt_move() {
+        let mut e = editor("a b a b");
+        type_search(&mut e, true, "b");
+        e.finish_search().unwrap();
+        assert_eq!(e.document.cursor(), pos(0, 2));
+        let hit = e.find_next(1, false).unwrap();
+        assert_eq!(hit.position, pos(0, 6));
+        assert!(hit.forward && !hit.wrapped);
+        assert_eq!(e.document.cursor(), pos(0, 2));
     }
 }

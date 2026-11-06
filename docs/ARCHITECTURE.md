@@ -288,6 +288,16 @@ black hole `"_`, skips all of these.
   prompt any other way puts the cursor back where it started.
 - `Editor::search_highlight` gives the UI the pattern to highlight: the one
   being typed, or the last search unless `:noh` hid it.
+- After an operator, searches are motions. `/` and `?` in operator-pending
+  mode move the pending operator into the search state while the prompt is
+  open (cancelling the prompt drops it). `finish_search` then returns
+  `SearchDone::Operator` with the match instead of moving, and
+  `command_line_execute` applies the operator through the exclusive
+  `SEARCH_MATCH` motion, whose target the command supplies (as marks do).
+  `n`/`N` do the same with `Editor::find_next`, which finds a match without
+  moving. The usual exclusive rules apply, so `d/^foo` from a line start
+  takes whole lines. `.` repeats it because the app records search prompts
+  for `.`; only `:` prompts are left out.
 
 ### The command line
 
@@ -517,7 +527,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 ## Known gaps / next steps
 
 - Visual block mode (`<C-v>`) and visual-mode `:` ranges (`:'<,'>`).
-- Search as a motion for operators (`d/foo`).
+- `/` in visual mode ends the selection rather than extending it to the
+  match (`v/foo<CR>`).
 - `:s` follow-ups: the `c` (confirm) flag, `&`/`:&&` to repeat the last
   substitution, and `:g/pattern/command`.
 - Alt keys that *are* bound can't be told apart from a fast Esc then that

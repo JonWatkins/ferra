@@ -15,6 +15,7 @@ mod operator;
 pub mod picker;
 pub mod registers;
 mod search;
+pub use search::{SearchDone, SearchHit};
 mod selection;
 mod transform;
 pub mod windows;

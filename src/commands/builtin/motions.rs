@@ -214,6 +214,10 @@ pub const MARK_LINE: Motion = Motion::new("mark_line", "", Linewise, |b, _, a| {
 
 /// `` `a ``: the mark's exact position (exclusive). Not bound directly.
 pub const MARK_EXACT: Motion = Motion::new("mark_exact", "", Exclusive, |_, _, a| a.target).jump();
+/// A search match (`d/foo<CR>`, `dn`): exclusive, like Vim. Not bound
+/// directly; the search commands work out the target.
+pub const SEARCH_MATCH: Motion =
+    Motion::new("search_match", "", Exclusive, |_, _, a| a.target).jump();
 
 /// `cw`: like `ce`, not `dw` (Vim special case). Not bound directly.
 const CHANGE_WORD: Motion = Motion::new("change_word", "", Inclusive, |b, p, a| {
