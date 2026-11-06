@@ -77,6 +77,19 @@ impl KeyPress {
         }
     }
 
+    /// The control character for Ctrl plus a letter (`<C-w>` is `\x17`),
+    /// so commands that take a character can tell `<C-r><C-w>` apart.
+    pub fn as_control_char(&self) -> Option<char> {
+        match self.code {
+            KeyCode::Char(c)
+                if self.modifiers.ctrl && !self.modifiers.alt && c.is_ascii_alphabetic() =>
+            {
+                Some(((c.to_ascii_lowercase() as u8) - b'a' + 1) as char)
+            }
+            _ => None,
+        }
+    }
+
     /// The digit value, if this is an unmodified digit key.
     pub fn as_digit(&self) -> Option<usize> {
         self.as_text()?.to_digit(10).map(|d| d as usize)

@@ -23,14 +23,14 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `gg` `G` (`5gg`, `5G`) | First / last line (or line 5) |
 | Normal  | `f` `t` `F` `T` + char | To / just before the next (or previous) char on the line |
 | Normal  | `;` `,` | Repeat the last `f`/`t`/`F`/`T` / in the other direction |
-| Normal  | `%` | Matching bracket |
+| Normal  | `%`, `50%` | Matching bracket; with a count, that percent of the way through the file |
 | Normal  | `{` `}` | Previous / next empty line (paragraph) |
 | Normal  | `r` + char | Replace characters (`3rx`) |
 | Normal  | `>` `<` + motion, `>>` `<<` | Indent / outdent lines (`>ip`, `3>>`; visual `>` `<`) |
 | Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |
 | Normal  | `gcc`, `gc` + motion (`gcap`, `gcj`), visual `gc` | Toggle comments on those lines, using the file's language |
 | Normal  | `~` | Toggle case under the cursor and move on |
-| Normal  | `J` | Join lines (`3J`, visual `J`) |
+| Normal  | `J`, `gJ` | Join lines (`3J`, visual `J`); `gJ` joins exactly, without adding a space or removing indentation |
 | Normal  | `i` `a` `I` `A` `o` `O` | Enter insert mode |
 | Normal  | `d` `c` `y` + motion/text object | Delete / change / yank (`dw`, `c$`, `yiw`, `di(`, `2d3w`) |
 | Normal  | `dd` `cc` `yy` | Operate on whole lines |
@@ -96,6 +96,7 @@ The `:` and `/`/`?` prompts support:
 | `<Left>` `<Right>`, `<Home>` `<End>` (`<C-b>` `<C-e>`) | Move the cursor |
 | `<Del>`, `<C-w>`, `<C-u>` | Delete a character / the word before the cursor / everything before it |
 | `<C-r>{register}` | Insert a register's first line (`/<C-r>"` searches for what you yanked) |
+| `<C-r><C-w>`, `<C-r><C-a>` | Insert the word / WORD under the cursor (`:s/<C-r><C-w>/new/`) |
 
 ## Substitute and ranges
 
@@ -108,6 +109,7 @@ regex syntax as search:
 :5,10s/\s+$//        trailing spaces on lines 5-10
 :s/(\w+), (\w+)/\2, \1/   swap two words (\1, \2 = groups; & = whole match)
 :s#/usr#/opt#        any punctuation works as the delimiter
+:s/b/~!/             ~ is the previous replacement (\~ for a literal ~)
 ```
 
 Flags: `g` every match on the line, `c` confirm each one, `i`/`I`

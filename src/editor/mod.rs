@@ -84,6 +84,9 @@ pub struct Editor {
     pub last_char_search: Option<CharSearch>,
     /// The arguments of the last `:s` (`/a/b/g`), for `&` and `:&&`.
     pub last_substitute: Option<String>,
+    /// The last `:s` replacement, in `regex` syntax with any `~` already
+    /// expanded: what `~` means next time, and what `&` repeats.
+    pub last_replacement: Option<String>,
     /// A `:s///c` waiting for y/n/a/q/l answers.
     confirm: Option<confirm::ConfirmSession>,
     /// `:normal` runs waiting for the app.

@@ -254,6 +254,32 @@ impl Editor {
         self.search_next(count, false)
     }
 
+    /// The word (or with `big`, the run of non-blanks) under or after the
+    /// cursor, for `<C-r><C-w>`. While a search prompt previews matches, the
+    /// cursor it means is where the search began.
+    pub fn word_under_cursor(&self, big: bool) -> Option<String> {
+        let cursor = self.search.origin.unwrap_or(self.document.cursor());
+        let line: Vec<char> = self.document.buffer().line(cursor.row).chars().collect();
+        let in_word = |c: char| {
+            if big {
+                !c.is_whitespace()
+            } else {
+                c.is_alphanumeric() || c == '_'
+            }
+        };
+        let first = (cursor.col..line.len()).find(|&i| in_word(line[i]))?;
+        let start = (0..first)
+            .rev()
+            .take_while(|&i| in_word(line[i]))
+            .last()
+            .unwrap_or(first);
+        let end = (first..line.len())
+            .take_while(|&i| in_word(line[i]))
+            .last()
+            .map_or(first, |i| i + 1);
+        Some(line[start..end].iter().collect())
+    }
+
     /// `:noh`: hides search highlights until the next search.
     pub fn clear_search_highlight(&mut self) {
         self.search.highlight = false;

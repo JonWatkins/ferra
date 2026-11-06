@@ -111,9 +111,25 @@ impl Editor {
     /// the line already ends in a space, or the next starts with `)`).
     /// Returns `false` if `row` is the last line.
     pub fn join_line(&mut self, row: usize) -> bool {
+        self.join_line_with(row, true)
+    }
+
+    /// `gJ`: joins line `row` and the next exactly as they are, without
+    /// removing indentation or adding a space.
+    pub fn join_line_raw(&mut self, row: usize) -> bool {
+        self.join_line_with(row, false)
+    }
+
+    fn join_line_with(&mut self, row: usize, tidy: bool) -> bool {
         let doc = &mut self.document;
         if row + 1 >= doc.buffer().line_count() {
             return false;
+        }
+        if !tidy {
+            let join_at = doc.buffer().line_end(row);
+            doc.delete(join_at, Position::new(row + 1, 0));
+            doc.set_cursor(join_at);
+            return true;
         }
         let line = doc.buffer().line(row).into_owned();
         let next = doc.buffer().line(row + 1).into_owned();

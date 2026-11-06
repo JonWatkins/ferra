@@ -26,8 +26,10 @@ pub struct Flags {
 
 /// Parses the text after `:s`: a delimiter (any punctuation), the pattern,
 /// the replacement and flags, with the closing delimiter optional
-/// (`s/a/b`). `\` escapes the delimiter.
-pub fn parse_substitute(text: &str) -> Result<Substitute, String> {
+/// (`s/a/b`). `\` escapes the delimiter. A `~` in the replacement stands
+/// for `previous`, the last substitution's replacement (already in
+/// `regex` syntax).
+pub fn parse_substitute(text: &str, previous: Option<&str>) -> Result<Substitute, String> {
     const USAGE: &str = "Usage: s/pattern/replacement/[flags]";
     let mut chars = text.chars();
     let delimiter = chars.next().ok_or(USAGE)?;
@@ -47,7 +49,7 @@ pub fn parse_substitute(text: &str) -> Result<Substitute, String> {
     }
     Ok(Substitute {
         pattern,
-        replacement: vim_replacement(&replacement),
+        replacement: vim_replacement(&replacement, previous.unwrap_or_default()),
         flags,
     })
 }
@@ -93,14 +95,16 @@ fn parse_flags(text: &str) -> Result<Flags, String> {
 }
 
 /// Translates a Vim replacement into `regex` syntax: `&` (whole match) and
-/// `\0`..`\9` become `${0}`..`${9}`, `\&` and `\\` are literal, `\n` is a
-/// line break, `\t` a tab, and a literal `$` is escaped.
-fn vim_replacement(text: &str) -> String {
+/// `\0`..`\9` become `${0}`..`${9}`, `~` is the previous replacement,
+/// `\&`, `\~` and `\\` are literal, `\n` is a line break, `\t` a tab, and a
+/// literal `$` is escaped.
+fn vim_replacement(text: &str, previous: &str) -> String {
     let mut out = String::new();
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
         match c {
             '&' => out.push_str("${0}"),
+            '~' => out.push_str(previous),
             '$' => out.push_str("$$"),
             '\\' => match chars.next() {
                 Some(d @ '0'..='9') => out.push_str(&format!("${{{d}}}")),
@@ -121,7 +125,7 @@ mod tests {
     use super::*;
 
     fn parse(text: &str) -> Substitute {
-        parse_substitute(text).unwrap()
+        parse_substitute(text, None).unwrap()
     }
 
     #[test]
@@ -153,7 +157,7 @@ mod tests {
         assert_eq!(f.ignore_case, Some(false));
         assert!(parse("/a/b/e").flags.no_error);
         assert!(
-            parse_substitute("/a/b/z")
+            parse_substitute("/a/b/z", None)
                 .unwrap_err()
                 .contains("Unknown flag 'z'")
         );
@@ -173,20 +177,30 @@ mod tests {
 
     #[test]
     fn vim_replacement_syntax() {
-        assert_eq!(vim_replacement(r"[&]"), "[${0}]");
-        assert_eq!(vim_replacement(r"\2-\1"), "${2}-${1}");
-        assert_eq!(vim_replacement(r"a\&b\\c"), r"a&b\c");
-        assert_eq!(vim_replacement(r"line\nnext\tx"), "line\nnext\tx");
-        assert_eq!(vim_replacement("$5"), "$$5", "a literal dollar");
+        assert_eq!(vim_replacement(r"[&]", ""), "[${0}]");
+        assert_eq!(vim_replacement(r"\2-\1", ""), "${2}-${1}");
+        assert_eq!(vim_replacement(r"a\&b\\c", ""), r"a&b\c");
+        assert_eq!(vim_replacement(r"line\nnext\tx", ""), "line\nnext\tx");
+        assert_eq!(vim_replacement("$5", ""), "$$5", "a literal dollar");
     }
 
     #[test]
     fn invalid_forms() {
-        assert!(parse_substitute("").is_err());
+        assert!(parse_substitute("", None).is_err());
         assert!(
-            parse_substitute("abc").is_err(),
+            parse_substitute("abc", None).is_err(),
             "letters can't be delimiters"
         );
-        assert!(parse_substitute("/a/b/g/extra").is_err());
+        assert!(parse_substitute("/a/b/g/extra", None).is_err());
+    }
+
+    #[test]
+    fn tilde_is_the_previous_replacement() {
+        let s = parse_substitute("/a/<~>/", Some("${0}x")).unwrap();
+        assert_eq!(s.replacement, "<${0}x>");
+        let s = parse_substitute(r"/a/\~/", Some("x")).unwrap();
+        assert_eq!(s.replacement, "~", "escaped: a literal tilde");
+        let s = parse_substitute("/a/~/", None).unwrap();
+        assert_eq!(s.replacement, "", "nothing before");
     }
 }

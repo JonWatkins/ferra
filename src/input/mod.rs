@@ -69,8 +69,10 @@ impl InputHandler {
         self.took_count = false;
         if let Some(waiting) = self.awaiting_char.take() {
             // Any printable key is the argument, even one bound to a command
-            // (`f:` finds a colon). Anything else (`<Esc>`) cancels.
-            return match key.as_text() {
+            // (`f:` finds a colon), and so is Ctrl plus a letter, as its
+            // control character (`<C-r><C-w>`). Anything else (`<Esc>`)
+            // cancels.
+            return match key.as_text().or_else(|| key.as_control_char()) {
                 Some(c) => vec![Outcome::Execute {
                     command: waiting.command,
                     count: waiting.count,

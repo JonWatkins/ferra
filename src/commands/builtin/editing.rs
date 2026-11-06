@@ -72,21 +72,12 @@ pub fn register(r: &mut CommandRegistry) {
     r.register(
         "join_lines",
         "Join [count] lines (at least two), or the selected lines (J)",
-        |cx| {
-            let (row, joins) = match cx.editor.take_selection() {
-                Some(range) => {
-                    let (first, last) = range.rows();
-                    (first, (last - first).max(1))
-                }
-                None => (cx.editor.document.cursor().row, cx.count().max(2) - 1),
-            };
-            for _ in 0..joins {
-                if !cx.editor.join_line(row) {
-                    break;
-                }
-            }
-            Ok(())
-        },
+        |cx| join_lines(cx, true),
+    );
+    r.register(
+        "join_lines_raw",
+        "Join lines without adding spaces or removing indentation (gJ)",
+        |cx| join_lines(cx, false),
     );
     r.register(
         "toggle_case_char",
@@ -149,11 +140,52 @@ pub fn register(r: &mut CommandRegistry) {
     );
 }
 
+/// `J` (`tidy`) / `gJ`: joins [count] lines, or the selected lines.
+fn join_lines(cx: &mut Context, tidy: bool) -> CommandResult {
+    let (row, joins) = match cx.editor.take_selection() {
+        Some(range) => {
+            let (first, last) = range.rows();
+            (first, (last - first).max(1))
+        }
+        None => (cx.editor.document.cursor().row, cx.count().max(2) - 1),
+    };
+    for _ in 0..joins {
+        let joined = if tidy {
+            cx.editor.join_line(row)
+        } else {
+            cx.editor.join_line_raw(row)
+        };
+        if !joined {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// `<C-w>` and `<C-a>` as they arrive after `<C-r>`.
+const CTRL_W: char = '\u{17}';
+const CTRL_A: char = '\u{1}';
+
 /// `<C-r>{register}`: in insert mode, inserts the register's text as it is
 /// (no auto-indent; a line register brings its line break). On the `:` and
-/// `/` lines, inserts its first line.
+/// `/` lines, inserts its first line; there `<C-r><C-w>` and `<C-r><C-a>`
+/// insert the word or WORD under the cursor.
 fn insert_register(cx: &mut Context) -> CommandResult {
     let name = cx.char_arg.ok_or("missing register name")?;
+    if matches!(name, CTRL_W | CTRL_A) {
+        if cx.editor.mode() != Mode::Command {
+            return Ok(());
+        }
+        let word = cx
+            .editor
+            .word_under_cursor(name == CTRL_A)
+            .ok_or("No word under the cursor")?;
+        word.chars().for_each(|c| cx.editor.insert_text_char(c));
+        return Ok(());
+    }
+    if name.is_control() {
+        return Ok(());
+    }
     let register = cx
         .editor
         .read_register(Some(name))?

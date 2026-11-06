@@ -162,6 +162,14 @@ pub const MATCHING_BRACKET: Motion = Motion::new(
     |b, p, _| motion::matching_bracket(b, p),
 )
 .jump();
+/// `{count}%`: the line `count` percent of the way through the file.
+/// Reached through `%` with a count, not bound directly.
+pub const FILE_PERCENT: Motion = Motion::new("goto_percent", "", Linewise, |b, _, a| {
+    let percent = a.count?.min(100);
+    let row = (percent * b.line_count()).div_ceil(100).max(1) - 1;
+    Some(line_start(b, row))
+})
+.jump();
 pub const NEXT_PARAGRAPH: Motion = Motion::new(
     "goto_next_paragraph",
     "Move to the empty line after the paragraph (})",
@@ -275,6 +283,23 @@ pub fn register(r: &mut CommandRegistry) {
             run(cx, motion, MotionArgs::with_count(cx.count))
         });
     }
+
+    // `%` with a count goes to that percent of the file instead (`50%`).
+    r.register(
+        MATCHING_BRACKET.name,
+        "Jump to the matching bracket (%), or with a count to that percent of the file (50%)",
+        |cx| {
+            let count = cx
+                .count
+                .or_else(|| cx.editor.pending_operator().and_then(|p| p.count));
+            let motion = if count.is_some() {
+                &FILE_PERCENT
+            } else {
+                &MATCHING_BRACKET
+            };
+            run(cx, motion, MotionArgs::with_count(cx.count))
+        },
+    );
 
     for motion in CHAR_SEARCHES {
         r.register(motion.name, motion.description, move |cx| {

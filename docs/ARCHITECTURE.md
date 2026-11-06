@@ -755,17 +755,15 @@ status, branches and history.
 - Visual block mode: `>`/`<` shift whole lines (Vim shifts from the
   block's left edge), a tab partly inside a block is taken whole (Vim splits
   it into spaces), and `gv` doesn't remember `$`.
-- `~` in a replacement (the previous replacement).
 - Alt keys that *are* bound can't be told apart from a fast Esc then that
   key (terminals send the same bytes), so binding `<A-j>` in insert mode
   means a quick `<Esc>j` runs it.
 - Language-aware indentation (tree-sitter indent queries), and `=` to
   re-indent. Auto-indent currently copies the previous line and reacts to
   brackets only.
-- `N%`, `gJ` (join without spaces), and `.` repeating a visual operation on
-  the same amount of text, as Vim does.
-- `"=` (the expression register), and `<C-r><C-w>` (the word under the
-  cursor) on the `:` line.
+- `.` repeating a visual operation on the same amount of text, as Vim does
+  (it replays the keys, so it repeats the motion instead).
+- `"=` (the expression register).
 - Window-local options, and a configurable status line format (Vim's
   `statusline` `%`-items).
 - File listing runs on the UI thread. It's capped by `max-files`, but very

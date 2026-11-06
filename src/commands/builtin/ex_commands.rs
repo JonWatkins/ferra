@@ -203,19 +203,26 @@ fn substitute(cx: &mut Context) -> CommandResult {
     if cx.arg_text.trim().is_empty() {
         return repeat_substitute(cx, false);
     }
-    let parsed = parse_substitute(cx.arg_text)?;
+    let previous = cx.editor.last_replacement.clone();
+    let parsed = parse_substitute(cx.arg_text, previous.as_deref())?;
     cx.editor.last_substitute = Some(cx.arg_text.to_string());
+    cx.editor.last_replacement = Some(parsed.replacement.clone());
     run_substitute(cx, parsed)
 }
 
-/// The last `:s`, parsed again.
+/// The last `:s`, parsed again, with the replacement it actually used (so
+/// a `~` in it isn't expanded a second time).
 fn last_substitute(cx: &Context) -> Result<Substitute, String> {
     let text = cx
         .editor
         .last_substitute
         .as_deref()
         .ok_or("No previous substitute regular expression")?;
-    parse_substitute(text)
+    let mut parsed = parse_substitute(text, None)?;
+    if let Some(replacement) = &cx.editor.last_replacement {
+        parsed.replacement = replacement.clone();
+    }
+    Ok(parsed)
 }
 
 /// `&` / `:&` (no flags) and `:&&` (same flags): the last `:s` again.
