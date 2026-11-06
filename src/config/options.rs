@@ -18,6 +18,9 @@ pub struct EditorOptions {
     pub cursorline: bool,
     pub scroll_off: usize,
     pub syntax_highlighting: bool,
+    /// Milliseconds to wait for the rest of a key sequence that's also a
+    /// prefix of a longer one (`jk` in insert mode). 0 waits forever.
+    pub key_timeout: u64,
     /// How the system clipboard is used: "registers", "unnamed" or "off".
     pub clipboard: ClipboardMode,
     pub cursor_shape: CursorShapes,

@@ -52,6 +52,20 @@ crossterm KeyEvent
   → Editor::enforce_cursor_rules    (normal mode can't sit past the last char)
 ```
 
+Two things happen around this. Terminals send Alt+x as Esc then x, so Esc
+quickly followed by a key arrives as Alt+key. `App::split_alt` turns an
+Alt key with no binding in the current mode back into Esc and the key
+(Neovim does the same), before it's recorded for macros.
+
+And when a key sequence is left half typed, the event loop polls with a
+deadline (`editor.key-timeout`, from the last key) instead of blocking.
+When it passes, `InputHandler::timeout` settles the sequence: keys bound on
+their own (`g` alongside `gg`) run (`Keymap::command_at`); in insert and
+command mode the first key is typed as text and the rest looked up again;
+otherwise (`g` in normal mode) it keeps waiting, like Vim. Counts,
+registers and `f`-style arguments never time out. Keys and timeouts share
+`App::tracked`, which records sequences for `.`.
+
 The UI only *reads* state. All mutation goes through commands, apart from
 literal text insertion.
 
@@ -490,10 +504,9 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 - Search as a motion for operators (`d/foo`).
 - `:s` follow-ups: the `c` (confirm) flag, `&`/`:&&` to repeat the last
   substitution, and `:g/pattern/command`.
-- `Esc` immediately followed by another key in the same terminal read is
-  parsed as Alt+key (this is how terminals encode Alt). Vim uses a short
-  `ttimeout` to tell them apart; we don't yet. It only shows up with very
-  fast input, such as pasted keystrokes.
+- Alt keys that *are* bound can't be told apart from a fast Esc then that
+  key (terminals send the same bytes), so binding `<A-j>` in insert mode
+  means a quick `<Esc>j` runs it.
 - `.` with a count only replaces a count typed *before* the change: after
   `d2w`, `3.` replays as `3d2w` (six words) where Vim deletes three.
 - Language-aware indentation (tree-sitter indent queries), and `=` to
@@ -519,5 +532,6 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
   files. Language injections (e.g. regex or SQL inside strings) are turned
   off.
 - More languages, and choosing a language for files without an extension.
-- Timeout for ambiguous key sequences such as `jk` in insert mode (Vim's
-  `timeoutlen`).
+- `.` and macros replay keys without timing, so a short binding that ran
+  because the key timeout passed (`g` alongside `gg`) replays as waiting
+  for the longer one. Text typed by a timeout in insert mode replays fine.

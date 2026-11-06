@@ -6,7 +6,7 @@ mod repeat;
 mod terminal;
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use repeat::ChangeRecorder;
 
@@ -18,7 +18,7 @@ use crate::commands::{CommandRegistry, Invocation};
 use crate::config::{Config, Theme};
 use crate::editor::{DocumentId, Editor, Message, Mode};
 use crate::events;
-use crate::input::{InputHandler, KeyPress, Keymap, Outcome};
+use crate::input::{InputHandler, KeyCode, KeyPress, Keymap, Lookup, Outcome};
 use crate::plugins::PluginHost;
 use crate::syntax::SyntaxEngine;
 use crate::ui::{self, Views};
@@ -196,6 +196,8 @@ impl App {
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         terminal::enable_bracketed_paste()?;
         let mut shape = None;
+        // When a half-typed key sequence gives up waiting.
+        let mut deadline: Option<Instant> = None;
         while !self.should_quit() {
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -207,6 +209,15 @@ impl App {
             if shape != Some(wanted) {
                 terminal::set_cursor_shape(wanted)?;
                 shape = Some(wanted);
+            }
+
+            // Wait for input, or for a half-typed key sequence to time out.
+            if let Some(due) = deadline
+                && !event::poll(due.saturating_duration_since(Instant::now()))?
+            {
+                self.handle_key_timeout();
+                deadline = None;
+                continue;
             }
 
             // Handle every key that's already waiting before drawing again,
@@ -221,6 +232,7 @@ impl App {
                 self.handle_event(event::read()?);
                 handled += 1;
             }
+            deadline = self.key_deadline();
         }
         terminal::disable_bracketed_paste()?;
         terminal::restore_cursor_shape()
@@ -333,22 +345,65 @@ impl App {
         );
     }
 
+    /// When the key timeout should end the sequence being typed, if any.
+    fn key_deadline(&self) -> Option<Instant> {
+        let millis = self.editor.options.key_timeout;
+        (millis > 0 && self.input.has_pending_keys())
+            .then(|| Instant::now() + Duration::from_millis(millis))
+    }
+
     /// Handles one key press. Public so tests can drive the app directly.
     pub fn handle_key(&mut self, key: KeyPress) {
+        if let Some([esc, key]) = self.split_alt(key) {
+            self.handle_key(esc);
+            self.handle_key(key);
+            return;
+        }
         self.record_macro_key(key);
         if self.replaying {
             self.process_key(key);
             return;
         }
+        self.tracked(Some(key), |app| app.process_key(key));
+    }
 
+    /// The key timeout passed with a key sequence half typed (see
+    /// [`InputHandler::timeout`]). Public so tests can trigger it.
+    pub fn handle_key_timeout(&mut self) {
+        self.tracked(None, |app| {
+            let outcomes = app.input.timeout(app.editor.mode(), &app.keymap);
+            app.apply_outcomes(outcomes);
+        });
+    }
+
+    /// Terminals send Alt+x as Esc then x, so Esc quickly followed by a key
+    /// (`<Esc>` then `j`, typed fast or pasted) arrives as Alt+j. Like
+    /// Neovim, an Alt key with no binding in this mode is taken as Esc
+    /// followed by the key.
+    fn split_alt(&self, key: KeyPress) -> Option<[KeyPress; 2]> {
+        if !key.modifiers.alt || self.keymap.lookup(self.editor.mode(), &[key]) != Lookup::NoMatch {
+            return None;
+        }
+        let mut modifiers = key.modifiers;
+        modifiers.alt = false;
+        Some([
+            KeyPress::plain(KeyCode::Esc),
+            KeyPress::new(key.code, modifiers),
+        ])
+    }
+
+    /// Runs `handle`, recording keys for `.` and firing change events.
+    fn tracked(&mut self, key: Option<KeyPress>, handle: impl FnOnce(&mut Self)) {
         let edits_before = self.editor.document.edit_count();
 
         // Record each sequence from idle to idle, for `.`.
         if self.is_idle() {
             self.changes.begin(edits_before);
         }
-        self.changes.push(key);
-        self.process_key(key);
+        if let Some(key) = key {
+            self.changes.push(key);
+        }
+        handle(self);
         // `:` commands and picker choices aren't repeated by `.`.
         if matches!(self.editor.mode(), Mode::Command | Mode::Picker) {
             self.changes.note_command_line();
@@ -395,7 +450,12 @@ impl App {
     }
 
     fn process_key(&mut self, key: KeyPress) {
-        for outcome in self.input.handle(key, self.editor.mode(), &self.keymap) {
+        let outcomes = self.input.handle(key, self.editor.mode(), &self.keymap);
+        self.apply_outcomes(outcomes);
+    }
+
+    fn apply_outcomes(&mut self, outcomes: Vec<Outcome>) {
+        for outcome in outcomes {
             match outcome {
                 Outcome::Execute {
                     command,

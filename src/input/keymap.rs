@@ -38,7 +38,8 @@ impl Keymap {
     /// Binds `keys` in `mode` to `command`.
     ///
     /// If a sequence is both bound and a prefix of a longer binding (e.g. `g`
-    /// and `gg`), the longer binding wins and the shorter one is unreachable.
+    /// and `gg`), lookups wait for the longer one; the shorter one runs when
+    /// the key timeout passes (see [`Keymap::command_at`]).
     pub fn bind(&mut self, mode: Mode, keys: &[KeyPress], command: impl Into<String>) {
         let mut node = self.modes.entry(mode).or_default();
         for key in keys {
@@ -64,6 +65,16 @@ impl Keymap {
         } else {
             Lookup::NoMatch
         }
+    }
+
+    /// The command bound to exactly `keys`, even if longer bindings start
+    /// with them. Used when the key timeout passes mid-sequence.
+    pub fn command_at(&self, mode: Mode, keys: &[KeyPress]) -> Option<&str> {
+        let mut node = self.modes.get(&mode)?;
+        for key in keys {
+            node = node.children.get(key)?;
+        }
+        node.command.as_deref()
     }
 
     /// Every `(mode, command)` pair that is bound, for validation.
@@ -195,5 +206,14 @@ mod tests {
         let mut bound = map.bound_commands();
         bound.sort();
         assert_eq!(bound, vec![(Mode::Normal, "top"), (Mode::Insert, "normal")]);
+    }
+
+    #[test]
+    fn command_at_finds_a_binding_hidden_by_a_longer_one() {
+        let map = keymap(&[(Mode::Normal, "g", "short"), (Mode::Normal, "gg", "long")]);
+        assert_eq!(map.lookup(Mode::Normal, &keys("g")), Lookup::Pending);
+        assert_eq!(map.command_at(Mode::Normal, &keys("g")), Some("short"));
+        assert_eq!(map.command_at(Mode::Normal, &keys("x")), None);
+        assert_eq!(map.command_at(Mode::Insert, &keys("g")), None);
     }
 }

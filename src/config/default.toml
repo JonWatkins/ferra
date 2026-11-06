@@ -19,6 +19,11 @@ cursorline = true
 scroll-off = 5
 # Colour code with tree-sitter (Rust, TOML, JSON, Python, JavaScript).
 syntax-highlighting = true
+# Milliseconds to wait for the next key of a sequence before giving up: a
+# half-typed insert-mode binding (the j of jk) is typed as text, and a key
+# bound on its own and as a prefix (g and gg) runs the shorter binding.
+# 0 waits forever.
+key-timeout = 1000
 # The system clipboard: "registers" (only "+ and "* use it), "unnamed"
 # (every yank and delete goes to it, and p pastes from it) or "off".
 clipboard = "registers"

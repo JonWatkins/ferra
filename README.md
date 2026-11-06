@@ -195,6 +195,7 @@ expand-tab = true           # indent with spaces; false for tabs
 auto-indent = true          # new lines keep indentation
 line-numbers = "absolute"   # "absolute" | "relative" | "none"
 scroll-off = 8
+key-timeout = 500           # ms to wait for the rest of a sequence (j of jk)
 
 [editor.cursor-shape]
 insert = "underline"
@@ -209,6 +210,13 @@ insert = "underline"
 "<C-q>" = "quit"
 "x" = ""                    # unbind a default
 ```
+
+With `jk` bound in insert mode, typing `j` waits up to `key-timeout`
+milliseconds for the `k`; after that the `j` is typed as text. A key bound
+both on its own and as the start of a longer binding (`g` and `gg`) runs the
+short binding when the timeout passes. Alt keys you haven't bound act as
+Esc followed by the key, since terminals send them the same way, so a fast
+`<Esc>j` is never mistaken for Alt+j.
 
 ### Hooks
 

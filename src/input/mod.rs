@@ -147,6 +147,52 @@ impl InputHandler {
         }
     }
 
+    /// Keys of a sequence are waiting for more (`g` of `gg`), as opposed to
+    /// a count, register or character argument, which wait forever.
+    pub fn has_pending_keys(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// The key timeout passed with a sequence half typed. If the keys so far
+    /// are bound on their own (`g` with `gg` also bound), that runs. In
+    /// insert and command mode the first key is typed as text and the rest
+    /// are looked up again, so with `jk` bound, `j` then a pause types "j".
+    /// Otherwise (`g` in normal mode) it keeps waiting, like Vim.
+    pub fn timeout(&mut self, mode: Mode, keymap: &Keymap) -> Vec<Outcome> {
+        if self.pending.is_empty() {
+            return Vec::new();
+        }
+        if let Some(command) = keymap.command_at(mode, &self.pending) {
+            let outcome = Outcome::Execute {
+                command: command.to_string(),
+                count: self.count,
+                register: self.register,
+                char_arg: None,
+            };
+            self.last_sequence = self.typed_display();
+            self.reset();
+            return vec![outcome];
+        }
+        if !mode.accepts_text() {
+            return Vec::new();
+        }
+        let keys = std::mem::take(&mut self.pending);
+        self.reset();
+        let (first, rest) = keys.split_first().expect("pending is non-empty");
+        let mut outcomes: Vec<Outcome> = first
+            .as_text()
+            .map(Outcome::InsertChar)
+            .into_iter()
+            .collect();
+        for key in rest {
+            let more = self.handle(*key, mode, keymap);
+            outcomes.extend(more.into_iter().filter(|o| *o != Outcome::Pending));
+        }
+        // The time is up for the rest too.
+        outcomes.extend(self.timeout(mode, keymap));
+        outcomes
+    }
+
     /// Clears any partially typed register, count or key sequence.
     pub fn reset(&mut self) {
         self.pending.clear();
@@ -483,5 +529,68 @@ mod tests {
         let mut h = InputHandler::default();
         feed(&mut h, Mode::Normal, "3g");
         assert_eq!(h.pending_display(), "3g");
+    }
+
+    #[test]
+    fn timeout_types_a_half_finished_insert_binding_as_text() {
+        let mut handler = InputHandler::default();
+        assert_eq!(last(&mut handler, Mode::Insert, "j"), Outcome::Pending);
+        assert!(handler.has_pending_keys());
+        assert_eq!(
+            handler.timeout(Mode::Insert, &keymap()),
+            vec![Outcome::InsertChar('j')]
+        );
+        assert!(handler.is_idle());
+    }
+
+    #[test]
+    fn timeout_runs_a_binding_that_is_also_a_prefix() {
+        let mut map = keymap();
+        map.bind(Mode::Normal, &parse_keys("g").unwrap(), "goto_file_end");
+        let mut handler = InputHandler::default();
+        handler.handle(KeyPress::plain(KeyCode::Char('3')), Mode::Normal, &map);
+        handler.handle(KeyPress::plain(KeyCode::Char('g')), Mode::Normal, &map);
+        assert_eq!(
+            handler.timeout(Mode::Normal, &map),
+            vec![execute("goto_file_end", Some(3))],
+            "the count carries over"
+        );
+        assert_eq!(handler.last_sequence, "3g");
+    }
+
+    #[test]
+    fn timeout_keeps_waiting_on_a_normal_mode_prefix() {
+        let mut handler = InputHandler::default();
+        feed(&mut handler, Mode::Normal, "g");
+        assert_eq!(handler.timeout(Mode::Normal, &keymap()), vec![]);
+        assert_eq!(
+            last(&mut handler, Mode::Normal, "g"),
+            execute("goto_file_start", None),
+            "gg still completes"
+        );
+    }
+
+    #[test]
+    fn timeout_with_nothing_pending_does_nothing() {
+        let mut handler = InputHandler::default();
+        feed(&mut handler, Mode::Normal, "3");
+        assert!(!handler.has_pending_keys(), "a count isn't a key sequence");
+        assert_eq!(handler.timeout(Mode::Normal, &keymap()), vec![]);
+    }
+
+    #[test]
+    fn timeout_retries_the_rest_of_a_longer_sequence() {
+        let mut map = keymap();
+        map.bind(Mode::Insert, &parse_keys("abc").unwrap(), "normal_mode");
+        map.bind(Mode::Insert, &parse_keys("bcd").unwrap(), "normal_mode");
+        let mut handler = InputHandler::default();
+        for c in "ab".chars() {
+            handler.handle(KeyPress::plain(KeyCode::Char(c)), Mode::Insert, &map);
+        }
+        assert_eq!(
+            handler.timeout(Mode::Insert, &map),
+            vec![Outcome::InsertChar('a'), Outcome::InsertChar('b')],
+            "`b` starts `bcd`, but its time is up too"
+        );
     }
 }
