@@ -1,6 +1,7 @@
 //! Listing the files in a project, for the file picker.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use ignore::WalkBuilder;
 
@@ -32,11 +33,32 @@ pub struct FileList {
     pub truncated: bool,
 }
 
-/// Lists the files under `root` (recursively), relative to it.
+/// Lists the files under `root` (recursively), relative to it, sorted.
 ///
 /// The `.git` directory is always skipped. Unreadable entries are skipped
 /// rather than failing the whole listing.
 pub fn list_files(root: &Path, options: &WalkOptions) -> FileList {
+    let mut files = Vec::new();
+    let truncated = walk_files(root, options, &AtomicBool::new(false), |batch| {
+        files.extend(batch);
+    });
+    files.sort();
+    FileList { files, truncated }
+}
+
+/// How many paths `walk_files` gathers before handing them over.
+const BATCH: usize = 256;
+
+/// Walks the files under `root` like [`list_files`], handing them to
+/// `on_batch` a few hundred at a time (relative to `root`, in directory
+/// order) so a caller on another thread can show them as they come. Stops
+/// early once `cancel` is set. Returns whether `max_files` cut it short.
+pub fn walk_files(
+    root: &Path,
+    options: &WalkOptions,
+    cancel: &AtomicBool,
+    mut on_batch: impl FnMut(Vec<PathBuf>),
+) -> bool {
     let walker = WalkBuilder::new(root)
         .hidden(!options.hidden)
         .git_ignore(options.git_ignore)
@@ -47,23 +69,34 @@ pub fn list_files(root: &Path, options: &WalkOptions) -> FileList {
         // Honour .gitignore even outside a git repository.
         .require_git(false)
         .filter_entry(|entry| entry.file_name() != ".git")
+        .sort_by_file_name(|a, b| a.cmp(b))
         .build();
 
-    let mut files = Vec::new();
+    let mut batch = Vec::with_capacity(BATCH);
+    let mut found = 0;
     let mut truncated = false;
     for entry in walker.flatten() {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
-        if files.len() == options.max_files {
+        if found == options.max_files {
             truncated = true;
             break;
         }
         let relative = entry.path().strip_prefix(root).unwrap_or(entry.path());
-        files.push(relative.to_path_buf());
+        batch.push(relative.to_path_buf());
+        found += 1;
+        if batch.len() == BATCH {
+            on_batch(std::mem::replace(&mut batch, Vec::with_capacity(BATCH)));
+        }
     }
-    files.sort();
-    FileList { files, truncated }
+    if !batch.is_empty() {
+        on_batch(batch);
+    }
+    truncated
 }
 
 #[cfg(test)]
@@ -148,5 +181,32 @@ mod tests {
     fn missing_root_gives_an_empty_list() {
         let list = list_files(Path::new("/definitely/not/here"), &WalkOptions::default());
         assert!(list.files.is_empty());
+    }
+
+    #[test]
+    fn walking_hands_over_batches_and_stops_when_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..600 {
+            fs::write(dir.path().join(format!("f{i:03}")), "").unwrap();
+        }
+        let mut sizes = Vec::new();
+        let truncated = walk_files(
+            dir.path(),
+            &WalkOptions::default(),
+            &AtomicBool::new(false),
+            |b| {
+                sizes.push(b.len());
+            },
+        );
+        assert_eq!(sizes, [256, 256, 88]);
+        assert!(!truncated);
+
+        let cancel = AtomicBool::new(false);
+        let mut seen = 0;
+        walk_files(dir.path(), &WalkOptions::default(), &cancel, |b| {
+            seen += b.len();
+            cancel.store(true, Ordering::Relaxed);
+        });
+        assert_eq!(seen, 256, "nothing after the cancel");
     }
 }

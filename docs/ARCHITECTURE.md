@@ -167,12 +167,22 @@ it when insert mode ends, if anything was typed. `<C-r>{register}`
 in insert mode it inserts the text exactly, without auto-indent, and on the
 `:`/`/` line the first line.
 
-The file picker lists files with `files::list_files`, which uses the `ignore`
-crate (ripgrep's walker): `.gitignore`, `.ignore` and git excludes are
-honoured even outside a repository, hidden files are optional, `.git` is
+The file picker lists files with `files::walk_files`, which uses the
+`ignore` crate (ripgrep's walker): `.gitignore`, `.ignore` and git excludes
+are honoured even outside a repository, hidden files are optional, `.git` is
 never listed, and listing stops at `max-files` (`[editor.file-picker]`). The
 fuzzy matcher gives matches in a path's file name extra weight, so `main`
 finds `src/main.rs` before `domain/lib.rs`.
+
+The listing runs in the background. The `file_picker` command opens an
+empty picker marked as loading a job number and leaves a
+`FileListRequest`; the app (`app/background.rs`) walks the tree on a thread
+that sends batches of a few hundred paths through a channel. The event loop
+polls for them every 30 ms while a job runs (and blocks on input as usual
+otherwise), and `Picker::extend` matches only the new items against the
+query and keeps the highlighted item. Updates for a job whose picker has
+gone are dropped, and closing the picker sets a flag the walker checks, so
+it stops.
 
 ## Syntax highlighting
 
@@ -657,11 +667,13 @@ terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
 
-1. **Background work and an event channel.** Today the event loop only
-   waits for terminal input. LSP replies, agent output and a shell's output
-   all arrive in the background, so the loop should also wait on a channel
-   that background tasks send to (each message handled like a key: it can
-   edit, fire hooks and request a redraw). Plugins would use the same
+1. **Background work and an event channel.** Started: `app/background.rs`
+   runs jobs on threads that report through a channel the event loop
+   checks while they run; the file picker's listing is the first job. LSP
+   replies, agent output and a shell's output would be more kinds of
+   update (each handled like a key: it can edit, fire hooks and request a
+   redraw). Long-lived jobs (a language server) will want the loop woken
+   by the channel rather than polled, and plugins would use the same
    channel for timers and jobs.
 2. **Floating windows and scratch buffers.** The picker is already a popup
    over the editor; generalise it into floats with a position, size, border
@@ -789,8 +801,6 @@ status, branches and history.
 - `"=` (the expression register).
 - Window-local options, and a configurable status line format (Vim's
   `statusline` `%`-items).
-- File listing runs on the UI thread. It's capped by `max-files`, but very
-  large trees could be walked in the background and streamed into the picker.
 - External changes are only noticed on focus, buffer switches and
   `:checktime`, not by watching files; and by mtime only, so a change within
   the filesystem's timestamp resolution of our own write can be missed.

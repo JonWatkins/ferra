@@ -253,6 +253,7 @@ fn space_f_lists_project_files_respecting_gitignore() {
     // Tests run from the crate root, so this lists this repository.
     let mut app = app();
     keys(&mut app, "<Space>f");
+    app.wait_for_background();
     assert_eq!(app.editor().mode(), Mode::Picker);
     let picker = app.editor().picker().unwrap();
     let labels: Vec<&str> = picker
@@ -283,6 +284,7 @@ fn file_picker_opens_the_chosen_file_in_a_new_buffer() {
         &mut app,
         &format!(":file_picker {}<CR>", root.replace('<', "<lt>")),
     );
+    app.wait_for_background();
     let screen = render(&mut app, 80, 20);
     assert!(screen.rows.join("\n").contains("Files"));
 

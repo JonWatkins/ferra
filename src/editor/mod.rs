@@ -49,6 +49,18 @@ pub struct NormalRun {
     pub at: Position,
 }
 
+/// The file picker asking the app to list files in the background and add
+/// them to the picker loading job `job`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileListRequest {
+    pub job: u64,
+    pub root: std::path::PathBuf,
+    /// The directory the picker was given, which opened files are under;
+    /// `None` for the current directory (files open by their relative path).
+    pub base: Option<std::path::PathBuf>,
+    pub options: crate::files::WalkOptions,
+}
+
 /// A request from `q`/`@` for the app, which records and replays keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MacroRequest {
@@ -91,6 +103,10 @@ pub struct Editor {
     confirm: Option<confirm::ConfirmSession>,
     /// `:normal` runs waiting for the app.
     normal_queue: Vec<NormalRun>,
+    /// A file listing waiting for the app to start.
+    file_list_request: Option<FileListRequest>,
+    /// The last background job number handed out.
+    last_job: u64,
     /// Keeps the undo step open across commands (`:normal` over a range).
     undo_held: bool,
     /// What's been typed in the current insert session, for the `.`
@@ -314,6 +330,21 @@ impl Editor {
     pub fn language_of(&self, document: &Document) -> Option<&str> {
         self.languages
             .detect(document.path(), &document.buffer().line(0))
+    }
+
+    /// A number for a new background job.
+    pub fn new_job_id(&mut self) -> u64 {
+        self.last_job += 1;
+        self.last_job
+    }
+
+    /// Asks the app to list files in the background for the file picker.
+    pub fn request_file_list(&mut self, request: FileListRequest) {
+        self.file_list_request = Some(request);
+    }
+
+    pub fn take_file_list_request(&mut self) -> Option<FileListRequest> {
+        self.file_list_request.take()
     }
 
     /// Queues keys for `:normal` to run at `at`.

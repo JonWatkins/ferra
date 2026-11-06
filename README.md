@@ -162,7 +162,7 @@ lines.
 | Keys / command | Action |
 |----------------|--------|
 | `<Space>b`, `:ls` | Buffer picker (starts on the previous buffer, so `<Space>b<CR>` toggles) |
-| `<Space>f`, `:files [dir]` | File picker: fuzzy-find a file under the current directory (respects `.gitignore`) |
+| `<Space>f`, `:files [dir]` | File picker: fuzzy-find a file under the current directory (respects `.gitignore`). It opens at once and fills in as files are found, so you can start typing straight away |
 | `<Space>p` | Command palette: every command, with its description |
 | `<Space>r`, `:reg` | Register picker: what each register holds; choosing one pastes it after the cursor |
 | `]b` `[b`, `:bn` `:bp` | Next / previous buffer |

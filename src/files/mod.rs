@@ -10,7 +10,7 @@ mod walk;
 
 pub use complete::{complete_path, complete_path_in};
 pub use error::FileError;
-pub use walk::{FileList, WalkOptions, list_files};
+pub use walk::{FileList, WalkOptions, list_files, walk_files};
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};

@@ -67,7 +67,12 @@ impl Widget for PickerView<'_> {
             .border_set(border::ROUNDED)
             .border_style(self.theme.get("ui.popup.border"))
             .title(Span::styled(
-                format!(" {} ", picker.title()),
+                // Still filling in from the background (the file listing).
+                if picker.loading().is_some() {
+                    format!(" {} (listing…) ", picker.title())
+                } else {
+                    format!(" {} ", picker.title())
+                },
                 self.theme.get("ui.popup.title"),
             ))
             .title_bottom(Line::from(count).right_aligned());

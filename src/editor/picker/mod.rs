@@ -22,6 +22,24 @@ pub enum PickerAction {
     Paste(char),
 }
 
+impl PickerItem {
+    /// A file found under `base` (the directory given to the file picker),
+    /// labelled with its path relative to it. Without a `base`, it's under
+    /// the current directory and opens by its relative path, which keeps
+    /// buffer names short.
+    pub fn file(relative: PathBuf, base: Option<&std::path::Path>) -> Self {
+        let path = match base {
+            Some(dir) => dir.join(&relative),
+            None => relative.clone(),
+        };
+        Self {
+            label: relative.to_string_lossy().into_owned(),
+            detail: String::new(),
+            action: PickerAction::OpenFile(path),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickerItem {
     /// The text that's matched and shown.
@@ -51,6 +69,8 @@ pub struct Picker {
     /// Long labels lose their end rather than their start (the default,
     /// which suits paths).
     keep_label_start: bool,
+    /// The background job still adding items (the file listing), if any.
+    loading: Option<u64>,
 }
 
 impl Picker {
@@ -62,9 +82,50 @@ impl Picker {
             matches: Vec::new(),
             selected: 0,
             keep_label_start: false,
+            loading: None,
         };
         picker.refilter();
         picker
+    }
+
+    /// Marks the picker as filled in by background job `job`, which adds
+    /// items with [`Picker::extend`] until [`Picker::finish_loading`].
+    pub fn loading_from(mut self, job: u64) -> Self {
+        self.loading = Some(job);
+        self
+    }
+
+    /// The background job still adding items, if any.
+    pub fn loading(&self) -> Option<u64> {
+        self.loading
+    }
+
+    pub fn finish_loading(&mut self) {
+        self.loading = None;
+    }
+
+    /// Adds items (from a background listing). Only the new ones are
+    /// matched against the query, and the highlighted item stays
+    /// highlighted.
+    pub fn extend(&mut self, items: Vec<PickerItem>) {
+        let selected = self.matches.get(self.selected).map(|m| m.index);
+        let first_new = self.items.len();
+        self.items.extend(items);
+        for index in first_new..self.items.len() {
+            if let Some(FuzzyMatch { score, positions }) =
+                fuzzy_match(&self.query, &self.items[index].label)
+            {
+                self.matches.push(PickerMatch {
+                    index,
+                    positions,
+                    score,
+                });
+            }
+        }
+        self.sort_matches();
+        self.selected = selected
+            .and_then(|index| self.matches.iter().position(|m| m.index == index))
+            .unwrap_or(0);
     }
 
     /// Starts with the given item selected (e.g. the alternate buffer), if
@@ -157,10 +218,14 @@ impl Picker {
                 })
             })
             .collect();
-        // Best score first; ties keep the items' own order.
+        self.sort_matches();
+        self.selected = 0;
+    }
+
+    /// Best score first; ties keep the items' own order.
+    fn sort_matches(&mut self) {
         self.matches
             .sort_by(|a, b| b.score.cmp(&a.score).then(a.index.cmp(&b.index)));
-        self.selected = 0;
     }
 }
 
@@ -241,5 +306,28 @@ mod tests {
     fn can_start_on_a_chosen_item() {
         let p = picker(&["a", "b", "c"]).with_selected(&PickerAction::RunCommand("c".into()));
         assert_eq!(p.selected_item().unwrap().label, "c");
+    }
+
+    #[test]
+    fn extending_matches_new_items_and_keeps_the_selection() {
+        let mut p = picker(&["write", "quit"]).loading_from(7);
+        assert_eq!(p.loading(), Some(7));
+        p.push('w');
+        assert_eq!(labels(&p), ["write"]);
+        p.extend(vec![command("wrap"), command("undo"), command("aw")]);
+        assert_eq!(
+            labels(&p),
+            ["write", "wrap", "aw"],
+            "only matches added, in order"
+        );
+        p.move_selection(1);
+        p.extend(vec![command("w")]);
+        assert_eq!(
+            p.selected_item().unwrap().label,
+            "wrap",
+            "selection stays put"
+        );
+        p.finish_loading();
+        assert_eq!(p.loading(), None);
     }
 }

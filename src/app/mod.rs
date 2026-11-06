@@ -1,6 +1,7 @@
 //! Application wiring: owns the editor, commands, keymap and UI state, and
 //! runs the event loop.
 
+mod background;
 mod macros;
 mod normal;
 mod repeat;
@@ -28,6 +29,10 @@ use crate::ui::{self, Views};
 /// during a very long paste.
 const MAX_KEYS_PER_FRAME: usize = 256;
 
+/// How often the event loop checks for background results while a job is
+/// running (it blocks on input when nothing is).
+const BACKGROUND_POLL: Duration = Duration::from_millis(30);
+
 pub struct App {
     editor: Editor,
     commands: CommandRegistry,
@@ -43,6 +48,8 @@ pub struct App {
     plugins: Option<PluginHost>,
     /// True while `.` feeds the last change back in, so it isn't re-recorded.
     replaying: bool,
+    /// Work running on other threads (the file picker's listing).
+    background: background::Background,
 }
 
 impl Default for App {
@@ -78,6 +85,7 @@ impl App {
             macros: macros::MacroState::default(),
             plugins: None,
             replaying: false,
+            background: background::Background::default(),
         };
         let mode = app.editor.options.clipboard;
         app.editor
@@ -215,12 +223,30 @@ impl App {
                 shape = Some(wanted);
             }
 
-            // Wait for input, or for a half-typed key sequence to time out.
-            if let Some(due) = deadline
-                && !event::poll(due.saturating_duration_since(Instant::now()))?
-            {
-                self.handle_key_timeout();
-                deadline = None;
+            // Wait for input, for a half-typed key sequence to time out, or
+            // (while a background job runs) for its results.
+            let wait = match (deadline, self.background.busy()) {
+                (Some(due), busy) => {
+                    let left = due.saturating_duration_since(Instant::now());
+                    Some(if busy {
+                        left.min(BACKGROUND_POLL)
+                    } else {
+                        left
+                    })
+                }
+                (None, true) => Some(BACKGROUND_POLL),
+                (None, false) => None,
+            };
+            let input_ready = match wait {
+                Some(wait) => event::poll(wait)?,
+                None => true,
+            };
+            self.handle_background();
+            if !input_ready {
+                if deadline.is_some_and(|due| Instant::now() >= due) {
+                    self.handle_key_timeout();
+                    deadline = None;
+                }
                 continue;
             }
 
@@ -559,6 +585,7 @@ impl App {
         if let Some(request) = self.editor.take_macro_request() {
             self.handle_macro_request(request);
         }
+        self.start_background_requests();
         let runs = self.editor.take_normal_queue();
         if !runs.is_empty() {
             self.run_normal(runs);
