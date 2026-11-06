@@ -374,7 +374,8 @@ pub(super) fn run(cx: &mut Context, motion: &'static Motion, args: MotionArgs) -
         return Ok(());
     };
     let register = pending.register.or(cx.register);
-    cx.editor.apply_operator(pending.operator, range, register)
+    cx.editor
+        .apply_operator_over(pending.operator, range, register, motion.jump)
 }
 
 fn move_cursor(editor: &mut Editor, motion: &Motion, args: MotionArgs) {

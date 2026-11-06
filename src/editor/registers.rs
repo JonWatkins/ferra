@@ -6,6 +6,8 @@
 //! | `a`-`z`  | Named. Writing also updates `"`. |
 //! | `A`-`Z`  | Appends to the lowercase register. |
 //! | `0`      | The last yank into the unnamed register. |
+//! | `1`-`9`  | Deletes of a line or more, newest first: each shifts the rest down. |
+//! | `-`      | The last delete within one line. |
 //! | `_`      | Black hole. Writes are discarded. |
 //! | `+`, `*` | The system clipboard (both the same here). |
 
@@ -18,6 +20,7 @@ use crate::clipboard::Clipboard;
 
 pub const UNNAMED: char = '"';
 pub const YANK: char = '0';
+pub const SMALL_DELETE: char = '-';
 pub const BLACK_HOLE: char = '_';
 pub const CLIPBOARD: char = '+';
 pub const SELECTION: char = '*';
@@ -69,11 +72,15 @@ impl Register {
     }
 }
 
-/// Why text is being stored, which decides whether `0` is updated.
+/// Why text is being stored, which decides whether `0`, `1`-`9` or `-` is
+/// updated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoreKind {
     Yank,
     Delete,
+    /// A delete over a jump motion (`d%`, `d}`, `d'a`): goes to `1` even
+    /// within one line, as in Vim.
+    DeleteOverJump,
 }
 
 #[derive(Default)]
@@ -149,7 +156,7 @@ impl Registers {
     /// registers (used for recording macros). Uppercase appends.
     pub fn set(&mut self, name: char, value: Register) -> Result<(), String> {
         match name {
-            'a'..='z' | UNNAMED => {
+            'a'..='z' | '0'..='9' | SMALL_DELETE | UNNAMED => {
                 self.registers.insert(name, value);
             }
             'A'..='Z' => {
@@ -191,12 +198,20 @@ impl Registers {
                 value
             }
             UNNAMED => {
-                if kind == StoreKind::Yank {
-                    self.registers.insert(YANK, value.clone());
+                match kind {
+                    StoreKind::Yank => {
+                        self.registers.insert(YANK, value.clone());
+                    }
+                    StoreKind::Delete if !value.linewise && !value.text.contains('\n') => {
+                        self.registers.insert(SMALL_DELETE, value.clone());
+                    }
+                    StoreKind::Delete | StoreKind::DeleteOverJump => {
+                        self.shift_numbered(value.clone());
+                    }
                 }
                 value
             }
-            'a'..='z' => {
+            'a'..='z' | '0'..='9' | SMALL_DELETE => {
                 self.registers.insert(name, value.clone());
                 value
             }
@@ -213,6 +228,16 @@ impl Registers {
         };
         self.registers.insert(UNNAMED, value);
         Ok(())
+    }
+
+    /// Puts `value` in `1`, moving `1`-`8` down one; `9` falls off.
+    fn shift_numbered(&mut self, value: Register) {
+        for n in (b'1'..b'9').rev() {
+            if let Some(older) = self.registers.remove(&(n as char)) {
+                self.registers.insert((n + 1) as char, older);
+            }
+        }
+        self.registers.insert('1', value);
     }
 }
 
@@ -380,5 +405,77 @@ mod tests {
         let mut r = Registers::default();
         let err = r.store(Some('%'), Register::charwise("x"), StoreKind::Yank);
         assert_eq!(err, Err("Invalid register: \"%".into()));
+    }
+
+    fn delete(r: &mut Registers, value: Register) {
+        r.store(None, value, StoreKind::Delete).unwrap();
+    }
+
+    #[test]
+    fn line_deletes_shift_through_the_numbered_registers() {
+        let mut r = Registers::default();
+        for i in 1..=10 {
+            delete(&mut r, Register::linewise(format!("line {i}")));
+        }
+        assert_eq!(text(&r, Some('1')), Some("line 10"));
+        assert_eq!(text(&r, Some('2')), Some("line 9"));
+        assert_eq!(text(&r, Some('9')), Some("line 2"), "line 1 fell off");
+        assert_eq!(text(&r, None), Some("line 10"));
+    }
+
+    #[test]
+    fn small_deletes_go_to_minus_and_leave_the_numbers_alone() {
+        let mut r = Registers::default();
+        delete(&mut r, Register::linewise("whole"));
+        delete(&mut r, Register::charwise("word"));
+        assert_eq!(text(&r, Some('-')), Some("word"));
+        assert_eq!(text(&r, Some('1')), Some("whole"));
+        assert_eq!(text(&r, Some('2')), None);
+        assert_eq!(text(&r, None), Some("word"));
+    }
+
+    #[test]
+    fn a_charwise_delete_across_lines_is_numbered() {
+        let mut r = Registers::default();
+        delete(&mut r, Register::charwise("end\nstart"));
+        assert_eq!(text(&r, Some('1')), Some("end\nstart"));
+        assert_eq!(text(&r, Some('-')), None);
+    }
+
+    #[test]
+    fn deletes_over_jumps_are_numbered_even_when_small() {
+        let mut r = Registers::default();
+        r.store(None, Register::charwise("(x)"), StoreKind::DeleteOverJump)
+            .unwrap();
+        assert_eq!(text(&r, Some('1')), Some("(x)"));
+        assert_eq!(text(&r, Some('-')), None);
+    }
+
+    #[test]
+    fn yanks_and_named_or_black_hole_deletes_skip_the_numbers() {
+        let mut r = Registers::default();
+        r.store(None, Register::linewise("yanked"), StoreKind::Yank)
+            .unwrap();
+        r.store(Some('a'), Register::linewise("named"), StoreKind::Delete)
+            .unwrap();
+        r.store(Some('_'), Register::linewise("gone"), StoreKind::Delete)
+            .unwrap();
+        r.store(Some('a'), Register::charwise("w"), StoreKind::Delete)
+            .unwrap();
+        assert_eq!(text(&r, Some('1')), None);
+        assert_eq!(text(&r, Some('-')), None);
+        assert_eq!(text(&r, Some('0')), Some("yanked"));
+    }
+
+    #[test]
+    fn numbered_and_minus_can_be_written_directly() {
+        let mut r = Registers::default();
+        r.store(Some('3'), Register::charwise("three"), StoreKind::Yank)
+            .unwrap();
+        r.store(Some('-'), Register::charwise("dash"), StoreKind::Yank)
+            .unwrap();
+        assert_eq!(text(&r, Some('3')), Some("three"));
+        assert_eq!(text(&r, Some('-')), Some("dash"));
+        assert_eq!(text(&r, Some('1')), None, "no shifting");
     }
 }

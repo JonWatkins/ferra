@@ -225,6 +225,12 @@ Motion details:
 Single-key shortcuts (`x`, `D`, `C`, `s`, `S`, `Y`, `X`) apply an operator
 over a fixed motion. Pastes read registers (`editor/registers.rs`).
 
+`Registers::store` follows Vim's rules for deletes into the unnamed
+register: a line or more (or a delete over a jump motion, `d%`, `d}`, via
+`StoreKind::DeleteOverJump`) shifts `"1`-`"8` down and lands in `"1`;
+anything smaller goes to `"-`. Yanks go to `"0`. Naming a register, or the
+black hole `"_`, skips all of these.
+
 ### Visual mode
 
 - One `Mode::Visual`, with the kind (`Char` for `v`, `Line` for `V`) on the
@@ -324,7 +330,9 @@ level: only the app sees keys.
 Recording keys rather than commands makes every change repeatable,
 including insert sessions and future plugin commands, without each command
 having to support it. A leading count is stored separately so `3.`
-replaces it, and a `"x` register prefix is kept.
+replaces it, and a `"x` register prefix is kept. If the change was a paste
+from `"1`-`"8`, `.` moves the prefix on one number first, so `"1pu.u.`
+steps back through older deletes.
 
 ### Macros and marks
 
@@ -514,7 +522,7 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
   brackets only.
 - `N%`, `gJ` (join without spaces), and `.` repeating a visual operation on
   the same amount of text, as Vim does.
-- Numbered delete registers `1`-`9` and the small-delete register `-`.
+- `:registers` to list what's in each register.
 - Resizing windows (`<C-w>+`, `<C-w>>`, `<C-w>=`) and moving them around.
 - Window-local options, and a statusline per window.
 - File listing runs on the UI thread. It's capped by `max-files`, but very

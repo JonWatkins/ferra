@@ -59,6 +59,18 @@ impl Editor {
         range: Range,
         register: Option<char>,
     ) -> Result<(), String> {
+        self.apply_operator_over(operator, range, register, false)
+    }
+
+    /// [`Editor::apply_operator`] for a range from a motion. A delete over a
+    /// jump motion (`d%`, `d}`) is kept in `"1` even within one line.
+    pub fn apply_operator_over(
+        &mut self,
+        operator: Operator,
+        range: Range,
+        register: Option<char>,
+        jump: bool,
+    ) -> Result<(), String> {
         // These transform the text in place and don't touch registers.
         match operator {
             Operator::Indent | Operator::Outdent => {
@@ -86,10 +98,10 @@ impl Editor {
         // Like Vim, an empty change (e.g. `x` on an empty line) leaves the
         // registers alone, but `c` still enters insert mode.
         if !range.is_empty() {
-            let kind = if operator == Operator::Yank {
-                StoreKind::Yank
-            } else {
-                StoreKind::Delete
+            let kind = match operator {
+                Operator::Yank => StoreKind::Yank,
+                _ if jump => StoreKind::DeleteOverJump,
+                _ => StoreKind::Delete,
             };
             self.registers.store(register, value, kind)?;
         }

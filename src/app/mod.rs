@@ -526,9 +526,16 @@ impl App {
 
     /// `.`: feeds the last change's keys back in.
     fn repeat_last_change(&mut self, count: Option<usize>) {
-        let Some(change) = self.changes.last_change() else {
+        let Some(change) = self.changes.last_change_mut() else {
             return;
         };
+        let pastes = matches!(
+            self.keymap.lookup(Mode::Normal, change.body()),
+            Lookup::Command("paste_after" | "paste_before")
+        );
+        if pastes {
+            change.advance_numbered_register();
+        }
         let keys = change.keys(count);
         self.changes.note_replay();
         self.replaying = true;

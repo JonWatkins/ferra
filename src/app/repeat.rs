@@ -48,6 +48,22 @@ impl LastChange {
         }
     }
 
+    /// The keys after the register and count (`p` in `"13p`).
+    pub fn body(&self) -> &[KeyPress] {
+        &self.body
+    }
+
+    /// Moves a `"1`-`"8` register prefix on to the next number, so `"1p`
+    /// then `.` `.` pastes `"1`, `"2`, `"3` (Vim's way of going back
+    /// through older deletes).
+    pub fn advance_numbered_register(&mut self) {
+        if let [_, key] = self.register.as_mut_slice()
+            && let Some(digit @ '1'..='8') = key.as_text()
+        {
+            *key = KeyPress::plain(KeyCode::Char((digit as u8 + 1) as char));
+        }
+    }
+
     /// The keys to replay. A `count` replaces the original one.
     pub fn keys(&self, count: Option<usize>) -> Vec<KeyPress> {
         let count = count
@@ -106,8 +122,13 @@ impl ChangeRecorder {
         self.keys.clear();
     }
 
+    #[cfg(test)]
     pub fn last_change(&self) -> Option<&LastChange> {
         self.last_change.as_ref()
+    }
+
+    pub fn last_change_mut(&mut self) -> Option<&mut LastChange> {
+        self.last_change.as_mut()
     }
 }
 
@@ -202,5 +223,18 @@ mod tests {
         recorder.finish(3);
 
         assert_eq!(recorder.last_change(), Some(&LastChange::parse(&keys("x"))));
+    }
+
+    #[test]
+    fn numbered_registers_advance() {
+        let mut change = LastChange::parse(&keys("\"1p"));
+        change.advance_numbered_register();
+        assert_eq!(change.keys(None), keys("\"2p"));
+        let mut change = LastChange::parse(&keys("\"9p"));
+        change.advance_numbered_register();
+        assert_eq!(change.keys(None), keys("\"9p"), "9 is the last");
+        let mut change = LastChange::parse(&keys("\"ap"));
+        change.advance_numbered_register();
+        assert_eq!(change.keys(None), keys("\"ap"));
     }
 }

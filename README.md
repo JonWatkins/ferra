@@ -36,6 +36,7 @@ Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
 | Normal  | `x` `X` `D` `C` `s` `S` `Y` | Shortcuts (`dl` `dh` `d$` `c$` `cl` `cc` `yy`) |
 | Normal  | `p` `P` | Paste after / before |
 | Normal  | `"a` (prefix) | Use register `a` (`"ayy`, `"ap`; `"A` appends, `"_` discards, `"0` last yank) |
+| Normal  | `"1`-`"9`, `"-` | Recent deletes of a line or more (`"1` newest), and the last delete within a line. `"1p` then `.` pastes `"2`, `"3`... |
 | Normal  | `u` `<C-r>` | Undo / redo |
 | Normal  | `.` | Repeat the last change (`3.` replaces its count) |
 | Normal  | `q{a-z}` … `q` | Record a macro (`qA` appends); the statusline shows `recording @a` |
