@@ -15,6 +15,7 @@ pub mod registers;
 mod search;
 mod selection;
 mod transform;
+pub mod windows;
 
 pub use buffers::BufferInfo;
 pub use command_line::{CommandLine, Prompt};
@@ -26,6 +27,7 @@ pub use operator::{Operator, PendingOperator};
 pub use registers::{Register, Registers};
 pub use selection::{Selection, SelectionKind};
 pub use transform::CaseChange;
+pub use windows::{Window, WindowId, Windows};
 
 use crate::config::EditorOptions;
 use crate::core::motion::CharSearch;
@@ -54,6 +56,7 @@ pub struct Editor {
     pending_operator: Option<PendingOperator>,
     selection: Option<Selection>,
     search: search::SearchState,
+    windows: Windows,
     /// The open picker popup, in picker mode.
     picker: Option<picker::Picker>,
     /// Set by `.`; the app replays the last change (which only it can do,

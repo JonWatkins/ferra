@@ -15,6 +15,7 @@ mod picker;
 mod search;
 mod text_objects;
 mod visual;
+mod windows;
 
 use super::CommandRegistry;
 
@@ -29,6 +30,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     visual::register(registry);
     search::register(registry);
     picker::register(registry);
+    windows::register(registry);
     modes::register(registry);
     command_line::register(registry);
 }

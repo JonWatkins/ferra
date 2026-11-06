@@ -54,38 +54,57 @@ impl SyntaxEngine {
     /// changed. `None` if the language is unknown, the document is too
     /// large, or highlighting failed.
     pub fn highlights(&mut self, document: &Document) -> Option<&Highlights> {
-        let (index, language) = LANGUAGES.iter().enumerate().find(|(_, l)| {
+        self.refresh(document);
+        self.get(document.id())
+    }
+
+    /// Brings `document`'s cached highlights up to date. Call this for each
+    /// document on screen, then `get` them all (several windows can show
+    /// different documents at once).
+    pub fn refresh(&mut self, document: &Document) {
+        let id = document.id();
+        let Some((index, language)) = LANGUAGES.iter().enumerate().find(|(_, l)| {
             document
                 .path()
                 .and_then(detect)
                 .is_some_and(|d| d.name == l.name)
-        })?;
+        }) else {
+            self.cache.remove(&id);
+            return;
+        };
 
-        let id = document.id();
         let version = document.text_version();
-        let stale = self
+        let fresh = self
             .cache
             .get(&id)
-            .is_none_or(|c| c.version != version || c.language != language.name);
-        if stale {
-            let highlights = if document.buffer().len_chars() > MAX_HIGHLIGHT_CHARS {
-                None
-            } else {
-                let config = self.configs[index]
-                    .get_or_init(|| load(language))
-                    .as_ref()
-                    .ok()?;
-                highlight::highlight(&mut self.highlighter, config, &document.buffer().text()).ok()
-            };
-            self.cache.insert(
-                id,
-                Cached {
-                    version,
-                    language: language.name,
-                    highlights,
-                },
-            );
+            .is_some_and(|c| c.version == version && c.language == language.name);
+        if fresh {
+            return;
         }
+        let highlights = if document.buffer().len_chars() > MAX_HIGHLIGHT_CHARS {
+            None
+        } else {
+            self.configs[index]
+                .get_or_init(|| load(language))
+                .as_ref()
+                .ok()
+                .and_then(|config| {
+                    highlight::highlight(&mut self.highlighter, config, &document.buffer().text())
+                        .ok()
+                })
+        };
+        self.cache.insert(
+            id,
+            Cached {
+                version,
+                language: language.name,
+                highlights,
+            },
+        );
+    }
+
+    /// The cached highlights for document `id` (see `refresh`).
+    pub fn get(&self, id: DocumentId) -> Option<&Highlights> {
         self.cache.get(&id)?.highlights.as_ref()
     }
 

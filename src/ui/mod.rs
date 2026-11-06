@@ -16,11 +16,13 @@ pub mod editor_view;
 mod picker;
 mod statusline;
 mod text;
+mod windows;
 
 pub use command_line::CommandLineView;
 pub use editor_view::{EditorView, ViewState};
 pub use picker::PickerView;
 pub use statusline::StatusLine;
+pub use windows::Views;
 
 use ratatui::{
     Frame,
@@ -28,7 +30,9 @@ use ratatui::{
 };
 
 use crate::config::Theme;
-use crate::editor::{Editor, Mode};
+use std::collections::HashMap;
+
+use crate::editor::{DocumentId, Editor, Mode};
 use crate::syntax::Highlights;
 
 /// Draws the whole screen and positions the terminal cursor.
@@ -36,9 +40,9 @@ pub fn draw(
     frame: &mut Frame,
     editor: &Editor,
     theme: &Theme,
-    view: &mut ViewState,
+    views: &mut Views,
     pending: &str,
-    syntax: Option<&Highlights>,
+    syntax: &HashMap<DocumentId, &Highlights>,
 ) {
     let area = frame.area();
     let base = theme.get("ui.background").patch(theme.get("ui.text"));
@@ -51,11 +55,7 @@ pub fn draw(
     ])
     .areas(area);
 
-    let editor_view = EditorView::new(&editor.document, &editor.options, theme)
-        .selection(editor.selection_range())
-        .search(editor.search_highlight())
-        .syntax(syntax);
-    frame.render_stateful_widget(editor_view, main, view);
+    let window_cursor = windows::draw_windows(frame, editor, theme, main, views, syntax);
     frame.render_widget(StatusLine::new(editor, theme, pending), status);
     frame.render_widget(CommandLineView::new(editor, theme), command);
 
@@ -71,7 +71,7 @@ pub fn draw(
             Some(PickerView::cursor_position(picker, PickerView::area(main)))
         }
         (Mode::Command, _) => Some(CommandLineView::cursor_position(editor, command)),
-        _ => view.cursor,
+        _ => window_cursor,
     };
     if let Some(position) = cursor {
         frame.set_cursor_position(position);

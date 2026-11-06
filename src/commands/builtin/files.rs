@@ -33,12 +33,17 @@ pub fn register(r: &mut CommandRegistry) {
 
     r.register(
         "quit",
-        "Quit, unless any buffer has unsaved changes (! to discard them)",
+        "Close the window, or quit from the last one (! to discard changes)",
         quit,
     );
     r.alias("q", "quit");
-    r.alias("qa", "quit");
-    r.alias("qall", "quit");
+    r.register(
+        "quit_all",
+        "Quit, unless any buffer has unsaved changes (! to discard them)",
+        quit_all,
+    );
+    r.alias("qa", "quit_all");
+    r.alias("qall", "quit_all");
 
     r.register(
         "write_all",
@@ -51,7 +56,7 @@ pub fn register(r: &mut CommandRegistry) {
         "Save every buffer with unsaved changes, then quit",
         |cx| {
             write_all(cx)?;
-            quit(cx)
+            quit_all(cx)
         },
     );
     r.alias("wqa", "write_all_quit");
@@ -83,8 +88,17 @@ pub fn register(r: &mut CommandRegistry) {
     r.alias("e", "edit");
 }
 
-/// Quits unless a buffer has unsaved changes (or `!` was given).
+/// `:q`: closes the window if there are others (its buffer stays open, so
+/// nothing is lost); from the last window, quits like `:qa`.
 fn quit(cx: &mut Context) -> CommandResult {
+    if cx.editor.windows().count() > 1 {
+        return cx.editor.close_window();
+    }
+    quit_all(cx)
+}
+
+/// Quits unless a buffer has unsaved changes (or `!` was given).
+fn quit_all(cx: &mut Context) -> CommandResult {
     if !cx.bang
         && let Some(doc) = cx.editor.first_modified_buffer()
     {

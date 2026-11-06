@@ -21,8 +21,8 @@ use ratatui::{
 };
 
 use crate::config::{EditorOptions, Theme};
-use crate::core::Range;
 use crate::core::search::SearchPattern;
+use crate::core::{Position as TextPosition, Range};
 use crate::editor::Document;
 use crate::syntax::{HIGHLIGHT_NAMES, Highlights};
 
@@ -41,6 +41,10 @@ pub struct EditorView<'a> {
     selection: Option<Range>,
     search: Option<&'a SearchPattern>,
     syntax: Option<&'a Highlights>,
+    /// The cursor to draw around; a window's own cursor when it isn't active.
+    cursor: Option<TextPosition>,
+    /// Only the active window shows the cursor line.
+    active: bool,
 }
 
 impl<'a> EditorView<'a> {
@@ -52,10 +56,24 @@ impl<'a> EditorView<'a> {
             selection: None,
             search: None,
             syntax: None,
+            cursor: None,
+            active: true,
         }
     }
 
     /// Colours the text with syntax highlights, if any.
+    /// Draws around `cursor` instead of the document's own cursor.
+    pub fn cursor(mut self, cursor: TextPosition) -> Self {
+        self.cursor = Some(cursor);
+        self
+    }
+
+    /// Whether this is the active window (inactive ones have no cursor line).
+    pub fn active(mut self, active: bool) -> Self {
+        self.active = active;
+        self
+    }
+
     pub fn syntax(mut self, syntax: Option<&'a Highlights>) -> Self {
         self.syntax = syntax;
         self
@@ -84,7 +102,7 @@ impl StatefulWidget for EditorView<'_> {
         }
 
         let text = self.document.buffer();
-        let cursor = self.document.cursor();
+        let cursor = self.cursor.unwrap_or_else(|| self.document.cursor());
         let tab_width = self.options.tab_width;
         let line_numbers = self.options.line_numbers;
 
@@ -119,7 +137,7 @@ impl StatefulWidget for EditorView<'_> {
             let y = area.y + i as u16;
             let is_cursor_row = row == cursor.row;
 
-            let row_style = if is_cursor_row && self.options.cursorline {
+            let row_style = if is_cursor_row && self.active && self.options.cursorline {
                 self.theme.get("ui.cursorline")
             } else {
                 Style::default()

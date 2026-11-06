@@ -19,7 +19,7 @@ use crate::events;
 use crate::input::{InputHandler, KeyPress, Keymap, Outcome};
 use crate::plugins::PluginHost;
 use crate::syntax::SyntaxEngine;
-use crate::ui::{self, ViewState};
+use crate::ui::{self, Views};
 
 /// Upper bound on keys handled between redraws, so the screen still updates
 /// during a very long paste.
@@ -31,11 +31,8 @@ pub struct App {
     keymap: Keymap,
     theme: Theme,
     input: InputHandler,
-    view: ViewState,
-    /// Scroll state of buffers that aren't shown, so switching back to one
-    /// keeps its place.
-    other_views: HashMap<DocumentId, ViewState>,
-    view_document: DocumentId,
+    /// Scroll state per window and buffer.
+    views: Views,
     changes: ChangeRecorder,
     syntax: SyntaxEngine,
     /// The Lua runtime, created when the first plugin loads.
@@ -69,9 +66,7 @@ impl App {
             keymap: config.keys,
             theme: config.theme,
             input: InputHandler::default(),
-            view: ViewState::default(),
-            other_views: HashMap::new(),
-            view_document: DocumentId::default(),
+            views: Views::default(),
             changes: ChangeRecorder::default(),
             syntax: SyntaxEngine::default(),
             plugins: None,
@@ -230,31 +225,43 @@ impl App {
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
-        let shown = self.editor.document.id();
-        if shown != self.view_document {
-            let previous = std::mem::take(&mut self.view);
-            self.other_views.insert(self.view_document, previous);
-            self.view = self.other_views.remove(&shown).unwrap_or_default();
-            self.view_document = shown;
-        }
-
         let pending = self.input.pending_display();
         if self.syntax.cached_count() > self.editor.buffer_count() {
             let open: Vec<DocumentId> = self.editor.buffers().iter().map(|b| b.id).collect();
             self.syntax.retain(&open);
         }
-        let syntax = if self.editor.options.syntax_highlighting {
-            self.syntax.highlights(&self.editor.document)
-        } else {
-            None
-        };
+
+        // Every buffer on screen needs its highlights, so refresh them all
+        // first, then borrow them together.
+        let shown: Vec<DocumentId> = self
+            .editor
+            .windows()
+            .layout()
+            .windows()
+            .into_iter()
+            .filter_map(|id| self.editor.window_view(id).map(|(doc, _)| doc.id()))
+            .collect();
+        let mut syntax = HashMap::new();
+        if self.editor.options.syntax_highlighting {
+            for &id in &shown {
+                if let Some(document) = self.editor.document_by_id(id) {
+                    self.syntax.refresh(document);
+                }
+            }
+            for &id in &shown {
+                if let Some(highlights) = self.syntax.get(id) {
+                    syntax.insert(id, highlights);
+                }
+            }
+        }
+
         ui::draw(
             frame,
             &self.editor,
             &self.theme,
-            &mut self.view,
+            &mut self.views,
             &pending,
-            syntax,
+            &syntax,
         );
     }
 

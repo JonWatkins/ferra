@@ -66,13 +66,29 @@ Text objects: `iw` `aw`, `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`
 | `]b` `[b`, `:bn` `:bp` | Next / previous buffer |
 | `:b 2`, `:b name`, `:b #` | Switch by number, part of the name, or to the previous buffer |
 | `:bd` | Close the buffer (`:bd!` discards changes) |
-| `:wa`, `:wqa`, `:qa` | Write all / write all and quit / quit |
+| `:wa`, `:wqa` | Write all / write all and quit |
 
 In a picker, type to fuzzy-filter, move with `<C-n>`/`<C-p>` (or arrows,
 `<Tab>`), `<CR>` to choose, `<Esc>` to close. Each buffer keeps its own
 cursor, scroll position and undo history. `:e path` opens another buffer
 without closing the current one, and `:q` refuses while *any* buffer has
 unsaved changes.
+
+## Windows
+
+| Keys / command | Action |
+|----------------|--------|
+| `<C-w>v`, `:vs [file]` | Split side by side (optionally opening a file) |
+| `<C-w>s`, `:sp [file]` | Split top and bottom |
+| `<C-w>h` `j` `k` `l` (or arrows), `<C-w>w` | Move to the window in that direction / the next one |
+| `<C-w>c`, `:close` | Close the window (its buffer stays open) |
+| `<C-w>o`, `:only` | Close every other window |
+| `:q`, `<C-w>q` | Close the window; quits from the last one |
+| `:qa` | Quit (refuses while any buffer has unsaved changes; `:qa!` doesn't) |
+
+Each window has its own cursor and scroll position, so two windows can show
+different parts of the same file. Edits show up in every window on that
+buffer.
 
 ## Files
 

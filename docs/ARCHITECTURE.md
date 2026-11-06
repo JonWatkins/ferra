@@ -79,6 +79,31 @@ kept, and its number is reused. `:q` and the write-and-quit commands check
 every buffer for unsaved changes. `:wa` saves each modified buffer as the
 active one, so its before-save hooks run.
 
+## Windows
+
+`editor/windows/` holds split windows. A `Window` is a view onto a buffer:
+a `DocumentId` and its own cursor. `Layout` is a tree of horizontal and
+vertical splits whose children share space equally, separated by one-cell
+lines.
+
+- `Layout::arrange` computes window and separator areas in plain cells, with
+  no UI types. Directional moves (`<C-w>h`) use the same geometry on a fixed
+  nominal area, since direction only depends on relative positions. Nothing
+  is ever placed outside the given area, however small.
+- The active window's buffer is always `Editor::document`, so commands are
+  unchanged. Focusing another window saves the active window's cursor into
+  its `Window`, then swaps the target's buffer in and restores its cursor.
+  Two windows on one buffer each keep their own cursor.
+- Buffers interact with windows in two places: a buffer shown in another
+  window is never dropped when a new file replaces it, and closing a buffer
+  points any window showing it at the next buffer.
+- The UI (`ui/windows.rs`) draws each window's `EditorView`, with that
+  window's cursor and scroll state (kept per window and buffer, in
+  `App::views`). The cursor line and selection appear only in the active
+  window. The app refreshes syntax highlights for every buffer on screen
+  before drawing.
+- `:q` closes the window and quits only from the last one; `:qa` quits.
+
 ## Pickers
 
 `editor/picker/` holds the picker state: items with an action
@@ -382,7 +407,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 - `N%`, `gJ` (join without spaces), and `.` repeating a visual operation on
   the same amount of text, as Vim does.
 - Numbered delete registers `1`-`9` and the small-delete register `-`.
-- Split windows (several views onto buffers at once).
+- Resizing windows (`<C-w>+`, `<C-w>>`, `<C-w>=`) and moving them around.
+- Window-local options, and a statusline per window.
 - File listing runs on the UI thread. It's capped by `max-files`, but very
   large trees could be walked in the background and streamed into the picker.
 - Asking before overwriting on external changes, and reloading

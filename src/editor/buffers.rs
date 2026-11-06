@@ -115,8 +115,17 @@ impl Editor {
                 scratch
             }
         };
-        self.document = next;
+        let closed = std::mem::replace(&mut self.document, next);
+        // Other windows that showed the closed buffer show the new one.
+        self.replace_window_document(closed.id(), self.document.id());
         self.set_mode(Mode::Normal);
+    }
+
+    /// Any open buffer by id, active or not.
+    pub fn document_by_id(&self, id: DocumentId) -> Option<&Document> {
+        std::iter::once(&self.document)
+            .chain(&self.background)
+            .find(|doc| doc.id() == id)
     }
 
     /// The first buffer with unsaved changes, active buffer first.
@@ -148,7 +157,7 @@ impl Editor {
     /// unless it's an untouched scratch buffer.
     pub(super) fn activate(&mut self, document: Document) {
         let previous = std::mem::replace(&mut self.document, document);
-        if !previous.is_pristine_scratch() {
+        if !previous.is_pristine_scratch() || self.shown_in_other_window(previous.id()) {
             self.background.push(previous);
         }
         self.set_mode(Mode::Normal);
