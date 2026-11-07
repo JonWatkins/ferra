@@ -419,6 +419,7 @@ expand-tab = true           # indent with spaces; false for tabs
 detect-indent = true        # but indent each file the way it already is
 auto-indent = true          # indent new lines (by the language's rules where it has them)
 wrap = false                # scroll long lines sideways rather than wrapping them
+wrap-marker = ""             # no ↪ before wrapped lines' later rows
 text-width = 72             # the width gq and gw reflow to
 line-numbers = "absolute"   # "absolute" | "relative" | "none"
 scroll-off = 8
@@ -460,7 +461,8 @@ keep them.
 As in Vim, some options can also be set for one window or one buffer:
 `:setlocal nowrap` in a split leaves other windows wrapping, and
 `:setlocal ts=2` applies to this buffer wherever it's shown. Windows have
-their own `wrap`, `line-numbers`, `cursorline` and `scroll-off` (a split
+their own `wrap`, `wrap-indent`, `wrap-marker`, `line-numbers`,
+`cursorline` and `scroll-off` (a split
 starts with those of the window it came from); buffers their own
 `tab-width`, `expand-tab`, `auto-indent` and `text-width`. `:set` changes an option
 everywhere (and drops this window's or buffer's own value), `:setglobal`

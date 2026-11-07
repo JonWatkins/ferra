@@ -147,11 +147,7 @@ impl StatefulWidget for EditorView<'_> {
 
         let height = text_area.height as usize;
         let width = text_area.width as usize;
-        let layout = TextLayout {
-            width,
-            wrap: self.options.wrap,
-            tab_width,
-        };
+        let layout = TextLayout::for_text(width, self.options);
         if layout.wrap {
             state.viewport.left = 0;
             state.viewport.top = layout.follow_cursor(
@@ -219,6 +215,11 @@ impl StatefulWidget for EditorView<'_> {
                         end,
                         first: part == 0,
                         last: last_part,
+                        indent: if wrap {
+                            layout.offset(line_text, part)
+                        } else {
+                            0
+                        },
                         left: if wrap {
                             line::display_col(line_text, start, tab_width)
                         } else if layout.wrap {
@@ -244,7 +245,12 @@ impl StatefulWidget for EditorView<'_> {
                     } else {
                         left
                     };
-                    let x = line::display_col(line_text, cursor.col, tab_width) - seg_left;
+                    let indent = if wrap {
+                        layout.offset(line_text, part)
+                    } else {
+                        0
+                    };
+                    let x = line::display_col(line_text, cursor.col, tab_width) - seg_left + indent;
                     state.cursor = Some(Position::new(
                         text_area.x + x.min(width.saturating_sub(1)) as u16,
                         screen_y,
@@ -269,6 +275,8 @@ struct RowPart<'l> {
     /// The line's last row (where a selected line break is drawn).
     last: bool,
     left: usize,
+    /// Cells the text starts in by (a wrapped line's continued rows).
+    indent: usize,
 }
 
 impl EditorView<'_> {
@@ -314,7 +322,6 @@ impl EditorView<'_> {
         syntax_styles: &[Style],
     ) {
         let tab_width = self.options.tab_width;
-        let width = text_area.width as usize;
         let RowPart {
             row,
             line: line_text,
@@ -323,7 +330,16 @@ impl EditorView<'_> {
             first,
             last,
             left,
+            indent,
         } = part;
+        // Continued rows start further in, after the wrap marker.
+        let text_area = Rect::new(
+            text_area.x + indent.min(text_area.width as usize) as u16,
+            text_area.y,
+            text_area.width.saturating_sub(indent as u16),
+            text_area.height,
+        );
+        let width = text_area.width as usize;
         let is_cursor_row = row == cursor.row;
 
         let row_style = if is_cursor_row && self.active && self.options.cursorline {
@@ -350,6 +366,18 @@ impl EditorView<'_> {
             self.theme.get(gutter_scope),
         );
 
+        if indent > 0 && !self.options.wrap_marker.is_empty() {
+            let marker = &self.options.wrap_marker;
+            let marker_width = unicode_width::UnicodeWidthStr::width(marker.as_str()) as u16;
+            let x = text_area.x.saturating_sub(marker_width);
+            buf.set_stringn(
+                x,
+                y,
+                marker,
+                marker_width as usize,
+                self.theme.get("ui.wrap-marker"),
+            );
+        }
         // Only this part's chars: the rest of a wrapped line is on later rows.
         let upto = line_text
             .char_indices()
@@ -551,7 +579,11 @@ mod tests {
         };
         let area = Rect::new(0, 0, 5, 2);
         let mut buf = Buffer::empty(area);
-        EditorView::new(&doc, &options(LineNumbers::None), &theme)
+        let options = EditorOptions {
+            wrap_marker: String::new(),
+            ..options(LineNumbers::None)
+        };
+        EditorView::new(&doc, &options, &theme)
             .selection(Some(range))
             .render(area, &mut buf, &mut ViewState::default());
         let blue = |y: u16| -> Vec<u16> {

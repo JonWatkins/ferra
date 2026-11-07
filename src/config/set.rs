@@ -75,7 +75,9 @@ pub enum Scope {
 /// The options `:setlocal` can set, and for what.
 pub fn scope(name: &str) -> Option<Scope> {
     match name {
-        "wrap" | "line-numbers" | "cursorline" | "scroll-off" => Some(Scope::Window),
+        "wrap" | "wrap-indent" | "wrap-marker" | "line-numbers" | "cursorline" | "scroll-off" => {
+            Some(Scope::Window)
+        }
         "tab-width" | "expand-tab" | "auto-indent" | "text-width" => Some(Scope::Buffer),
         _ => None,
     }
@@ -167,6 +169,10 @@ const ALIASES: &[(&str, &str)] = &[
     ("tm", "key-timeout"),
     ("timeoutlen", "key-timeout"),
     ("syntax", "syntax-highlighting"),
+    ("bri", "wrap-indent"),
+    ("breakindent", "wrap-indent"),
+    ("sbr", "wrap-marker"),
+    ("showbreak", "wrap-marker"),
     ("tw", "text-width"),
     ("textwidth", "text-width"),
 ];

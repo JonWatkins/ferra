@@ -23,6 +23,10 @@ pub struct EditorOptions {
     /// Long lines continue on the next screen rows (breaking between
     /// words) rather than running off the edge.
     pub wrap: bool,
+    /// A wrapped line's continued rows start at its indentation.
+    pub wrap_indent: bool,
+    /// Shown at the start of a wrapped line's continued rows.
+    pub wrap_marker: String,
     pub cursorline: bool,
     /// A status line under every window, or one for the whole screen.
     pub statusline: StatuslineMode,

@@ -361,9 +361,18 @@ mid-word only for a word wider than the window, and before a wide char
 the edge would cut. Display columns count from the line's start, as
 without wrapping, so tabs don't move when wrapping is toggled.
 
+A wrapped line's later rows are narrower: with `wrap-indent` they start
+at the line's indentation, after `wrap-marker` (`↪ `, drawn in
+`ui.wrap-marker`), like Vim's `breakindent` and `showbreak`
+(`TextLayout::continued`, dropped to just the marker when it would leave
+less than half the width). `row_starts_indented` breaks those rows at the
+narrower width, drawing shifts their text, highlights and cursor right
+by `TextLayout::offset`, and `gj`/`gk` count it in the screen column they
+keep.
+
 `editor::windows::TextLayout` (the text width beside the gutter, whether
-to wrap, the tab width) is the one place that knows how a window lays
-out lines, shared by the UI and the commands:
+to wrap, the tab width, the continued rows' indent) is the one place that
+knows how a window lays out lines, shared by the UI and the commands:
 
 - Drawing (`EditorView::render`) walks lines from the view's top, drawing
   each of a line's rows (`draw_row`) with the line number on its first
@@ -1173,8 +1182,8 @@ status, branches and history.
   `kitty-keyboard` waits for the next start.
 - Local options, as in Vim: the editor keeps the global options and, per
   window and per buffer, a sparse TOML table of `:setlocal` values
-  (`config::set::scope` says which options may: `wrap`, `line-numbers`,
-  `cursorline`, `scroll-off` per window; `tab-width`, `expand-tab`,
+  (`config::set::scope` says which options may: `wrap`, `wrap-indent`,
+  `wrap-marker`, `line-numbers`, `cursorline`, `scroll-off` per window; `tab-width`, `expand-tab`,
   `auto-indent`, `text-width` per buffer). `Editor::options` is always what's in force
   for the active window and buffer (global, then the buffer's, then the
   window's, by `set::with_locals`), recomputed by `refresh_options` when
@@ -1228,11 +1237,10 @@ status, branches and history.
 - `"=` (the expression register).
 - Soft wrap: a line taller than the whole window can't be scrolled through (the view
   starts at a line's start; Vim shows `@` rows, Neovim smooth-scrolls),
-  continued rows aren't indented to match (`breakindent`) or marked
-  (`showbreak`), and `<C-d>`/`<C-e>` scroll by lines, not screen rows.
+  and `<C-d>`/`<C-e>` scroll by lines, not screen rows.
 - `<C-f>`/`<C-b>` move the cursor with the view, like `<C-d>`, rather than
   to the edge of the new screen as in Vim.
-- Local options cover the eight above; others (`statusline-layout`,
+- Local options cover the ten above; others (`statusline-layout`,
   `search.*`...) are global, so the status line layout is one setting for
   the active window. Plugin status functions run every frame, so a slow
   one slows drawing.

@@ -24,6 +24,10 @@ text-width = 79
 # Long lines continue on the next screen rows, breaking between words, and
 # gj/gk move by screen rows. false scrolls sideways instead.
 wrap = true
+# A wrapped line's later rows start at its indentation, after this marker
+# ("" for none).
+wrap-indent = true
+wrap-marker = "↪ "
 # Highlight the line the cursor is on.
 cursorline = true
 # "windows": a status line under every window, the active one highlighted
@@ -225,6 +229,7 @@ block-comment = ["/*", "*/"]
 "ui.splash.key" = "#e0af68"
 "ui.splash.text" = "#a9b1d6"
 "ui.fold" = { fg = "#6b7280", modifiers = ["italic"] }
+"ui.wrap-marker" = "#4b5263"
 "ui.popup" = { fg = "#d4d7dd", bg = "#1f2229" }
 "ui.popup.border" = "#4b5263"
 "ui.popup.title" = { fg = "#7aa2f7", modifiers = ["bold"] }

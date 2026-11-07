@@ -193,9 +193,11 @@ fn move_screen_rows(editor: &mut Editor, count: usize, down: bool) {
     } else {
         wrap::row_of(&starts, col)
     };
-    let screen_col = editor
-        .wanted_screen_column()
-        .unwrap_or_else(|| display_col(&line, col, tab) - display_col(&line, starts[part], tab));
+    // The column on screen, counting a continued row's indentation.
+    let screen_col = editor.wanted_screen_column().unwrap_or_else(|| {
+        layout.offset(&line, part) + display_col(&line, col, tab)
+            - display_col(&line, starts[part], tab)
+    });
 
     let (mut row, mut part) = (row, part);
     for _ in 0..count {
@@ -221,7 +223,8 @@ fn move_screen_rows(editor: &mut Editor, count: usize, down: bool) {
     let line = buffer.line(row);
     let starts = layout.row_starts(&line);
     let left = display_col(&line, starts[part], tab);
-    let mut col = char_col_at(&line, left + screen_col, tab);
+    let offset = layout.offset(&line, part);
+    let mut col = char_col_at(&line, left + screen_col.saturating_sub(offset), tab);
     // Stay on this row: not past its last char onto the next one.
     if let Some(&next) = starts.get(part + 1) {
         col = col.min(next.saturating_sub(1));

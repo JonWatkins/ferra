@@ -14,10 +14,22 @@ use super::columns::char_width;
 /// `width` cells wide: `[0]` for a line that fits. With `width` 0 (no room
 /// at all) the line isn't broken.
 pub fn row_starts(line: &str, width: usize, tab_width: usize) -> Vec<usize> {
+    row_starts_indented(line, width, tab_width, 0)
+}
+
+/// [`row_starts`], with the rows after the first `continued` cells
+/// narrower (they're indented, or marked as continuing).
+pub fn row_starts_indented(
+    line: &str,
+    width: usize,
+    tab_width: usize,
+    continued: usize,
+) -> Vec<usize> {
     let mut starts = vec![0];
     if width == 0 {
         return starts;
     }
+    let later_width = width.saturating_sub(continued).max(1);
     // Display columns of the current row's start, and of each char.
     let mut row_start_cell = 0;
     let mut cells = Vec::with_capacity(line.len());
@@ -29,6 +41,11 @@ pub fn row_starts(line: &str, width: usize, tab_width: usize) -> Vec<usize> {
         cells.push(cell);
         // A space may hang past the edge, so the break comes after it.
         let hangs = c == ' ';
+        let width = if starts.len() == 1 {
+            width
+        } else {
+            later_width
+        };
         if !hangs && cell + w - row_start_cell > width && i > *starts.last().expect("never empty") {
             let at = match break_at {
                 Some(at) if at > *starts.last().expect("never empty") => at,
@@ -38,7 +55,7 @@ pub fn row_starts(line: &str, width: usize, tab_width: usize) -> Vec<usize> {
             row_start_cell = cells[at];
             break_at = None;
             // A word carried over may still not fit with this char.
-            if cell + w - row_start_cell > width && at < i {
+            if cell + w - row_start_cell > later_width && at < i {
                 starts.push(i);
                 row_start_cell = cell;
             }
@@ -111,6 +128,25 @@ mod tests {
     #[test]
     fn no_width_means_no_breaking() {
         assert_eq!(row_starts("anything at all", 0, 4), [0]);
+    }
+
+    #[test]
+    fn continued_rows_can_be_narrower() {
+        let starts = row_starts_indented("aaaa bbbb cccc dddd", 10, 4, 4);
+        let chars: Vec<char> = "aaaa bbbb cccc dddd".chars().collect();
+        let rows: Vec<String> = starts
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| {
+                let e = starts.get(i + 1).copied().unwrap_or(chars.len());
+                chars[s..e].iter().collect()
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            ["aaaa bbbb ", "cccc ", "dddd"],
+            "6 cells after the first"
+        );
     }
 
     #[test]

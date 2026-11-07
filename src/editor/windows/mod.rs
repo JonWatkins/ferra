@@ -228,6 +228,10 @@ pub struct TextLayout {
     pub width: usize,
     pub wrap: bool,
     pub tab_width: usize,
+    /// Continued rows of a wrapped line start at its indentation.
+    pub wrap_indent: bool,
+    /// The width of the marker before continued rows (`wrap-marker`).
+    pub marker_width: usize,
 }
 
 impl TextLayout {
@@ -238,17 +242,56 @@ impl TextLayout {
         options: &crate::config::EditorOptions,
     ) -> Self {
         let gutter = gutter_width(document.buffer().line_count(), options.line_numbers);
+        Self::for_text(window_width.saturating_sub(gutter as usize), options)
+    }
+
+    /// The layout of text `width` cells wide (beside any gutter).
+    pub fn for_text(width: usize, options: &crate::config::EditorOptions) -> Self {
         Self {
-            width: window_width.saturating_sub(gutter as usize),
+            width,
             wrap: options.wrap,
             tab_width: options.tab_width,
+            wrap_indent: options.wrap_indent,
+            marker_width: unicode_width::UnicodeWidthStr::width(options.wrap_marker.as_str()),
+        }
+    }
+
+    /// How far in a wrapped `line`'s continued rows start: its indentation
+    /// (with `wrap-indent`) and the marker. Nothing if that would leave
+    /// less than half the width for text.
+    pub fn continued(&self, line: &str) -> usize {
+        let indent = if self.wrap_indent {
+            let rest = line.trim_start_matches([' ', '\t']);
+            crate::core::columns::display_width(&line[..line.len() - rest.len()], self.tab_width)
+        } else {
+            0
+        };
+        let offset = indent + self.marker_width;
+        if offset * 2 > self.width {
+            self.marker_width.min(self.width / 2)
+        } else {
+            offset
+        }
+    }
+
+    /// How far in row `part` of `line` starts on screen.
+    pub fn offset(&self, line: &str, part: usize) -> usize {
+        if self.wrap && part > 0 {
+            self.continued(line)
+        } else {
+            0
         }
     }
 
     /// The char column each screen row of `line` starts at.
     pub fn row_starts(&self, line: &str) -> Vec<usize> {
         if self.wrap {
-            crate::core::wrap::row_starts(line, self.width, self.tab_width)
+            crate::core::wrap::row_starts_indented(
+                line,
+                self.width,
+                self.tab_width,
+                self.continued(line),
+            )
         } else {
             vec![0]
         }

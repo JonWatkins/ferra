@@ -35,8 +35,11 @@ fn long_lines_continue_on_the_next_rows_between_words() {
     let screen = render(&mut app, 30, 8).rows;
     let rows = text_rows(&mut app, 8);
     assert_eq!(rows[0], "the quick brown fox jumps");
-    assert_eq!(rows[1], "over the lazy dog and");
-    assert_eq!(rows[2], "then some more words");
+    assert_eq!(
+        rows[1], "↪ over the lazy dog and",
+        "continued rows are marked"
+    );
+    assert_eq!(rows[2], "↪ then some more words");
     assert_eq!(rows[3], "short");
     assert!(screen[0].starts_with("   1 "), "{:?}", screen[0]);
     assert!(
@@ -56,8 +59,8 @@ fn the_cursor_is_drawn_on_the_row_its_column_is_on() {
     let screen = render(&mut app, 30, 8);
     assert_eq!(
         screen.cursor,
-        (5 + 19, 2),
-        "the last char, on the third row"
+        (5 + 2 + 19, 2),
+        "the last char, on the third row, after the marker"
     );
     keys(&mut app, "0");
     assert_eq!(render(&mut app, 30, 8).cursor, (5, 0));
@@ -77,10 +80,11 @@ fn gj_and_gk_move_by_screen_rows_and_j_by_lines() {
     let mut app = with_text(&format!("{LONG}<CR>short"));
     render(&mut app, 30, 8);
     keys(&mut app, "wwgj");
-    // `brown` is at screen column 10; the row below starts at `over`.
-    assert_eq!(cursor(&app), (0, 36), "column 10 of the second row");
+    // `brown` is at screen column 10; the row below starts at `over`, after
+    // the 2-cell marker, so column 10 there is its 8th char.
+    assert_eq!(cursor(&app), (0, 34), "column 10 of the second row");
     keys(&mut app, "gj");
-    assert_eq!(cursor(&app), (0, 58));
+    assert_eq!(cursor(&app), (0, 56), "screen column 10 again");
     keys(&mut app, "gj");
     assert_eq!(cursor(&app).0, 1, "on to the next line");
     keys(&mut app, "gkgkgk");
@@ -109,4 +113,21 @@ fn the_view_scrolls_by_screen_rows_to_keep_the_cursor_in_sight() {
     );
     keys(&mut app, "gg");
     assert!(text_rows(&mut app, 12)[0].starts_with("0 the"));
+}
+
+#[test]
+fn continued_rows_start_at_the_lines_indentation() {
+    let mut app = app();
+    keys(
+        &mut app,
+        ":set ai<CR>i    one two three four five six seven eight nine<Esc>",
+    );
+    let rows = text_rows(&mut app, 8);
+    // 25 cells, then 19 after the indentation and the marker.
+    assert_eq!(rows[0], "    one two three four");
+    assert_eq!(rows[1], "    ↪ five six seven");
+    assert_eq!(rows[2], "    ↪ eight nine");
+    keys(&mut app, ":setlocal nowrap-indent wrap-marker=<CR>");
+    let rows = text_rows(&mut app, 8);
+    assert_eq!(rows[1], "five six seven eight nine", "both off: all 25 cells");
 }
