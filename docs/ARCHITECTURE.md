@@ -52,10 +52,23 @@ crossterm KeyEvent
   → Editor::enforce_cursor_rules    (normal mode can't sit past the last char)
 ```
 
-Two things happen around this. Terminals send Alt+x as Esc then x, so Esc
-quickly followed by a key arrives as Alt+key. `App::split_alt` turns an
-Alt key with no binding in the current mode back into Esc and the key
-(Neovim does the same), before it's recorded for macros.
+A few things happen around this. Terminals send Alt+x as Esc then x, so
+Esc quickly followed by a key arrives as Alt+key. Where the terminal has
+the kitty keyboard protocol, `App::run` asks for it
+(`terminal::enable_keyboard_enhancement`, with only
+`DISAMBIGUATE_ESCAPE_CODES`; crossterm's query waits for the terminal's
+answer, and one that doesn't answer is used the old way), and pops it on
+exit. Esc then arrives on its own, so a bound `<A-j>` only runs for Alt+j.
+Otherwise, or for an Alt key with no binding in the current mode,
+`App::split_alt` turns it back into Esc and the key (Neovim does the
+same), before it's recorded for macros.
+
+The protocol also reports `<C-[>`, `<C-i>` and `<C-m>` apart from `<Esc>`,
+`<Tab>` and `<CR>`, which older terminals send for them.
+`App::as_legacy` maps them back (`KeyPress::legacy_equivalent`): `<C-[>`
+always, since Vim users press it as Esc, and the other two unless the
+current mode's bindings use them (`Keymap::uses`), so binding `<C-i>` in
+normal mode is how to have it apart from Tab there.
 
 And when a key sequence is left half typed, the event loop polls with a
 deadline (`editor.key-timeout`, from the last key) instead of blocking.
@@ -984,9 +997,11 @@ status, branches and history.
 
 ## Known gaps / next steps
 
-- Alt keys that *are* bound can't be told apart from a fast Esc then that
+- Without the kitty keyboard protocol (tmux, Terminal.app, older xterms),
+  Alt keys that *are* bound can't be told apart from a fast Esc then that
   key (terminals send the same bytes), so binding `<A-j>` in insert mode
-  means a quick `<Esc>j` runs it.
+  means a quick `<Esc>j` runs it there. tmux's own `extended-keys` (CSI u)
+  mode isn't asked for.
 - Indentation: no tree rules for Python or YAML (typing them uses the
   heuristics above, and `=` declines), nor keywords for languages other
   than Bash and Python (Lua's `end`, Ruby's). Indent styles can't be

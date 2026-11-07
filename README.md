@@ -400,6 +400,13 @@ short binding when the timeout passes. Alt keys you haven't bound act as
 Esc followed by the key, since terminals send them the same way, so a fast
 `<Esc>j` is never mistaken for Alt+j.
 
+In terminals with the kitty keyboard protocol (kitty, WezTerm, foot,
+Ghostty, Alacritty, recent iTerm2), ferra asks for it, so keys arrive
+unambiguously: a fast `<Esc>j` doesn't run a bound `<A-j>` either, and
+`<C-i>` and `<C-m>` can be bound apart from `<Tab>` and `<CR>` (unbound,
+they act as those, and `<C-[>` is always `<Esc>`). `kitty-keyboard = false`
+turns it off.
+
 ### Hooks
 
 Run commands when something happens:

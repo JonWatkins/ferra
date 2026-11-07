@@ -28,6 +28,12 @@ statusline = "windows"
 scroll-off = 5
 # Colour code with tree-sitter (the languages in [languages] below).
 syntax-highlighting = true
+# Ask the terminal for the kitty keyboard protocol where it has it (kitty,
+# WezTerm, foot, Ghostty, Alacritty, recent iTerm2). Keys then arrive
+# unambiguously: a quick Esc then j is never taken for a bound <A-j>, and
+# <C-i>, <C-m> can be bound apart from <Tab>, <CR> (unbound, they act as
+# those; <C-[> is always <Esc>). Other terminals work as before.
+kitty-keyboard = true
 # Milliseconds to wait for the next key of a sequence before giving up: a
 # half-typed insert-mode binding (the j of jk) is typed as text, and a key
 # bound on its own and as a prefix (g and gg) runs the shorter binding.

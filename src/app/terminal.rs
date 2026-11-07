@@ -4,7 +4,10 @@ use std::io::{self, stdout};
 
 use crossterm::{
     cursor::SetCursorStyle,
-    event::{DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange},
+    event::{
+        DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
 };
 
@@ -42,4 +45,25 @@ pub fn enable_focus_reporting() -> io::Result<()> {
 
 pub fn disable_focus_reporting() -> io::Result<()> {
     execute!(stdout(), DisableFocusChange)
+}
+
+/// Asks the terminal, if it supports the kitty keyboard protocol (kitty,
+/// WezTerm, foot, Ghostty, Alacritty, recent iTerm2...), to report keys
+/// unambiguously: Esc on its own rather than as the start of Alt+key, and
+/// Ctrl-I, Ctrl-M and Ctrl-[ apart from Tab, Enter and Esc. Returns whether
+/// it did, so it can be turned off again. Asking waits briefly for the
+/// terminal's answer; must be in raw mode.
+pub fn enable_keyboard_enhancement() -> io::Result<bool> {
+    if !crossterm::terminal::supports_keyboard_enhancement()? {
+        return Ok(false);
+    }
+    execute!(
+        stdout(),
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    )?;
+    Ok(true)
+}
+
+pub fn disable_keyboard_enhancement() -> io::Result<()> {
+    execute!(stdout(), PopKeyboardEnhancementFlags)
 }

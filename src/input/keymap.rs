@@ -109,6 +109,16 @@ impl Keymap {
         best
     }
 
+    /// Whether `key` appears anywhere in `mode`'s bindings.
+    pub fn uses(&self, mode: Mode, key: KeyPress) -> bool {
+        fn walk(node: &Node, key: KeyPress) -> bool {
+            node.children
+                .iter()
+                .any(|(k, child)| *k == key || walk(child, key))
+        }
+        self.modes.get(&mode).is_some_and(|node| walk(node, key))
+    }
+
     /// Every `(mode, command)` pair that is bound, for validation.
     pub fn bound_commands(&self) -> Vec<(Mode, &str)> {
         fn walk<'a>(node: &'a Node, mode: Mode, out: &mut Vec<(Mode, &'a str)>) {
@@ -161,6 +171,15 @@ mod tests {
             map.bind(*mode, &keys(k), *cmd);
         }
         map
+    }
+
+    #[test]
+    fn uses_finds_a_key_anywhere_in_a_modes_bindings() {
+        let map = keymap(&[(Mode::Normal, "<C-w><C-i>", "x"), (Mode::Insert, "jk", "y")]);
+        let ctrl_i = keys("<C-i>")[0];
+        assert!(map.uses(Mode::Normal, ctrl_i), "second in a sequence");
+        assert!(!map.uses(Mode::Insert, ctrl_i), "another mode's");
+        assert!(map.uses(Mode::Insert, keys("k")[0]));
     }
 
     #[test]

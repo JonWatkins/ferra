@@ -221,6 +221,9 @@ impl App {
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         terminal::enable_bracketed_paste()?;
         terminal::enable_focus_reporting()?;
+        // A terminal that doesn't answer is used the old way.
+        let enhanced_keys = self.editor.options.kitty_keyboard
+            && terminal::enable_keyboard_enhancement().unwrap_or(false);
         let mut shape = None;
         // When a half-typed key sequence gives up waiting.
         let mut deadline: Option<Instant> = None;
@@ -286,6 +289,9 @@ impl App {
                 handled += 1;
             }
             deadline = self.key_deadline();
+        }
+        if enhanced_keys {
+            terminal::disable_keyboard_enhancement()?;
         }
         terminal::disable_focus_reporting()?;
         terminal::disable_bracketed_paste()?;
@@ -457,6 +463,7 @@ impl App {
 
     /// Handles one key press. Public so tests can drive the app directly.
     pub fn handle_key(&mut self, key: KeyPress) {
+        let key = self.as_legacy(key);
         if let Some([esc, key]) = self.split_alt(key) {
             self.handle_key(esc);
             self.handle_key(key);
@@ -477,6 +484,22 @@ impl App {
             let outcomes = app.input.timeout(app.editor.mode(), &app.keymap);
             app.apply_outcomes(outcomes);
         });
+    }
+
+    /// With the kitty keyboard protocol, `<C-[>`, `<C-i>` and `<C-m>` arrive
+    /// as themselves rather than as `<Esc>`, `<Tab>` and `<CR>`. `<C-[>` is
+    /// always `<Esc>` (Vim users press it for that); the others act as Tab
+    /// and Enter unless a binding in the current mode uses them, so binding
+    /// `<C-i>` is how to get it apart from Tab.
+    fn as_legacy(&self, key: KeyPress) -> KeyPress {
+        match key.legacy_equivalent() {
+            Some(legacy)
+                if key.code == KeyCode::Char('[') || !self.keymap.uses(self.editor.mode(), key) =>
+            {
+                legacy
+            }
+            _ => key,
+        }
     }
 
     /// Terminals send Alt+x as Esc then x, so Esc quickly followed by a key

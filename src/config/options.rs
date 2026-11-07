@@ -32,6 +32,9 @@ pub struct EditorOptions {
     pub clipboard: ClipboardMode,
     /// Which clipboard: "auto", "system" or "terminal" (OSC 52).
     pub clipboard_provider: crate::clipboard::ClipboardProvider,
+    /// Use the kitty keyboard protocol where the terminal supports it, so
+    /// Esc, Alt+key and Ctrl-I/Tab are told apart.
+    pub kitty_keyboard: bool,
     /// Check open files for changes made by other programs every second
     /// (as well as on focus, buffer switches and `:checktime`).
     pub watch_files: bool,

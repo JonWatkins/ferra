@@ -106,6 +106,23 @@ impl KeyPress {
         }
     }
 
+    /// The key older terminals send for this one, for the keys they can't
+    /// tell apart but the kitty keyboard protocol can: `<C-[>` is `<Esc>`,
+    /// `<C-i>` is `<Tab>` and `<C-m>` is `<CR>`.
+    pub fn legacy_equivalent(&self) -> Option<KeyPress> {
+        let Modifiers { ctrl, alt, shift } = self.modifiers;
+        if !ctrl || alt || shift {
+            return None;
+        }
+        let code = match self.code {
+            KeyCode::Char('[') => KeyCode::Esc,
+            KeyCode::Char('i') => KeyCode::Tab,
+            KeyCode::Char('m') => KeyCode::Enter,
+            _ => return None,
+        };
+        Some(KeyPress::plain(code))
+    }
+
     /// The digit value, if this is an unmodified digit key.
     pub fn as_digit(&self) -> Option<usize> {
         self.as_text()?.to_digit(10).map(|d| d as usize)
@@ -150,7 +167,6 @@ impl KeyPress {
     }
 }
 
-/// Parses a key sequence like `gg` or `<C-w>v` into key presses.
 /// `text` pasted into the terminal, as keys: `<PasteStart>`, a key per
 /// character (line breaks as `<CR>`, tabs as `<Tab>`), then `<PasteEnd>`.
 pub fn paste_keys(text: &str) -> Vec<KeyPress> {
@@ -167,6 +183,7 @@ pub fn paste_keys(text: &str) -> Vec<KeyPress> {
         .collect()
 }
 
+/// Parses a key sequence like `gg` or `<C-w>v` into key presses.
 pub fn parse_keys(notation: &str) -> Result<Vec<KeyPress>, String> {
     let mut keys = Vec::new();
     let mut rest = notation;
@@ -389,5 +406,16 @@ mod tests {
         assert_eq!(parse_keys(&notation).unwrap(), keys);
         let text: String = keys.iter().filter_map(KeyPress::as_pasted).collect();
         assert_eq!(text, "a <b>\n\tc");
+    }
+
+    #[test]
+    fn keys_older_terminals_merge() {
+        let legacy = |k: &str| parse_keys(k).unwrap()[0].legacy_equivalent();
+        assert_eq!(legacy("<C-[>"), Some(KeyPress::plain(KeyCode::Esc)));
+        assert_eq!(legacy("<C-i>"), Some(KeyPress::plain(KeyCode::Tab)));
+        assert_eq!(legacy("<C-m>"), Some(KeyPress::plain(KeyCode::Enter)));
+        assert_eq!(legacy("<C-a>"), None);
+        assert_eq!(legacy("<C-A-i>"), None);
+        assert_eq!(legacy("i"), None);
     }
 }
