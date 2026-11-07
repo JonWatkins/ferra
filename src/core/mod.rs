@@ -9,6 +9,7 @@ mod block;
 mod buffer;
 pub mod columns;
 mod history;
+pub mod increment;
 pub mod indent;
 pub mod motion;
 mod position;

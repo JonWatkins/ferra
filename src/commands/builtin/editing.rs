@@ -22,6 +22,36 @@ pub fn register(r: &mut CommandRegistry) {
         Ok(())
     });
     r.register(
+        "increment",
+        "Add [count] to the number under or after the cursor (<C-a>)",
+        |cx| cx.editor.increment(cx.count() as i128),
+    );
+    r.register(
+        "decrement",
+        "Take [count] from the number under or after the cursor (<C-x>)",
+        |cx| cx.editor.increment(-(cx.count() as i128)),
+    );
+    r.register(
+        "visual_increment",
+        "Add [count] to the first number on each selected line (visual <C-a>)",
+        |cx| cx.editor.increment_selection(cx.count() as i128, false),
+    );
+    r.register(
+        "visual_decrement",
+        "Take [count] from the first number on each selected line (visual <C-x>)",
+        |cx| cx.editor.increment_selection(-(cx.count() as i128), false),
+    );
+    r.register(
+        "visual_increment_sequence",
+        "Add [count], twice [count]... to the numbers on the selected lines, making a sequence (visual g<C-a>)",
+        |cx| cx.editor.increment_selection(cx.count() as i128, true),
+    );
+    r.register(
+        "visual_decrement_sequence",
+        "Take [count], twice [count]... from the numbers on the selected lines (visual g<C-x>)",
+        |cx| cx.editor.increment_selection(-(cx.count() as i128), true),
+    );
+    r.register(
         "complete_next",
         "Complete the word before the cursor from words in the buffers, or go to the next match (<C-n>)",
         |cx| cx.editor.complete(true),

@@ -286,6 +286,8 @@ block-comment = ["/*", "*/"]
 "gk" = "move_screen_up"
 "g<Down>" = "move_screen_down"
 "g<Up>" = "move_screen_up"
+"<C-a>" = "increment"
+"<C-x>" = "decrement"
 # Scrolling: the cursor moves with the view, as in Vim.
 "<C-d>" = "scroll_half_page_down"
 "<C-u>" = "scroll_half_page_up"
@@ -553,6 +555,10 @@ block-comment = ["/*", "*/"]
 "gk" = "move_screen_up"
 "g<Down>" = "move_screen_down"
 "g<Up>" = "move_screen_up"
+"<C-a>" = "visual_increment"
+"<C-x>" = "visual_decrement"
+"g<C-a>" = "visual_increment_sequence"
+"g<C-x>" = "visual_decrement_sequence"
 # Scrolling: the cursor moves with the view, as in Vim.
 "<C-d>" = "scroll_half_page_down"
 "<C-u>" = "scroll_half_page_up"

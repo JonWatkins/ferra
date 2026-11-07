@@ -8,6 +8,7 @@ mod command_line;
 mod completion;
 mod document;
 mod files;
+mod increment;
 mod jumps;
 mod marks;
 mod message;

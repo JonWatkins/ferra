@@ -51,6 +51,8 @@ type, open a file or split the window.
 | Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |
 | Normal  | `gcc`, `gc` + motion (`gcap`, `gcj`), visual `gc` | Toggle comments on those lines, using the file's language |
 | Normal  | `~` | Toggle case under the cursor and move on |
+| Normal  | `<C-a>` `<C-x>` (`5<C-a>`) | Add to / take from the number under or after the cursor: decimal (`-` signs, leading zeros kept), `0x` hex, `0b` binary |
+| Visual  | `<C-a>` `<C-x>`, `g<C-a>` `g<C-x>` | The same for the first number on each selected line; the `g` forms make a sequence (+1, +2, +3...) |
 | Normal  | `J`, `gJ` | Join lines (`3J`, visual `J`); `gJ` joins exactly, without adding a space or removing indentation |
 | Normal  | `i` `a` `I` `A` `o` `O` | Enter insert mode |
 | Normal  | `d` `c` `y` + motion/text object | Delete / change / yank (`dw`, `c$`, `yiw`, `di(`, `2d3w`) |

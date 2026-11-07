@@ -781,6 +781,21 @@ where they happened (consecutive edits on one line update the last entry).
 `g;`/`g,` step through it, and `'.` is its newest entry. Positions aren't
 adjusted for later edits; they're clamped when used.
 
+### Adding to numbers
+
+`<C-a>`/`<C-x>` find a number with `core::increment`: the one the cursor
+is in (looking back for a `0x`/`0b` prefix) or the next on the line, read
+as decimal (a `-` right before the digits is its sign), hex or binary, as
+Neovim's default `nrformats` (no octal). Hex and binary keep their width,
+wrapping like an unsigned number of that many digits, and the case of
+their letters; decimal with leading zeros keeps its width. Only the
+number's chars are replaced, so marks and text around it stay put. In
+visual mode (`editor/increment.rs`) each line's selected chars are
+searched (whole lines, the charwise part, or the block's columns) and, as
+in Vim, only the digits inside them count; `g<C-a>` multiplies the step by
+how many numbers have changed so far. The selection is taken like an
+operator's, so `.` repeats it on as many lines.
+
 ### Word completion
 
 `<C-n>`/`<C-p>` in insert mode complete the word before the cursor
