@@ -12,6 +12,9 @@ pub struct EditorOptions {
     pub tab_width: usize,
     /// Indent with spaces (`tab-width` of them) rather than tab characters.
     pub expand_tab: bool,
+    /// Indent each file the way it's already indented (tabs, or how many
+    /// spaces), over `expand-tab` and `tab-width`.
+    pub detect_indent: bool,
     /// New lines start with the indentation of the line they came from.
     pub auto_indent: bool,
     pub line_numbers: LineNumbers,
@@ -143,6 +146,8 @@ pub enum StatusElement {
     FileEncoding,
     /// `LF` or `CRLF`.
     FileLineEnding,
+    /// How the buffer indents: `2 spaces`, `tabs` (see `:indent`).
+    Indent,
     /// Keys typed so far for a command (`2d`).
     PendingKeys,
     /// `recording @a` while recording a macro.

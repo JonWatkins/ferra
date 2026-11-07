@@ -2,9 +2,8 @@
 //! `cw`, ...) live in `operators.rs`.
 
 use crate::commands::{CommandRegistry, CommandResult, Context};
-use crate::core::{Position, Range};
-use crate::editor::CaseChange;
-use crate::editor::Mode;
+use crate::core::{IndentUnit, Position, Range};
+use crate::editor::{CaseChange, Message, Mode};
 
 pub fn register(r: &mut CommandRegistry) {
     r.register(
@@ -22,6 +21,12 @@ pub fn register(r: &mut CommandRegistry) {
         cx.editor.note_typed("\t");
         Ok(())
     });
+    r.register(
+        "indent_style",
+        "Show how this buffer indents, or indent it with [tabs | spaces [N] | N | auto]",
+        indent_style,
+    );
+    r.alias("indent", "indent_style");
     r.register(
         "delete_char_backward",
         "Delete character before cursor",
@@ -166,6 +171,51 @@ const CTRL_A: char = '\u{1}';
 /// (no auto-indent; a line register brings its line break). On the `:` and
 /// `/` lines, inserts its first line; there `<C-r><C-w>` and `<C-r><C-a>`
 /// insert the word or WORD under the cursor.
+/// `:indent`: shows the buffer's indent style and where it came from, or
+/// sets it. `auto` looks at the text again and goes back to detecting.
+fn indent_style(cx: &mut Context) -> CommandResult {
+    const USAGE: &str = "Usage: :indent [tabs | spaces [N] | N | auto]";
+    let spaces = |n: &str| -> Result<Option<IndentUnit>, String> {
+        n.parse()
+            .ok()
+            .filter(|n| (1..=16).contains(n))
+            .map(|n| Some(IndentUnit::Spaces(n)))
+            .ok_or_else(|| format!("Not an indent width (1 to 16): {n}"))
+    };
+    let args: Vec<String> = cx.args.iter().map(|a| a.to_lowercase()).collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let choice = match args[..] {
+        [] => {
+            let doc = &cx.editor.document;
+            let source = if doc.chosen_indent().is_some() {
+                "set with :indent"
+            } else if doc.detected_indent().is_some() && cx.editor.options.detect_indent {
+                "detected"
+            } else {
+                "from config"
+            };
+            let style = cx.editor.indent_style();
+            cx.editor
+                .set_message(Message::info(format!("Indenting with {style} ({source})")));
+            return Ok(());
+        }
+        ["auto"] => {
+            cx.editor.document.detect_indent();
+            None
+        }
+        ["tabs" | "tab"] => Some(IndentUnit::Tabs),
+        ["spaces" | "space"] => Some(IndentUnit::Spaces(cx.editor.options.tab_width.max(1))),
+        ["spaces" | "space", n] => spaces(n)?,
+        [n] if n.starts_with(|c: char| c.is_ascii_digit()) => spaces(n)?,
+        _ => return Err(USAGE.into()),
+    };
+    cx.editor.document.choose_indent(choice);
+    let style = cx.editor.indent_style();
+    cx.editor
+        .set_message(Message::info(format!("Indenting with {style}")));
+    Ok(())
+}
+
 fn insert_register(cx: &mut Context) -> CommandResult {
     let name = cx.char_arg.ok_or("missing register name")?;
     if matches!(name, CTRL_W | CTRL_A) {

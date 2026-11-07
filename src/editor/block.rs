@@ -171,11 +171,12 @@ impl Editor {
     /// `>` / `<` on a block: shifts the text from the block's left edge by
     /// one indent, as Vim does. The whitespace starting there grows or
     /// shrinks (`<` never takes whitespace from left of the block) and is
-    /// rewritten as tabs or spaces per `expand-tab`. Rows that stop short of
+    /// rewritten as tabs or spaces as the buffer indents. Rows that stop short of
     /// the block, or have nothing but whitespace in it, are left alone.
     fn shift_block(&mut self, block: Block, indent: bool) {
         let tab = self.options.tab_width.max(1);
-        let expand_tab = self.options.expand_tab;
+        let unit = self.indent_width();
+        let expand_tab = !self.indent_with_tabs();
         for row in block.rows() {
             let line = self.document.buffer().line(row).into_owned();
             if !block.reaches(&line, tab) {
@@ -194,9 +195,9 @@ impl Editor {
             let from = display_col(&line, start, tab);
             let to = display_col(&line, end, tab);
             let new_to = if indent {
-                to + tab
+                to + unit
             } else if to > block.left {
-                to.saturating_sub(tab).max(block.left)
+                to.saturating_sub(unit).max(block.left)
             } else {
                 continue;
             };

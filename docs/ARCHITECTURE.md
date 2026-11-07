@@ -280,7 +280,8 @@ Operators that transform text in place (`>`, `<`, `gu`, `gU`, `g~`) don't
 touch registers. `apply_operator` hands them to `editor/transform.rs`:
 
 - `shift_lines` measures each line's indent, adds or removes one level, and
-  rebuilds it with spaces (`expand-tab`) or tabs plus spaces, as Vim does,
+  rebuilds it with spaces or tabs plus spaces (the buffer's
+  [indent style](#indentation)), as Vim does,
   so mixed indentation gets tidied rather than made worse.
 - `change_case` replaces the range with its re-cased text (which may change
   length, e.g. `ß` → `SS`).
@@ -354,6 +355,17 @@ Indentation follows the language's rules where it has them
   rules (`type_with_indent`); without rules it takes off a level.
 - New lines are skipped with `auto-indent = false`; `=` isn't. Files over
   the highlighting limit fall back to the heuristic.
+- **The indent style** (`Editor::indent_style`, an `IndentUnit`: tabs or
+  N spaces) is the buffer's `:indent` choice, else what `core/indent.rs`
+  detected when the file was read or reloaded (with `detect-indent`),
+  else `expand-tab` and `tab-width`. Detection looks at the first 1000
+  lines: mostly tab-indented means tabs; otherwise the commonest step by
+  which a line's indent grows over the previous non-blank line's, ignoring
+  one-space steps, `*` comment continuations and lines mixing tabs in
+  (alignment, not indentation), with ties going to the narrower step.
+  Everything that indents (`>`/`<`, block shifts, Tab, `=`, new lines,
+  closing brackets) goes through it; `tab-width` still sets how wide a
+  tab is drawn. The `indent` status line element shows it.
 
 ### Comments
 
@@ -406,7 +418,7 @@ where they change, so marks elsewhere on them stay put.
   a tab turns the tab into spaces first.
 - `>` / `<` shift from the block's left edge: the whitespace starting
   there grows or shrinks by one indent (`<` never takes whitespace from
-  left of the block) and is rewritten as tabs or spaces per `expand-tab`.
+  left of the block) and is rewritten as tabs or spaces as the buffer indents.
   Rows that stop short of the block, or are blank inside it, are skipped.
 - Yanks store a `blockwise` register (one line per row). Pasting one
   inserts each row at the same display column on successive lines, padding
@@ -874,9 +886,11 @@ status, branches and history.
   key (terminals send the same bytes), so binding `<A-j>` in insert mode
   means a quick `<Esc>j` runs it.
 - Indentation: no rules for Python or YAML (new lines copy the line
-  above, and `=` declines), no re-indenting as a keyword is typed (Bash's
-  `fi`; only closing brackets trigger it), and the indent unit is always
-  `tab-width` rather than detected from the file.
+  above, and `=` declines), and no re-indenting as a keyword is typed
+  (Bash's `fi`; only closing brackets trigger it). Indent styles can't be
+  set per language in config (Helix's `indent = { unit = ... }`), and
+  Vim's mix of a `shiftwidth` narrower than tabs (4-column levels made of
+  tabs and spaces) isn't supported.
 - `"=` (the expression register).
 - Window-local options, and per-window or plugin-supplied status line
   elements (the layout is one setting for the active window).

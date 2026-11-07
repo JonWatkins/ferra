@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::core::{Buffer, Change, History, Position, Revision, TextFormat};
+use crate::core::{Buffer, Change, History, IndentUnit, Position, Revision, TextFormat};
 
 /// Identifies a document among the editor's open buffers. Shown to users
 /// starting from 1.
@@ -63,6 +63,10 @@ pub struct Document {
     /// Rows being followed through edits (`:g` visits them); `None` once
     /// a row's line is deleted.
     tracked_rows: Option<Vec<Option<usize>>>,
+    /// How the file was indented when read (see [`crate::core::indent`]).
+    detected_indent: Option<IndentUnit>,
+    /// The indentation chosen with `:indent`, over any detected one.
+    chosen_indent: Option<IndentUnit>,
 }
 
 impl Document {
@@ -71,6 +75,27 @@ impl Document {
             buffer: Buffer::from_text(text),
             ..Self::default()
         }
+    }
+
+    /// How the file was indented when it was read, if that could be told.
+    pub fn detected_indent(&self) -> Option<IndentUnit> {
+        self.detected_indent
+    }
+
+    /// The indentation picked with `:indent`, if any.
+    pub fn chosen_indent(&self) -> Option<IndentUnit> {
+        self.chosen_indent
+    }
+
+    /// `:indent`: indents this buffer with `unit` from now on, or `None` to
+    /// go back to the detected or configured style.
+    pub fn choose_indent(&mut self, unit: Option<IndentUnit>) {
+        self.chosen_indent = unit;
+    }
+
+    /// Looks at the text again to see how it's indented.
+    pub fn detect_indent(&mut self) {
+        self.detected_indent = crate::core::indent::detect(&self.buffer);
     }
 
     /// Display name for the UI: the path as given, or `[scratch]`.

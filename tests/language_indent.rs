@@ -150,7 +150,8 @@ fn python_has_no_rules_but_new_lines_follow_colons() {
     );
     assert_eq!(text(&app), "def f():\n  return 1", "unchanged");
     keys(&mut app, "ggox<Esc>");
-    assert_eq!(text(&app), "def f():\n    x\n  return 1");
+    // The file indents by two, so the new line does too.
+    assert_eq!(text(&app), "def f():\n  x\n  return 1");
 }
 
 #[test]

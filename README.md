@@ -107,6 +107,14 @@ line's level, and `=` re-indents (`==`, `=ip`, `gg=G`). Other files keep
 the indentation of the line above, one level more after an opening bracket
 (or a `:` in Python).
 
+Each file is indented the way it already is: tabs, or however many spaces
+its lines step in by, worked out from its first 1000 lines when it's
+opened (and again on `:e!`). That covers `>>`, Tab, `=` and new lines.
+Files with nothing indented yet use `expand-tab` and `tab-width`, and
+`detect-indent = false` turns detection off. `:indent` shows the style in
+use; `:indent tabs`, `:indent 2` (or `:indent spaces 2`) set it for the
+buffer, and `:indent auto` looks at the text again.
+
 Macros are stored in their register as key notation (`A;<Esc>j`), so
 `"ap` pastes one to edit and `"ay$` yanks it back. Playback stops at the
 first failing command.
@@ -247,7 +255,8 @@ right = ["file-line-ending", "separator", "position-percentage", "position"]
 Elements: `mode`, `file-name` (shortened from the left to fit),
 `file-base-name`, `modified`, `position`, `position-percentage`,
 `total-lines`, `file-type`, `file-encoding` (only when not plain UTF-8),
-`file-line-ending`, `pending-keys`, `recording`, `separator` and `spacer`.
+`file-line-ending`, `indent` (`2 spaces`, `tabs`), `pending-keys`,
+`recording`, `separator` and `spacer`.
 Elements with nothing to show take no space.
 
 Window sizes are kept as proportions, so they survive resizing the terminal.
@@ -264,6 +273,7 @@ Splitting or closing a window evens out its neighbours again, as Vim does.
 | `:e path` / `:e!` | Open a file in a new buffer (or switch to it) / reload the current one (`u` brings back what it discarded) |
 | `:checktime` | Check every open file for changes made by other programs |
 | `:fenc`, `:fenc utf-8` | Show the file's encoding, or convert it (saved on `:w`) |
+| `:indent`, `:indent tabs` / `2` / `auto` | Show how the buffer indents, or set it (see Indentation) |
 
 A trailing `!` overrides safety checks: unsaved changes, a file that changed
 on disk since it was read, or writing over an existing file. Saves are
@@ -341,6 +351,7 @@ every option. Example:
 [editor]
 tab-width = 2
 expand-tab = true           # indent with spaces; false for tabs
+detect-indent = true        # but indent each file the way it already is
 auto-indent = true          # indent new lines (by the language's rules where it has them)
 line-numbers = "absolute"   # "absolute" | "relative" | "none"
 scroll-off = 8

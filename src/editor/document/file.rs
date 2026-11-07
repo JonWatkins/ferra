@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use super::Document;
-use crate::core::{Buffer, DEFAULT_FALLBACK, Encoding, FileEncoding, Position, TextFormat};
+use crate::core::{Buffer, DEFAULT_FALLBACK, Encoding, FileEncoding, Position, TextFormat, indent};
 use crate::files::{self, FileError};
 
 /// What was found when opening a file, for the status message.
@@ -67,8 +67,10 @@ impl Document {
         };
 
         let (text, format) = decode(&path, &contents.bytes, fallback)?;
+        let buffer = Buffer::from_text(&text);
         let document = Document {
-            buffer: Buffer::from_text(&text),
+            detected_indent: indent::detect(&buffer),
+            buffer,
             path: Some(path.clone()),
             format,
             saved_encoding: format.encoding,
@@ -154,6 +156,7 @@ impl Document {
         self.disk_acknowledged = None;
         self.format = format;
         self.saved_encoding = format.encoding;
+        self.detected_indent = indent::detect(&self.buffer);
         self.set_cursor(cursor);
         Ok(Some(OpenInfo {
             new_file: false,

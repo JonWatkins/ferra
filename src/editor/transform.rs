@@ -12,7 +12,7 @@
 use std::ops::RangeInclusive;
 
 use super::Editor;
-use crate::core::{Position, Range, motion};
+use crate::core::{IndentUnit, Position, Range, motion};
 use crate::syntax::indent::{self, IndentStyle};
 
 /// How `gu`, `gU` and `g~` change letters.
@@ -43,13 +43,38 @@ impl CaseChange {
 }
 
 impl Editor {
-    /// One level of indentation: a tab, or `tab-width` spaces with
-    /// `expand-tab`.
+    /// How this buffer is indented: as chosen with `:indent`, else as the
+    /// file was found to be (with `detect-indent`), else per `expand-tab`
+    /// and `tab-width`.
+    pub fn indent_style(&self) -> IndentUnit {
+        let doc = &self.document;
+        doc.chosen_indent()
+            .or_else(|| doc.detected_indent().filter(|_| self.options.detect_indent))
+            .unwrap_or(if self.options.expand_tab {
+                IndentUnit::Spaces(self.options.tab_width.max(1))
+            } else {
+                IndentUnit::Tabs
+            })
+    }
+
+    /// How many display columns one level of indentation takes.
+    pub fn indent_width(&self) -> usize {
+        match self.indent_style() {
+            IndentUnit::Tabs => self.options.tab_width.max(1),
+            IndentUnit::Spaces(n) => n.max(1),
+        }
+    }
+
+    /// Whether indentation is made of tabs (then spaces for any remainder).
+    pub(super) fn indent_with_tabs(&self) -> bool {
+        self.indent_style() == IndentUnit::Tabs
+    }
+
+    /// One level of indentation: a tab, or spaces.
     pub fn indent_unit(&self) -> String {
-        if self.options.expand_tab {
-            " ".repeat(self.options.tab_width)
-        } else {
-            "\t".to_string()
+        match self.indent_style() {
+            IndentUnit::Tabs => "\t".to_string(),
+            IndentUnit::Spaces(n) => " ".repeat(n.max(1)),
         }
     }
 
@@ -57,12 +82,13 @@ impl Editor {
     ///
     /// Like Vim, the indentation is measured and rebuilt rather than having
     /// characters added or removed, so a line's indent is always made the
-    /// configured way (spaces with `expand-tab`, otherwise tabs then spaces)
+    /// buffer's way (see [`Editor::indent_style`]: spaces, or tabs then spaces)
     /// and mixed indentation is tidied up. Empty lines aren't indented.
     pub fn shift_lines(&mut self, range: Range, indent: bool) {
         let (first, last) = range.rows();
         let tab_width = self.options.tab_width.max(1);
-        let expand_tab = self.options.expand_tab;
+        let unit = self.indent_width();
+        let expand_tab = !self.indent_with_tabs();
         let doc = &mut self.document;
         for row in first..=last {
             let line = doc.buffer().line(row).into_owned();
@@ -78,15 +104,11 @@ impl Editor {
                 }
             });
             let width = if indent {
-                width + tab_width
+                width + unit
             } else {
-                width.saturating_sub(tab_width)
+                width.saturating_sub(unit)
             };
-            let new_indent = if expand_tab {
-                " ".repeat(width)
-            } else {
-                "\t".repeat(width / tab_width) + &" ".repeat(width % tab_width)
-            };
+            let new_indent = whitespace(0, width, tab_width, expand_tab);
             if line.chars().take(old_len).collect::<String>() != new_indent {
                 doc.delete(Position::new(row, 0), Position::new(row, old_len));
                 doc.insert(Position::new(row, 0), &new_indent);
@@ -178,11 +200,10 @@ impl Editor {
         let remove = if before.ends_with(&['\t']) {
             1
         } else {
-            let tab_width = self.options.tab_width.max(1);
             before
                 .iter()
                 .rev()
-                .take(tab_width)
+                .take(self.indent_width())
                 .take_while(|&&c| c == ' ')
                 .count()
         };
@@ -191,10 +212,10 @@ impl Editor {
         self.document.set_cursor(start);
     }
 
-    /// Indentation `width` display columns wide, made the configured way.
+    /// Indentation `width` display columns wide, made the buffer's way.
     pub fn indent_string(&self, width: usize) -> String {
         let tab = self.options.tab_width.max(1);
-        whitespace(0, width, tab, self.options.expand_tab)
+        whitespace(0, width, tab, !self.indent_with_tabs())
     }
 
     /// The width each line of `rows` should be indented to by the
@@ -205,10 +226,9 @@ impl Editor {
         if buffer.len_chars() > crate::syntax::MAX_HIGHLIGHT_CHARS {
             return None;
         }
-        let tab = self.options.tab_width.max(1);
         let style = IndentStyle {
-            tab_width: tab,
-            unit: tab,
+            tab_width: self.options.tab_width.max(1),
+            unit: self.indent_width(),
         };
         indent::compute(language, &buffer.text(), rows, style)
     }

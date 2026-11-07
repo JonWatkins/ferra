@@ -204,6 +204,7 @@ impl Active<'_> {
                 LineEnding::Lf => " LF ".to_string(),
                 LineEnding::Crlf => " CRLF ".to_string(),
             }),
+            StatusElement::Indent => Span::raw(format!(" {} ", editor.indent_style())),
             StatusElement::PendingKeys => {
                 styled(format!("{} ", self.pending), "ui.statusline.pending")
             }
@@ -326,6 +327,18 @@ mod tests {
         let text = render(&editor, "");
         assert!(text.starts_with(" LF │ 4 lines "), "{text:?}");
         assert!(text.ends_with(" 50%  NORMAL "), "{text:?}");
+    }
+
+    #[test]
+    fn indent_shows_the_buffers_indent_style() {
+        use StatusElement::*;
+        let mut editor = Editor::default();
+        editor.options.statusline_layout = layout(&[Indent], &[], &[]);
+        assert!(render(&editor, "").starts_with(" 4 spaces "));
+        editor
+            .document
+            .choose_indent(Some(crate::core::IndentUnit::Tabs));
+        assert!(render(&editor, "").starts_with(" tabs "));
     }
 
     #[test]
