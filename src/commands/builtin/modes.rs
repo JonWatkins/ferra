@@ -37,6 +37,18 @@ pub fn register(r: &mut CommandRegistry) {
         Ok(())
     });
     r.register(
+        "insert_at_last_insert",
+        "Insert where insert mode was last left in this buffer (gi)",
+        |cx| {
+            let target = cx.editor.document.mark('^');
+            cx.editor.set_mode(Mode::Insert);
+            if let Some(position) = target {
+                cx.editor.document.set_cursor(position);
+            }
+            Ok(())
+        },
+    );
+    r.register(
         "replace_mode",
         "Type over the text from the cursor ([count] times on <Esc>) (R)",
         |cx| {

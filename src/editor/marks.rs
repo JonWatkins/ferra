@@ -43,7 +43,8 @@ impl Editor {
             _ => {}
         }
         let document = match name {
-            'a'..='z' => &self.document,
+            // `^`: where insert mode last stopped in this buffer.
+            'a'..='z' | '^' => &self.document,
             'A'..='Z' => {
                 let id = *self.global_marks.get(&name).ok_or_else(not_set)?;
                 self.document_by_id(id).ok_or_else(not_set)?

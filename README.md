@@ -73,6 +73,9 @@ type, open a file or split the window.
 | Normal  | `''`, ` `` ` | Back to where the cursor was before the last jump (again to toggle) |
 | Normal  | `<C-o>`, `<C-i>` / `<Tab>` | Back / forward through the jump list, across buffers (`3<C-o>`) |
 | Normal  | `g;`, `g,` | Older / newer place in the change list; `'.` is the last change |
+| Normal  | `gi` | Insert where insert mode was last left in this buffer (`` `^ `` goes there) |
+| Normal  | `gf` | Open the file named under the cursor (beside this file, or in the working directory); `name:12` or `name:12:5` goes to that line and column |
+| Normal  | `<C-^>` (Ctrl-6) | Switch to the alternate buffer (`:b#`) |
 | Normal  | `/` `?` | Search forward / backward (regex; matches preview as you type) |
 | Normal  | `n` `N` | Next / previous match |
 | Visual  | `/` `?` | Search extends the selection to the match (`v/foo<CR>d`); `<Esc>` keeps the selection as it was |

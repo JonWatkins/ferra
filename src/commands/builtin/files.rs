@@ -98,6 +98,12 @@ pub fn register(r: &mut CommandRegistry) {
     r.alias("fenc", "file_encoding");
 
     r.register(
+        "goto_file",
+        "Open the file named under the cursor, at its :line if it has one (gf)",
+        |cx| cx.editor.open_file_under_cursor(),
+    );
+
+    r.register(
         "force_quit",
         "Quit, discarding unsaved changes (ZQ)",
         |cx| {

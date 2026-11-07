@@ -787,6 +787,13 @@ where they happened (consecutive edits on one line update the last entry).
 `g;`/`g,` step through it, and `'.` is its newest entry. Positions aren't
 adjusted for later edits; they're clamped when used.
 
+Leaving insert mode sets the buffer's `^` mark (an ordinary local mark, so
+it follows edits), which `gi` and `` `^ `` go back to. `gf`
+(`Editor::open_file_under_cursor`) takes the run of file-name characters
+under the cursor, splits off a `:line[:col]` suffix, and opens the first of
+"beside the current file" and "from the working directory" that exists,
+through `open`, so it's a jump and `<C-^>` comes back.
+
 ### Reflowing text (`gq`)
 
 `gq` is `Operator::Format` (`gw` with `keep_cursor`) over the lines its
@@ -1159,6 +1166,11 @@ status, branches and history.
   auto-wrapping at `text-width`), use an external `formatprg`, or know
   block comments' middle lines (` * ` in `/* */`); two spaces after a
   sentence become one.
+- Folding (`zf`, `za`, `zc`, `zo`, `zR`, `zM`): needs `j`/`k` and the
+  view to step over hidden lines, and fold ranges kept in place as lines
+  are added and removed.
+- `gf` takes the name as written: no `path`/`suffixesadd` search, and
+  `gx` (open a URL) isn't there.
 - `"=` (the expression register).
 - Soft wrap: a line taller than the whole window can't be scrolled through (the view
   starts at a line's start; Vim shows `@` rows, Neovim smooth-scrolls),

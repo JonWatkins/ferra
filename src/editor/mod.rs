@@ -332,6 +332,10 @@ impl Editor {
                 self.finish_block_insert(insert);
             }
         }
+        if previous == Mode::Insert && mode != Mode::Insert {
+            // `gi` (and `` `^ ``) go back to where insert mode stopped.
+            self.document.set_mark('^');
+        }
         if previous == Mode::Insert && mode == Mode::Normal {
             // Like Vim, leaving insert mode steps back onto the last typed char.
             let cursor = self.document.cursor();

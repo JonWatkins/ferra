@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use super::{DiskState, Document, Editor, Message, Mode, OpenInfo, SaveInfo};
-use crate::core::LineEnding;
+use crate::core::{LineEnding, Position};
 use crate::events::Event;
 use crate::files::FileError;
 
@@ -17,6 +17,60 @@ impl Editor {
     /// Replaces the current document with the file at `path`.
     /// Opens the file at `path` in a new buffer, or switches to it if it's
     /// already open.
+    /// `gf`: opens the file named under the cursor. A `:line` (and
+    /// `:col`) after the name, as in compiler messages and grep output,
+    /// goes there. The name is looked for next to the current file, then
+    /// in the working directory; `~` is the home directory.
+    pub fn open_file_under_cursor(&mut self) -> Result<(), String> {
+        let cursor = self.document.cursor();
+        let line: Vec<char> = self.document.buffer().line(cursor.row).chars().collect();
+        let in_name = |c: char| c.is_alphanumeric() || "/._-~+:@%#\\".contains(c);
+        let at = cursor.col.min(line.len().saturating_sub(1));
+        if line.is_empty() || !in_name(line[at]) {
+            return Err("No file name under the cursor".into());
+        }
+        let start = line[..at]
+            .iter()
+            .rposition(|&c| !in_name(c))
+            .map_or(0, |i| i + 1);
+        let end = line[at..]
+            .iter()
+            .position(|&c| !in_name(c))
+            .map_or(line.len(), |i| at + i);
+        let word: String = line[start..end].iter().collect();
+        let (name, row, col) = split_location(word.trim_end_matches([':', '.']));
+
+        let name = match name.strip_prefix("~/") {
+            Some(rest) => std::env::var_os("HOME")
+                .map(|home| Path::new(&home).join(rest))
+                .unwrap_or_else(|| Path::new(name).to_path_buf()),
+            None => Path::new(name).to_path_buf(),
+        };
+        let beside = self
+            .document
+            .path()
+            .and_then(Path::parent)
+            .map(|dir| dir.join(&name));
+        let path = [beside, Some(name.clone())]
+            .into_iter()
+            .flatten()
+            .find(|p| p.is_file())
+            .ok_or_else(|| format!("Can't find file \"{}\"", name.display()))?;
+        self.open(&path).map_err(|e| e.to_string())?;
+        if let Some(row) = row {
+            let row = row
+                .saturating_sub(1)
+                .min(self.document.buffer().line_count() - 1);
+            let col = match col {
+                Some(col) => col.saturating_sub(1),
+                None => crate::core::motion::first_non_blank(self.document.buffer(), row),
+            };
+            self.document.set_cursor(Position::new(row, col));
+            self.enforce_cursor_rules();
+        }
+        Ok(())
+    }
+
     pub fn open(&mut self, path: &Path) -> Result<(), FileError> {
         if let Some(id) = self.find_open_path(path) {
             if id != self.document.id() {
@@ -286,5 +340,48 @@ mod tests {
         let events = editor.take_events();
         assert!(events.contains(&Event::Opened { path: path.clone() }));
         assert!(events.contains(&Event::AfterSave { path }));
+    }
+}
+
+/// `src/main.rs:12:5` → the name, line 12 and column 5 (1-based); plain
+/// names have neither.
+fn split_location(word: &str) -> (&str, Option<usize>, Option<usize>) {
+    let mut parts = word.rsplitn(3, ':');
+    let last = parts.next().unwrap_or(word);
+    let middle = parts.next();
+    let first = parts.next();
+    let number = |s: &str| s.parse::<usize>().ok();
+    match (first, middle.and_then(number), number(last)) {
+        (Some(name), Some(row), Some(col)) => (name, Some(row), Some(col)),
+        _ => match (middle, number(last)) {
+            (Some(rest), Some(row)) => {
+                // `name:line`, with `rest` possibly `dir:name` (rare).
+                let name = match first {
+                    Some(first) => &word[..first.len() + 1 + rest.len()],
+                    None => rest,
+                };
+                (name, Some(row), None)
+            }
+            _ => (word, None, None),
+        },
+    }
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::split_location;
+
+    #[test]
+    fn names_with_lines_and_columns() {
+        assert_eq!(split_location("src/main.rs"), ("src/main.rs", None, None));
+        assert_eq!(
+            split_location("src/main.rs:12"),
+            ("src/main.rs", Some(12), None)
+        );
+        assert_eq!(
+            split_location("src/main.rs:12:5"),
+            ("src/main.rs", Some(12), Some(5))
+        );
+        assert_eq!(split_location("a:b.rs:3"), ("a:b.rs", Some(3), None));
     }
 }
