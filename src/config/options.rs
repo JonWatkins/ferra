@@ -212,6 +212,8 @@ pub struct CursorShapes {
     pub operator: CursorShape,
     pub visual: CursorShape,
     pub picker: CursorShape,
+    /// Replace mode (`R`).
+    pub replace: CursorShape,
 }
 
 impl CursorShapes {
@@ -240,6 +242,7 @@ mod tests {
             operator: CursorShape::Block,
             visual: CursorShape::Block,
             picker: CursorShape::Bar,
+            replace: CursorShape::Underline,
         };
         assert_eq!(shapes.for_mode(Mode::Insert), CursorShape::Bar);
         assert_eq!(shapes.for_mode(Mode::Command), CursorShape::Underline);

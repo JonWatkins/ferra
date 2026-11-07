@@ -36,6 +36,14 @@ pub fn register(r: &mut CommandRegistry) {
         cx.editor.document.set_cursor(cursor.with_col(usize::MAX));
         Ok(())
     });
+    r.register(
+        "replace_mode",
+        "Type over the text from the cursor ([count] times on <Esc>) (R)",
+        |cx| {
+            cx.editor.start_replace(cx.count());
+            Ok(())
+        },
+    );
     r.register("command_mode", "Enter command-line mode", |cx| {
         // From visual mode the command applies to the selected lines, as in
         // Vim: the prompt starts with the `'<,'>` range.

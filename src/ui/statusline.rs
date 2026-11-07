@@ -153,12 +153,15 @@ impl Active<'_> {
                     }
                     Some(s) if s.kind == SelectionKind::Line => "V-LINE".to_string(),
                     Some(s) if s.kind == SelectionKind::Block => "V-BLOCK".to_string(),
+                    _ if editor.replacing() => "REPLACE".to_string(),
                     _ => mode.to_string(),
                 };
-                styled(
-                    format!(" {label} "),
-                    &format!("ui.statusline.{}", mode.id()),
-                )
+                let scope = if editor.replacing() {
+                    "replace"
+                } else {
+                    mode.id()
+                };
+                styled(format!(" {label} "), &format!("ui.statusline.{scope}"))
             }
             StatusElement::FileName => Span::raw(format!(
                 " {} ",

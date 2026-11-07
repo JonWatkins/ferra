@@ -88,8 +88,12 @@ pub fn register(r: &mut CommandRegistry) {
         "Delete character before cursor",
         |cx| {
             for _ in 0..cx.count() {
-                cx.editor.document.delete_backward();
-                cx.editor.note_typed_backspace();
+                if cx.editor.replacing() {
+                    cx.editor.backspace_replacing();
+                } else {
+                    cx.editor.document.delete_backward();
+                    cx.editor.note_typed_backspace();
+                }
             }
             Ok(())
         },

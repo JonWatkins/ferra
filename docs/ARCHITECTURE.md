@@ -781,6 +781,18 @@ where they happened (consecutive edits on one line update the last entry).
 `g;`/`g,` step through it, and `'.` is its newest entry. Positions aren't
 adjusted for later edits; they're clamped when used.
 
+### Replace mode
+
+`R` (`editor/replace.rs`) is insert mode with a `Replacing` state, as
+Vim's replace mode shares insert mode's keys: typed chars (and pastes)
+take the place of the char under the cursor, or add at a line's end, and
+each records what it overwrote, so `<BS>` puts that back (over text it
+didn't type it just moves left). A line break is added without deleting
+anything. On leaving, `set_mode` calls `finish_replace` before what was
+typed is stored, which types it again for a count (`3Rab`). The status
+line shows `REPLACE` (`ui.statusline.replace`) and the cursor takes
+`cursor-shape.replace`. `.` replays the keys like any insert.
+
 ### Adding to numbers
 
 `<C-a>`/`<C-x>` find a number with `core::increment`: the one the cursor

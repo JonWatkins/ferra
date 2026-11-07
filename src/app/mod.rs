@@ -237,6 +237,11 @@ impl App {
                 .options
                 .cursor_shape
                 .for_mode(self.editor.mode());
+            let wanted = if self.editor.replacing() {
+                self.editor.options.cursor_shape.replace
+            } else {
+                wanted
+            };
             if shape != Some(wanted) {
                 terminal::set_cursor_shape(wanted)?;
                 shape = Some(wanted);
@@ -362,6 +367,11 @@ impl App {
                 // On a line that's only (auto-)indentation so far, a paste
                 // that brings its own indentation replaces it rather than
                 // adding to it.
+                if self.editor.replacing() {
+                    // Typed over the text, as if each char were typed.
+                    text.chars().for_each(|c| self.editor.insert_text_char(c));
+                    return;
+                }
                 let doc = &mut self.editor.document;
                 let cursor = doc.cursor();
                 let line = doc.buffer().line(cursor.row);

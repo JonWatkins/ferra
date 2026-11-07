@@ -46,6 +46,7 @@ type, open a file or split the window.
 | Normal  | `H` `M` `L` (`3H`) | Top / middle / bottom line on screen; motions too (`dL`) |
 | Normal  | `gj` `gk` (`g<Down>` `g<Up>`) | Down / up a screen row, through the rows of a wrapped line |
 | Normal  | `r` + char | Replace characters (`3rx`) |
+| Normal  | `R` | Replace mode: type over the text (`<BS>` puts it back; `3Rab<Esc>` types it three times) |
 | Normal  | `>` `<` + motion, `>>` `<<` | Indent / outdent lines (`>ip`, `3>>`; visual `>` `<`) |
 | Normal  | `=` + motion, `==` | Re-indent lines by the language's rules (`gg=G` for the whole file; visual `=`) |
 | Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |

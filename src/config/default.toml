@@ -95,6 +95,8 @@ picker = "bar"
 # While an operator (d, c, y) waits for a motion.
 operator = "underline"
 visual = "block"
+# Replace mode (R).
+replace = "underline"
 
 # Which files are in which language, for syntax highlighting. Files are
 # matched by exact file name, then extension, then the interpreter on a
@@ -232,6 +234,7 @@ block-comment = ["/*", "*/"]
 "ui.statusline" = { fg = "#a0a6b0", bg = "#1f2229" }
 "ui.statusline.normal" = { fg = "#16181d", bg = "#7aa2f7", modifiers = ["bold"] }
 "ui.statusline.insert" = { fg = "#16181d", bg = "#9ece6a", modifiers = ["bold"] }
+"ui.statusline.replace" = { fg = "#16181d", bg = "#f7768e", modifiers = ["bold"] }
 "ui.statusline.command" = { fg = "#16181d", bg = "#e0af68", modifiers = ["bold"] }
 "ui.statusline.operator" = { fg = "#16181d", bg = "#7aa2f7", modifiers = ["bold"] }
 "ui.statusline.visual" = { fg = "#16181d", bg = "#bb9af7", modifiers = ["bold"] }
@@ -327,6 +330,7 @@ block-comment = ["/*", "*/"]
 "x" = "delete_char"
 "<Del>" = "delete_char"
 "r" = "replace_char"
+"R" = "replace_mode"
 "X" = "delete_char_before"
 "D" = "delete_to_line_end"
 "C" = "change_to_line_end"

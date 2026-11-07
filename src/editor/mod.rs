@@ -16,6 +16,7 @@ mod mode;
 mod operator;
 pub mod picker;
 pub mod registers;
+mod replace;
 mod search;
 pub use search::{SearchDone, SearchHit};
 mod block;
@@ -166,6 +167,8 @@ pub struct Editor {
     /// The screen column `gj`/`gk` aim for, while the cursor stays where
     /// they left it (so a short row on the way doesn't lose it).
     screen_column: Option<(DocumentId, Position, usize)>,
+    /// Replace mode (`R`) while in insert mode.
+    replacing: Option<replace::Replacing>,
     /// Insert-mode word completion in progress (`<C-n>`).
     completion: Option<WordCompletion>,
     /// Whether the key being handled used the completion.
@@ -310,6 +313,12 @@ impl Editor {
         if previous != Mode::Insert && mode == Mode::Insert {
             self.typed.clear();
         }
+        if previous == Mode::Insert && mode != Mode::Insert {
+            // `3R`: type the text twice more before it's stored.
+            let leaving = std::mem::replace(&mut self.mode, previous);
+            self.finish_replace();
+            self.mode = leaving;
+        }
         if previous == Mode::Insert && mode != Mode::Insert && !self.typed.is_empty() {
             self.registers
                 .set_last_insert(std::mem::take(&mut self.typed));
@@ -378,7 +387,11 @@ impl Editor {
     pub fn insert_text_char(&mut self, c: char) {
         match self.mode {
             Mode::Insert => {
-                self.type_with_indent(c);
+                if self.replacing.is_some() {
+                    self.type_replacing(c);
+                } else {
+                    self.type_with_indent(c);
+                }
                 self.typed.push(c);
             }
             Mode::Command => {
