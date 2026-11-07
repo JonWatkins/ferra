@@ -8,7 +8,6 @@
 //! one; `:setglobal` changes only the global value, for windows and
 //! buffers without their own.
 
-use crate::clipboard;
 use crate::commands::{ArgCompletion, CommandRegistry, CommandResult, Context};
 use crate::config::set::{self, SetResult};
 use crate::editor::{Editor, Message};
@@ -93,14 +92,8 @@ fn set_local_option(cx: &mut Context) -> CommandResult {
 
 /// Re-applies what was put in place at startup, and reports the values.
 fn finish(editor: &mut Editor, result: &SetResult) {
-    let options = editor.global_options().clone();
+    editor.apply_option_effects(&result.changed);
     let changed = |name: &str| result.changed.iter().any(|c| c == name);
-    if changed("clipboard-provider") {
-        let provider = clipboard::for_provider(options.clipboard_provider);
-        editor.registers.set_clipboard(provider, options.clipboard);
-    } else if changed("clipboard") {
-        editor.registers.set_clipboard_mode(options.clipboard);
-    }
     let mut text = result.shown.join("  ");
     if changed("kitty-keyboard") {
         text.push_str(" (from the next start)");

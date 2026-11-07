@@ -142,8 +142,8 @@ pub struct StatuslineLayout {
 
 /// One piece of the status line. Elements with nothing to show (`modified`
 /// in an unmodified buffer, `file-encoding` for plain UTF-8) take no space.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(try_from = "String", into = "String")]
 pub enum StatusElement {
     /// `NORMAL`, `INSERT`, `V-LINE`, ...
     Mode,
@@ -175,6 +175,58 @@ pub enum StatusElement {
     Separator,
     /// A space.
     Spacer,
+    /// What a Lua plugin's `editor.status(name, ...)` function returns:
+    /// `"plugin:name"` in config.
+    Plugin(String),
+}
+
+/// The built-in elements and their names in config.
+const STATUS_ELEMENTS: &[(StatusElement, &str)] = &[
+    (StatusElement::Mode, "mode"),
+    (StatusElement::FileName, "file-name"),
+    (StatusElement::FileBaseName, "file-base-name"),
+    (StatusElement::Modified, "modified"),
+    (StatusElement::Position, "position"),
+    (StatusElement::PositionPercentage, "position-percentage"),
+    (StatusElement::TotalLines, "total-lines"),
+    (StatusElement::FileType, "file-type"),
+    (StatusElement::FileEncoding, "file-encoding"),
+    (StatusElement::FileLineEnding, "file-line-ending"),
+    (StatusElement::Indent, "indent"),
+    (StatusElement::PendingKeys, "pending-keys"),
+    (StatusElement::Recording, "recording"),
+    (StatusElement::Separator, "separator"),
+    (StatusElement::Spacer, "spacer"),
+];
+
+impl TryFrom<String> for StatusElement {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, String> {
+        if let Some(plugin) = name.strip_prefix("plugin:") {
+            if plugin.is_empty() {
+                return Err("plugin: needs a name (plugin:<name>)".into());
+            }
+            return Ok(StatusElement::Plugin(plugin.to_string()));
+        }
+        STATUS_ELEMENTS
+            .iter()
+            .find(|(_, n)| *n == name)
+            .map(|(element, _)| element.clone())
+            .ok_or_else(|| format!("unknown status line element `{name}`"))
+    }
+}
+
+impl From<StatusElement> for String {
+    fn from(element: StatusElement) -> String {
+        match element {
+            StatusElement::Plugin(name) => format!("plugin:{name}"),
+            other => STATUS_ELEMENTS
+                .iter()
+                .find(|(e, _)| *e == other)
+                .map_or_else(String::new, |(_, n)| n.to_string()),
+        }
+    }
 }
 
 /// Where status lines go (Neovim's `laststatus`).

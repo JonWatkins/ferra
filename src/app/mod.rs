@@ -7,6 +7,7 @@ mod normal;
 mod repeat;
 mod terminal;
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use repeat::{ChangeRecorder, EditStamp};
@@ -16,6 +17,7 @@ use ratatui::{DefaultTerminal, Frame};
 
 use crate::clipboard::{self, Clipboard};
 use crate::commands::{CommandRegistry, Invocation};
+use crate::config::StatusElement;
 use crate::config::{Config, Theme};
 use crate::editor::{DocumentId, Editor, Message, Mode};
 use crate::events;
@@ -56,6 +58,8 @@ pub struct App {
     paste: Option<String>,
     /// Work running on other threads (the file picker's listing).
     background: background::Background,
+    /// The last error from each plugin status function, so it's shown once.
+    plugin_status_errors: HashMap<String, String>,
 }
 
 impl Default for App {
@@ -93,6 +97,7 @@ impl App {
             replaying: false,
             paste: None,
             background: background::Background::default(),
+            plugin_status_errors: HashMap::new(),
         };
         let mode = app.editor.options.clipboard;
         let provider = app.editor.options.clipboard_provider;
@@ -154,6 +159,22 @@ impl App {
             Err(error) => vec![error],
         };
         errors.extend(self.install_plugins());
+        // A `plugin:name` status line element no plugin provides.
+        let layout = &self.editor.options.statusline_layout;
+        for element in layout
+            .left
+            .iter()
+            .chain(&layout.center)
+            .chain(&layout.right)
+        {
+            if let StatusElement::Plugin(name) = element
+                && !self.plugins.as_ref().is_some_and(|p| p.has_status(name))
+            {
+                errors.push(format!(
+                    "statusline-layout: no plugin provides plugin:{name}"
+                ));
+            }
+        }
         if errors.is_empty() {
             return None;
         }
@@ -415,7 +436,56 @@ impl App {
         self.editor.registers.set_clipboard(clipboard, mode);
     }
 
+    /// Calls the Lua functions behind `plugin:name` status line elements, so
+    /// the status line can show what they return. An error is shown once
+    /// (until it changes), and the element is left empty.
+    fn refresh_plugin_statuses(&mut self) {
+        let Some(plugins) = &self.plugins else {
+            return;
+        };
+        let layout = &self.editor.options.statusline_layout;
+        let names: Vec<String> = layout
+            .left
+            .iter()
+            .chain(&layout.center)
+            .chain(&layout.right)
+            .filter_map(|element| match element {
+                StatusElement::Plugin(name) if plugins.has_status(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        for name in names {
+            let mut cx = crate::commands::Context {
+                editor: &mut self.editor,
+                registry: &self.commands,
+                count: None,
+                register: None,
+                args: &[],
+                bang: false,
+                char_arg: None,
+                range: None,
+                arg_text: "",
+            };
+            let text = match plugins.status(&name, &mut cx) {
+                Ok(text) => {
+                    self.plugin_status_errors.remove(&name);
+                    text
+                }
+                Err(error) => {
+                    let error = format!("plugin:{name}: {error}");
+                    if self.plugin_status_errors.get(&name) != Some(&error) {
+                        self.editor.set_message(Message::error(error.clone()));
+                        self.plugin_status_errors.insert(name.clone(), error);
+                    }
+                    String::new()
+                }
+            };
+            self.editor.set_plugin_status(&name, text);
+        }
+    }
+
     pub fn draw(&mut self, frame: &mut Frame) {
+        self.refresh_plugin_statuses();
         let pending = self.input.pending_display();
         let count = self.editor.buffer_count();
         if self.syntax.cached_count() > count || self.editor.syntax_trees.count() > count {

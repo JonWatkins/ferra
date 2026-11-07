@@ -103,13 +103,13 @@ impl Active<'_> {
         let others: usize = sections
             .iter()
             .flat_map(|section| section.iter())
-            .filter(|&&e| e != StatusElement::FileName)
-            .map(|&e| self.element(e, 0).width())
+            .filter(|&e| *e != StatusElement::FileName)
+            .map(|e| self.element(e, 0).width())
             .sum();
         let names = sections
             .iter()
             .flat_map(|section| section.iter())
-            .filter(|&&e| e == StatusElement::FileName)
+            .filter(|&e| *e == StatusElement::FileName)
             .count();
         let budget = (area.width as usize).saturating_sub(others + 2 * names) / names.max(1);
 
@@ -117,7 +117,7 @@ impl Active<'_> {
             Line::from(
                 section
                     .iter()
-                    .map(|&e| self.element(e, budget))
+                    .map(|e| self.element(e, budget))
                     .collect::<Vec<_>>(),
             )
         };
@@ -139,7 +139,7 @@ impl Active<'_> {
 
     /// One element's text and style. `name_budget` is the room for the
     /// file name's text.
-    fn element(&self, element: StatusElement, name_budget: usize) -> Span<'static> {
+    fn element(&self, element: &StatusElement, name_budget: usize) -> Span<'static> {
         let editor = self.editor;
         let document = &editor.document;
         let cursor = document.cursor();
@@ -208,6 +208,14 @@ impl Active<'_> {
                 LineEnding::Crlf => " CRLF ".to_string(),
             }),
             StatusElement::Indent => Span::raw(format!(" {} ", editor.indent_style())),
+            StatusElement::Plugin(name) => Span::styled(
+                editor
+                    .plugin_status(name)
+                    .filter(|text| !text.is_empty())
+                    .map(|text| format!(" {text} "))
+                    .unwrap_or_default(),
+                self.theme.get(&format!("ui.statusline.plugin.{name}")),
+            ),
             StatusElement::PendingKeys => {
                 styled(format!("{} ", self.pending), "ui.statusline.pending")
             }

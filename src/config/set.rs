@@ -98,6 +98,24 @@ pub fn with_locals(global: &EditorOptions, locals: &[&Table]) -> EditorOptions {
         .unwrap_or_else(|_: toml::de::Error| global.clone())
 }
 
+/// Sets option `name` (a config name, or a Vim one like `ts`) to `value`
+/// in `options`, checked as config is. Returns the option's config name.
+pub fn set_value(options: &mut EditorOptions, name: &str, value: Value) -> Result<String, String> {
+    let name = canonical(name);
+    let mut table = table_of(options);
+    let slot = get_mut(&mut table, name).ok_or_else(|| format!("Unknown option: {name}"))?;
+    *slot = value;
+    *options = Value::Table(table)
+        .try_into()
+        .map_err(|e: toml::de::Error| format!("{name}: {}", e.message().trim()))?;
+    Ok(name.to_string())
+}
+
+/// The value of option `name` (a config or Vim name) in `options`.
+pub fn get_value(options: &EditorOptions, name: &str) -> Option<Value> {
+    get(&table_of(options), canonical(name)).cloned()
+}
+
 /// The value of option `name` in `options`, for keeping as a local value.
 pub fn value_of(options: &EditorOptions, name: &str) -> Option<Value> {
     get(&table_of(options), name).cloned()

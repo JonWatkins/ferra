@@ -2,7 +2,8 @@
 //!
 //! Plugins are Lua files loaded at startup: `init.lua` in the config
 //! directory, then every `plugins/*.lua` in name order. They use a global
-//! `editor` table to register commands, hooks and key bindings:
+//! `editor` table to register commands, hooks, key bindings and status line
+//! elements:
 //!
 //! ```lua
 //! editor.command("hello", "Insert a greeting", function(ctx)
@@ -10,6 +11,7 @@
 //! end)
 //! editor.on("before-save", function(ctx, event) ... end)
 //! editor.map("normal", "<Space>h", "hello")
+//! editor.status("words", function(ctx) return "42 words" end)
 //! ```
 //!
 //! Registrations made while a file loads are collected, then installed into
@@ -36,6 +38,7 @@ struct Registrations {
     commands: Vec<(String, String, RegistryKey)>,
     hooks: Vec<(EventKind, String, RegistryKey)>,
     maps: Vec<(String, String, String)>,
+    statuses: Vec<(String, RegistryKey)>,
 }
 
 pub struct PluginHost {
@@ -43,6 +46,8 @@ pub struct PluginHost {
     pending: Rc<RefCell<Registrations>>,
     /// The file being loaded, used to name hooks in error messages.
     current: Rc<RefCell<String>>,
+    /// Status line functions (`editor.status`), by name.
+    statuses: RefCell<std::collections::HashMap<String, RegistryKey>>,
 }
 
 impl PluginHost {
@@ -51,6 +56,7 @@ impl PluginHost {
             lua: Rc::new(Lua::new()),
             pending: Rc::default(),
             current: Rc::default(),
+            statuses: RefCell::default(),
         };
         host.install_globals().map_err(|e| api::describe(&e))?;
         Ok(host)
@@ -119,6 +125,7 @@ impl PluginHost {
                 api::call(&lua, &key, cx, Some(event))
             });
         }
+        self.statuses.borrow_mut().extend(pending.statuses);
         for (mode, keys, command) in pending.maps {
             let Some(mode_value) = Mode::ALL.iter().find(|m| m.id() == mode) else {
                 errors.push(format!("editor.map: unknown mode '{mode}'"));
@@ -133,6 +140,21 @@ impl PluginHost {
             }
         }
         errors
+    }
+
+    /// Whether a status line function called `name` is registered.
+    pub fn has_status(&self, name: &str) -> bool {
+        self.statuses.borrow().contains_key(name)
+    }
+
+    /// Calls status line function `name`: its text (`nil` is nothing).
+    pub fn status(&self, name: &str, cx: &mut crate::commands::Context) -> Result<String, String> {
+        let statuses = self.statuses.borrow();
+        let key = statuses
+            .get(name)
+            .ok_or_else(|| format!("No status function {name}"))?;
+        let text: Option<String> = api::call_returning(&self.lua, key, cx, None)?;
+        Ok(text.unwrap_or_default())
     }
 
     /// The global `editor` table plugins register through.
@@ -183,6 +205,16 @@ impl PluginHost {
             "map",
             lua.create_function(move |_, (mode, keys, command): (String, String, String)| {
                 pending.borrow_mut().maps.push((mode, keys, command));
+                Ok(())
+            })?,
+        )?;
+
+        let pending = self.pending.clone();
+        editor.set(
+            "status",
+            lua.create_function(move |lua, (name, function): (String, Function)| {
+                let key = lua.create_registry_value(function)?;
+                pending.borrow_mut().statuses.push((name, key));
                 Ok(())
             })?,
         )?;

@@ -170,6 +170,10 @@ pub struct Editor {
     /// A count on the insert command (`3i`, `5o`): how many times to put
     /// in what's typed, and whether each copy is on a line of its own.
     insert_repeat: Option<(usize, bool)>,
+    /// What each Lua `editor.status` function last returned, by name, for
+    /// `plugin:<name>` status line elements (the app refreshes them before
+    /// drawing).
+    plugin_statuses: HashMap<String, String>,
     /// Replace mode (`R`) while in insert mode.
     replacing: Option<replace::Replacing>,
     /// Insert-mode word completion in progress (`<C-n>`).
@@ -219,6 +223,64 @@ impl Editor {
         };
         table.insert(name.to_string(), value);
         self.refresh_options();
+    }
+
+    /// Sets option `name` to `value`: for the active window or buffer only
+    /// with `local` (`:setlocal`), otherwise everywhere, dropping their own
+    /// values (`:set`). For plugins; checked as config is.
+    pub fn set_option(
+        &mut self,
+        name: &str,
+        value: toml::Value,
+        local: bool,
+    ) -> Result<(), String> {
+        use crate::config::set;
+        if local {
+            let mut options = self.options.clone();
+            let name = set::set_value(&mut options, name, value)?;
+            if set::scope(&name).is_none() {
+                return Err(format!(
+                    "{name} is the same everywhere: it can't be set locally"
+                ));
+            }
+            let value = set::value_of(&options, &name).expect("just set");
+            self.set_local_option(&name, value);
+            return Ok(());
+        }
+        let mut global = self.global_options.clone();
+        let name = set::set_value(&mut global, name, value)?;
+        self.set_global_options(global);
+        self.clear_local_options(std::slice::from_ref(&name));
+        self.apply_option_effects(std::slice::from_ref(&name));
+        Ok(())
+    }
+
+    /// The value of option `name` in force here.
+    pub fn option_value(&self, name: &str) -> Option<toml::Value> {
+        crate::config::set::get_value(&self.options, name)
+    }
+
+    /// After options `changed` changed: re-applies what was put in place at
+    /// startup (the clipboard).
+    pub fn apply_option_effects(&mut self, changed: &[String]) {
+        let options = self.global_options.clone();
+        let is = |name: &str| changed.iter().any(|c| c == name);
+        if is("clipboard-provider") {
+            let provider = crate::clipboard::for_provider(options.clipboard_provider);
+            self.registers.set_clipboard(provider, options.clipboard);
+        } else if is("clipboard") {
+            self.registers.set_clipboard_mode(options.clipboard);
+        }
+    }
+
+    /// What plugin status function `name` last returned.
+    pub fn plugin_status(&self, name: &str) -> Option<&str> {
+        self.plugin_statuses.get(name).map(String::as_str)
+    }
+
+    /// Records what plugin status function `name` returned.
+    pub fn set_plugin_status(&mut self, name: &str, text: String) {
+        self.plugin_statuses.insert(name.to_string(), text);
     }
 
     /// Drops the active window's and buffer's own values for `names`, so

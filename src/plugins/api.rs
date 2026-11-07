@@ -17,6 +17,8 @@
 //! | `ctx:mode()` | `"normal"`, `"insert"`, ... |
 //! | `ctx:message(text)` | Show a message |
 //! | `ctx:run(name, ...)` | Run any command, with optional arguments |
+//! | `ctx:option(name)` | An option's value here (`"tab-width"`, `"search.case"`) |
+//! | `ctx:set_option(name, value [, "local"])` | Set it everywhere, or for this window or buffer |
 //!
 //! Fields: `ctx.count` (number or `nil`) and `ctx.args` (a list of strings).
 //! Edits go through the document like built-in commands, so they're undoable
@@ -40,6 +42,16 @@ pub fn call(
     cx: &mut Context,
     event: Option<&Event>,
 ) -> CommandResult {
+    call_returning::<()>(lua, key, cx, event)
+}
+
+/// [`call`], keeping what the function returns.
+pub fn call_returning<R: mlua::FromLuaMulti>(
+    lua: &Lua,
+    key: &RegistryKey,
+    cx: &mut Context,
+    event: Option<&Event>,
+) -> Result<R, String> {
     let function: mlua::Function = lua.registry_value(key).map_err(|e| describe(&e))?;
     let cell = RefCell::new(cx);
     lua.scope(|scope| {
@@ -170,13 +182,101 @@ pub fn call(
             })?,
         )?;
 
+        ctx.set(
+            "option",
+            scope.create_function(|lua, (_, name): (Value, String)| {
+                match cell.borrow().editor.option_value(&name) {
+                    Some(value) => to_lua(lua, &value),
+                    None => Err(mlua::Error::runtime(format!("Unknown option: {name}"))),
+                }
+            })?,
+        )?;
+        ctx.set(
+            "set_option",
+            scope.create_function(
+                |_, (_, name, value, scope): (Value, String, Value, Option<String>)| {
+                    let local = match scope.as_deref() {
+                        None | Some("global") => false,
+                        Some("local") => true,
+                        Some(other) => {
+                            return Err(mlua::Error::runtime(format!(
+                                "set_option: scope is \"local\" or \"global\", not \"{other}\""
+                            )));
+                        }
+                    };
+                    let value = to_toml(&value).map_err(mlua::Error::runtime)?;
+                    cell.borrow_mut()
+                        .editor
+                        .set_option(&name, value, local)
+                        .map_err(mlua::Error::runtime)
+                },
+            )?,
+        )?;
+
         let event = match event {
             Some(event) => Value::Table(event_table(lua, event)?),
             None => Value::Nil,
         };
-        function.call::<()>((ctx, event))
+        function.call::<R>((ctx, event))
     })
     .map_err(|e| describe(&e))
+}
+
+/// An option's value for Lua: booleans, integers, strings, and tables for
+/// lists and groups.
+fn to_lua(lua: &Lua, value: &toml::Value) -> mlua::Result<Value> {
+    Ok(match value {
+        toml::Value::Boolean(b) => Value::Boolean(*b),
+        toml::Value::Integer(i) => Value::Integer(*i),
+        toml::Value::Float(f) => Value::Number(*f),
+        toml::Value::String(s) => Value::String(lua.create_string(s)?),
+        toml::Value::Datetime(d) => Value::String(lua.create_string(d.to_string())?),
+        toml::Value::Array(items) => {
+            let table = lua.create_table()?;
+            for (i, item) in items.iter().enumerate() {
+                table.set(i + 1, to_lua(lua, item)?)?;
+            }
+            Value::Table(table)
+        }
+        toml::Value::Table(entries) => {
+            let table = lua.create_table()?;
+            for (key, item) in entries {
+                table.set(key.as_str(), to_lua(lua, item)?)?;
+            }
+            Value::Table(table)
+        }
+    })
+}
+
+/// A Lua value for an option: the reverse of [`to_lua`]. A table is a list
+/// if its keys are 1, 2, 3...
+fn to_toml(value: &Value) -> Result<toml::Value, String> {
+    Ok(match value {
+        Value::Boolean(b) => toml::Value::Boolean(*b),
+        Value::Integer(i) => toml::Value::Integer(*i),
+        Value::Number(n) if n.fract() == 0.0 => toml::Value::Integer(*n as i64),
+        Value::Number(n) => toml::Value::Float(*n),
+        Value::String(s) => toml::Value::String(s.to_str().map_err(|e| e.to_string())?.to_string()),
+        Value::Table(table) => {
+            let len = table.raw_len();
+            if len > 0 {
+                let mut items = Vec::with_capacity(len);
+                for i in 1..=len {
+                    let item: Value = table.raw_get(i).map_err(|e| e.to_string())?;
+                    items.push(to_toml(&item)?);
+                }
+                toml::Value::Array(items)
+            } else {
+                let mut entries = toml::Table::new();
+                for pair in table.clone().pairs::<String, Value>() {
+                    let (key, item) = pair.map_err(|e| e.to_string())?;
+                    entries.insert(key, to_toml(&item)?);
+                }
+                toml::Value::Table(entries)
+            }
+        }
+        other => return Err(format!("an option can't be {}", other.type_name())),
+    })
 }
 
 /// The event passed to hooks, as a table: `{ kind = "after-save", path = ... }`.

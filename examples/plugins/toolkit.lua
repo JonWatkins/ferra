@@ -58,6 +58,20 @@ editor.command("word_count", "Show line, word and character counts", function(ct
   ctx:message(("%d lines, %d words, %d chars"):format(ctx:line_count(), words, #text))
 end)
 
+-- A status line element: the word count, for prose. Show it with
+--   [editor.statusline-layout]
+--   right = ["plugin:words", "position"]
+editor.status("words", function(ctx)
+  local words = 0
+  for _ in ctx:text():gmatch("%S+") do words = words + 1 end
+  return words .. " words"
+end)
+
+-- Toggle soft wrap for this window only (as :setlocal wrap!).
+editor.command("toggle_wrap", "Wrap long lines in this window, or stop", function(ctx)
+  ctx:set_option("wrap", not ctx:option("wrap"), "local")
+end)
+
 -- Insert today's date at the cursor.
 editor.command("insert_date", "Insert today's date (YYYY-MM-DD)", function(ctx)
   ctx:insert(os.date("%Y-%m-%d"))

@@ -1010,6 +1010,18 @@ hook is an ordinary Rust closure holding the Lua state and the function's
 registry key, so plugin commands get the palette, `:` execution, key
 binding, undo, `.` and hooks with no special cases.
 
+`editor.status(name, fn)` registers a status line function for a
+`plugin:<name>` element (`StatusElement::Plugin`, parsed from config
+strings, so the names are checked: one no plugin registers is reported
+after loading). The status line is drawn with only `&Editor`, so before
+each draw `App::refresh_plugin_statuses` calls the functions in the
+layout, with an ordinary `ctx`, and stores their text on the editor
+(`Editor::set_plugin_status`); an error is shown once until it changes,
+and the element is left empty. `ctx:option`/`ctx:set_option` go through
+`Editor::option_value`/`Editor::set_option`, which use the same
+TOML-table checks as `:set` (and `:setlocal` with `"local"`), converting
+Lua values to TOML and back (tables are lists when keyed 1, 2, 3...).
+
 A callback runs inside `Lua::scope` (`plugins/api.rs`). The `ctx` methods
 are scoped functions that borrow the command's `Context` through a
 `RefCell`, so Lua can reach the editor only for the duration of the call: a
@@ -1220,10 +1232,10 @@ status, branches and history.
   (`showbreak`), and `<C-d>`/`<C-e>` scroll by lines, not screen rows.
 - `<C-f>`/`<C-b>` move the cursor with the view, like `<C-d>`, rather than
   to the edge of the new screen as in Vim.
-- Local options cover the seven above; others (`statusline-layout`,
-  `search.*`...) are global. Status line elements can't be per window or
-  supplied by plugins (the layout is one setting for the active window).
-  Lua plugins can't read or set options yet.
+- Local options cover the eight above; others (`statusline-layout`,
+  `search.*`...) are global, so the status line layout is one setting for
+  the active window. Plugin status functions run every frame, so a slow
+  one slows drawing.
 - External changes are noticed by polling once a second, not OS file
   notifications; and a change that keeps both the modified time (within
   the filesystem's resolution) and the size is missed.

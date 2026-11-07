@@ -313,7 +313,8 @@ Elements: `mode`, `file-name` (shortened from the left to fit),
 `file-base-name`, `modified`, `position`, `position-percentage`,
 `total-lines`, `file-type`, `file-encoding` (only when not plain UTF-8),
 `file-line-ending`, `indent` (`2 spaces`, `tabs`), `pending-keys`,
-`recording`, `separator` and `spacer`.
+`recording`, `separator`, `spacer`, and `plugin:<name>` for what a Lua
+plugin's `editor.status` function returns (see [Lua plugins](#lua-plugins)).
 Elements with nothing to show take no space.
 
 Window sizes are kept as proportions, so they survive resizing the terminal.
@@ -515,8 +516,23 @@ editor.on("before-save", function(ctx, event)
 end)
 ```
 
-`editor.command(name, [description,] fn)`, `editor.on(event, fn)` and
-`editor.map(mode, keys, command)` are available while loading. Callbacks get
+`editor.command(name, [description,] fn)`, `editor.on(event, fn)`,
+`editor.map(mode, keys, command)` and `editor.status(name, fn)` are
+available while loading. A status function returns text for the status
+line; put it in the layout as `"plugin:name"`:
+
+```lua
+editor.status("words", function(ctx)
+  local n = 0
+  for _ in ctx:text():gmatch("%S+") do n = n + 1 end
+  return n .. " words"
+end)
+```
+
+```toml
+[editor.statusline-layout]
+right = ["plugin:words", "position"]
+``` Callbacks get
 a `ctx`:
 
 | `ctx` method | |
@@ -527,6 +543,7 @@ a `ctx`:
 | `path()`, `mode()` | The file and the current mode |
 | `message(text)` | Show a message |
 | `run(name, ...)` | Run any command, with arguments |
+| `option(name)`, `set_option(name, value [, "local"])` | Read an option (`"tab-width"`, `"search.case"`), or set it everywhere or for this window or buffer, checked as config is |
 
 Plus `ctx.count` and `ctx.args`. Hooks also get an `event` table (`kind`,
 and `path` or `from`/`to` where relevant). Raising a Lua `error` cancels the
@@ -538,7 +555,8 @@ commands appear in the command palette and can override built-in ones.
 
 [`examples/plugins/toolkit.lua`](examples/plugins/toolkit.lua) is a
 complete example (`:todo`, `:duplicate_line`, `:sort_paragraph`,
-`:word_count`, `:insert_date` and an after-save hook). Try it with:
+`:word_count`, `:insert_date`, `:toggle_wrap`, a `plugin:words` status
+element and an after-save hook). Try it with:
 
 ```sh
 mkdir -p ~/.config/ferra/plugins
