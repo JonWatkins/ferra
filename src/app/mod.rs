@@ -14,7 +14,7 @@ use repeat::{ChangeRecorder, EditStamp};
 use crossterm::event::{self, Event};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::clipboard::{Clipboard, LazySystemClipboard};
+use crate::clipboard::{self, Clipboard};
 use crate::commands::{CommandRegistry, Invocation};
 use crate::config::{Config, Theme};
 use crate::editor::{DocumentId, Editor, Message, Mode};
@@ -91,9 +91,10 @@ impl App {
             background: background::Background::default(),
         };
         let mode = app.editor.options.clipboard;
+        let provider = app.editor.options.clipboard_provider;
         app.editor
             .registers
-            .set_clipboard(Box::new(LazySystemClipboard::default()), mode);
+            .set_clipboard(clipboard::for_provider(provider), mode);
         app.validate_keymap();
         if !unknown_hook_commands.is_empty() {
             unknown_hook_commands.sort();

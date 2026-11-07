@@ -35,6 +35,12 @@ key-timeout = 1000
 # The system clipboard: "registers" (only "+ and "* use it), "unnamed"
 # (every yank and delete goes to it, and p pastes from it) or "off".
 clipboard = "registers"
+# Which clipboard that is: "system", "terminal" (your terminal's, set with
+# an OSC 52 escape sequence: it works over SSH, and in tmux with
+# `set -g set-clipboard on`) or "auto" (the system clipboard, but the
+# terminal's over SSH or when there's no system clipboard). The terminal's
+# clipboard can only be copied to; paste from it with your terminal.
+clipboard-provider = "auto"
 # The encoding for files that aren't UTF-8 and have no byte-order mark (any
 # WHATWG label: "windows-1252", "latin1", "shift_jis", "gbk"...). Files are
 # saved back in the encoding they were read in. "utf-8" refuses other files.

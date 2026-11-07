@@ -30,6 +30,8 @@ pub struct EditorOptions {
     pub key_timeout: u64,
     /// How the system clipboard is used: "registers", "unnamed" or "off".
     pub clipboard: ClipboardMode,
+    /// Which clipboard: "auto", "system" or "terminal" (OSC 52).
+    pub clipboard_provider: crate::clipboard::ClipboardProvider,
     /// The encoding for files that aren't UTF-8 and have no byte-order mark.
     pub fallback_encoding: FallbackEncoding,
     pub cursor_shape: CursorShapes,

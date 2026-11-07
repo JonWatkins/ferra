@@ -679,9 +679,26 @@ adjusted for later edits; they're clamped when used.
 ### Clipboard and pasting
 
 `clipboard::Clipboard` is a two-method trait (`get`, `set`). The app gives
-the registers a `LazySystemClipboard` (the `arboard` crate, connected on
-first use, so startup and tests never talk to the OS); tests use
-`MemoryClipboard`. `Registers` decides which register names use it, per
+the registers the one `clipboard-provider` names (`clipboard::for_provider`);
+tests use `MemoryClipboard`, so no test touches the real clipboard:
+
+- `"system"`: `LazySystemClipboard` (the `arboard` crate, connected on
+  first use, so startup never talks to the OS).
+- `"terminal"`: `TerminalClipboard` writes OSC 52 (`ESC ] 52 ; c ;`, the
+  text in base64, `BEL`) to standard output, between frames, and the
+  terminal sets the clipboard of the machine it runs on. Reading the
+  terminal's clipboard back (an OSC 52 query) is often refused and would
+  mean waiting for a reply among the input events, so `get` gives the text
+  last copied; pasting from elsewhere is the terminal's own paste.
+- `"auto"` (default, `AutoClipboard`): the terminal's when `SSH_TTY`,
+  `SSH_CONNECTION` or `SSH_CLIENT` is set (the system clipboard there is
+  the remote machine's), otherwise the system one, falling back to the
+  terminal's when the system clipboard can't be used (no display).
+
+tmux passes OSC 52 on only with `set-clipboard on`; ferra doesn't wrap it
+in tmux's passthrough sequence, which tmux also disables by default.
+
+`Registers` decides which register names use it, per
 `ClipboardMode`: `"+`/`"*` only (default), also the unnamed register, or
 never. Pastes go through `Registers::read`, which can fail and returns an
 owned value. Text ending in a line break reads as linewise, as in Vim. A
@@ -942,7 +959,9 @@ status, branches and history.
   by the rename used for ordinary saves.
 - Guessing legacy encodings (telling Shift-JIS from Windows-1252 by
   content): files that aren't UTF-8 use the one configured fallback.
-- Clipboard over SSH (OSC 52).
+- Reading the terminal's clipboard (an OSC 52 query), so `"+p` over SSH
+  could paste what was copied on the local machine; for now that's the
+  terminal's own paste.
 - Syntax: indentation (`=`, Enter) parses the file afresh rather than
   using the engine's tree, which lives in the app, not the editor; files
   over 4M chars aren't highlighted (the first parse is the cost); and

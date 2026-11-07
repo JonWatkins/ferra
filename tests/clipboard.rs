@@ -174,3 +174,63 @@ fn pasting_into_the_prompt_takes_the_first_line() {
     app.handle_paste("goto_line 1\nrm -rf /");
     assert_eq!(app.editor().command_line.input(), "goto_line 1");
 }
+
+/// What a terminal clipboard wrote to the "terminal".
+#[derive(Clone, Default)]
+struct Terminal(std::rc::Rc<std::cell::RefCell<Vec<u8>>>);
+
+impl std::io::Write for Terminal {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.borrow_mut().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Terminal {
+    fn written(&self) -> String {
+        String::from_utf8(std::mem::take(&mut *self.0.borrow_mut())).unwrap()
+    }
+}
+
+fn with_terminal_clipboard(config: &str, content: &str) -> (App, Terminal) {
+    use ferra::clipboard::TerminalClipboard;
+    let terminal = Terminal::default();
+    let mut app = app_with_config(&format!("[editor]\nauto-indent = false\n{config}"));
+    app.use_clipboard(Box::new(TerminalClipboard::new(Box::new(terminal.clone()))));
+    keys(&mut app, &format!("i{content}<Esc>gg0"));
+    (app, terminal)
+}
+
+#[test]
+fn the_terminal_clipboard_is_set_with_osc_52() {
+    let (mut app, terminal) = with_terminal_clipboard("", "first<CR>second");
+    keys(&mut app, "\"+yy");
+    // "first\n" in base64.
+    assert_eq!(terminal.written(), "\x1b]52;c;Zmlyc3QK\x07");
+    keys(&mut app, "j\"+p");
+    assert_eq!(text(&app), "first\nsecond\nfirst", "pastes what it copied");
+    keys(&mut app, "yy");
+    assert_eq!(terminal.written(), "", "other registers stay out of it");
+}
+
+#[test]
+fn unnamed_mode_copies_every_yank_to_the_terminal() {
+    let (mut app, terminal) = with_terminal_clipboard("clipboard = \"unnamed\"", "a b");
+    keys(&mut app, "yiw");
+    assert_eq!(terminal.written(), ferra::clipboard::osc52("a"));
+    keys(&mut app, "$p");
+    assert_eq!(text(&app), "a ba");
+}
+
+#[test]
+fn clipboard_provider_is_configurable() {
+    for provider in ["auto", "system", "terminal"] {
+        let config =
+            ferra::Config::from_toml(&format!("[editor]\nclipboard-provider = \"{provider}\""));
+        assert!(config.is_ok(), "{provider}");
+    }
+    assert!(ferra::Config::from_toml("[editor]\nclipboard-provider = \"osc\"").is_err());
+}

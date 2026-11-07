@@ -95,7 +95,14 @@ Text objects: `iw` `aw`, `ip` `ap` (paragraph), `i"` `a"`, `i'` `a'`, `` i` `` `
 **System clipboard:** `"+` (and `"*`) is the system clipboard: `"+yy`
 copies a line out, `"+p` pastes text in (text ending in a line break pastes
 as whole lines). Set `clipboard = "unnamed"` under `[editor]` to make every
-yank, delete and `p` use it, or `"off"` to never touch it. Pasting into the
+yank, delete and `p` use it, or `"off"` to never touch it.
+
+Over SSH (or on a machine with no system clipboard), `"+` copies to the
+clipboard of the computer you're sitting at instead, through your terminal
+(an OSC 52 escape sequence, supported by iTerm2, kitty, WezTerm, Alacritty,
+Windows Terminal, foot and others; in tmux, `set -g set-clipboard on`).
+That only goes one way: paste with your terminal (Cmd/Ctrl+Shift+V).
+`clipboard-provider = "system"` or `"terminal"` picks one always. Pasting into the
 terminal (Cmd/Ctrl+V) inserts the text exactly as copied, with no
 auto-indent, as one undo step. `.` and macros repeat pastes too.
 
