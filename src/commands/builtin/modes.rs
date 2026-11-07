@@ -9,10 +9,12 @@ pub fn register(r: &mut CommandRegistry) {
     });
     r.register("insert_mode", "Insert before cursor", |cx| {
         cx.editor.set_mode(Mode::Insert);
+        cx.editor.repeat_insert(cx.count, false);
         Ok(())
     });
     r.register("append_mode", "Insert after cursor", |cx| {
         cx.editor.set_mode(Mode::Insert);
+        cx.editor.repeat_insert(cx.count, false);
         let cursor = cx.editor.document.cursor();
         let line_len = cx.editor.document.buffer().line_len(cursor.row);
         let col = (cursor.col + 1).min(line_len);
@@ -24,6 +26,7 @@ pub fn register(r: &mut CommandRegistry) {
         "Insert at first non-blank character of line",
         |cx| {
             cx.editor.set_mode(Mode::Insert);
+            cx.editor.repeat_insert(cx.count, false);
             let cursor = cx.editor.document.cursor();
             let col = motion::first_non_blank(cx.editor.document.buffer(), cursor.row);
             cx.editor.document.set_cursor(cursor.with_col(col));
@@ -32,6 +35,7 @@ pub fn register(r: &mut CommandRegistry) {
     );
     r.register("append_at_line_end", "Insert at end of line", |cx| {
         cx.editor.set_mode(Mode::Insert);
+        cx.editor.repeat_insert(cx.count, false);
         let cursor = cx.editor.document.cursor();
         cx.editor.document.set_cursor(cursor.with_col(usize::MAX));
         Ok(())
@@ -42,6 +46,7 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| {
             let target = cx.editor.document.mark('^');
             cx.editor.set_mode(Mode::Insert);
+            cx.editor.repeat_insert(cx.count, false);
             if let Some(position) = target {
                 cx.editor.document.set_cursor(position);
             }

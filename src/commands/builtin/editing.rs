@@ -184,6 +184,7 @@ pub fn register(r: &mut CommandRegistry) {
             let indent = cx.editor.indent_for_opened_line(row, false);
             cx.editor.document.insert_str(&indent);
             cx.editor.set_mode(Mode::Insert);
+            cx.editor.repeat_insert(cx.count, true);
             Ok(())
         },
     );
@@ -196,6 +197,7 @@ pub fn register(r: &mut CommandRegistry) {
             let indent = cx.editor.indent_for_opened_line(row, true);
             cx.editor.document.insert_str(&indent);
             cx.editor.set_mode(Mode::Insert);
+            cx.editor.repeat_insert(cx.count, true);
             Ok(())
         },
     );

@@ -840,6 +840,18 @@ one change; the cursor goes to the last one's first non-blank, or with `gw`
 stays where it was. `gqq`, `gqgq` and `gwgw` come from operator-pending `q`,
 `gq` and `gw` bound to `current_line`.
 
+### Counted inserts
+
+`i`, `a`, `I`, `A`, `gi`, `o` and `O` pass their count to
+`Editor::repeat_insert`, which the editor keeps while inserting. When
+insert mode ends, `set_mode` calls `finish_insert_repeat` (after
+`finish_replace`, before what was typed is stored as `".`), which puts in
+the session's typed text (`Editor::typed`, so pastes, completions and
+backspaces are as they ended up) the other `count - 1` times: at the
+cursor, or for `o`/`O` each on a new line after the current one with its
+indentation. It's all one insert session, so one undo step, and `.`
+replays the count with the keys.
+
 ### Replace mode
 
 `R` (`editor/replace.rs`) is insert mode with a `Replacing` state, as

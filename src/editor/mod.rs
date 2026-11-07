@@ -167,6 +167,9 @@ pub struct Editor {
     /// The screen column `gj`/`gk` aim for, while the cursor stays where
     /// they left it (so a short row on the way doesn't lose it).
     screen_column: Option<(DocumentId, Position, usize)>,
+    /// A count on the insert command (`3i`, `5o`): how many times to put
+    /// in what's typed, and whether each copy is on a line of its own.
+    insert_repeat: Option<(usize, bool)>,
     /// Replace mode (`R`) while in insert mode.
     replacing: Option<replace::Replacing>,
     /// Insert-mode word completion in progress (`<C-n>`).
@@ -312,11 +315,13 @@ impl Editor {
 
         if previous != Mode::Insert && mode == Mode::Insert {
             self.typed.clear();
+            self.insert_repeat = None;
         }
         if previous == Mode::Insert && mode != Mode::Insert {
             // `3R`: type the text twice more before it's stored.
             let leaving = std::mem::replace(&mut self.mode, previous);
             self.finish_replace();
+            self.finish_insert_repeat();
             self.mode = leaving;
         }
         if previous == Mode::Insert && mode != Mode::Insert && !self.typed.is_empty() {
@@ -481,6 +486,42 @@ impl Editor {
     pub fn note_typed(&mut self, text: &str) {
         if self.mode == Mode::Insert {
             self.typed.push_str(text);
+        }
+    }
+
+    /// Makes the insert just started put its text in `count` times when it
+    /// ends (`3ihi<Esc>`), each copy on a line of its own with `lines`
+    /// (`5o`).
+    pub fn repeat_insert(&mut self, count: Option<usize>, lines: bool) {
+        self.insert_repeat = count.filter(|&n| n > 1).map(|n| (n, lines));
+    }
+
+    /// Leaving insert mode after a counted insert: puts in what was typed
+    /// the rest of the times. Copies on lines of their own (`o`, `O`) get
+    /// the indentation of the line typed on.
+    fn finish_insert_repeat(&mut self) {
+        let Some((count, lines)) = self.insert_repeat.take() else {
+            return;
+        };
+        let typed = self.typed.clone();
+        if typed.is_empty() {
+            return;
+        }
+        let doc = &mut self.document;
+        for _ in 1..count {
+            if lines {
+                let row = doc.cursor().row;
+                let line = doc.buffer().line(row);
+                let indent: String = line
+                    .chars()
+                    .take_while(|c| matches!(c, ' ' | '\t'))
+                    .collect();
+                let end = doc.buffer().line_end(row);
+                let after = doc.insert(end, &format!("\n{indent}{typed}"));
+                doc.set_cursor(after);
+            } else {
+                doc.insert_str(&typed);
+            }
         }
     }
 

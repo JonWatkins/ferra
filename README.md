@@ -59,7 +59,7 @@ type, open a file or split the window.
 | Normal  | `<C-a>` `<C-x>` (`5<C-a>`) | Add to / take from the number under or after the cursor: decimal (`-` signs, leading zeros kept), `0x` hex, `0b` binary |
 | Visual  | `<C-a>` `<C-x>`, `g<C-a>` `g<C-x>` | The same for the first number on each selected line; the `g` forms make a sequence (+1, +2, +3...) |
 | Normal  | `J`, `gJ` | Join lines (`3J`, visual `J`); `gJ` joins exactly, without adding a space or removing indentation |
-| Normal  | `i` `a` `I` `A` `o` `O` | Enter insert mode |
+| Normal  | `i` `a` `I` `A` `o` `O` | Enter insert mode; with a count, what you type goes in that many times (`80i-<Esc>`, `3oitem<Esc>`) |
 | Normal  | `d` `c` `y` + motion/text object | Delete / change / yank (`dw`, `c$`, `yiw`, `di(`, `2d3w`) |
 | Normal  | `dd` `cc` `yy` | Operate on whole lines |
 | Normal  | `x` `X` `D` `C` `s` `S` `Y` | Shortcuts (`dl` `dh` `d$` `c$` `cl` `cc` `yy`) |
