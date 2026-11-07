@@ -220,6 +220,13 @@ pub const MARK_LINE: Motion = Motion::new("mark_line", "", Linewise, |b, _, a| {
 })
 .jump();
 
+/// `H`, `M`, `L`: a row on screen (linewise, to its first non-blank), worked
+/// out by the scrolling commands. Not bound directly.
+pub const SCREEN_LINE: Motion = Motion::new("screen_line", "", Linewise, |b, _, a| {
+    Some(line_start(b, a.target?.row))
+})
+.jump();
+
 /// `` `a ``: the mark's exact position (exclusive). Not bound directly.
 pub const MARK_EXACT: Motion = Motion::new("mark_exact", "", Exclusive, |_, _, a| a.target).jump();
 /// A search match (`d/foo<CR>`, `dn`): exclusive, like Vim. Not bound

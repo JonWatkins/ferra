@@ -1,7 +1,10 @@
 //! Split windows.
 //!
 //! A window is a view onto a buffer with its own cursor; the UI also keeps
-//! a scroll position per window. Several windows can show the same buffer.
+//! a scroll position per window (and buffer), and tells the editor where
+//! each window's view starts after drawing it, so commands like `<C-d>`,
+//! `zz` and `H` can work from it ([`Windows::view_top`]). Several windows
+//! can show the same buffer.
 //!
 //! The active window's buffer is always `Editor::document`, so commands work
 //! exactly as with one window. Other windows remember which buffer they
@@ -12,7 +15,8 @@ mod layout;
 
 pub use layout::{Area, Direction, Layout, Separator, SplitDirection};
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 
 use super::{Document, DocumentId, Editor, Mode};
 use crate::core::Position;
@@ -39,6 +43,10 @@ pub struct Windows {
     /// Where the windows were last drawn, so resizing can work in cells.
     /// Set by the UI while drawing (hence the `Cell`).
     area: Cell<Area>,
+    /// Each window's first row on screen, as last drawn (set by the UI).
+    tops: RefCell<HashMap<WindowId, usize>>,
+    /// First rows commands asked for, which the UI uses at the next draw.
+    requested_tops: RefCell<HashMap<WindowId, usize>>,
 }
 
 /// The area assumed before anything is drawn (tests, a first command).
@@ -56,6 +64,8 @@ impl Default for Windows {
             active: WindowId(0),
             last_id: 0,
             area: Cell::new(DEFAULT_AREA),
+            tops: RefCell::default(),
+            requested_tops: RefCell::default(),
         }
     }
 }
@@ -87,8 +97,78 @@ impl Windows {
         self.layout.arrange(self.area.get()).0
     }
 
+    /// How many rows of text window `id` shows.
+    pub fn height(&self, id: WindowId) -> usize {
+        self.sizes()
+            .into_iter()
+            .find(|(window, _)| *window == id)
+            .map_or(0, |(_, area)| area.height as usize)
+    }
+
+    /// Records the first row window `id` showed when drawn (the UI calls
+    /// this).
+    pub fn note_top(&self, id: WindowId, top: usize) {
+        self.tops.borrow_mut().insert(id, top);
+    }
+
+    /// Asks for window `id`'s view to start at `top` from the next draw.
+    pub fn request_top(&self, id: WindowId, top: usize) {
+        self.requested_tops.borrow_mut().insert(id, top);
+    }
+
+    /// The first row asked for by a command since the last draw (the UI
+    /// calls this).
+    pub fn take_requested_top(&self, id: WindowId) -> Option<usize> {
+        self.requested_tops.borrow_mut().remove(&id)
+    }
+
+    /// Where window `id`'s view starts: the row asked for since the last
+    /// draw, or the one drawn, scrolled as the next draw will scroll it to
+    /// keep the cursor at `cursor_row` in sight.
+    pub fn view_top(
+        &self,
+        id: WindowId,
+        cursor_row: usize,
+        line_count: usize,
+        scroll_off: usize,
+    ) -> usize {
+        let top = self
+            .requested_tops
+            .borrow()
+            .get(&id)
+            .or(self.tops.borrow().get(&id))
+            .copied()
+            .unwrap_or(0);
+        follow_cursor(top, cursor_row, self.height(id), line_count, scroll_off)
+    }
+
     fn get_mut(&mut self, id: WindowId) -> Option<&mut Window> {
         self.windows.iter_mut().find(|w| w.id == id)
+    }
+}
+
+/// The first row of a view `height` rows tall, starting at `top`, once
+/// scrolled just enough to show `row` with `scroll_off` rows of context
+/// above and below it where the buffer allows.
+pub fn follow_cursor(
+    top: usize,
+    row: usize,
+    height: usize,
+    line_count: usize,
+    scroll_off: usize,
+) -> usize {
+    if height == 0 {
+        return top;
+    }
+    let margin = scroll_off.min((height - 1) / 2);
+    let above = margin.min(row);
+    let below = margin.min(line_count.saturating_sub(row + 1));
+    if row < top + above {
+        row - above
+    } else if row + below >= top + height {
+        row + below + 1 - height
+    } else {
+        top
     }
 }
 

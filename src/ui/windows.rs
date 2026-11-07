@@ -92,6 +92,10 @@ pub fn draw_windows(
             window_area.height,
         );
         let state = views.entry((id, document.id())).or_default();
+        if let Some(top) = windows.take_requested_top(id) {
+            let last = document.buffer().line_count().saturating_sub(1);
+            state.viewport.top = top.min(last);
+        }
         let highlights = syntax.as_deref_mut().and_then(|engine| {
             let rows = state.visible_rows(document, window_cursor, rect.height, &editor.options);
             engine.highlight(document, &editor.languages, &editor.syntax_trees, rows)
@@ -109,6 +113,7 @@ pub fn draw_windows(
             .search(editor.search_highlight())
             .syntax(highlights);
         frame.render_stateful_widget(view, rect, state);
+        windows.note_top(id, state.viewport.top);
         if active {
             cursor = state.cursor;
         }

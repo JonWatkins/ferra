@@ -40,6 +40,10 @@ type, open a file or split the window.
 | Normal  | `;` `,` | Repeat the last `f`/`t`/`F`/`T` / in the other direction |
 | Normal  | `%`, `50%` | Matching bracket; with a count, that percent of the way through the file |
 | Normal  | `{` `}` | Previous / next empty line (paragraph) |
+| Normal  | `<C-d>` `<C-u>`, `<C-f>` `<C-b>` (`<PageDown>` `<PageUp>`) | Scroll half a screen / a screen down or up, the cursor with it (`3<C-d>`: 3 lines) |
+| Normal  | `<C-e>` `<C-y>` | Scroll a line down / up, the cursor staying put while it's in sight |
+| Normal  | `zz` `zt` `zb` (`z.` `z<CR>` `z-`) | Scroll the cursor line to the middle / top / bottom (and go to its first non-blank) |
+| Normal  | `H` `M` `L` (`3H`) | Top / middle / bottom line on screen; motions too (`dL`) |
 | Normal  | `r` + char | Replace characters (`3rx`) |
 | Normal  | `>` `<` + motion, `>>` `<<` | Indent / outdent lines (`>ip`, `3>>`; visual `>` `<`) |
 | Normal  | `=` + motion, `==` | Re-indent lines by the language's rules (`gg=G` for the whole file; visual `=`) |

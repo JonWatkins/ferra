@@ -17,6 +17,7 @@ mod motions;
 mod operators;
 mod options;
 mod picker;
+mod scrolling;
 mod search;
 mod text_objects;
 mod visual;
@@ -43,6 +44,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     modes::register(registry);
     command_line::register(registry);
     options::register(registry);
+    scrolling::register(registry);
 }
 
 #[cfg(test)]

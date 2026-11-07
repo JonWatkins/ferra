@@ -128,6 +128,22 @@ innermost split in the right direction that holds the window: growing takes
 cells from the windows after it first, then the ones before, and every
 window keeps at least one cell.
 
+The scroll position stays in the UI (`ViewState`, per window and buffer),
+since it's settled while drawing, when the cursor has to be kept in sight.
+After drawing a window the UI records where its view starts
+(`Windows::note_top`), and scrolling commands (`commands/builtin/
+scrolling.rs`: `<C-d>`, `<C-f>`, `<C-e>`, `zz`, `H`...) read it back
+through `Windows::view_top`, which also applies the scroll the next draw
+will do for the cursor's current row (`windows::follow_cursor`, shared with
+the UI's `Viewport`), so commands run before a redraw (a macro's) agree
+with it. A command moves the view by asking for a new first row
+(`Windows::request_top`), which the UI applies before drawing that window
+next. The window's height comes from the layout (`Windows::height`), so it
+works before the first draw too. Like Vim, a scroll that leaves the
+cursor inside the `scroll-off` margin moves the cursor out of it, not the
+view back. `H`, `M` and `L` are a linewise jump motion (`SCREEN_LINE`)
+given the row, so operators take them (`dL`).
+
 Status lines are drawn per window by default (`statusline = "windows"`).
 A window's status line goes in the row right below it, which is always
 either the horizontal separator under it or the screen's status row, so
@@ -1021,6 +1037,9 @@ status, branches and history.
   Vim's mix of a `shiftwidth` narrower than tabs (4-column levels made of
   tabs and spaces) isn't supported.
 - `"=` (the expression register).
+- Soft wrapping of long lines (`wrap`): lines scroll sideways instead. And
+  `<C-f>`/`<C-b>` move the cursor with the view, like `<C-d>`, rather than
+  to the edge of the new screen as in Vim.
 - Window- and buffer-local options (`:setlocal`; options are global, bar
   `:indent`), and per-window or plugin-supplied status line elements (the
   layout is one setting for the active window). Lua plugins can't read or

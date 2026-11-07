@@ -145,7 +145,7 @@ fn visual_delete_is_one_undo_step() {
 #[test]
 fn unbound_key_keeps_selection() {
     let mut app = with_text("abc");
-    keys(&mut app, "vlz");
+    keys(&mut app, "vlQ");
     assert_eq!(app.editor().mode(), Mode::Visual);
     keys(&mut app, "d");
     assert_eq!(text(&app), "c");

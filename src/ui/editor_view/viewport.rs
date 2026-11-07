@@ -28,17 +28,13 @@ impl Viewport {
         height: usize,
         scroll_off: usize,
     ) {
-        if height > 0 {
-            let margin = scroll_off.min((height - 1) / 2);
-            let above = margin.min(target.row);
-            let below = margin.min(target.line_count.saturating_sub(target.row + 1));
-
-            if target.row < self.top + above {
-                self.top = target.row - above;
-            } else if target.row + below >= self.top + height {
-                self.top = target.row + below + 1 - height;
-            }
-        }
+        self.top = crate::editor::windows::follow_cursor(
+            self.top,
+            target.row,
+            height,
+            target.line_count,
+            scroll_off,
+        );
 
         if width > 0 {
             if target.col < self.left {
