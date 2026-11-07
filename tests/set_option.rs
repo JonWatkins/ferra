@@ -87,3 +87,89 @@ fn kitty_keyboard_waits_for_the_next_start() {
     keys(&mut app, ":set nokitty-keyboard<CR>");
     assert_eq!(message(&app), "kitty-keyboard=false (from the next start)");
 }
+
+const LONG: &str = "the quick brown fox jumps over the lazy dog and then some more words";
+
+#[test]
+fn setlocal_wrap_is_one_windows_own() {
+    let mut app = app();
+    keys(
+        &mut app,
+        &format!("i{LONG}<Esc>0:split<CR>:setlocal nowrap<CR>"),
+    );
+    let rows = render(&mut app, 40, 12).rows;
+    // Two windows of 4 rows (with a status line each) over the command line.
+    let wrapped = |row: &str| row.trim().starts_with("over") || row.contains(" over ");
+    assert!(!rows[1].contains("over"), "the active window doesn't wrap");
+    assert!(
+        rows[6..10].iter().any(|r| wrapped(r)),
+        "the other does: {rows:?}"
+    );
+    keys(&mut app, "<C-w>w:set wrap?<CR>");
+    assert_eq!(message(&app), "wrap=true");
+    keys(&mut app, "<C-w>w:set wrap?<CR>");
+    assert_eq!(message(&app), "wrap=false");
+}
+
+#[test]
+fn a_buffers_own_tab_width_goes_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.txt");
+    let b = dir.path().join("b.txt");
+    std::fs::write(&a, "x\n").unwrap();
+    std::fs::write(&b, "y\n").unwrap();
+    let mut app = app();
+    app.open(&a);
+    keys(&mut app, ":setlocal ts=2<CR>");
+    keys(&mut app, &format!(":e {}<CR>:set ts?<CR>", b.display()));
+    assert_eq!(message(&app), "tab-width=4", "b has the global value");
+    keys(&mut app, ">>");
+    assert_eq!(text(&app), "    y");
+    keys(&mut app, &format!(":e {}<CR>>>", a.display()));
+    assert_eq!(text(&app), "  x", "a keeps its own");
+    keys(&mut app, ":setlocal<CR>");
+    assert_eq!(message(&app), "tab-width=2");
+}
+
+#[test]
+fn set_drops_the_local_value_and_setglobal_keeps_it() {
+    let mut app = app();
+    keys(
+        &mut app,
+        ":setlocal ts=2<CR>:setglobal ts=6<CR>:set ts?<CR>",
+    );
+    assert_eq!(message(&app), "tab-width=2", "its own value still");
+    keys(&mut app, ":setglobal ts?<CR>");
+    assert_eq!(message(&app), "tab-width=6");
+    keys(&mut app, ":set ts=8<CR>:setlocal<CR>");
+    assert_eq!(message(&app), "No options set for this window or buffer");
+    keys(&mut app, ":set ts?<CR>");
+    assert_eq!(message(&app), "tab-width=8");
+}
+
+#[test]
+fn global_only_options_are_refused_locally() {
+    let mut app = app();
+    keys(&mut app, ":setlocal clipboard=unnamed<CR>");
+    assert!(
+        message(&app).starts_with("clipboard is the same everywhere"),
+        "{}",
+        message(&app)
+    );
+    assert_eq!(
+        app.editor().options.clipboard,
+        ferra::editor::registers::ClipboardMode::Registers
+    );
+}
+
+#[test]
+fn a_split_starts_with_its_windows_own_options() {
+    let mut app = app();
+    keys(&mut app, "ia<Esc>:setlocal nonu<CR>:split<CR>:set nu?<CR>");
+    assert_eq!(message(&app), "line-numbers=none");
+    let rows = render(&mut app, 40, 12).rows;
+    assert!(
+        rows[0].starts_with('a') && rows[6].starts_with('a'),
+        "{rows:?}"
+    );
+}

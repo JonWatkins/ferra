@@ -386,6 +386,8 @@ impl Editor {
             document: self.document.id(),
             cursor: self.document.cursor(),
         });
+        // A split starts with its window's own options, as in Vim.
+        self.copy_window_options(active, id);
         self.focus_window(id);
         id
     }
@@ -400,6 +402,7 @@ impl Editor {
             self.save_active_window();
             self.windows.active = id;
             self.switch_to(target.document);
+            self.refresh_options();
             self.document.set_cursor(target.cursor);
             self.enforce_cursor_rules();
         }

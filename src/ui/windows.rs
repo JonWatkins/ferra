@@ -91,17 +91,19 @@ pub fn draw_windows(
             window_area.width,
             window_area.height,
         );
+        // Each window draws with its own options (`:setlocal wrap`...).
+        let options = editor.options_for(id, document.id());
         let state = views.entry((id, document.id())).or_default();
         if let Some(top) = windows.take_requested_top(id) {
             let last = document.buffer().line_count().saturating_sub(1);
             state.viewport.top = top.min(last);
         }
         let highlights = syntax.as_deref_mut().and_then(|engine| {
-            let rows = state.visible_rows(document, window_cursor, rect, &editor.options);
+            let rows = state.visible_rows(document, window_cursor, rect, &options);
             engine.highlight(document, &editor.languages, &editor.syntax_trees, rows)
         });
 
-        let view = EditorView::new(document, &editor.options, theme)
+        let view = EditorView::new(document, &options, theme)
             .cursor(window_cursor)
             .active(active)
             .selection(if active {

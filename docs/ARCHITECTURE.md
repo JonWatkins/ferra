@@ -1040,8 +1040,22 @@ status, branches and history.
   pick values of `line-numbers` and `search.case`. Nearly every option is
   read where it's used, so it applies at once; `clipboard` and
   `clipboard-provider` are re-applied to the registers, and
-  `kitty-keyboard` waits for the next start. There's one set of options:
-  no `:setlocal` (indentation per buffer is `:indent`).
+  `kitty-keyboard` waits for the next start.
+- Local options, as in Vim: the editor keeps the global options and, per
+  window and per buffer, a sparse TOML table of `:setlocal` values
+  (`config::set::scope` says which options may: `wrap`, `line-numbers`,
+  `cursorline`, `scroll-off` per window; `tab-width`, `expand-tab`,
+  `auto-indent` per buffer). `Editor::options` is always what's in force
+  for the active window and buffer (global, then the buffer's, then the
+  window's, by `set::with_locals`), recomputed by `refresh_options` when
+  the active buffer (`activate`) or window (`focus_window`) changes, so
+  the rest of the code reads options as before. Drawing asks
+  `Editor::options_for` per window. `:set` works on the options in force
+  (so `:set ts?` shows them), copies the changes to the global options
+  and drops the active window's and buffer's own values for them;
+  `:setglobal` changes only the global ones; `:setlocal` stores values in
+  the tables and refuses global-only options. A split copies its window's
+  table.
 
 ## Testing strategy
 
@@ -1069,17 +1083,16 @@ status, branches and history.
   Vim's mix of a `shiftwidth` narrower than tabs (4-column levels made of
   tabs and spaces) isn't supported.
 - `"=` (the expression register).
-- Soft wrap: `wrap` applies to every window (it isn't window-local), a
-  line taller than the whole window can't be scrolled through (the view
+- Soft wrap: a line taller than the whole window can't be scrolled through (the view
   starts at a line's start; Vim shows `@` rows, Neovim smooth-scrolls),
   continued rows aren't indented to match (`breakindent`) or marked
   (`showbreak`), and `<C-d>`/`<C-e>` scroll by lines, not screen rows.
 - `<C-f>`/`<C-b>` move the cursor with the view, like `<C-d>`, rather than
   to the edge of the new screen as in Vim.
-- Window- and buffer-local options (`:setlocal`; options are global, bar
-  `:indent`), and per-window or plugin-supplied status line elements (the
-  layout is one setting for the active window). Lua plugins can't read or
-  set options yet.
+- Local options cover the seven above; others (`statusline-layout`,
+  `search.*`...) are global. Status line elements can't be per window or
+  supplied by plugins (the layout is one setting for the active window).
+  Lua plugins can't read or set options yet.
 - External changes are noticed by polling once a second, not OS file
   notifications; and a change that keeps both the modified time (within
   the filesystem's resolution) and the size is missed.

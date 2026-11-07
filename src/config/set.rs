@@ -63,6 +63,65 @@ pub fn set(options: &mut EditorOptions, args: &[String]) -> Result<SetResult, St
     Ok(result)
 }
 
+/// Where an option can have its own value besides the global one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// Each window's own: how it shows text.
+    Window,
+    /// Each buffer's own: how its text is edited.
+    Buffer,
+}
+
+/// The options `:setlocal` can set, and for what.
+pub fn scope(name: &str) -> Option<Scope> {
+    match name {
+        "wrap" | "line-numbers" | "cursorline" | "scroll-off" => Some(Scope::Window),
+        "tab-width" | "expand-tab" | "auto-indent" => Some(Scope::Buffer),
+        _ => None,
+    }
+}
+
+/// `global` with each table of `locals` (option name to value, as set by
+/// `:setlocal`) laid over it in turn.
+pub fn with_locals(global: &EditorOptions, locals: &[&Table]) -> EditorOptions {
+    if locals.iter().all(|table| table.is_empty()) {
+        return global.clone();
+    }
+    let mut table = table_of(global);
+    for local in locals {
+        for (name, value) in local.iter() {
+            table.insert(name.clone(), value.clone());
+        }
+    }
+    Value::Table(table)
+        .try_into()
+        .unwrap_or_else(|_: toml::de::Error| global.clone())
+}
+
+/// The value of option `name` in `options`, for keeping as a local value.
+pub fn value_of(options: &EditorOptions, name: &str) -> Option<Value> {
+    get(&table_of(options), name).cloned()
+}
+
+/// `name=value` for each of `table`'s options (local values), in order.
+pub fn describe(table: &Table) -> Vec<String> {
+    table.keys().map(|name| show(table, name)).collect()
+}
+
+/// Copies options `names`' values from `from` to `to`.
+pub fn copy_values(from: &EditorOptions, to: &mut EditorOptions, names: &[String]) {
+    let source = table_of(from);
+    let mut target = table_of(to);
+    for name in names {
+        if let (Some(value), Some(slot)) = (get(&source, name), get_mut(&mut target, name)) {
+            *slot = value.clone();
+        }
+    }
+    if let Ok(options) = Value::Table(target).try_into() {
+        *to = options;
+    }
+}
+
 /// Every option's name (dotted for nested ones), for completion.
 pub fn option_names() -> Vec<String> {
     let mut names = leaf_names(&table_of(&EditorOptions::default()));
@@ -539,6 +598,28 @@ mod tests {
             );
             assert_eq!(options, EditorOptions::default(), "{arg} changed nothing");
         }
+    }
+
+    #[test]
+    fn local_values_lay_over_the_global_ones() {
+        let global = EditorOptions::default();
+        let mut window = Table::new();
+        window.insert("wrap".into(), Value::Boolean(false));
+        let mut buffer = Table::new();
+        buffer.insert("tab-width".into(), Value::Integer(2));
+        let options = with_locals(&global, &[&buffer, &window]);
+        assert!(!options.wrap);
+        assert_eq!(options.tab_width, 2);
+        assert_eq!(options.scroll_off, global.scroll_off);
+        assert_eq!(describe(&buffer), ["tab-width=2"]);
+
+        let mut to = EditorOptions::default();
+        copy_values(&options, &mut to, &["wrap".into()]);
+        assert!(!to.wrap);
+        assert_eq!(to.tab_width, 4, "only the names given");
+        assert_eq!(scope("wrap"), Some(Scope::Window));
+        assert_eq!(scope("tab-width"), Some(Scope::Buffer));
+        assert_eq!(scope("clipboard"), None);
     }
 
     #[test]

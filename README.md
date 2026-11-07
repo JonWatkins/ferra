@@ -415,7 +415,17 @@ Several can go on one line (`:set ts=2 et`), and Tab completes names.
 Vim's names work for the common ones: `ts`, `et`, `ai`, `so`, `cul`,
 `hls`, `ws`, `nu`/`rnu` (for `line-numbers`) and `ic`/`scs` (for
 `search.case`). Changes last until ferra quits; put them in the config to
-keep them. Lists are written as in the config, without spaces
+keep them.
+
+As in Vim, some options can also be set for one window or one buffer:
+`:setlocal nowrap` in a split leaves other windows wrapping, and
+`:setlocal ts=2` applies to this buffer wherever it's shown. Windows have
+their own `wrap`, `line-numbers`, `cursorline` and `scroll-off` (a split
+starts with those of the window it came from); buffers their own
+`tab-width`, `expand-tab` and `auto-indent`. `:set` changes an option
+everywhere (and drops this window's or buffer's own value), `:setglobal`
+only where there's no value of its own, and `:setlocal` alone lists this
+window's and buffer's own values. Lists are written as in the config, without spaces
 (`:set statusline-layout.right=["position"]`).
 
 With `jk` bound in insert mode, typing `j` waits up to `key-timeout`

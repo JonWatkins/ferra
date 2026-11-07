@@ -161,6 +161,7 @@ impl Editor {
         if !previous.is_pristine_scratch() || self.shown_in_other_window(previous.id()) {
             self.background.push(previous);
         }
+        self.refresh_options();
         self.set_mode(Mode::Normal);
     }
 

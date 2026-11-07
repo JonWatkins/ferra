@@ -36,6 +36,8 @@ pub use selection::{Selection, SelectionKind, VisualShape};
 pub use transform::CaseChange;
 pub use windows::{Window, WindowId, Windows};
 
+use std::collections::HashMap;
+
 use crate::config::EditorOptions;
 use crate::core::Position;
 use crate::core::motion::CharSearch;
@@ -88,7 +90,16 @@ pub struct Editor {
     /// The last id handed out; new documents get the next one.
     last_id: u64,
     pub command_line: CommandLine,
+    /// The options in force for the active window and buffer: the global
+    /// ones with any `:setlocal` values for them laid over (see
+    /// [`Editor::refresh_options`]).
     pub options: EditorOptions,
+    /// The options as set in config and by `:set`.
+    global_options: EditorOptions,
+    /// `:setlocal` values: each window's own (how it shows text) and each
+    /// buffer's own (how it's edited).
+    window_options: HashMap<WindowId, toml::Table>,
+    buffer_options: HashMap<DocumentId, toml::Table>,
     /// Which files are in which language (`[languages]` config).
     pub languages: crate::config::Languages,
     /// Each document's syntax tree, kept up to date as it's edited, for
@@ -162,9 +173,109 @@ pub struct Editor {
 impl Editor {
     pub fn new(options: EditorOptions) -> Self {
         Self {
+            global_options: options.clone(),
             options,
             ..Self::default()
         }
+    }
+
+    /// The options as set in config and by `:set`, without any window's or
+    /// buffer's own values.
+    pub fn global_options(&self) -> &EditorOptions {
+        &self.global_options
+    }
+
+    /// Replaces the global options (`:set`, `:setglobal`).
+    pub fn set_global_options(&mut self, options: EditorOptions) {
+        self.global_options = options;
+        self.refresh_options();
+    }
+
+    /// Gives the active window (for a window option) or buffer (for a
+    /// buffer option) its own `value` for option `name` (`:setlocal`).
+    pub fn set_local_option(&mut self, name: &str, value: toml::Value) {
+        let table = match crate::config::set::scope(name) {
+            Some(crate::config::set::Scope::Window) => self
+                .window_options
+                .entry(self.windows.active())
+                .or_default(),
+            Some(crate::config::set::Scope::Buffer) => {
+                self.buffer_options.entry(self.document.id()).or_default()
+            }
+            None => return,
+        };
+        table.insert(name.to_string(), value);
+        self.refresh_options();
+    }
+
+    /// Drops the active window's and buffer's own values for `names`, so
+    /// they follow the global ones again (`:set`).
+    pub fn clear_local_options(&mut self, names: &[String]) {
+        for table in [
+            self.window_options.get_mut(&self.windows.active()),
+            self.buffer_options.get_mut(&self.document.id()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            table.retain(|name, _| !names.iter().any(|n| n == name));
+        }
+        self.refresh_options();
+    }
+
+    /// `name=value` for each of the active window's and buffer's own
+    /// option values (`:setlocal` alone).
+    pub fn local_options(&self) -> Vec<String> {
+        let mut shown = Vec::new();
+        for table in [
+            self.window_options.get(&self.windows.active()),
+            self.buffer_options.get(&self.document.id()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            shown.extend(crate::config::set::describe(table));
+        }
+        shown
+    }
+
+    /// The options in force for window `window` showing buffer `document`.
+    pub fn options_for(&self, window: WindowId, document: DocumentId) -> EditorOptions {
+        if window == self.windows.active() && document == self.document.id() {
+            return self.options.clone();
+        }
+        let empty = toml::Table::new();
+        crate::config::set::with_locals(
+            &self.global_options,
+            &[
+                self.buffer_options.get(&document).unwrap_or(&empty),
+                self.window_options.get(&window).unwrap_or(&empty),
+            ],
+        )
+    }
+
+    /// Gives window `to` the same own option values as window `from`.
+    pub(crate) fn copy_window_options(&mut self, from: WindowId, to: WindowId) {
+        if let Some(table) = self.window_options.get(&from).cloned() {
+            self.window_options.insert(to, table);
+        }
+    }
+
+    /// Recomputes [`Editor::options`] for the active window and buffer;
+    /// called when either changes.
+    pub fn refresh_options(&mut self) {
+        let empty = toml::Table::new();
+        self.options = crate::config::set::with_locals(
+            &self.global_options,
+            &[
+                self.buffer_options
+                    .get(&self.document.id())
+                    .unwrap_or(&empty),
+                self.window_options
+                    .get(&self.windows.active())
+                    .unwrap_or(&empty),
+            ],
+        );
     }
 
     /// An editor with default options editing `document`.
