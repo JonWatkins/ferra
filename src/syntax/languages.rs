@@ -203,17 +203,18 @@ mod tests {
     }
 
     #[test]
-    fn the_default_config_and_the_grammars_list_the_same_languages() {
+    fn every_grammar_has_a_language_in_the_default_config() {
+        // The config can also list languages without a grammar (make,
+        // git-commit): recognised for comments and options only.
         let config = Config::default();
-        let mut configured: Vec<&str> = config.languages.names().collect();
-        let mut built_in: Vec<&str> = LANGUAGES
+        let configured: Vec<&str> = config.languages.names().collect();
+        for name in LANGUAGES
             .iter()
             .map(|l| l.name)
             .filter(|name| !INJECTION_ONLY.contains(name))
-            .collect();
-        configured.sort_unstable();
-        built_in.sort_unstable();
-        assert_eq!(configured, built_in);
+        {
+            assert!(configured.contains(&name), "{name} isn't in [languages]");
+        }
     }
 
     #[test]

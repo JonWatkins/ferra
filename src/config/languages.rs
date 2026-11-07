@@ -10,8 +10,8 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-/// How to recognise one language's files.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+/// How to recognise one language's files, and how to edit them.
+#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct FileType {
     /// `rs`, `py`: without the dot.
@@ -27,6 +27,10 @@ pub struct FileType {
     /// What wraps a block comment (`["<!--", "-->"]`), for `gc` in
     /// languages without line comments.
     pub block_comment: Option<[String; 2]>,
+    /// Options for this language's buffers (`tab-width`, `expand-tab`,
+    /// `auto-indent`, `text-width`), over the `[editor]` ones; a buffer's
+    /// own `:setlocal` values still win.
+    pub options: toml::Table,
 }
 
 /// How `gc` comments a line: a prefix, and for block comments a suffix.
@@ -38,7 +42,7 @@ pub struct CommentTokens {
 
 /// Language name to how its files are recognised. Sorted, so when two
 /// languages claim the same file the choice is always the same.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(transparent)]
 pub struct Languages(BTreeMap<String, FileType>);
 
@@ -73,6 +77,35 @@ impl Languages {
                     || s == interpreter.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.')
             })
         })
+    }
+
+    /// The options `language`'s buffers get (see [`FileType::options`]).
+    pub fn options(&self, language: &str) -> Option<&toml::Table> {
+        self.0
+            .get(language)
+            .map(|t| &t.options)
+            .filter(|t| !t.is_empty())
+    }
+
+    /// Checks each language's options name buffer options with valid
+    /// values, against `editor` (the config's own options: taking the
+    /// defaults here would load the config being checked).
+    pub fn check_options(&self, editor: &super::EditorOptions) -> Result<(), String> {
+        use super::set;
+        for (language, file_type) in &self.0 {
+            for (name, value) in &file_type.options {
+                if set::scope(name) != Some(set::Scope::Buffer) {
+                    return Err(format!(
+                        "languages.{language}.options: {name} can't be set per language \
+                         (tab-width, expand-tab, auto-indent and text-width can)"
+                    ));
+                }
+                let mut options = editor.clone();
+                set::set_value(&mut options, name, value.clone())
+                    .map_err(|e| format!("languages.{language}.options: {e}"))?;
+            }
+        }
+        Ok(())
     }
 
     fn find(&self, matches: impl Fn(&FileType) -> bool) -> Option<&str> {

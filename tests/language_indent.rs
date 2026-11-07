@@ -126,9 +126,10 @@ fn o_and_capital_o_indent_by_the_rules() {
 fn other_languages_follow_their_own_rules() {
     let (_dir, mut app) = open("a.go", "func f() {\nswitch x {\ncase 1:\ng()\n}\n}");
     keys(&mut app, "=G");
+    // Go indents with tabs (its [languages] options), as gofmt does.
     assert_eq!(
         text(&app),
-        "func f() {\n    switch x {\n    case 1:\n        g()\n    }\n}"
+        "func f() {\n\tswitch x {\n\tcase 1:\n\t\tg()\n\t}\n}"
     );
 
     let (_dir, mut app) = open("a.sh", "if a; then\nb\nelse\nc\nfi");

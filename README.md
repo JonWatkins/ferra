@@ -394,6 +394,19 @@ extensions = ["py", "pyi", "star"]   # replaces the list, so keep the defaults
 file-names = [".bashrc", "my-tool"]
 ```
 
+A language can also set `tab-width`, `expand-tab`, `auto-indent` and
+`text-width` for its buffers, over `[editor]` (a buffer's `:setlocal`, or
+a `:set` in it, still wins). By default Go and Makefiles indent with tabs,
+and commit messages (`COMMIT_EDITMSG`) reflow at 72 with `gq`:
+
+```toml
+[languages.python]
+options = { tab-width = 4, text-width = 88 }
+```
+
+Languages without a built-in grammar (`make`, `git-commit`, or ones you
+add) aren't highlighted, but still get their comment marker and options.
+
 Colours are theme scopes (`keyword`,
 `function`, `string`, `comment`, `type`...), each falling back to its
 parent, so `function.method` uses `function` unless you set it:

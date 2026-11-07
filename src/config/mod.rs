@@ -81,7 +81,12 @@ impl Config {
         let user: Table = user.parse().map_err(|e| invalid(&e))?;
         merge(&mut merged, user);
 
-        Value::Table(merged).try_into().map_err(|e| invalid(&e))
+        let config: Config = Value::Table(merged).try_into().map_err(|e| invalid(&e))?;
+        config
+            .languages
+            .check_options(&config.editor)
+            .map_err(|e| invalid(&e))?;
+        Ok(config)
     }
 
     /// Loads the config from `path`. A missing file yields the defaults.

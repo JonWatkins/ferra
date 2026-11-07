@@ -129,5 +129,8 @@ fn continued_rows_start_at_the_lines_indentation() {
     assert_eq!(rows[2], "    ↪ eight nine");
     keys(&mut app, ":setlocal nowrap-indent wrap-marker=<CR>");
     let rows = text_rows(&mut app, 8);
-    assert_eq!(rows[1], "five six seven eight nine", "both off: all 25 cells");
+    assert_eq!(
+        rows[1], "five six seven eight nine",
+        "both off: all 25 cells"
+    );
 }

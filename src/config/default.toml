@@ -112,7 +112,14 @@ replace = "underline"
 #   file-names = [".bashrc", "my-script"]
 #
 # `comment` (or `block-comment` for languages without line comments) is what
-# gc uses to comment lines out.
+# gc uses to comment lines out. `options` sets tab-width, expand-tab,
+# auto-indent or text-width for the language's buffers (:setlocal still wins):
+#
+#   [languages.python]
+#   options = { tab-width = 4, text-width = 88 }
+#
+# A language without a built-in grammar (make, git-commit) isn't
+# highlighted, but is still recognised for comments and options.
 [languages.rust]
 extensions = ["rs"]
 comment = "//"
@@ -148,6 +155,19 @@ comment = "//"
 [languages.go]
 extensions = ["go"]
 comment = "//"
+options = { expand-tab = false }
+
+[languages.make]
+extensions = ["mk"]
+file-names = ["Makefile", "makefile", "GNUmakefile"]
+comment = "#"
+# Recipes must start with a tab.
+options = { expand-tab = false }
+
+[languages.git-commit]
+file-names = ["COMMIT_EDITMSG", "MERGE_MSG", "TAG_EDITMSG"]
+comment = "#"
+options = { text-width = 72 }
 
 [languages.c]
 extensions = ["c", "h"]

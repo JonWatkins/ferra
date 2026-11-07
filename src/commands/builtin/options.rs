@@ -50,7 +50,7 @@ fn set_option(cx: &mut Context) -> CommandResult {
     let mut global = cx.editor.global_options().clone();
     set::copy_values(&options, &mut global, &result.changed);
     cx.editor.set_global_options(global);
-    cx.editor.clear_local_options(&result.changed);
+    cx.editor.follow_global_options(&result.changed);
     finish(cx.editor, &result);
     Ok(())
 }

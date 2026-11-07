@@ -104,6 +104,9 @@ pub struct Editor {
     /// buffer's own (how it's edited).
     window_options: HashMap<WindowId, toml::Table>,
     buffer_options: HashMap<DocumentId, toml::Table>,
+    /// The language whose options `options` includes (see
+    /// [`Editor::refresh_options`]).
+    options_language: Option<String>,
     /// Which files are in which language (`[languages]` config).
     pub languages: crate::config::Languages,
     /// Each document's syntax tree, kept up to date as it's edited, for
@@ -250,7 +253,7 @@ impl Editor {
         let mut global = self.global_options.clone();
         let name = set::set_value(&mut global, name, value)?;
         self.set_global_options(global);
-        self.clear_local_options(std::slice::from_ref(&name));
+        self.follow_global_options(std::slice::from_ref(&name));
         self.apply_option_effects(std::slice::from_ref(&name));
         Ok(())
     }
@@ -281,6 +284,31 @@ impl Editor {
     /// Records what plugin status function `name` returned.
     pub fn set_plugin_status(&mut self, name: &str, text: String) {
         self.plugin_statuses.insert(name.to_string(), text);
+    }
+
+    /// After `:set` (or a plugin) changed the global `names`: drops the
+    /// active window's and buffer's own values for them, so they follow the
+    /// new global ones, except where the buffer's language sets one: that
+    /// would otherwise still win, so the buffer gets the new value as its
+    /// own, as `:set` does in Vim.
+    pub fn follow_global_options(&mut self, names: &[String]) {
+        self.clear_local_options(names);
+        let language = self.language_of(&self.document).map(str::to_string);
+        let Some(language_options) = language
+            .as_deref()
+            .and_then(|language| self.languages.options(language))
+            .cloned()
+        else {
+            return;
+        };
+        for name in names
+            .iter()
+            .filter(|name| language_options.contains_key(*name))
+        {
+            if let Some(value) = crate::config::set::value_of(&self.global_options, name) {
+                self.set_local_option(name, value);
+            }
+        }
     }
 
     /// Drops the active window's and buffer's own values for `names`, so
@@ -320,9 +348,14 @@ impl Editor {
             return self.options.clone();
         }
         let empty = toml::Table::new();
+        let language = self
+            .document_by_id(document)
+            .and_then(|doc| self.language_of(doc))
+            .and_then(|language| self.languages.options(language));
         crate::config::set::with_locals(
             &self.global_options,
             &[
+                language.unwrap_or(&empty),
                 self.buffer_options.get(&document).unwrap_or(&empty),
                 self.window_options.get(&window).unwrap_or(&empty),
             ],
@@ -340,9 +373,14 @@ impl Editor {
     /// called when either changes.
     pub fn refresh_options(&mut self) {
         let empty = toml::Table::new();
+        let language = self.language_of(&self.document).map(str::to_string);
+        let language_options = language
+            .as_deref()
+            .and_then(|language| self.languages.options(language));
         self.options = crate::config::set::with_locals(
             &self.global_options,
             &[
+                language_options.unwrap_or(&empty),
                 self.buffer_options
                     .get(&self.document.id())
                     .unwrap_or(&empty),
@@ -351,6 +389,7 @@ impl Editor {
                     .unwrap_or(&empty),
             ],
         );
+        self.options_language = language;
     }
 
     /// An editor with default options editing `document`.
@@ -463,6 +502,11 @@ impl Editor {
     /// one step.
     pub fn finish_command(&mut self) {
         self.enforce_cursor_rules();
+        // A `#!` line typed into a new file can change its language, and so
+        // the options its language sets.
+        if self.language_of(&self.document) != self.options_language.as_deref() {
+            self.refresh_options();
+        }
         // A `:s///c` session undoes as one step, across its answers.
         if self.mode != Mode::Insert && self.confirm.is_none() && !self.undo_held {
             self.document.commit();

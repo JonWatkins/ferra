@@ -1185,16 +1185,22 @@ status, branches and history.
   (`config::set::scope` says which options may: `wrap`, `wrap-indent`,
   `wrap-marker`, `line-numbers`, `cursorline`, `scroll-off` per window; `tab-width`, `expand-tab`,
   `auto-indent`, `text-width` per buffer). `Editor::options` is always what's in force
-  for the active window and buffer (global, then the buffer's, then the
-  window's, by `set::with_locals`), recomputed by `refresh_options` when
-  the active buffer (`activate`) or window (`focus_window`) changes, so
-  the rest of the code reads options as before. Drawing asks
-  `Editor::options_for` per window. `:set` works on the options in force
-  (so `:set ts?` shows them), copies the changes to the global options
-  and drops the active window's and buffer's own values for them;
+  for the active window and buffer (global, then the buffer's language's
+  `options` from `[languages]`, then the buffer's, then the window's, by
+  `set::with_locals`), recomputed by `refresh_options` when the active
+  buffer (`activate`) or window (`focus_window`) changes, or when
+  `finish_command` sees the buffer's language has (a `#!` typed, a scratch
+  buffer saved as `Makefile`), so the rest of the code reads options as
+  before. Drawing asks `Editor::options_for` per window. `:set` works on
+  the options in force (so `:set ts?` shows them), copies the changes to
+  the global options and drops the active window's and buffer's own
+  values for them (`follow_global_options`), except that where the
+  buffer's language sets one, the buffer gets the new value as its own,
+  so `:set et` in a Go buffer takes effect there, as in Vim;
   `:setglobal` changes only the global ones; `:setlocal` stores values in
   the tables and refuses global-only options. A split copies its window's
-  table.
+  table. Language options are checked when the config loads
+  (`Languages::check_options`): buffer options only, valid values.
 
 ## Testing strategy
 
@@ -1217,10 +1223,9 @@ status, branches and history.
   mode isn't asked for.
 - Indentation: no tree rules for Python or YAML (typing them uses the
   heuristics above, and `=` declines), nor keywords for languages other
-  than Bash and Python (Lua's `end`, Ruby's). Indent styles can't be
-  set per language in config (Helix's `indent = { unit = ... }`), and
-  Vim's mix of a `shiftwidth` narrower than tabs (4-column levels made of
-  tabs and spaces) isn't supported.
+  than Bash and Python (Lua's `end`, Ruby's). Vim's mix of a `shiftwidth`
+  narrower than tabs (4-column levels made of tabs and spaces) isn't
+  supported. Window options (`wrap`) can't be set per language.
 - Completion: only words from the open buffers (no paths, whole lines,
   dictionaries or LSP, nor Vim's `<C-x>` sub-modes), matched by prefix
   (not fuzzily). `.` replays the `<C-n>` keys, so it completes again
