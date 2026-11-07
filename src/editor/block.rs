@@ -55,6 +55,7 @@ impl Editor {
     /// Takes the selected block and returns to normal mode.
     pub fn take_block(&mut self) -> Option<Block> {
         let block = self.selection_block()?;
+        self.note_taken_shape();
         self.set_mode(Mode::Normal);
         Some(block)
     }
@@ -227,6 +228,7 @@ impl Editor {
                 block.rows().collect(),
             )
         };
+        self.note_taken_shape();
         self.set_mode(Mode::Normal);
         self.begin_block_insert(block.first, rows, target);
     }

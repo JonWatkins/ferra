@@ -5,6 +5,7 @@
 //! so operators work on it unchanged.
 
 use super::{Editor, Mode};
+use crate::core::columns::{char_col_at, display_col};
 use crate::core::{Buffer, Position, Range};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +55,26 @@ impl Selection {
     }
 }
 
+/// How much text a selection covered, for `.` to cover the same amount from
+/// wherever the cursor is (Vim's `visual-repeat`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisualShape {
+    /// Characters within one line: this many.
+    Chars(usize),
+    /// Characters over several lines: this many lines, ending at this
+    /// column on the last.
+    CharLines { lines: usize, end_col: usize },
+    /// This many whole lines.
+    Lines(usize),
+    /// This many rows, this many display columns wide (or to each row's
+    /// end).
+    Block {
+        rows: usize,
+        width: usize,
+        to_eol: bool,
+    },
+}
+
 /// A finished selection, remembered for `gv`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct LastSelection {
@@ -98,8 +119,125 @@ impl Editor {
     /// operator to act on it.
     pub fn take_selection(&mut self) -> Option<Range> {
         let range = self.selection_range()?;
+        self.note_taken_shape();
         self.set_mode(Mode::Normal);
         Some(range)
+    }
+
+    /// The shape of the current selection.
+    pub fn visual_shape(&self) -> Option<VisualShape> {
+        let selection = self.selection?;
+        let cursor = self.document.cursor();
+        let (start, end) = if selection.anchor <= cursor {
+            (selection.anchor, cursor)
+        } else {
+            (cursor, selection.anchor)
+        };
+        let lines = end.row - start.row + 1;
+        Some(match selection.kind {
+            SelectionKind::Line => VisualShape::Lines(lines),
+            SelectionKind::Char if lines == 1 => VisualShape::Chars(end.col - start.col + 1),
+            SelectionKind::Char => VisualShape::CharLines {
+                lines,
+                end_col: end.col,
+            },
+            SelectionKind::Block => {
+                let block = crate::core::Block::between(
+                    self.document.buffer(),
+                    (selection.anchor.row, selection.anchor.col),
+                    (cursor.row, cursor.col),
+                    self.block_to_eol,
+                    self.options.tab_width,
+                );
+                VisualShape::Block {
+                    rows: lines,
+                    width: block.right - block.left + 1,
+                    to_eol: block.to_eol,
+                }
+            }
+        })
+    }
+
+    /// Remembers the selection's shape as an operator takes it.
+    pub(super) fn note_taken_shape(&mut self) {
+        self.taken_shape = self.visual_shape();
+    }
+
+    /// The shape of the selection the last operator took, once: the app
+    /// keeps it with the change, so `.` acts on as much text again.
+    pub fn take_visual_shape(&mut self) -> Option<VisualShape> {
+        self.taken_shape.take()
+    }
+
+    /// Selects text of `shape` starting at the cursor, in visual mode (for
+    /// `.` after a visual operator). It's cut short at the end of a line or
+    /// the buffer.
+    pub fn select_shape(&mut self, shape: VisualShape) {
+        let start = self.document.cursor();
+        let mut anchor = start;
+        let buffer = self.document.buffer();
+        let last_row = |lines: usize| (start.row + lines.max(1) - 1).min(buffer.line_count() - 1);
+        let last_char = |row: usize, col: usize| col.min(buffer.line_len(row).saturating_sub(1));
+        let (kind, cursor, to_eol) = match shape {
+            VisualShape::Chars(n) => (
+                SelectionKind::Char,
+                start.with_col(last_char(start.row, start.col + n.max(1) - 1)),
+                false,
+            ),
+            VisualShape::CharLines { lines, end_col } => {
+                let row = last_row(lines);
+                (
+                    SelectionKind::Char,
+                    Position::new(row, last_char(row, end_col)),
+                    false,
+                )
+            }
+            VisualShape::Lines(lines) => {
+                let row = last_row(lines);
+                (
+                    SelectionKind::Line,
+                    Position::new(row, last_char(row, start.col)),
+                    false,
+                )
+            }
+            VisualShape::Block {
+                rows,
+                width,
+                to_eol,
+            } => {
+                // Corners at the top left and bottom right, unless the
+                // bottom row ends inside the block and the top one doesn't:
+                // then the top right and bottom left, so the block keeps
+                // its width.
+                let tab = self.options.tab_width;
+                let row = last_row(rows);
+                let left = display_col(&buffer.line(start.row), start.col, tab);
+                let right = left + width.max(1) - 1;
+                let width_of = |row: usize| display_col(&buffer.line(row), usize::MAX, tab);
+                let col_at = |row: usize, col: usize| {
+                    last_char(row, char_col_at(&buffer.line(row), col, tab))
+                };
+                let short = width_of(row) <= right;
+                if short && width_of(row) > left && width_of(start.row) > right {
+                    anchor = Position::new(row, col_at(row, left));
+                    (
+                        SelectionKind::Block,
+                        Position::new(start.row, col_at(start.row, right)),
+                        to_eol,
+                    )
+                } else {
+                    (
+                        SelectionKind::Block,
+                        Position::new(row, col_at(row, right)),
+                        to_eol,
+                    )
+                }
+            }
+        };
+        self.set_mode(Mode::Visual);
+        self.selection = Some(Selection { anchor, kind });
+        self.block_to_eol = to_eol;
+        self.document.set_cursor(cursor);
     }
 
     /// `o`: moves the cursor to the other end of the selection.
@@ -305,6 +443,59 @@ mod tests {
         assert!(e.reselect());
         assert_eq!(e.mode(), Mode::Visual);
         assert_eq!(e.selection_range(), Some(chars(pos(0, 0), pos(0, 5))));
+    }
+
+    #[test]
+    fn shapes_are_measured_and_reselected_from_the_cursor() {
+        let mut e = editor("abcdef\nabcdef\nabcdef\nabcdef", pos(0, 1));
+        let measure = |e: &mut Editor, kind, to: Position| {
+            e.toggle_visual(kind);
+            e.document.set_cursor(to);
+            let shape = e.visual_shape().unwrap();
+            e.set_mode(Mode::Normal);
+            e.document.set_cursor(pos(0, 1));
+            shape
+        };
+        let char_shape = measure(&mut e, SelectionKind::Char, pos(0, 3));
+        assert_eq!(char_shape, VisualShape::Chars(3));
+        let lines_shape = measure(&mut e, SelectionKind::Char, pos(1, 4));
+        assert_eq!(
+            lines_shape,
+            VisualShape::CharLines {
+                lines: 2,
+                end_col: 4
+            }
+        );
+        assert_eq!(
+            measure(&mut e, SelectionKind::Line, pos(2, 0)),
+            VisualShape::Lines(3)
+        );
+        let block_shape = measure(&mut e, SelectionKind::Block, pos(1, 2));
+        assert_eq!(
+            block_shape,
+            VisualShape::Block {
+                rows: 2,
+                width: 2,
+                to_eol: false
+            }
+        );
+
+        e.document.set_cursor(pos(2, 2));
+        e.select_shape(char_shape);
+        assert_eq!(e.selection_range(), Some(chars(pos(2, 2), pos(2, 5))));
+        e.set_mode(Mode::Normal);
+        e.document.set_cursor(pos(2, 0));
+        e.select_shape(lines_shape);
+        assert_eq!(e.selection_range(), Some(chars(pos(2, 0), pos(3, 5))));
+        e.set_mode(Mode::Normal);
+        e.document.set_cursor(pos(3, 3));
+        e.select_shape(block_shape);
+        let block = e.selection_block().unwrap();
+        assert_eq!(
+            (block.first, block.last, block.left, block.right),
+            (3, 3, 3, 4),
+            "cut short by the buffer's end"
+        );
     }
 
     #[test]

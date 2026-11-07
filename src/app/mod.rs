@@ -484,6 +484,9 @@ impl App {
             self.changes.begin(before);
         }
         if let Some(key) = key {
+            if self.input.is_idle() {
+                self.changes.mark_binding_start();
+            }
             self.changes.push(key);
         }
         // Counts are marked so `.` with a count can replace them all. Only
@@ -492,6 +495,9 @@ impl App {
         handle(self);
         if key.is_some() && counts_count && self.input.took_count() {
             self.changes.mark_count();
+        }
+        if let Some(shape) = self.editor.take_visual_shape() {
+            self.changes.note_visual(shape);
         }
         // `:` commands and picker choices aren't repeated by `.`; a search
         // is, as an operator's motion (`d/foo<CR>`).
@@ -642,11 +648,18 @@ impl App {
             change.advance_numbered_register();
         }
         // As in Vim, a count given to `.` becomes the change's count, so a
-        // later `.` without one uses it too.
-        if let Some(count) = count {
+        // later `.` without one uses it too. A visual change has no count
+        // of its own (its size is the selection's), so it ignores one.
+        let visual = change.visual();
+        if let Some(count) = count
+            && visual.is_none()
+        {
             change.set_count(count);
         }
         let keys = change.keys(None);
+        if let Some(shape) = visual {
+            self.editor.select_shape(shape);
+        }
         self.changes.note_replay();
         self.replaying = true;
         for key in keys {

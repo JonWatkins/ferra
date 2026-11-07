@@ -55,7 +55,7 @@ type, open a file or split the window.
 | Normal  | `"/`, `":`, `"%`, `".` | Read-only registers: the last search, the last `:` command, the file name (`"%p`), the last inserted text |
 | Normal  | `"1`-`"9`, `"-` | Recent deletes of a line or more (`"1` newest), and the last delete within a line. `"1p` then `.` pastes `"2`, `"3`... |
 | Normal  | `u` `<C-r>` | Undo / redo |
-| Normal  | `.` | Repeat the last change (`3.` replaces its counts: after `d2w`, deletes three words; later `.` keep the 3) |
+| Normal  | `.` | Repeat the last change (`3.` replaces its counts: after `d2w`, deletes three words; later `.` keep the 3). After a visual change, it acts on as much text again from the cursor |
 | Normal  | `q{a-z}` … `q` | Record a macro (`qA` appends); the statusline shows `recording @a` |
 | Normal  | `@{a-z}`, `@@`, `@:` | Play a macro (`10@a`), the last one, or the last `:` command |
 | Normal  | `m{a-z}`, `m{A-Z}` | Set a mark in this buffer / a global mark that jumps across buffers |
@@ -73,6 +73,7 @@ type, open a file or split the window.
 | Visual  | `d` `x` `c` `s` `y` | Delete / change / yank the selection |
 | Visual  | `D` `X` `C` `S` `Y` | Same, on whole lines |
 | Visual  | `p` `P` | Replace the selection (`p` keeps the replaced text, so it can swap) |
+| Visual  | `>` `<` | Shift the selected lines (`3>` three times); `.` repeats on as many lines |
 | Visual  | `o` | Move to the other end of the selection (`O`: other side of the row, in a block) |
 | Visual  | `v` `V` `<C-v>` `<Esc>` | Switch selection kind / leave |
 | Block   | `d` `y` `c` `u` `U` `~` | Act on the rectangle; `y` then `p` pastes it back as a column |

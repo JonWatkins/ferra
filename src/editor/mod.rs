@@ -32,7 +32,7 @@ pub use message::{Message, Severity};
 pub use mode::Mode;
 pub use operator::{Operator, PendingOperator};
 pub use registers::{Register, Registers};
-pub use selection::{Selection, SelectionKind};
+pub use selection::{Selection, SelectionKind, VisualShape};
 pub use transform::CaseChange;
 pub use windows::{Window, WindowId, Windows};
 
@@ -139,6 +139,9 @@ pub struct Editor {
     last_selection: Option<selection::LastSelection>,
     /// `$` in visual block mode: every row runs to its end.
     block_to_eol: bool,
+    /// The shape of the last selection an operator took, until the app
+    /// collects it for `.` (see [`Editor::take_visual_shape`]).
+    taken_shape: Option<selection::VisualShape>,
     /// Text typed by `I`/`A`/`c` on a block's first row, copied to the
     /// others when insert mode ends.
     block_insert: Option<block::BlockInsert>,

@@ -6,8 +6,14 @@
 //! its keys back through the normal input path. Recording keys rather than
 //! commands means every way of changing text is repeatable, including
 //! insert sessions and future plugin commands, with no extra work.
+//!
+//! A change made by an operator on a visual selection is the exception: as
+//! in Vim, `.` acts on the same *amount* of text from the cursor rather
+//! than replaying the keys that made the selection. The recorder notes
+//! where the operator's key binding began and the selection's shape, keeps
+//! only the keys from there on, and `.` selects that shape first.
 
-use crate::editor::DocumentId;
+use crate::editor::{DocumentId, VisualShape};
 use crate::input::{KeyCode, KeyPress};
 
 /// The active buffer and how many edits it has had. Comparing two stamps
@@ -39,11 +45,19 @@ pub struct RecordedKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LastChange {
     keys: Vec<RecordedKey>,
+    /// The change acted on a selection of this shape, which `.` selects
+    /// before replaying the keys (the operator and what followed).
+    visual: Option<VisualShape>,
 }
 
 impl LastChange {
+    #[cfg(test)]
     pub fn new(keys: Vec<RecordedKey>) -> Self {
-        Self { keys }
+        Self { keys, visual: None }
+    }
+
+    pub fn visual(&self) -> Option<VisualShape> {
+        self.visual
     }
 
     /// Where a leading `"x` register prefix starts (counts may come before
@@ -117,6 +131,11 @@ pub struct ChangeRecorder {
     used_command_line: bool,
     /// The sequence was `.` itself, which must not replace the last change.
     replayed: bool,
+    /// Where the key binding being typed began, in `keys`.
+    binding_start: usize,
+    /// An operator took a selection of this shape, in the binding that
+    /// began at this index.
+    visual: Option<(VisualShape, usize)>,
     last_change: Option<LastChange>,
 }
 
@@ -127,6 +146,18 @@ impl ChangeRecorder {
         self.at_start = stamp;
         self.used_command_line = false;
         self.replayed = false;
+        self.binding_start = 0;
+        self.visual = None;
+    }
+
+    /// The next key starts a new key binding (nothing is half typed).
+    pub fn mark_binding_start(&mut self) {
+        self.binding_start = self.keys.len();
+    }
+
+    /// The binding being typed took a visual selection of `shape`.
+    pub fn note_visual(&mut self, shape: VisualShape) {
+        self.visual = Some((shape, self.binding_start));
     }
 
     pub fn push(&mut self, key: KeyPress) {
@@ -152,9 +183,15 @@ impl ChangeRecorder {
     pub fn finish(&mut self, stamp: EditStamp) {
         let changed = stamp.edited_since(self.at_start);
         if changed && !self.used_command_line && !self.replayed && !self.keys.is_empty() {
-            self.last_change = Some(LastChange::new(std::mem::take(&mut self.keys)));
+            let mut keys = std::mem::take(&mut self.keys);
+            let visual = self.visual.map(|(shape, from)| {
+                keys.drain(..from.min(keys.len()));
+                shape
+            });
+            self.last_change = Some(LastChange { keys, visual });
         }
         self.keys.clear();
+        self.visual = None;
     }
 
     #[cfg(test)]
@@ -274,6 +311,30 @@ mod tests {
             edits: 5,
         });
         assert_eq!(recorder.last_change(), Some(&change("x")));
+    }
+
+    #[test]
+    fn a_visual_change_keeps_only_the_operators_keys() {
+        let mut recorder = ChangeRecorder::default();
+        recorder.begin(stamp(0));
+        for key in keys("vj\"ad") {
+            // `"`, `a` and `d` are one binding: `a` and `d` arrive with the
+            // register half typed.
+            let half_typed = matches!(key.as_text(), Some('a' | 'd'));
+            if !half_typed {
+                recorder.mark_binding_start();
+            }
+            recorder.push(key);
+        }
+        recorder.note_visual(VisualShape::Lines(2));
+        recorder.finish(stamp(1));
+        let change = recorder.last_change().unwrap();
+        assert_eq!(change.keys(None), keys("\"ad"));
+        assert_eq!(change.visual(), Some(VisualShape::Lines(2)));
+
+        // The next change starts without one.
+        record(&mut recorder, "x", 1, 2);
+        assert_eq!(recorder.last_change().unwrap().visual(), None);
     }
 
     #[test]

@@ -539,6 +539,22 @@ count), so switching buffers never does. If the change was a paste
 from `"1`-`"8`, `.` moves the prefix on one number first, so `"1pu.u.`
 steps back through older deletes.
 
+A change made by an operator on a visual selection is repeated on the same
+*amount* of text from the cursor, as in Vim (`visual-repeat`), not by
+replaying the motion: after `ved` on a two-letter word, `.` deletes two
+characters wherever it's used. Taking a selection (`take_selection`,
+`take_block`, block `I`/`A`) notes its `VisualShape`: a number of
+characters on one line, a number of lines and the end column on the last,
+a number of lines, or a block's rows and display width (and `$`). The app
+collects it after each key (`Editor::take_visual_shape`), and the recorder
+pairs it with where that key binding began (the start of `"ad` or `3>`),
+which it tracks by noting each key that arrives with nothing half typed.
+The last change then keeps only the keys from there on, and `.` first
+calls `Editor::select_shape`, which selects that much from the cursor, cut
+short at a line's or the buffer's end. A count given to `.` is ignored
+for these, since the size comes from the selection. A count on a visual
+`>` or `<` shifts that many times.
+
 ### Macros and marks
 
 Macros are recorded and replayed as keys, like `.`, so they live in the
@@ -819,8 +835,6 @@ status, branches and history.
 - Language-aware indentation (tree-sitter indent queries), and `=` to
   re-indent. Auto-indent currently copies the previous line and reacts to
   brackets only.
-- `.` repeating a visual operation on the same amount of text, as Vim does
-  (it replays the keys, so it repeats the motion instead).
 - `"=` (the expression register).
 - Window-local options, and per-window or plugin-supplied status line
   elements (the layout is one setting for the active window).

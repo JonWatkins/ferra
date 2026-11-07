@@ -91,13 +91,25 @@ pub fn register(r: &mut CommandRegistry) {
     );
 }
 
-/// Starts an operator, or in visual mode applies it to the selection.
+/// Starts an operator, or in visual mode applies it to the selection. A
+/// count on a visual `>` or `<` shifts that many times (`3>`).
 fn begin(cx: &mut Context, operator: Operator) -> CommandResult {
+    let times = match operator {
+        Operator::Indent | Operator::Outdent => cx.count(),
+        _ => 1,
+    };
     if let Some(block) = cx.editor.take_block() {
-        return cx.editor.apply_block_operator(operator, block, cx.register);
+        for _ in 0..times {
+            cx.editor
+                .apply_block_operator(operator, block, cx.register)?;
+        }
+        return Ok(());
     }
     if let Some(range) = cx.editor.take_selection() {
-        return cx.editor.apply_operator(operator, range, cx.register);
+        for _ in 0..times {
+            cx.editor.apply_operator(operator, range, cx.register)?;
+        }
+        return Ok(());
     }
     cx.editor.begin_operator(operator, cx.count, cx.register);
     Ok(())
