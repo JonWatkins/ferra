@@ -78,7 +78,7 @@ fn set_local_option(cx: &mut Context) -> CommandResult {
     let result = set::set(&mut options, cx.args)?;
     if let Some(name) = result.changed.iter().find(|n| set::scope(n).is_none()) {
         return Err(format!(
-            "{name} is the same everywhere: use :set (a window or buffer can have its own wrap, wrap-indent, wrap-marker, line-numbers, cursorline, scroll-off, tab-width, expand-tab, auto-indent, text-width)"
+            "{name} is the same everywhere: use :set (a window or buffer can have its own wrap, wrap-indent, wrap-marker, line-numbers, cursorline, scroll-off, tab-width, expand-tab, auto-indent, text-width, auto-wrap)"
         ));
     }
     for name in &result.changed {

@@ -54,7 +54,7 @@ type, open a file or split the window.
 | Normal  | `=` + motion, `==` | Re-indent lines by the language's rules (`gg=G` for the whole file; visual `=`) |
 | Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |
 | Normal  | `gcc`, `gc` + motion (`gcap`, `gcj`), visual `gc` | Toggle comments on those lines, using the file's language |
-| Normal  | `gq` + motion (`gqip`, `gqq`), visual `gq`; `gw` | Reflow those lines to `text-width` (79), keeping indentation, comment markers and list items; `gw` leaves the cursor put |
+| Normal  | `gq` + motion (`gqip`, `gqq`), visual `gq`; `gw` | Reflow those lines to `text-width` (79), keeping indentation, comment markers and list items; `gw` leaves the cursor put. `auto-wrap` breaks lines as you type past it |
 | Normal  | `~` | Toggle case under the cursor and move on |
 | Normal  | `<C-a>` `<C-x>` (`5<C-a>`) | Add to / take from the number under or after the cursor: decimal (`-` signs, leading zeros kept), `0x` hex, `0b` binary |
 | Visual  | `<C-a>` `<C-x>`, `g<C-a>` `g<C-x>` | The same for the first number on each selected line; the `g` forms make a sequence (+1, +2, +3...) |
@@ -394,10 +394,11 @@ extensions = ["py", "pyi", "star"]   # replaces the list, so keep the defaults
 file-names = [".bashrc", "my-tool"]
 ```
 
-A language can also set `tab-width`, `expand-tab`, `auto-indent` and
-`text-width` for its buffers, over `[editor]` (a buffer's `:setlocal`, or
-a `:set` in it, still wins). By default Go and Makefiles indent with tabs,
-and commit messages (`COMMIT_EDITMSG`) reflow at 72 with `gq`:
+A language can also set `tab-width`, `expand-tab`, `auto-indent`,
+`text-width` and `auto-wrap` for its buffers, over `[editor]` (a buffer's
+`:setlocal`, or a `:set` in it, still wins). By default Go and Makefiles
+indent with tabs, and commit messages (`COMMIT_EDITMSG`) wrap at 72 as
+you type:
 
 ```toml
 [languages.python]
@@ -434,6 +435,7 @@ auto-indent = true          # indent new lines (by the language's rules where it
 wrap = false                # scroll long lines sideways rather than wrapping them
 wrap-marker = ""             # no ↪ before wrapped lines' later rows
 text-width = 72             # the width gq and gw reflow to
+auto-wrap = "comments"      # break lines typed past text-width: "off", "comments", "all"
 line-numbers = "absolute"   # "absolute" | "relative" | "none"
 scroll-off = 8
 statusline = "global"       # one status line, not one per window

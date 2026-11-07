@@ -21,6 +21,10 @@ auto-indent = true
 line-numbers = "relative"
 # The width gq and gw reflow text to (per buffer with :setlocal tw=72).
 text-width = 79
+# Typing past text-width breaks the line, keeping its indentation and
+# comment marker: "off", "comments" (only in comments, for code) or "all"
+# (for prose). Per language: options = { auto-wrap = "all" }.
+auto-wrap = "off"
 # Long lines continue on the next screen rows, breaking between words, and
 # gj/gk move by screen rows. false scrolls sideways instead.
 wrap = true
@@ -167,7 +171,7 @@ options = { expand-tab = false }
 [languages.git-commit]
 file-names = ["COMMIT_EDITMSG", "MERGE_MSG", "TAG_EDITMSG"]
 comment = "#"
-options = { text-width = 72 }
+options = { text-width = 72, auto-wrap = "all" }
 
 [languages.c]
 extensions = ["c", "h"]

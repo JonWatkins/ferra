@@ -521,6 +521,7 @@ impl Editor {
                     self.type_replacing(c);
                 } else {
                     self.type_with_indent(c);
+                    self.auto_wrap(c);
                 }
                 self.typed.push(c);
             }

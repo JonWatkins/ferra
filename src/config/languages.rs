@@ -97,7 +97,7 @@ impl Languages {
                 if set::scope(name) != Some(set::Scope::Buffer) {
                     return Err(format!(
                         "languages.{language}.options: {name} can't be set per language \
-                         (tab-width, expand-tab, auto-indent and text-width can)"
+                         (tab-width, expand-tab, auto-indent, text-width and auto-wrap can)"
                     ));
                 }
                 let mut options = editor.clone();

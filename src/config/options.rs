@@ -20,6 +20,9 @@ pub struct EditorOptions {
     pub line_numbers: LineNumbers,
     /// The width `gq` reflows text to (0: 79, as in Vim).
     pub text_width: usize,
+    /// Whether typing past `text-width` breaks the line: never, in
+    /// comments, or anywhere.
+    pub auto_wrap: AutoWrap,
     /// Long lines continue on the next screen rows (breaking between
     /// words) rather than running off the edge.
     pub wrap: bool,
@@ -231,6 +234,18 @@ impl From<StatusElement> for String {
                 .map_or_else(String::new, |(_, n)| n.to_string()),
         }
     }
+}
+
+/// `auto-wrap`: where typing past `text-width` breaks the line (Vim's
+/// `formatoptions` `c` and `t`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoWrap {
+    Off,
+    /// Only in comments (by the language's line-comment marker).
+    Comments,
+    /// In any text.
+    All,
 }
 
 /// Where status lines go (Neovim's `laststatus`).

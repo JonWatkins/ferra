@@ -78,7 +78,9 @@ pub fn scope(name: &str) -> Option<Scope> {
         "wrap" | "wrap-indent" | "wrap-marker" | "line-numbers" | "cursorline" | "scroll-off" => {
             Some(Scope::Window)
         }
-        "tab-width" | "expand-tab" | "auto-indent" | "text-width" => Some(Scope::Buffer),
+        "tab-width" | "expand-tab" | "auto-indent" | "text-width" | "auto-wrap" => {
+            Some(Scope::Buffer)
+        }
         _ => None,
     }
 }

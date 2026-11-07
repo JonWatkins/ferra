@@ -156,6 +156,61 @@ impl Editor {
         }
     }
 
+    /// After `c` is typed in insert mode, with `auto-wrap`: if the line now
+    /// runs past `text-width`, breaks it at the last space within it, the
+    /// new line starting with the same leader (indentation, comment marker,
+    /// list item alignment) as `gq` would give it. With `comments`, only
+    /// comment lines. A word too long to fit is left alone.
+    pub(super) fn auto_wrap(&mut self, c: char) {
+        use crate::config::AutoWrap;
+        if self.options.auto_wrap == AutoWrap::Off || c.is_whitespace() {
+            return;
+        }
+        let width = match self.options.text_width {
+            0 => 79,
+            width => width,
+        };
+        let tab = self.options.tab_width.max(1);
+        let cursor = self.document.cursor();
+        let line = self.document.buffer().line(cursor.row).into_owned();
+        if crate::core::columns::display_col(&line, cursor.col, tab) <= width {
+            return;
+        }
+        let comment = self
+            .language_of(&self.document)
+            .and_then(|language| self.languages.comment_tokens(language))
+            .filter(|tokens| tokens.end.is_none())
+            .map(|tokens| tokens.start.trim().to_string());
+        let (text_start, leader, commented) =
+            crate::core::format::continuation(&line, comment.as_deref());
+        if self.options.auto_wrap == AutoWrap::Comments && !commented {
+            return;
+        }
+        // The last space whose text before it fits.
+        let chars: Vec<char> = line.chars().collect();
+        let Some(space) = (text_start + 1..cursor.col.min(chars.len()))
+            .rev()
+            .find(|&i| {
+                chars[i] == ' '
+                    && chars[i - 1] != ' '
+                    && crate::core::columns::display_col(&line, i, tab) <= width
+            })
+        else {
+            return;
+        };
+        let end = (space..chars.len())
+            .find(|&i| chars[i] != ' ')
+            .unwrap_or(chars.len());
+        let doc = &mut self.document;
+        doc.delete(
+            Position::new(cursor.row, space),
+            Position::new(cursor.row, end),
+        );
+        doc.insert(Position::new(cursor.row, space), &format!("\n{leader}"));
+        let col = leader.chars().count() + cursor.col.saturating_sub(end);
+        doc.set_cursor(Position::new(cursor.row + 1, col));
+    }
+
     /// `gu`, `gU`, `g~`: changes the case of the text in `range`, leaving the
     /// cursor at its start.
     pub fn change_case(&mut self, range: Range, change: CaseChange) {

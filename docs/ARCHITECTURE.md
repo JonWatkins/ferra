@@ -849,6 +849,14 @@ one change; the cursor goes to the last one's first non-blank, or with `gw`
 stays where it was. `gqq`, `gqgq` and `gwgw` come from operator-pending `q`,
 `gq` and `gw` bound to `current_line`.
 
+`auto-wrap` (buffer-local, `off`/`comments`/`all`, like Vim's
+`formatoptions` `c`/`t`) does the same as you type: after a non-blank char
+lands past `text-width`, `Editor::auto_wrap` breaks the line at the last
+space within the width, starting the new line with
+`core::format::continuation` (the leader `gq` would use), and moves the
+cursor with the text. It's part of the insert session, so one undo and
+`.` replays the keys, which wrap the same way.
+
 ### Counted inserts
 
 `i`, `a`, `I`, `A`, `gi`, `o` and `O` pass their count to
@@ -1184,7 +1192,7 @@ status, branches and history.
   window and per buffer, a sparse TOML table of `:setlocal` values
   (`config::set::scope` says which options may: `wrap`, `wrap-indent`,
   `wrap-marker`, `line-numbers`, `cursorline`, `scroll-off` per window; `tab-width`, `expand-tab`,
-  `auto-indent`, `text-width` per buffer). `Editor::options` is always what's in force
+  `auto-indent`, `text-width`, `auto-wrap` per buffer). `Editor::options` is always what's in force
   for the active window and buffer (global, then the buffer's language's
   `options` from `[languages]`, then the buffer's, then the window's, by
   `set::with_locals`), recomputed by `refresh_options` when the active
@@ -1230,10 +1238,10 @@ status, branches and history.
   dictionaries or LSP, nor Vim's `<C-x>` sub-modes), matched by prefix
   (not fuzzily). `.` replays the `<C-n>` keys, so it completes again
   rather than repeating the word chosen, which differs if the buffer has.
-- Formatting: `gq` doesn't format as you type (Vim's `formatoptions=t`,
-  auto-wrapping at `text-width`), use an external `formatprg`, or know
-  block comments' middle lines (` * ` in `/* */`); two spaces after a
-  sentence become one.
+- Formatting: no external `formatprg`, block comments' middle lines
+  (` * ` in `/* */`) aren't leaders, and two spaces after a sentence
+  become one. `auto-wrap` only breaks the line being typed; it doesn't
+  rejoin a paragraph after an edit (Vim's `formatoptions=a`).
 - Folding: only by indentation (no syntax-tree or marker folds); closing an
   outer fold forgets the folds inside it; no fold column; folds aren't
   saved with the file; relative line numbers count hidden lines.

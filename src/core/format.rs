@@ -59,6 +59,24 @@ pub fn format_lines(
     out
 }
 
+/// For wrapping `line` as it's typed: the char column its text starts at
+/// (after indentation and any comment marker), what a line continuing it
+/// starts with (the same leader, lined up under a list item's text), and
+/// whether it's a comment.
+pub fn continuation(line: &str, comment: Option<&str>) -> (usize, String, bool) {
+    let parsed = Line::parse(line, comment);
+    let rest = line.trim_start_matches([' ', '\t']);
+    let text_start = match comment.and_then(|c| rest.strip_prefix(c)) {
+        Some(after) => line.chars().count() - after.trim_start_matches([' ', '\t']).chars().count(),
+        None => line.chars().count() - rest.chars().count(),
+    };
+    let leader = match parsed.bullet {
+        Some(bullet) => format!("{}{}", parsed.leader, " ".repeat(bullet)),
+        None => parsed.leader,
+    };
+    (text_start, leader, parsed.commented)
+}
+
 /// A line split into its leader and its text.
 struct Line {
     leader: String,
@@ -194,6 +212,19 @@ mod tests {
             format("- one two three\n- four\n1. five six seven", 9, None),
             "- one two\n  three\n- four\n1. five\n   six\n   seven"
         );
+    }
+
+    #[test]
+    fn continuing_a_line_as_its_typed() {
+        assert_eq!(
+            continuation("    // some text", Some("//")),
+            (7, "    // ".into(), true)
+        );
+        assert_eq!(
+            continuation("  - item text", None),
+            (2, "    ".into(), false)
+        );
+        assert_eq!(continuation("plain", None), (0, String::new(), false));
     }
 
     #[test]
