@@ -1,4 +1,5 @@
-//! Insert-mode word completion: `<C-n>` and `<C-p>`, as in Vim.
+//! Insert-mode completion, as in Vim: words (`<C-n>`, `<C-p>`), file
+//! names (`<C-x><C-f>`) and whole lines (`<C-x><C-l>`).
 //!
 //! The word before the cursor is completed from words in the buffer
 //! (nearest first, looking forward for `<C-n>` and backward for `<C-p>`,
@@ -68,12 +69,119 @@ impl Editor {
         let start = cursor.with_col(cursor.col - word_len);
         let typed: String = before[before.len() - word_len..].iter().collect();
         let items = self.gather_words(&typed, cursor, forward);
+        let empty = if typed.is_empty() {
+            "No words to complete with".to_string()
+        } else {
+            format!("No completions for \"{typed}\"")
+        };
+        self.start_completion(start, typed, items, empty)
+    }
+
+    /// `<C-x><C-f>`: completes the file name before the cursor from the
+    /// directory its path names, relative to the current file's directory
+    /// (or the working directory). Directories end in `/`, so completing
+    /// can go on into them; hidden files are listed once a `.` is typed.
+    pub fn complete_path(&mut self) -> Result<(), String> {
+        self.completion_used = true;
+        let cursor = self.document.cursor();
+        let line = self.document.buffer().line(cursor.row);
+        let before: Vec<char> = line.chars().take(cursor.col).collect();
+        let in_path = |c: char| c.is_alphanumeric() || "/._-~+@".contains(c);
+        let path_len = before.iter().rev().take_while(|c| in_path(**c)).count();
+        let path: String = before[before.len() - path_len..].iter().collect();
+        // Only the last part (after the last `/`) is completed.
+        let (dir, name) = match path.rfind('/') {
+            Some(at) => (&path[..=at], &path[at + 1..]),
+            None => ("", path.as_str()),
+        };
+        let start = cursor.with_col(cursor.col - name.chars().count());
+        let base = match dir.strip_prefix("~/") {
+            Some(rest) => std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(rest)),
+            None if dir.starts_with('/') => Some(std::path::PathBuf::from(dir)),
+            None => {
+                let here = self
+                    .document
+                    .path()
+                    .and_then(|p| p.parent())
+                    .map(std::path::Path::to_path_buf)
+                    .or_else(|| std::env::current_dir().ok());
+                here.map(|h| h.join(dir))
+            }
+        };
+        let mut items: Vec<String> = base
+            .and_then(|base| std::fs::read_dir(base).ok())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let file = entry.file_name().to_string_lossy().into_owned();
+                let shown =
+                    file.starts_with(name) && (name.starts_with('.') || !file.starts_with('.'));
+                if !shown {
+                    return None;
+                }
+                let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+                Some(if is_dir { format!("{file}/") } else { file })
+            })
+            .collect();
+        items.sort();
+        items.truncate(MAX_ITEMS);
+        let empty = format!("No files matching \"{path}\"");
+        self.start_completion(start, name.to_string(), items, empty)
+    }
+
+    /// `<C-x><C-l>`: completes the whole line from the lines that start with
+    /// what's typed on it (after its indentation), the nearest above first,
+    /// then below, then in the other buffers.
+    pub fn complete_line(&mut self) -> Result<(), String> {
+        self.completion_used = true;
+        let cursor = self.document.cursor();
+        let buffer = self.document.buffer();
+        let line = buffer.line(cursor.row);
+        let indent = line.chars().take_while(|c| c.is_whitespace()).count();
+        let start = cursor.with_col(indent.min(cursor.col));
+        let typed: String = line
+            .chars()
+            .skip(start.col)
+            .take(cursor.col - start.col)
+            .collect();
+        let mut seen = HashSet::new();
+        let mut items = Vec::new();
+        let mut take = |candidate: &str| {
+            let text = candidate.trim_start().trim_end();
+            if text.len() > typed.len()
+                && text.starts_with(&typed)
+                && items.len() < MAX_ITEMS
+                && seen.insert(text.to_string())
+            {
+                items.push(text.to_string());
+            }
+        };
+        let count = buffer.line_count();
+        for row in (0..cursor.row).rev().chain(cursor.row + 1..count) {
+            take(&buffer.line(row));
+        }
+        for document in &self.background {
+            let buffer = document.buffer();
+            for row in 0..buffer.line_count() {
+                take(&buffer.line(row));
+            }
+        }
+        let empty = format!("No lines starting \"{typed}\"");
+        self.start_completion(start, typed, items, empty)
+    }
+
+    /// Starts a completion of `typed` (from `start` to the cursor) with
+    /// `items`, putting in the first; `empty` is the error if there are none.
+    fn start_completion(
+        &mut self,
+        start: Position,
+        typed: String,
+        items: Vec<String>,
+        empty: String,
+    ) -> Result<(), String> {
         if items.is_empty() {
-            return Err(if typed.is_empty() {
-                "No words to complete with".into()
-            } else {
-                format!("No completions for \"{typed}\"")
-            });
+            return Err(empty);
         }
         self.completion = Some(WordCompletion {
             start,

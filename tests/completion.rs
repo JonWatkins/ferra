@@ -105,3 +105,59 @@ fn the_menu_shows_the_matches_by_the_cursor() {
     let rows = render(&mut app, 40, 10).rows;
     assert!(!rows[2].contains("foobar"), "gone once done: {rows:?}");
 }
+
+#[test]
+fn ctrl_x_ctrl_f_completes_file_names_beside_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("alpha.txt"), "").unwrap();
+    std::fs::write(dir.path().join("alpine.md"), "").unwrap();
+    std::fs::create_dir(dir.path().join("beta")).unwrap();
+    std::fs::write(dir.path().join("beta/inner.rs"), "").unwrap();
+    std::fs::write(dir.path().join(".hidden"), "").unwrap();
+    let mut app = app();
+    app.open(&dir.path().join("notes.txt"));
+    keys(&mut app, "isee al<C-x><C-f>");
+    assert_eq!(text(&app), "see alpha.txt");
+    keys(&mut app, "<C-n>");
+    assert_eq!(text(&app), "see alpine.md");
+    keys(&mut app, "<C-y> ./be<C-x><C-f>");
+    assert_eq!(text(&app), "see alpine.md ./beta/", "directories end in /");
+    keys(&mut app, "<C-x><C-f>");
+    assert_eq!(
+        text(&app),
+        "see alpine.md ./beta/inner.rs",
+        "and go on into them"
+    );
+    keys(&mut app, " <C-x><C-f>");
+    let shown: Vec<String> = app.editor().completion().unwrap().items.clone();
+    assert!(!shown.iter().any(|f| f.starts_with('.')), "{shown:?}");
+    keys(&mut app, "<C-e>.h<C-x><C-f>");
+    assert!(text(&app).ends_with(" .hidden"), "{}", text(&app));
+}
+
+#[test]
+fn ctrl_x_ctrl_l_completes_whole_lines() {
+    let mut app = app();
+    keys(
+        &mut app,
+        "iuse std::fmt;<CR>use std::io;<CR>    use std::f<C-x><C-l>",
+    );
+    assert_eq!(text(&app), "use std::fmt;\nuse std::io;\n    use std::fmt;");
+    keys(&mut app, "<Esc>ouse<C-x><C-l>");
+    assert_eq!(
+        text(&app).lines().last(),
+        Some("    use std::fmt;"),
+        "the nearest above first (indentation as typed)"
+    );
+    keys(&mut app, "<C-n>");
+    assert_eq!(text(&app).lines().last(), Some("    use std::io;"));
+}
+
+#[test]
+fn no_files_or_lines_say_so() {
+    let mut app = app();
+    keys(&mut app, "i/nonexistent/x<C-x><C-f>");
+    assert_eq!(message(&app), "No files matching \"/nonexistent/x\"");
+    keys(&mut app, "<CR>zzz<C-x><C-l>");
+    assert_eq!(message(&app), "No lines starting \"zzz\"");
+}

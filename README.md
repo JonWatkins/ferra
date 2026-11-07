@@ -103,6 +103,8 @@ type, open a file or split the window.
 | Insert  | `<Esc>` | Back to normal mode |
 | Insert  | `<C-r>{register}` | Insert a register's text (`<C-r>"` the last yank, `<C-r>.` the last insert, `<C-r>+` the clipboard) |
 | Insert  | `<C-n>` `<C-p>` | Complete the word before the cursor from the open buffers' words (nearest first); again for the next / previous match, round to what you typed |
+| Insert  | `<C-x><C-f>` | Complete a file name: from the directory the path before the cursor names, beside the current file (`<C-x><C-f>` again goes into a directory) |
+| Insert  | `<C-x><C-l>` | Complete the whole line from the lines that start with what you've typed on it, nearest above first |
 | Insert  | `<C-y>` `<C-e>` | While completing: keep the match / put back what you typed (any other key keeps it and carries on) |
 | Command | `<CR>` / `<Esc>` | Run / cancel |
 

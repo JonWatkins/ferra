@@ -62,6 +62,16 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.complete(false),
     );
     r.register(
+        "complete_path",
+        "Complete the file name before the cursor (<C-x><C-f>)",
+        |cx| cx.editor.complete_path(),
+    );
+    r.register(
+        "complete_line",
+        "Complete the whole line from lines starting the same way (<C-x><C-l>)",
+        |cx| cx.editor.complete_line(),
+    );
+    r.register(
         "complete_accept",
         "Keep the completion chosen (<C-y>)",
         |cx| {

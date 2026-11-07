@@ -907,6 +907,16 @@ The nearest goes in at once; later presses step through the matches and
 what was typed, as a ring. Each step replaces the word in the buffer, so
 the text is always what you see, and the `".` register's text follows.
 
+`<C-x><C-f>` and `<C-x><C-l>` start the same kind of completion with
+other matches (`start_completion` is shared): the entries of the
+directory the path before the cursor names (relative to the current
+file's directory, as completion plugins do, rather than Vim's working
+directory; `~/` and absolute paths too), only the part after the last `/`
+replaced, directories with a trailing `/`, hidden ones once a `.` is
+typed; or the lines (trimmed) that start with the current line's text
+after its indentation, nearest above first, then below, then other
+buffers. `<C-n>`/`<C-p>` then step through whichever is open.
+
 Completion ends with the first key that doesn't use it: `App::process_key`
 clears a flag before each key and ends a completion no completion command
 set it for. That covers typing on, moving, `<Esc>` and pastes, and works
@@ -1234,9 +1244,9 @@ status, branches and history.
   than Bash and Python (Lua's `end`, Ruby's). Vim's mix of a `shiftwidth`
   narrower than tabs (4-column levels made of tabs and spaces) isn't
   supported. Window options (`wrap`) can't be set per language.
-- Completion: only words from the open buffers (no paths, whole lines,
-  dictionaries or LSP, nor Vim's `<C-x>` sub-modes), matched by prefix
-  (not fuzzily). `.` replays the `<C-n>` keys, so it completes again
+- Completion: words, file names and whole lines (no dictionaries,
+  omni-completion or LSP, nor Vim's other `<C-x>` modes), matched by
+  prefix (not fuzzily). `.` replays the `<C-n>` keys, so it completes again
   rather than repeating the word chosen, which differs if the buffer has.
 - Formatting: no external `formatprg`, block comments' middle lines
   (` * ` in `/* */`) aren't leaders, and two spaces after a sentence
