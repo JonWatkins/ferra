@@ -100,6 +100,8 @@ pub enum ArgCompletion {
     Path,
     /// Open buffer names (`:b`).
     Buffer,
+    /// Option names (`:set`).
+    Option,
 }
 
 impl Command {

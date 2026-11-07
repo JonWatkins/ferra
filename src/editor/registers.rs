@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::clipboard::Clipboard;
 
@@ -35,7 +35,7 @@ pub const LAST_INSERT: char = '.';
 const LISTED: &str = "\"0123456789abcdefghijklmnopqrstuvwxyz-.+";
 
 /// How the system clipboard is used (`clipboard` in `[editor]`).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ClipboardMode {
     /// Only `"+` and `"*` use the system clipboard.
@@ -133,6 +133,11 @@ impl Registers {
     /// Connects the system clipboard, used as `mode` says.
     pub fn set_clipboard(&mut self, clipboard: Box<dyn Clipboard>, mode: ClipboardMode) {
         self.clipboard = Some(clipboard);
+        self.mode = mode;
+    }
+
+    /// Changes which registers use the clipboard (`:set clipboard=...`).
+    pub fn set_clipboard_mode(&mut self, mode: ClipboardMode) {
         self.mode = mode;
     }
 

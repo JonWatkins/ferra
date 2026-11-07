@@ -225,6 +225,27 @@ fn candidates(
             .map(|b| b.name)
             .filter(|name| name.contains(word))
             .collect(),
+        Some(ArgCompletion::Option) => {
+            // After `no` or `inv`, complete the name that follows.
+            let (prefix, name) = ["no", "inv"]
+                .into_iter()
+                .find_map(|p| word.strip_prefix(p).map(|rest| (p, rest)))
+                .filter(|(_, rest)| !rest.is_empty())
+                .unwrap_or(("", word));
+            let names: Vec<String> = crate::config::set::option_names()
+                .into_iter()
+                .filter(|n| n.starts_with(name))
+                .map(|n| format!("{prefix}{n}"))
+                .collect();
+            if names.is_empty() && !prefix.is_empty() {
+                crate::config::set::option_names()
+                    .into_iter()
+                    .filter(|n| n.starts_with(word))
+                    .collect()
+            } else {
+                names
+            }
+        }
         Some(ArgCompletion::None) | None => Vec::new(),
     }
 }

@@ -6,6 +6,7 @@
 
 mod languages;
 mod options;
+pub mod set;
 mod theme;
 
 pub use languages::{CommentTokens, FileType, Languages};

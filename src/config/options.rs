@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::core::search::CaseMode;
 use crate::editor::Mode;
@@ -6,7 +6,7 @@ use crate::editor::registers::ClipboardMode;
 use crate::files::WalkOptions;
 
 /// Behavioural options from the `[editor]` config section.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct EditorOptions {
     pub tab_width: usize,
@@ -46,7 +46,7 @@ pub struct EditorOptions {
 }
 
 /// The `[editor.file-picker]` config section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct FilePickerOptions {
     /// List hidden files and directories.
@@ -68,7 +68,7 @@ impl From<FilePickerOptions> for WalkOptions {
 }
 
 /// The `[editor.search]` config section.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct SearchOptions {
     pub case: SearchCase,
@@ -78,7 +78,7 @@ pub struct SearchOptions {
     pub wrap: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchCase {
     /// Case-insensitive unless the pattern has an uppercase letter.
@@ -108,6 +108,12 @@ impl Default for EditorOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FallbackEncoding(pub &'static crate::core::Encoding);
 
+impl Serialize for FallbackEncoding {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0.name())
+    }
+}
+
 impl<'de> Deserialize<'de> for FallbackEncoding {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let label = String::deserialize(deserializer)?;
@@ -120,7 +126,7 @@ impl<'de> Deserialize<'de> for FallbackEncoding {
 /// The `[editor.statusline-layout]` section: the elements on the left, in
 /// the center and on the right of the active window's status line, like
 /// Helix's `[editor.statusline]`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StatuslineLayout {
     pub left: Vec<StatusElement>,
@@ -131,7 +137,7 @@ pub struct StatuslineLayout {
 
 /// One piece of the status line. Elements with nothing to show (`modified`
 /// in an unmodified buffer, `file-encoding` for plain UTF-8) take no space.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StatusElement {
     /// `NORMAL`, `INSERT`, `V-LINE`, ...
@@ -167,7 +173,7 @@ pub enum StatusElement {
 }
 
 /// Where status lines go (Neovim's `laststatus`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StatuslineMode {
     /// Under every window, in place of the line between stacked windows
@@ -177,7 +183,7 @@ pub enum StatuslineMode {
     Global,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LineNumbers {
     Absolute,
@@ -186,7 +192,7 @@ pub enum LineNumbers {
     None,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CursorShape {
     Block,
@@ -194,7 +200,7 @@ pub enum CursorShape {
     Underline,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CursorShapes {
     pub normal: CursorShape,

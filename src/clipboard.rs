@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub trait Clipboard {
     fn get(&mut self) -> Result<String, String>;
@@ -71,7 +71,7 @@ impl Clipboard for LazySystemClipboard {
 }
 
 /// Which clipboard `"+` and `"*` use (`clipboard-provider` in `[editor]`).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ClipboardProvider {
     /// The system clipboard, or the terminal's over SSH or when there's no

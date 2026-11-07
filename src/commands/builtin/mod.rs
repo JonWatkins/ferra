@@ -15,6 +15,7 @@ mod marks;
 mod modes;
 mod motions;
 mod operators;
+mod options;
 mod picker;
 mod search;
 mod text_objects;
@@ -41,6 +42,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     jumps::register(registry);
     modes::register(registry);
     command_line::register(registry);
+    options::register(registry);
 }
 
 #[cfg(test)]

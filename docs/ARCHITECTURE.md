@@ -982,6 +982,18 @@ status, branches and history.
   error.
 - Themes use dot-separated scopes that fall back to their parent
   (`ui.linenr.selected` → `ui.linenr`), which leaves room for syntax scopes.
+- `:set` (`config/set.rs`) changes `[editor]` options while running.
+  `EditorOptions` is serialized to a TOML table, the named value
+  (dotted for nested tables) replaced, and the table deserialized back, so
+  a value is checked exactly as in the config file and the message names
+  the option. Text is taken without quotes and coerced by the current
+  value's type; `+=`/`-=` work on numbers. Vim names map to ferra's
+  (`ts` → `tab-width`), and Vim's `nu`, `rnu`, `ic` and `scs` switches
+  pick values of `line-numbers` and `search.case`. Nearly every option is
+  read where it's used, so it applies at once; `clipboard` and
+  `clipboard-provider` are re-applied to the registers, and
+  `kitty-keyboard` waits for the next start. There's one set of options:
+  no `:setlocal` (indentation per buffer is `:indent`).
 
 ## Testing strategy
 
@@ -1009,8 +1021,10 @@ status, branches and history.
   Vim's mix of a `shiftwidth` narrower than tabs (4-column levels made of
   tabs and spaces) isn't supported.
 - `"=` (the expression register).
-- Window-local options, and per-window or plugin-supplied status line
-  elements (the layout is one setting for the active window).
+- Window- and buffer-local options (`:setlocal`; options are global, bar
+  `:indent`), and per-window or plugin-supplied status line elements (the
+  layout is one setting for the active window). Lua plugins can't read or
+  set options yet.
 - External changes are noticed by polling once a second, not OS file
   notifications; and a change that keeps both the modified time (within
   the filesystem's resolution) and the size is missed.

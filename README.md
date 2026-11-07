@@ -393,6 +393,25 @@ insert = "underline"
 "x" = ""                    # unbind a default
 ```
 
+Any `[editor]` option can also be changed while running with `:set`, by
+its name in the config (nested ones with a dot), Vim-style:
+
+| Command | Does |
+|---------|------|
+| `:set tab-width=2`, `:set line-numbers=absolute` | Sets an option |
+| `:set expand-tab`, `:set noexpand-tab`, `:set expand-tab!` | Turns a switch on, off, or over |
+| `:set scroll-off+=2` | Adds to (or `-=` takes from) a number |
+| `:set tab-width?` | Shows an option |
+| `:set tab-width&` | Puts back its default |
+| `:set` | Lists the options you've changed |
+
+Several can go on one line (`:set ts=2 et`), and Tab completes names.
+Vim's names work for the common ones: `ts`, `et`, `ai`, `so`, `cul`,
+`hls`, `ws`, `nu`/`rnu` (for `line-numbers`) and `ic`/`scs` (for
+`search.case`). Changes last until ferra quits; put them in the config to
+keep them. Lists are written as in the config, without spaces
+(`:set statusline-layout.right=["position"]`).
+
 With `jk` bound in insert mode, typing `j` waits up to `key-timeout`
 milliseconds for the `k`; after that the `j` is typed as text. A key bound
 both on its own and as the start of a longer binding (`g` and `gg`) runs the
