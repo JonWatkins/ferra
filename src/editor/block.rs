@@ -114,6 +114,10 @@ impl Editor {
         match operator {
             Operator::Comment => return self.toggle_comment(block.first, block.last),
             Operator::Reindent => return self.reindent_lines(block.first, block.last),
+            Operator::Format { keep_cursor } => {
+                self.format_text(block.first, block.last, keep_cursor);
+                return Ok(());
+            }
             Operator::Indent | Operator::Outdent => {
                 self.shift_block(block, operator == Operator::Indent);
                 return Ok(());

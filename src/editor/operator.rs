@@ -1,4 +1,4 @@
-//! Operators (`d`, `c`, `y`, `>`, `<`, `=`, `gu`, `gU`, `g~`, `gc`) and applying
+//! Operators (`d`, `c`, `y`, `>`, `<`, `=`, `gu`, `gU`, `g~`, `gc`, `gq`) and applying
 //! them to ranges.
 
 use super::registers::{Register, StoreKind};
@@ -20,6 +20,11 @@ pub enum Operator {
     Comment,
     /// `=`: re-indents the lines the range touches by the language's rules.
     Reindent,
+    /// `gq` (and `gw`, which keeps the cursor where it was): reflows the
+    /// lines the range touches to `text-width`.
+    Format {
+        keep_cursor: bool,
+    },
 }
 
 /// An operator waiting for a motion or text object (operator-pending mode).
@@ -98,6 +103,11 @@ impl Editor {
                 let (first, last) = range.rows();
                 return self.reindent_lines(first, last);
             }
+            Operator::Format { keep_cursor } => {
+                let (first, last) = range.rows();
+                self.format_text(first, last, keep_cursor);
+                return Ok(());
+            }
             Operator::Delete | Operator::Change | Operator::Yank => {}
         }
 
@@ -156,7 +166,8 @@ impl Editor {
                 | Operator::Uppercase
                 | Operator::ToggleCase
                 | Operator::Comment
-                | Operator::Reindent,
+                | Operator::Reindent
+                | Operator::Format { .. },
                 _,
             ) => unreachable!("handled before touching registers"),
         }

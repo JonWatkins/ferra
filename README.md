@@ -51,6 +51,7 @@ type, open a file or split the window.
 | Normal  | `=` + motion, `==` | Re-indent lines by the language's rules (`gg=G` for the whole file; visual `=`) |
 | Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |
 | Normal  | `gcc`, `gc` + motion (`gcap`, `gcj`), visual `gc` | Toggle comments on those lines, using the file's language |
+| Normal  | `gq` + motion (`gqip`, `gqq`), visual `gq`; `gw` | Reflow those lines to `text-width` (79), keeping indentation, comment markers and list items; `gw` leaves the cursor put |
 | Normal  | `~` | Toggle case under the cursor and move on |
 | Normal  | `<C-a>` `<C-x>` (`5<C-a>`) | Add to / take from the number under or after the cursor: decimal (`-` signs, leading zeros kept), `0x` hex, `0b` binary |
 | Visual  | `<C-a>` `<C-x>`, `g<C-a>` `g<C-x>` | The same for the first number on each selected line; the `g` forms make a sequence (+1, +2, +3...) |
@@ -402,6 +403,7 @@ expand-tab = true           # indent with spaces; false for tabs
 detect-indent = true        # but indent each file the way it already is
 auto-indent = true          # indent new lines (by the language's rules where it has them)
 wrap = false                # scroll long lines sideways rather than wrapping them
+text-width = 72             # the width gq and gw reflow to
 line-numbers = "absolute"   # "absolute" | "relative" | "none"
 scroll-off = 8
 statusline = "global"       # one status line, not one per window
@@ -444,7 +446,7 @@ As in Vim, some options can also be set for one window or one buffer:
 `:setlocal ts=2` applies to this buffer wherever it's shown. Windows have
 their own `wrap`, `line-numbers`, `cursorline` and `scroll-off` (a split
 starts with those of the window it came from); buffers their own
-`tab-width`, `expand-tab` and `auto-indent`. `:set` changes an option
+`tab-width`, `expand-tab`, `auto-indent` and `text-width`. `:set` changes an option
 everywhere (and drops this window's or buffer's own value), `:setglobal`
 only where there's no value of its own, and `:setlocal` alone lists this
 window's and buffer's own values. Lists are written as in the config, without spaces

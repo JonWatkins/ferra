@@ -787,6 +787,22 @@ where they happened (consecutive edits on one line update the last entry).
 `g;`/`g,` step through it, and `'.` is its newest entry. Positions aren't
 adjusted for later edits; they're clamped when used.
 
+### Reflowing text (`gq`)
+
+`gq` is `Operator::Format` (`gw` with `keep_cursor`) over the lines its
+range touches. `core/format.rs` does the work, a paragraph at a time:
+blank lines (or a comment marker alone) separate paragraphs and are kept,
+as does a change between comment and code. Each paragraph's words are
+joined with single spaces and broken greedily at `text-width` (0 means 79,
+Vim's fallback; it's buffer-local), every line starting with the first
+line's leader: its indentation and the language's line-comment marker with
+its space (block comments aren't leaders, so Markdown's `#` headings stay
+put). A list item (`- `, `* `, `+ `, `1. `, `1) `) starts its own
+paragraph, its later lines indented to its text. The lines are replaced as
+one change; the cursor goes to the last one's first non-blank, or with `gw`
+stays where it was. `gqq`, `gqgq` and `gwgw` come from operator-pending `q`,
+`gq` and `gw` bound to `current_line`.
+
 ### Replace mode
 
 `R` (`editor/replace.rs`) is insert mode with a `Replacing` state, as
@@ -1098,7 +1114,7 @@ status, branches and history.
   window and per buffer, a sparse TOML table of `:setlocal` values
   (`config::set::scope` says which options may: `wrap`, `line-numbers`,
   `cursorline`, `scroll-off` per window; `tab-width`, `expand-tab`,
-  `auto-indent` per buffer). `Editor::options` is always what's in force
+  `auto-indent`, `text-width` per buffer). `Editor::options` is always what's in force
   for the active window and buffer (global, then the buffer's, then the
   window's, by `set::with_locals`), recomputed by `refresh_options` when
   the active buffer (`activate`) or window (`focus_window`) changes, so
@@ -1139,6 +1155,10 @@ status, branches and history.
   dictionaries or LSP, nor Vim's `<C-x>` sub-modes), matched by prefix
   (not fuzzily). `.` replays the `<C-n>` keys, so it completes again
   rather than repeating the word chosen, which differs if the buffer has.
+- Formatting: `gq` doesn't format as you type (Vim's `formatoptions=t`,
+  auto-wrapping at `text-width`), use an external `formatprg`, or know
+  block comments' middle lines (` * ` in `/* */`); two spaces after a
+  sentence become one.
 - `"=` (the expression register).
 - Soft wrap: a line taller than the whole window can't be scrolled through (the view
   starts at a line's start; Vim shows `@` rows, Neovim smooth-scrolls),

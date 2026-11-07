@@ -118,6 +118,44 @@ impl Editor {
         doc.set_cursor(Position::new(first, col));
     }
 
+    /// `gq` (`gw` with `keep_cursor`): reflows lines `first` to `last` to
+    /// `text-width` (see [`format_lines`](crate::core::format::format_lines)),
+    /// keeping indentation and the language's line-comment marker. The
+    /// cursor goes to the last line's first non-blank, as in Vim, or with
+    /// `keep_cursor` stays where it was.
+    pub fn format_text(&mut self, first: usize, last: usize, keep_cursor: bool) {
+        let comment = self
+            .language_of(&self.document)
+            .and_then(|language| self.languages.comment_tokens(language))
+            .filter(|tokens| tokens.end.is_none())
+            .map(|tokens| tokens.start.trim().to_string());
+        // 0 means Vim's fallback for `gq`, 79.
+        let width = match self.options.text_width {
+            0 => 79,
+            width => width,
+        };
+        let tab_width = self.options.tab_width.max(1);
+        let cursor = self.document.cursor();
+        let doc = &mut self.document;
+        let lines: Vec<String> = (first..=last)
+            .map(|row| doc.buffer().line(row).into_owned())
+            .collect();
+        let formatted =
+            crate::core::format::format_lines(&lines, width, comment.as_deref(), tab_width);
+        if formatted != lines {
+            let end = doc.buffer().line_end(last);
+            doc.delete(Position::new(first, 0), end);
+            doc.insert(Position::new(first, 0), &formatted.join("\n"));
+        }
+        if keep_cursor {
+            doc.set_cursor(cursor);
+        } else {
+            let row = first + formatted.len().saturating_sub(1);
+            let col = motion::first_non_blank(doc.buffer(), row);
+            doc.set_cursor(Position::new(row, col));
+        }
+    }
+
     /// `gu`, `gU`, `g~`: changes the case of the text in `range`, leaving the
     /// cursor at its start.
     pub fn change_case(&mut self, range: Range, change: CaseChange) {

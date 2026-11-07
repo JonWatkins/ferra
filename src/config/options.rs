@@ -18,6 +18,8 @@ pub struct EditorOptions {
     /// New lines start with the indentation of the line they came from.
     pub auto_indent: bool,
     pub line_numbers: LineNumbers,
+    /// The width `gq` reflows text to (0: 79, as in Vim).
+    pub text_width: usize,
     /// Long lines continue on the next screen rows (breaking between
     /// words) rather than running off the edge.
     pub wrap: bool,

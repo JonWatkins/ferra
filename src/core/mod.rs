@@ -8,6 +8,7 @@
 mod block;
 mod buffer;
 pub mod columns;
+pub mod format;
 mod history;
 pub mod increment;
 pub mod indent;

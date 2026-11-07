@@ -59,6 +59,17 @@ pub fn register(r: &mut CommandRegistry) {
     );
 
     r.register(
+        "operator_format",
+        "Reflow the lines of a motion or text object to text-width (gq, gqq, gqip)",
+        |cx| begin(cx, Operator::Format { keep_cursor: false }),
+    );
+    r.register(
+        "operator_format_keep_cursor",
+        "Like gq, leaving the cursor where it was (gw)",
+        |cx| begin(cx, Operator::Format { keep_cursor: true }),
+    );
+
+    r.register(
         "delete_char",
         "Delete [count] characters under the cursor (dl)",
         |cx| operate(cx, Operator::Delete, &motions::RIGHT),

@@ -76,7 +76,7 @@ pub enum Scope {
 pub fn scope(name: &str) -> Option<Scope> {
     match name {
         "wrap" | "line-numbers" | "cursorline" | "scroll-off" => Some(Scope::Window),
-        "tab-width" | "expand-tab" | "auto-indent" => Some(Scope::Buffer),
+        "tab-width" | "expand-tab" | "auto-indent" | "text-width" => Some(Scope::Buffer),
         _ => None,
     }
 }
@@ -149,6 +149,8 @@ const ALIASES: &[(&str, &str)] = &[
     ("tm", "key-timeout"),
     ("timeoutlen", "key-timeout"),
     ("syntax", "syntax-highlighting"),
+    ("tw", "text-width"),
+    ("textwidth", "text-width"),
 ];
 
 /// Vim switches that are values of one of ferra's options here: `nu` and
