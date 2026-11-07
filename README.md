@@ -203,8 +203,8 @@ Keys use the same notation as config and macros (`A;<lt>Esc>0x` types
 `A;`, presses Esc, then `0x`); text that isn't valid notation, like
 `i<div>`, is typed as it is.
 
-`|` puts several commands on one line: `:%s/a/b/g | w`. `:g`, `:v` and
-`:normal` take everything after them, so `:g/TODO/s/TODO/DONE/ | normal A!`
+`|` puts several commands on one line: `:%s/a/b/g | w`. `:g`, `:v`,
+`:normal` and `:sort` take everything after them, so `:g/TODO/s/TODO/DONE/ | normal A!`
 runs both commands on each TODO line. In `:s`, a `|` inside the pattern or
 replacement is regex alternation (`:s/cat|dog/pet/g`); only one after it
 starts the next command. In other commands, `\|` is a literal `|`.
@@ -214,6 +214,23 @@ Ranges work before any `:` command: `%` (the whole file), `5`, `5,10`, `.`
 last visual selection; `:` in visual mode fills it in). A range alone jumps
 to its line (`:42`, `:$`). `:[range]d` and `:[range]y` delete or yank whole
 lines.
+
+### Sorting
+
+`:sort` sorts the lines in a range (`:'<,'>sort` from a visual selection),
+or the whole file, as one undo step:
+
+```
+:sort              by the text (capitals before lowercase)
+:sort i            ignoring case
+:sort n            by the first number in each line (lines without one first)
+:sort! u           reversed, keeping only the first of identical lines
+:sort /=\s*/       by what follows the first `=` on each line
+:sort r /\d\+/     by the match itself
+```
+
+As in Vim, the sort is stable, lines a pattern doesn't match keep their
+order before the sorted ones, and `//` is the last search.
 
 ## Buffers and the picker
 

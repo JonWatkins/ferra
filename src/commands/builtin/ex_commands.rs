@@ -5,7 +5,9 @@
 //! cursor's line when there isn't one (`:g`: the whole file).
 
 use super::command_line::run_command_line;
-use crate::commands::ex::{Bar, Flags, Global, Substitute, parse_global, parse_substitute};
+use crate::commands::ex::{
+    Bar, Flags, Global, Substitute, parse_global, parse_sort, parse_substitute, sort_lines,
+};
 use crate::commands::{CommandRegistry, CommandResult, Context};
 use crate::core::search::{CaseMode, SearchPattern};
 use crate::core::{Position, Range, motion};
@@ -75,6 +77,14 @@ pub fn register(r: &mut CommandRegistry) {
     });
     r.alias("y", "yank_range");
     r.alias("yank", "yank_range");
+
+    r.register(
+        "sort",
+        "Sort the lines in [range] (all by default): sort [!] [i] [n] [u] [r] [/pattern/]",
+        sort,
+    )
+    .bar(Bar::Argument);
+    r.alias("sor", "sort");
 
     r.register(
         "normal",
@@ -316,6 +326,46 @@ fn run_substitute(cx: &mut Context, parsed: Substitute) -> CommandResult {
         "{verb_plural} on {}",
         plural(changed_lines, "line")
     )));
+    Ok(())
+}
+
+/// `:sort`: sorts the lines in the range, or the whole file (see
+/// [`parse_sort`]), as one change.
+fn sort(cx: &mut Context) -> CommandResult {
+    let options = parse_sort(cx.arg_text, cx.bang)?;
+    let pattern = match options.pattern.as_deref() {
+        None => None,
+        Some("") => Some(
+            cx.editor
+                .last_search_pattern()
+                .cloned()
+                .ok_or("No previous search pattern")?,
+        ),
+        Some(text) => Some(SearchPattern::new(
+            text,
+            CaseMode::from(cx.editor.options.search.case),
+        )?),
+    };
+    let buffer = cx.editor.document.buffer();
+    let (first, last) = cx.range.unwrap_or((0, buffer.line_count() - 1));
+    let lines: Vec<String> = (first..=last)
+        .map(|row| buffer.line(row).into_owned())
+        .collect();
+    let sorted = sort_lines(&lines, &options, pattern.as_ref());
+    if sorted != lines {
+        let doc = &mut cx.editor.document;
+        let end = doc.buffer().line_end(last);
+        doc.delete(Position::new(first, 0), end);
+        doc.insert(Position::new(first, 0), &sorted.join("\n"));
+    }
+    let col = motion::first_non_blank(cx.editor.document.buffer(), first);
+    cx.editor.document.set_cursor(Position::new(first, col));
+    let removed = lines.len() - sorted.len();
+    if removed > 0 {
+        let s = if removed == 1 { "" } else { "s" };
+        cx.editor
+            .set_message(Message::info(format!("{removed} fewer line{s}")));
+    }
     Ok(())
 }
 

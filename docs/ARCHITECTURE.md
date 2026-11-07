@@ -657,6 +657,12 @@ prompt re-run the live preview.
 
 ### Ranges and `:s`
 
+(`:sort` is parsed and done there too, `commands/ex/sort.rs`: a stable sort
+of keys made from each line, the text after or of a pattern's first match,
+lowercased with `i` or the first number with `n`. `u` drops lines whose
+keys compare equal to the one before, and the command replaces only the
+range, as one change.)
+
 `command_line_execute` parses `[range] name[!] [arguments]`
 (`commands/ex/`, pure functions with their own tests). The range becomes
 `Invocation::range` (0-based, inclusive rows). The text after the name is
