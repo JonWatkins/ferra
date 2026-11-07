@@ -351,6 +351,38 @@ touch registers. `apply_operator` hands them to `editor/transform.rs`:
 
 `J` and indentation live there too; see [Indentation](#indentation).
 
+### Soft wrap
+
+With `wrap` (the default), a line wider than the window continues on the
+next screen rows. `core/wrap.rs` works out where: `row_starts` gives the
+char column each row starts at, breaking after a space where it can (a
+space at the edge hangs past it rather than pushing the word down),
+mid-word only for a word wider than the window, and before a wide char
+the edge would cut. Display columns count from the line's start, as
+without wrapping, so tabs don't move when wrapping is toggled.
+
+`editor::windows::TextLayout` (the text width beside the gutter, whether
+to wrap, the tab width) is the one place that knows how a window lays
+out lines, shared by the UI and the commands:
+
+- Drawing (`EditorView::render`) walks lines from the view's top, drawing
+  each of a line's rows (`draw_row`) with the line number on its first
+  only, and clips syntax, search and selection highlights to each row's
+  chars (a selected line break shows on the last row).
+- `windows::follow_cursor` keeps the cursor in sight counting screen rows:
+  `scroll-off` is in rows, the view always starts at a line's start, and
+  a long jump starts looking a screen above the cursor rather than
+  measuring every line on the way.
+- `gj`/`gk` move through a line's rows, aiming for a screen column that
+  `Editor::wanted_screen_column` remembers while the cursor stays where
+  they put it, so a short row on the way doesn't lose it. Without wrap
+  they're `j`/`k`.
+- `TextLayout::bottom` (the last line at least partly shown) is what `L`
+  and the scrolling commands use.
+
+`j`/`k` still move by lines, as in Vim, and `<C-d>` and friends scroll by
+lines too.
+
 The editor pane draws tabs as spaces up to the next tab stop (`tab-width`).
 `ui/editor_view/line.rs` is the one place that maps character columns to
 display cells, so the cursor, text and highlights stay aligned with tabs
@@ -1037,8 +1069,12 @@ status, branches and history.
   Vim's mix of a `shiftwidth` narrower than tabs (4-column levels made of
   tabs and spaces) isn't supported.
 - `"=` (the expression register).
-- Soft wrapping of long lines (`wrap`): lines scroll sideways instead. And
-  `<C-f>`/`<C-b>` move the cursor with the view, like `<C-d>`, rather than
+- Soft wrap: `wrap` applies to every window (it isn't window-local), a
+  line taller than the whole window can't be scrolled through (the view
+  starts at a line's start; Vim shows `@` rows, Neovim smooth-scrolls),
+  continued rows aren't indented to match (`breakindent`) or marked
+  (`showbreak`), and `<C-d>`/`<C-e>` scroll by lines, not screen rows.
+- `<C-f>`/`<C-b>` move the cursor with the view, like `<C-d>`, rather than
   to the edge of the new screen as in Vim.
 - Window- and buffer-local options (`:setlocal`; options are global, bar
   `:indent`), and per-window or plugin-supplied status line elements (the

@@ -4,17 +4,12 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 
 use crate::config::LineNumbers;
 
-const MIN_DIGITS: usize = 3;
 /// One cell of padding on each side of the number.
 const PADDING: usize = 2;
 
 /// Gutter width in cells for a buffer with `line_count` lines.
 pub fn width(line_count: usize, mode: LineNumbers) -> u16 {
-    if mode == LineNumbers::None {
-        return 0;
-    }
-    let digits = line_count.to_string().len().max(MIN_DIGITS);
-    (digits + PADDING) as u16
+    crate::editor::windows::gutter_width(line_count, mode)
 }
 
 /// The number displayed next to `row` (0-based).

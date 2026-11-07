@@ -97,7 +97,7 @@ pub fn draw_windows(
             state.viewport.top = top.min(last);
         }
         let highlights = syntax.as_deref_mut().and_then(|engine| {
-            let rows = state.visible_rows(document, window_cursor, rect.height, &editor.options);
+            let rows = state.visible_rows(document, window_cursor, rect, &editor.options);
             engine.highlight(document, &editor.languages, &editor.syntax_trees, rows)
         });
 

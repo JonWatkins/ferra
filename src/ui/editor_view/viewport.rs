@@ -30,10 +30,11 @@ impl Viewport {
     ) {
         self.top = crate::editor::windows::follow_cursor(
             self.top,
-            target.row,
+            (target.row, 0),
             height,
             target.line_count,
             scroll_off,
+            |_| 1,
         );
 
         if width > 0 {

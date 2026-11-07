@@ -16,6 +16,7 @@ mod range;
 pub mod search;
 pub mod text_format;
 pub mod text_object;
+pub mod wrap;
 
 pub use block::{Block, BlockRow};
 pub use buffer::{Buffer, TextEdit};

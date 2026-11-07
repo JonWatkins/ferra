@@ -44,6 +44,7 @@ type, open a file or split the window.
 | Normal  | `<C-e>` `<C-y>` | Scroll a line down / up, the cursor staying put while it's in sight |
 | Normal  | `zz` `zt` `zb` (`z.` `z<CR>` `z-`) | Scroll the cursor line to the middle / top / bottom (and go to its first non-blank) |
 | Normal  | `H` `M` `L` (`3H`) | Top / middle / bottom line on screen; motions too (`dL`) |
+| Normal  | `gj` `gk` (`g<Down>` `g<Up>`) | Down / up a screen row, through the rows of a wrapped line |
 | Normal  | `r` + char | Replace characters (`3rx`) |
 | Normal  | `>` `<` + motion, `>>` `<<` | Indent / outdent lines (`>ip`, `3>>`; visual `>` `<`) |
 | Normal  | `=` + motion, `==` | Re-indent lines by the language's rules (`gg=G` for the whole file; visual `=`) |
@@ -378,6 +379,7 @@ tab-width = 2
 expand-tab = true           # indent with spaces; false for tabs
 detect-indent = true        # but indent each file the way it already is
 auto-indent = true          # indent new lines (by the language's rules where it has them)
+wrap = false                # scroll long lines sideways rather than wrapping them
 line-numbers = "absolute"   # "absolute" | "relative" | "none"
 scroll-off = 8
 statusline = "global"       # one status line, not one per window

@@ -122,15 +122,23 @@ impl Windows {
         self.requested_tops.borrow_mut().remove(&id)
     }
 
-    /// Where window `id`'s view starts: the row asked for since the last
-    /// draw, or the one drawn, scrolled as the next draw will scroll it to
-    /// keep the cursor at `cursor_row` in sight.
+    /// How many cells wide window `id` is.
+    pub fn width(&self, id: WindowId) -> usize {
+        self.sizes()
+            .into_iter()
+            .find(|(window, _)| *window == id)
+            .map_or(0, |(_, area)| area.width as usize)
+    }
+
+    /// Where window `id`'s view of `document` starts: the line asked for
+    /// since the last draw, or the one drawn, scrolled as the next draw
+    /// will scroll it to keep `cursor` in sight.
     pub fn view_top(
         &self,
         id: WindowId,
-        cursor_row: usize,
-        line_count: usize,
-        scroll_off: usize,
+        document: &Document,
+        cursor: Position,
+        options: &crate::config::EditorOptions,
     ) -> usize {
         let top = self
             .requested_tops
@@ -139,7 +147,8 @@ impl Windows {
             .or(self.tops.borrow().get(&id))
             .copied()
             .unwrap_or(0);
-        follow_cursor(top, cursor_row, self.height(id), line_count, scroll_off)
+        let layout = TextLayout::new(self.width(id), document, options);
+        layout.follow_cursor(top, document, cursor, self.height(id), options.scroll_off)
     }
 
     fn get_mut(&mut self, id: WindowId) -> Option<&mut Window> {
@@ -147,28 +156,159 @@ impl Windows {
     }
 }
 
-/// The first row of a view `height` rows tall, starting at `top`, once
-/// scrolled just enough to show `row` with `scroll_off` rows of context
-/// above and below it where the buffer allows.
+/// The first line of a view `height` screen rows tall that started at line
+/// `top`, once scrolled just enough to show the cursor (on line `row`, its
+/// `row_in_line`th screen row) with `scroll_off` screen rows of context
+/// above and below it where the buffer allows. `rows_of(line)` is how many
+/// screen rows a line takes (1 each without wrapping). The view always
+/// starts at the start of a line.
 pub fn follow_cursor(
     top: usize,
-    row: usize,
+    cursor: (usize, usize),
     height: usize,
     line_count: usize,
     scroll_off: usize,
+    rows_of: impl Fn(usize) -> usize,
 ) -> usize {
+    let (row, row_in_line) = cursor;
     if height == 0 {
         return top;
     }
     let margin = scroll_off.min((height - 1) / 2);
-    let above = margin.min(row);
-    let below = margin.min(line_count.saturating_sub(row + 1));
-    if row < top + above {
-        row - above
-    } else if row + below >= top + height {
-        row + below + 1 - height
+    let mut top = top;
+    // Every line takes a row at least, so lines more than a screen above
+    // the cursor can't be in the view; start no further back than that.
+    if row > top + height {
+        top = row - height;
+    }
+
+    // Above: `margin` rows (as many as there are) between the top and the
+    // cursor's row.
+    let mut above = if row < top {
+        top = row;
+        row_in_line
     } else {
-        top
+        (top..row).map(&rows_of).sum::<usize>() + row_in_line
+    };
+    while above < margin && top > 0 {
+        top -= 1;
+        above += rows_of(top);
+    }
+
+    // Below: the cursor's row and `margin` more must fit.
+    let mut below = rows_of(row).saturating_sub(row_in_line + 1);
+    let mut next = row + 1;
+    while below < margin && next < line_count {
+        below += rows_of(next);
+        next += 1;
+    }
+    let mut used = above + 1 + below.min(margin);
+    while used > height && top < row {
+        used -= rows_of(top);
+        top += 1;
+    }
+    top
+}
+
+/// The line-number gutter's width in cells, for a buffer of `line_count`
+/// lines.
+pub fn gutter_width(line_count: usize, mode: crate::config::LineNumbers) -> u16 {
+    if mode == crate::config::LineNumbers::None {
+        return 0;
+    }
+    // At least three digits, and a cell of padding either side.
+    let digits = line_count.to_string().len().max(3);
+    (digits + 2) as u16
+}
+
+/// How a window lays out a buffer's lines: `width` cells of text (beside
+/// the gutter), wrapped or not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextLayout {
+    pub width: usize,
+    pub wrap: bool,
+    pub tab_width: usize,
+}
+
+impl TextLayout {
+    /// The layout of `document` in a window `window_width` cells wide.
+    pub fn new(
+        window_width: usize,
+        document: &Document,
+        options: &crate::config::EditorOptions,
+    ) -> Self {
+        let gutter = gutter_width(document.buffer().line_count(), options.line_numbers);
+        Self {
+            width: window_width.saturating_sub(gutter as usize),
+            wrap: options.wrap,
+            tab_width: options.tab_width,
+        }
+    }
+
+    /// The char column each screen row of `line` starts at.
+    pub fn row_starts(&self, line: &str) -> Vec<usize> {
+        if self.wrap {
+            crate::core::wrap::row_starts(line, self.width, self.tab_width)
+        } else {
+            vec![0]
+        }
+    }
+
+    /// How many screen rows `line` takes.
+    pub fn rows(&self, line: &str) -> usize {
+        if self.wrap {
+            self.row_starts(line).len()
+        } else {
+            1
+        }
+    }
+
+    /// The first line of a view of `document` `height` rows tall that
+    /// started at `top`, scrolled to show `cursor` (see [`follow_cursor`]).
+    pub fn follow_cursor(
+        &self,
+        top: usize,
+        document: &Document,
+        cursor: Position,
+        height: usize,
+        scroll_off: usize,
+    ) -> usize {
+        let buffer = document.buffer();
+        let row_in_line = if self.wrap {
+            crate::core::wrap::row_of(&self.row_starts(&buffer.line(cursor.row)), cursor.col)
+        } else {
+            0
+        };
+        follow_cursor(
+            top,
+            (cursor.row, row_in_line),
+            height,
+            buffer.line_count(),
+            scroll_off,
+            |row| self.rows(&buffer.line(row)),
+        )
+    }
+
+    /// The last line at least partly shown in a view `height` rows tall
+    /// starting at `top`.
+    pub fn bottom(&self, document: &Document, top: usize, height: usize) -> usize {
+        let buffer = document.buffer();
+        let last = buffer.line_count() - 1;
+        if !self.wrap {
+            return (top + height)
+                .saturating_sub(1)
+                .min(last)
+                .max(top.min(last));
+        }
+        let mut used = 0;
+        let mut row = top.min(last);
+        loop {
+            used += self.rows(&buffer.line(row));
+            if used >= height || row == last {
+                return row;
+            }
+            row += 1;
+        }
     }
 }
 
@@ -448,5 +588,37 @@ mod tests {
         e.toggle_visual(crate::editor::SelectionKind::Char);
         e.focus_next_window();
         assert_eq!(e.mode(), Mode::Normal);
+    }
+}
+
+#[cfg(test)]
+mod follow_tests {
+    use super::follow_cursor;
+
+    #[test]
+    fn without_wrapping_it_keeps_the_margin_in_lines() {
+        let one = |_| 1;
+        assert_eq!(follow_cursor(0, (3, 0), 10, 100, 2, one), 0);
+        assert_eq!(follow_cursor(0, (9, 0), 10, 100, 2, one), 2);
+        assert_eq!(follow_cursor(50, (40, 0), 10, 100, 2, one), 38);
+        assert_eq!(follow_cursor(0, (99, 0), 10, 100, 2, one), 90, "at the end");
+    }
+
+    #[test]
+    fn wrapped_lines_count_all_their_rows() {
+        // Every line is 3 rows; 10 rows show 3 lines and a row of a fourth.
+        let three = |_| 3;
+        assert_eq!(
+            follow_cursor(0, (3, 0), 10, 100, 0, three),
+            0,
+            "the 10th row"
+        );
+        assert_eq!(follow_cursor(0, (3, 2), 10, 100, 0, three), 1, "the 12th");
+        assert_eq!(follow_cursor(5, (5, 2), 10, 100, 0, three), 5);
+        assert_eq!(
+            follow_cursor(0, (500, 0), 10, 1000, 0, three),
+            497,
+            "a long jump"
+        );
     }
 }

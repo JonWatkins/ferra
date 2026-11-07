@@ -18,6 +18,9 @@ pub struct EditorOptions {
     /// New lines start with the indentation of the line they came from.
     pub auto_indent: bool,
     pub line_numbers: LineNumbers,
+    /// Long lines continue on the next screen rows (breaking between
+    /// words) rather than running off the edge.
+    pub wrap: bool,
     pub cursorline: bool,
     /// A status line under every window, or one for the whole screen.
     pub statusline: StatuslineMode,

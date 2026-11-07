@@ -12,7 +12,10 @@
 use super::motions::{self, MotionArgs, SCREEN_LINE};
 use crate::commands::CommandRegistry;
 use crate::core::Position;
+use crate::core::columns::{char_col_at, display_col};
+use crate::core::wrap;
 use crate::editor::Editor;
+use crate::editor::windows::TextLayout;
 
 pub fn register(r: &mut CommandRegistry) {
     r.register(
@@ -64,6 +67,23 @@ pub fn register(r: &mut CommandRegistry) {
         "Scroll up [count] lines, moving the cursor only to keep it in sight",
         |cx| {
             scroll_view(cx.editor, -(cx.count() as isize));
+            Ok(())
+        },
+    );
+
+    r.register(
+        "move_screen_down",
+        "Move down [count] screen rows, through the rows of wrapped lines (gj)",
+        |cx| {
+            move_screen_rows(cx.editor, cx.count(), true);
+            Ok(())
+        },
+    );
+    r.register(
+        "move_screen_up",
+        "Move up [count] screen rows, through the rows of wrapped lines (gk)",
+        |cx| {
+            move_screen_rows(cx.editor, cx.count(), false);
             Ok(())
         },
     );
@@ -143,18 +163,92 @@ pub fn register(r: &mut CommandRegistry) {
     }
 }
 
-/// The active window's first row on screen and its height.
+/// `gj`, `gk`: moves the cursor `count` screen rows down (or up), keeping
+/// its column on screen. A wrapped line's rows count separately; without
+/// wrapping this is `j`/`k`.
+fn move_screen_rows(editor: &mut Editor, count: usize, down: bool) {
+    if !editor.options.wrap {
+        let lines = if down {
+            count as isize
+        } else {
+            -(count as isize)
+        };
+        editor.document.move_vertical(lines);
+        return;
+    }
+    let windows = editor.windows();
+    let layout = TextLayout::new(
+        windows.width(windows.active()),
+        &editor.document,
+        &editor.options,
+    );
+    let tab = editor.options.tab_width;
+    let buffer = editor.document.buffer();
+    let last = buffer.line_count() - 1;
+    let Position { row, col } = editor.document.cursor();
+    let line = buffer.line(row);
+    let starts = layout.row_starts(&line);
+    let part = wrap::row_of(&starts, col);
+    let screen_col = editor
+        .wanted_screen_column()
+        .unwrap_or_else(|| display_col(&line, col, tab) - display_col(&line, starts[part], tab));
+
+    let (mut row, mut part) = (row, part);
+    for _ in 0..count {
+        let parts = layout.rows(&buffer.line(row));
+        if down {
+            if part + 1 < parts {
+                part += 1;
+            } else if row < last {
+                row += 1;
+                part = 0;
+            } else {
+                break;
+            }
+        } else if part > 0 {
+            part -= 1;
+        } else if row > 0 {
+            row -= 1;
+            part = layout.rows(&buffer.line(row)) - 1;
+        } else {
+            break;
+        }
+    }
+    let line = buffer.line(row);
+    let starts = layout.row_starts(&line);
+    let left = display_col(&line, starts[part], tab);
+    let mut col = char_col_at(&line, left + screen_col, tab);
+    // Stay on this row: not past its last char onto the next one.
+    if let Some(&next) = starts.get(part + 1) {
+        col = col.min(next.saturating_sub(1));
+    }
+    editor.document.set_cursor(Position::new(row, col));
+    // Normal mode can't sit past the last char; settle that now, so the
+    // position recorded is where the cursor ends up.
+    if editor.mode() == crate::editor::Mode::Normal {
+        editor.document.clamp_to_last_char();
+    }
+    editor.set_wanted_screen_column(screen_col);
+}
+
+/// The active window's first line on screen and its height in rows.
 fn view(editor: &Editor) -> (usize, usize) {
     let windows = editor.windows();
     let id = windows.active();
     let doc = &editor.document;
-    let top = windows.view_top(
-        id,
-        doc.cursor().row,
-        doc.buffer().line_count(),
-        editor.options.scroll_off,
-    );
+    let top = windows.view_top(id, doc, doc.cursor(), &editor.options);
     (top, windows.height(id))
+}
+
+/// The last line at least partly on screen when the view starts at `top`.
+fn bottom(editor: &Editor, top: usize, height: usize) -> usize {
+    let windows = editor.windows();
+    let layout = TextLayout::new(
+        windows.width(windows.active()),
+        &editor.document,
+        &editor.options,
+    );
+    layout.bottom(&editor.document, top, height)
 }
 
 fn half(editor: &Editor) -> usize {
@@ -192,7 +286,7 @@ fn scroll(editor: &mut Editor, view_lines: isize, cursor_lines: isize) {
         .windows()
         .request_top(editor.windows().active(), new_top);
     let margin = editor.options.scroll_off.min(height.saturating_sub(1) / 2);
-    let bottom = (new_top + height).saturating_sub(1).min(last);
+    let bottom = bottom(editor, new_top, height);
     let lowest = if new_top == 0 { 0 } else { new_top + margin };
     let highest = if bottom == last {
         last
@@ -259,7 +353,7 @@ enum ScreenLine {
 fn screen_line(editor: &Editor, line: ScreenLine, count: usize) -> usize {
     let (top, height) = view(editor);
     let last = last_row(editor);
-    let bottom = (top + height).saturating_sub(1).min(last);
+    let bottom = bottom(editor, top, height);
     let margin = editor.options.scroll_off.min(height.saturating_sub(1) / 2);
     let lowest = if top == 0 { 0 } else { top + margin };
     let highest = if bottom == last {

@@ -24,6 +24,7 @@ use crate::config::{EditorOptions, Theme};
 use crate::core::search::SearchPattern;
 use crate::core::{Position as TextPosition, Range};
 use crate::editor::Document;
+use crate::editor::windows::TextLayout;
 use crate::syntax::{HIGHLIGHT_NAMES, Highlights};
 
 /// State kept between frames for an editor pane.
@@ -42,17 +43,20 @@ impl ViewState {
         &self,
         document: &Document,
         cursor: TextPosition,
-        height: u16,
+        area: Rect,
         options: &EditorOptions,
     ) -> std::ops::Range<usize> {
-        let mut viewport = self.viewport;
-        let target = ScrollTarget {
-            row: cursor.row,
-            col: 0,
-            line_count: document.buffer().line_count(),
-        };
-        viewport.scroll_to(target, 0, height as usize, options.scroll_off);
-        viewport.top..viewport.top + height as usize
+        let height = area.height as usize;
+        let layout = TextLayout::new(area.width as usize, document, options);
+        let top = layout.follow_cursor(
+            self.viewport.top,
+            document,
+            cursor,
+            height,
+            options.scroll_off,
+        );
+        // Wrapped lines take more rows, so this may be more than are shown.
+        top..top + height
     }
 }
 
@@ -140,18 +144,33 @@ impl StatefulWidget for EditorView<'_> {
         let [gutter_area, text_area] =
             Layout::horizontal([Constraint::Length(gutter_width), Constraint::Min(0)]).areas(area);
 
-        let cursor_col = line::display_col(&text.line(cursor.row), cursor.col, tab_width);
-        let target = ScrollTarget {
-            row: cursor.row,
-            col: cursor_col,
-            line_count: text.line_count(),
+        let height = text_area.height as usize;
+        let width = text_area.width as usize;
+        let layout = TextLayout {
+            width,
+            wrap: self.options.wrap,
+            tab_width,
         };
-        state.viewport.scroll_to(
-            target,
-            text_area.width as usize,
-            text_area.height as usize,
-            self.options.scroll_off,
-        );
+        if layout.wrap {
+            state.viewport.left = 0;
+            state.viewport.top = layout.follow_cursor(
+                state.viewport.top,
+                self.document,
+                cursor,
+                height,
+                self.options.scroll_off,
+            );
+        } else {
+            let cursor_col = line::display_col(&text.line(cursor.row), cursor.col, tab_width);
+            let target = ScrollTarget {
+                row: cursor.row,
+                col: cursor_col,
+                line_count: text.line_count(),
+            };
+            state
+                .viewport
+                .scroll_to(target, width, height, self.options.scroll_off);
+        }
         let Viewport { top, left } = state.viewport;
 
         let text_style = self.theme.get("ui.text");
@@ -162,85 +181,181 @@ impl StatefulWidget for EditorView<'_> {
                 .collect(),
             None => Vec::new(),
         };
-        let rows = (top..text.line_count()).take(area.height as usize);
-        for (i, row) in rows.enumerate() {
-            let y = area.y + i as u16;
-            let is_cursor_row = row == cursor.row;
 
-            let row_style = if is_cursor_row && self.active && self.options.cursorline {
-                self.theme.get("ui.cursorline")
-            } else {
-                Style::default()
-            };
-            buf.set_style(Rect::new(area.x, y, area.width, 1), row_style);
-
-            let gutter_scope = if is_cursor_row {
-                "ui.linenr.selected"
-            } else {
-                "ui.linenr"
-            };
-            gutter::render(
-                buf,
-                Rect::new(gutter_area.x, y, gutter_area.width, 1),
-                &gutter::label(row, cursor.row, line_numbers),
-                self.theme.get(gutter_scope),
-            );
-
+        let mut y = 0;
+        let mut row = top;
+        while y < height && row < text.line_count() {
             let line_text = &*text.line(row);
-            let visible = line::visible_slice(line_text, left, text_area.width as usize, tab_width);
-            buf.set_stringn(
-                text_area.x,
-                y,
-                visible,
-                text_area.width as usize,
-                text_style,
-            );
-
-            let mut highlight = |from: usize, to: usize, style: Style| {
-                // Char columns to display cells; a column past the last char
-                // (a selected line break) is drawn as one extra cell.
-                let line_len = text.line_len(row);
-                let from = line::display_col(line_text, from, tab_width);
-                let to = line::display_col(line_text, to, tab_width) + usize::from(to > line_len);
-                let start = from.max(left) - left;
-                let end = to.saturating_sub(left).min(text_area.width as usize);
-                if start < end {
-                    let cells = Rect::new(text_area.x + start as u16, y, (end - start) as u16, 1);
-                    buf.set_style(cells, style);
+            let line_len = text.line_len(row);
+            let starts = layout.row_starts(line_text);
+            for (part, &start) in starts.iter().enumerate() {
+                if y >= height {
+                    break;
                 }
-            };
-
-            if let Some(syntax) = self.syntax {
-                for span in syntax.line(row) {
-                    highlight(span.start, span.end, syntax_styles[span.highlight]);
+                let end = starts.get(part + 1).copied().unwrap_or(line_len);
+                let last_part = part + 1 == starts.len();
+                let screen_y = area.y + y as u16;
+                self.draw_row(
+                    buf,
+                    area,
+                    gutter_area,
+                    text_area,
+                    screen_y,
+                    RowPart {
+                        row,
+                        line: line_text,
+                        start,
+                        end,
+                        first: part == 0,
+                        last: last_part,
+                        left: if layout.wrap {
+                            line::display_col(line_text, start, tab_width)
+                        } else {
+                            left
+                        },
+                    },
+                    cursor,
+                    text_style,
+                    &syntax_styles,
+                );
+                let cursor_here = row == cursor.row
+                    && (crate::core::wrap::row_of(&starts, cursor.col) == part || !layout.wrap);
+                if cursor_here && !text_area.is_empty() {
+                    let seg_left = if layout.wrap {
+                        line::display_col(line_text, start, tab_width)
+                    } else {
+                        left
+                    };
+                    let x = line::display_col(line_text, cursor.col, tab_width) - seg_left;
+                    state.cursor = Some(Position::new(
+                        text_area.x + x.min(width.saturating_sub(1)) as u16,
+                        screen_y,
+                    ));
                 }
+                y += 1;
             }
-            if let Some(pattern) = self.search {
-                let style = self.theme.get("ui.search.match");
-                for (from, to) in pattern.matches_in_line(line_text) {
-                    highlight(from, to, style);
-                }
+            row += 1;
+        }
+    }
+}
+
+/// One screen row's part of a buffer line: chars `start..end` of `line`,
+/// drawn from display column `left`.
+struct RowPart<'l> {
+    row: usize,
+    line: &'l str,
+    start: usize,
+    end: usize,
+    /// The line's first row (where its number goes).
+    first: bool,
+    /// The line's last row (where a selected line break is drawn).
+    last: bool,
+    left: usize,
+}
+
+impl EditorView<'_> {
+    #[allow(clippy::too_many_arguments)]
+    fn draw_row(
+        &self,
+        buf: &mut Buffer,
+        area: Rect,
+        gutter_area: Rect,
+        text_area: Rect,
+        y: u16,
+        part: RowPart,
+        cursor: TextPosition,
+        text_style: Style,
+        syntax_styles: &[Style],
+    ) {
+        let tab_width = self.options.tab_width;
+        let width = text_area.width as usize;
+        let RowPart {
+            row,
+            line: line_text,
+            start,
+            end,
+            first,
+            last,
+            left,
+        } = part;
+        let is_cursor_row = row == cursor.row;
+
+        let row_style = if is_cursor_row && self.active && self.options.cursorline {
+            self.theme.get("ui.cursorline")
+        } else {
+            Style::default()
+        };
+        buf.set_style(Rect::new(area.x, y, area.width, 1), row_style);
+
+        let gutter_scope = if is_cursor_row {
+            "ui.linenr.selected"
+        } else {
+            "ui.linenr"
+        };
+        let label = if first {
+            gutter::label(row, cursor.row, self.options.line_numbers)
+        } else {
+            String::new()
+        };
+        gutter::render(
+            buf,
+            Rect::new(gutter_area.x, y, gutter_area.width, 1),
+            &label,
+            self.theme.get(gutter_scope),
+        );
+
+        // Only this part's chars: the rest of a wrapped line is on later rows.
+        let upto = line_text
+            .char_indices()
+            .nth(end)
+            .map_or(line_text.len(), |(i, _)| i);
+        let visible = line::visible_slice(&line_text[..upto], left, width, tab_width);
+        buf.set_stringn(text_area.x, y, visible, width, text_style);
+
+        let line_len = line_text.chars().count();
+        let mut highlight = |from: usize, to: usize, style: Style| {
+            // Char columns to display cells, within this part of the line; a
+            // column past the last char (a selected line break) is drawn as
+            // one extra cell on the line's last row.
+            let to_end = to > line_len && last;
+            let from = from.max(start);
+            let to = to.min(end);
+            if from >= to && !to_end {
+                return;
             }
-            // The selection is drawn last, so it wins over search matches.
-            if let Some(block) = self.block {
-                if block.rows().contains(&row) {
-                    let (from, to) = block.chars_in(line_text, tab_width);
-                    if from < to {
-                        highlight(from, to, self.theme.get("ui.selection"));
-                    }
-                }
-            } else if let Some(range) = self.selection
-                && let Some((from, to)) = selection::selected_cols(range, row, text.line_len(row))
-            {
-                highlight(from, to, self.theme.get("ui.selection"));
+            let from = line::display_col(line_text, from, tab_width);
+            let to = line::display_col(line_text, to, tab_width) + usize::from(to_end);
+            let begin = from.max(left) - left;
+            let finish = to.saturating_sub(left).min(width);
+            if begin < finish {
+                let cells = Rect::new(text_area.x + begin as u16, y, (finish - begin) as u16, 1);
+                buf.set_style(cells, style);
+            }
+        };
+
+        if let Some(syntax) = self.syntax {
+            for span in syntax.line(row) {
+                highlight(span.start, span.end, syntax_styles[span.highlight]);
             }
         }
-
-        if !text_area.is_empty() {
-            state.cursor = Some(Position::new(
-                text_area.x + (cursor_col - left) as u16,
-                text_area.y + (cursor.row - top) as u16,
-            ));
+        if let Some(pattern) = self.search {
+            let style = self.theme.get("ui.search.match");
+            for (from, to) in pattern.matches_in_line(line_text) {
+                highlight(from, to, style);
+            }
+        }
+        // The selection is drawn last, so it wins over search matches.
+        if let Some(block) = self.block {
+            if block.rows().contains(&row) {
+                let (from, to) = block.chars_in(line_text, tab_width);
+                if from < to {
+                    highlight(from, to, self.theme.get("ui.selection"));
+                }
+            }
+        } else if let Some(range) = self.selection
+            && let Some((from, to)) = selection::selected_cols(range, row, line_len)
+        {
+            highlight(from, to, self.theme.get("ui.selection"));
         }
     }
 }
@@ -380,6 +495,29 @@ mod tests {
     }
 
     #[test]
+    fn selections_highlight_every_row_of_a_wrapped_line() {
+        let doc = Document::with_text("aaaa bbbb");
+        let mut theme = Theme::default();
+        theme.set("ui.selection", Style::new().bg(ratatui::style::Color::Blue));
+        let range = Range::Chars {
+            start: TextPos::new(0, 2),
+            end: TextPos::new(0, 7),
+        };
+        let area = Rect::new(0, 0, 5, 2);
+        let mut buf = Buffer::empty(area);
+        EditorView::new(&doc, &options(LineNumbers::None), &theme)
+            .selection(Some(range))
+            .render(area, &mut buf, &mut ViewState::default());
+        let blue = |y: u16| -> Vec<u16> {
+            (0..5)
+                .filter(|&x| buf[(x, y)].bg == ratatui::style::Color::Blue)
+                .collect()
+        };
+        assert_eq!(blue(0), vec![2, 3, 4], "\"aa \" of \"aaaa \"");
+        assert_eq!(blue(1), vec![0, 1], "\"bb\" of \"bbbb\"");
+    }
+
+    #[test]
     fn selection_highlight_respects_horizontal_scroll() {
         let mut doc = Document::with_text("0123456789");
         doc.set_cursor(TextPos::new(0, 9));
@@ -393,7 +531,11 @@ mod tests {
         let area = Rect::new(0, 0, 4, 1);
         let mut buf = Buffer::empty(area);
         let mut state = ViewState::default();
-        EditorView::new(&doc, &options(LineNumbers::None), &theme)
+        let options = EditorOptions {
+            wrap: false,
+            ..options(LineNumbers::None)
+        };
+        EditorView::new(&doc, &options, &theme)
             .selection(Some(range))
             .render(area, &mut buf, &mut state);
 

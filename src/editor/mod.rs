@@ -149,6 +149,9 @@ pub struct Editor {
     /// (`fi`), by document and row, to put back if the word goes on
     /// (`file`).
     keyword_indent: Option<(DocumentId, usize, String)>,
+    /// The screen column `gj`/`gk` aim for, while the cursor stays where
+    /// they left it (so a short row on the way doesn't lose it).
+    screen_column: Option<(DocumentId, Position, usize)>,
     /// Text typed by `I`/`A`/`c` on a block's first row, copied to the
     /// others when insert mode ends.
     block_insert: Option<block::BlockInsert>,
@@ -342,6 +345,19 @@ impl Editor {
     pub fn language_of(&self, document: &Document) -> Option<&str> {
         self.languages
             .detect(document.path(), &document.buffer().line(0))
+    }
+
+    /// The screen column `gj`/`gk` last aimed for, if the cursor is still
+    /// where they left it.
+    pub fn wanted_screen_column(&self) -> Option<usize> {
+        let (doc, at, column) = self.screen_column?;
+        (doc == self.document.id() && at == self.document.cursor()).then_some(column)
+    }
+
+    /// Records the screen column `gj`/`gk` aimed for, with the cursor where
+    /// they left it.
+    pub fn set_wanted_screen_column(&mut self, column: usize) {
+        self.screen_column = Some((self.document.id(), self.document.cursor(), column));
     }
 
     /// Shows the splash screen until the user starts working (see

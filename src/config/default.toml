@@ -19,6 +19,9 @@ detect-indent = true
 auto-indent = true
 # "absolute", "relative" (hybrid: current line shows its absolute number) or "none".
 line-numbers = "relative"
+# Long lines continue on the next screen rows, breaking between words, and
+# gj/gk move by screen rows. false scrolls sideways instead.
+wrap = true
 # Highlight the line the cursor is on.
 cursorline = true
 # "windows": a status line under every window, the active one highlighted
@@ -279,6 +282,10 @@ block-comment = ["/*", "*/"]
 "H" = "goto_screen_top"
 "M" = "goto_screen_middle"
 "L" = "goto_screen_bottom"
+"gj" = "move_screen_down"
+"gk" = "move_screen_up"
+"g<Down>" = "move_screen_down"
+"g<Up>" = "move_screen_up"
 # Scrolling: the cursor moves with the view, as in Vim.
 "<C-d>" = "scroll_half_page_down"
 "<C-u>" = "scroll_half_page_up"
@@ -542,6 +549,10 @@ block-comment = ["/*", "*/"]
 "H" = "goto_screen_top"
 "M" = "goto_screen_middle"
 "L" = "goto_screen_bottom"
+"gj" = "move_screen_down"
+"gk" = "move_screen_up"
+"g<Down>" = "move_screen_down"
+"g<Up>" = "move_screen_up"
 # Scrolling: the cursor moves with the view, as in Vim.
 "<C-d>" = "scroll_half_page_down"
 "<C-u>" = "scroll_half_page_up"
