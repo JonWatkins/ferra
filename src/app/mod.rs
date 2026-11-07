@@ -326,7 +326,7 @@ impl App {
 
     /// Text pasted into the terminal (bracketed paste). It goes in exactly as
     /// copied: no auto-indent, no key bindings, one undo step (see
-    /// [`App::paste`]). Macros and `.` record it as `<PasteStart>`, its text
+    /// `App::paste`). Macros and `.` record it as `<PasteStart>`, its text
     /// and `<PasteEnd>`, and put it in the same way when replayed.
     pub fn handle_paste(&mut self, text: &str) {
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
@@ -399,9 +399,11 @@ impl App {
 
     pub fn draw(&mut self, frame: &mut Frame) {
         let pending = self.input.pending_display();
-        if self.syntax.cached_count() > self.editor.buffer_count() {
+        let count = self.editor.buffer_count();
+        if self.syntax.cached_count() > count || self.editor.syntax_trees.count() > count {
             let open: Vec<DocumentId> = self.editor.buffers().iter().map(|b| b.id).collect();
             self.syntax.retain(&open);
+            self.editor.syntax_trees.retain(&open);
         }
 
         let splash = if self.editor.splash_visible() {

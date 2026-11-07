@@ -1,78 +1,79 @@
 //! Syntax highlighting with tree-sitter.
 //!
+//! [`SyntaxTrees`] keeps a syntax tree per document, fed the buffer's
+//! edits so that after a change tree-sitter re-parses only what it touched;
+//! the editor holds it, for indentation (`indent.rs`) and highlighting.
 //! [`SyntaxEngine`] picks a language for a document (by the `[languages]`
-//! config: file name, extension or `#!` line) and keeps a syntax tree for
-//! it. Edits are fed to the tree as they're made (from the buffer's edit
-//! log), so after a change tree-sitter re-parses only what it touched.
-//! Highlighting covers just the rows a window shows (see `highlight.rs`),
-//! cached until the text changes. The UI styles each [`Span`] with the
+//! config: file name, extension or `#!` line) and highlights just the rows
+//! a window shows (see `highlight.rs`), cached until the text changes. The UI styles each [`Span`] with the
 //! theme scope named by its highlight (`keyword`, `function.method`, ...).
 
 mod highlight;
 pub mod indent;
 mod languages;
+mod trees;
 
 pub use highlight::{HIGHLIGHT_NAMES, Highlights, LanguageConfig, Span};
 pub use languages::{INJECTION_ONLY, LANGUAGES, LanguageDef, language};
+pub use trees::SyntaxTrees;
 
 use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::ops::Range;
 
-use tree_sitter::{InputEdit, Parser, Point, Tree};
-
 use crate::config::Languages;
-use crate::core::{Buffer, TextEdit};
 use crate::editor::{Document, DocumentId};
 
-/// Documents larger than this (in chars) aren't highlighted, so opening a
-/// huge file stays responsive.
+/// Documents larger than this (in chars) aren't parsed, so opening a huge
+/// file stays responsive: no highlighting, and indentation by heuristics.
 pub const MAX_HIGHLIGHT_CHARS: usize = 4 * 1024 * 1024;
 
 /// Highlighted row ranges kept per document while its text is unchanged
 /// (one per window showing it, say).
 const CACHED_RANGES: usize = 4;
 
-/// A document's syntax tree and recent highlights.
-struct DocumentSyntax {
+/// A document's recent highlights, for its text as of `edit_seq`.
+struct DocumentHighlights {
     language: usize,
     buffer_id: u64,
-    /// The buffer's `edit_seq` the tree was last brought up to.
     edit_seq: u64,
-    /// `None` if the document is too large, or parsing failed.
-    tree: Option<Tree>,
-    /// Highlights for the current tree, most recent last.
+    /// Most recent last.
     highlights: Vec<Highlights>,
 }
 
+/// Highlights documents from the trees in [`SyntaxTrees`].
 pub struct SyntaxEngine {
-    parser: Parser,
     /// For injected languages, which parse only parts of the text.
-    injection_parser: Parser,
+    injection_parser: tree_sitter::Parser,
     /// Compiled queries, one per entry in `LANGUAGES`, built on first use.
     configs: Vec<OnceCell<Result<LanguageConfig, String>>>,
-    documents: HashMap<DocumentId, DocumentSyntax>,
+    documents: HashMap<DocumentId, DocumentHighlights>,
+    /// Trees for `highlights_default`, which has no editor's to use.
+    #[cfg(test)]
+    trees: SyntaxTrees,
 }
 
 impl Default for SyntaxEngine {
     fn default() -> Self {
         Self {
-            parser: Parser::new(),
-            injection_parser: Parser::new(),
+            injection_parser: tree_sitter::Parser::new(),
             configs: LANGUAGES.iter().map(|_| OnceCell::new()).collect(),
             documents: HashMap::new(),
+            #[cfg(test)]
+            trees: SyntaxTrees::default(),
         }
     }
 }
 
 impl SyntaxEngine {
-    /// Highlights for `rows` of `document`, bringing its syntax tree up to
-    /// date first. `None` if the language is unknown, the document is too
-    /// large, or parsing failed.
+    /// Highlights for `rows` of `document`, from its tree in `trees`
+    /// (brought up to date). `None` if the language is unknown, the
+    /// document is too large, or parsing failed.
     pub fn highlight(
         &mut self,
         document: &Document,
         languages: &Languages,
+        trees: &SyntaxTrees,
         rows: Range<usize>,
     ) -> Option<&Highlights> {
         let id = document.id();
@@ -87,82 +88,54 @@ impl SyntaxEngine {
             .as_ref()
             .ok()?;
 
-        // The edits since the tree was built, if it can be brought up to date.
-        let edits = self
-            .documents
-            .get(&id)
-            .filter(|s| s.language == index && s.buffer_id == buffer.id())
-            .and_then(|s| buffer.edits_since(s.edit_seq))
-            .map(<[TextEdit]>::to_vec);
-        let state = match edits {
-            Some(edits) => {
-                let state = self.documents.get_mut(&id).expect("checked above");
-                if !edits.is_empty() {
-                    state.highlights.clear();
-                    state.tree = state.tree.take().and_then(|mut tree| {
-                        for edit in &edits {
-                            tree.edit(&input_edit(edit));
-                        }
-                        parse(&mut self.parser, config, buffer, Some(&tree))
-                    });
-                    state.edit_seq = buffer.edit_seq();
-                }
-                state
-            }
-            None => {
-                let tree = if buffer.len_chars() > MAX_HIGHLIGHT_CHARS {
-                    None
-                } else {
-                    parse(&mut self.parser, config, buffer, None)
-                };
-                self.documents
-                    .entry(id)
-                    .insert_entry(DocumentSyntax {
-                        language: index,
-                        buffer_id: buffer.id(),
-                        edit_seq: buffer.edit_seq(),
-                        tree,
-                        highlights: Vec::new(),
-                    })
-                    .into_mut()
-            }
-        };
-        let tree = state.tree.as_ref()?;
-
+        let current = self.documents.get(&id).is_some_and(|d| {
+            d.language == index && d.buffer_id == buffer.id() && d.edit_seq == buffer.edit_seq()
+        });
+        if !current {
+            self.documents.insert(
+                id,
+                DocumentHighlights {
+                    language: index,
+                    buffer_id: buffer.id(),
+                    edit_seq: buffer.edit_seq(),
+                    highlights: Vec::new(),
+                },
+            );
+        }
+        let state = self.documents.get_mut(&id).expect("just made current");
         let rows = rows.start.min(buffer.line_count())..rows.end.min(buffer.line_count());
         let cached = state.highlights.iter().position(|h| {
             let have = h.rows();
             have.start <= rows.start && rows.end <= have.end
         });
-        let at = match cached {
-            Some(at) => at,
-            None => {
-                let configs = &self.configs;
-                // Languages inside this one (a code block's, `<script>`'s),
-                // by name or file extension (`js`, `py`), loaded on first use.
-                let inject = move |name: &str| {
-                    let index = injected_language(name, languages)?;
-                    configs[index]
-                        .get_or_init(|| load(&LANGUAGES[index]))
-                        .as_ref()
-                        .ok()
-                };
-                let highlights = highlight::highlight_rows(
-                    buffer,
-                    tree,
-                    config,
-                    rows,
-                    &inject,
-                    &mut self.injection_parser,
-                );
-                if state.highlights.len() == CACHED_RANGES {
-                    state.highlights.remove(0);
-                }
-                state.highlights.push(highlights);
-                state.highlights.len() - 1
-            }
+        if let Some(at) = cached {
+            return state.highlights.get(at);
+        }
+
+        let tree = trees.tree(document, LANGUAGES[index].name)?;
+        let configs = &self.configs;
+        // Languages inside this one (a code block's, `<script>`'s), by name
+        // or file extension (`js`, `py`), loaded on first use.
+        let inject = move |name: &str| {
+            let index = injected_language(name, languages)?;
+            configs[index]
+                .get_or_init(|| load(&LANGUAGES[index]))
+                .as_ref()
+                .ok()
         };
-        state.highlights.get(at)
+        let highlights = highlight::highlight_rows(
+            buffer,
+            &tree,
+            config,
+            rows,
+            &inject,
+            &mut self.injection_parser,
+        );
+        if state.highlights.len() == CACHED_RANGES {
+            state.highlights.remove(0);
+        }
+        state.highlights.push(highlights);
+        state.highlights.last()
     }
 
     /// Highlights for all of `document`, with the default `[languages]`.
@@ -170,21 +143,23 @@ impl SyntaxEngine {
     pub fn highlights_default(&mut self, document: &Document) -> Option<&Highlights> {
         let languages = crate::config::Config::default().languages;
         let rows = 0..document.buffer().line_count();
-        self.highlight(document, &languages, rows)
-    }
-
-    /// The syntax tree kept for document `id`, if any.
-    #[cfg(test)]
-    pub(crate) fn tree(&self, id: DocumentId) -> Option<&Tree> {
-        self.documents.get(&id)?.tree.as_ref()
+        let trees = std::mem::take(&mut self.trees);
+        let found = self.highlight(document, &languages, &trees, rows).is_some();
+        self.trees = trees;
+        if !found {
+            return None;
+        }
+        self.documents.get(&document.id())?.highlights.last()
     }
 
     /// Drops what's kept for documents that are no longer open.
     pub fn retain(&mut self, open: &[DocumentId]) {
         self.documents.retain(|id, _| open.contains(id));
+        #[cfg(test)]
+        self.trees.retain(open);
     }
 
-    /// How many documents have syntax kept.
+    /// How many documents have highlights kept.
     pub fn cached_count(&self) -> usize {
         self.documents.len()
     }
@@ -203,30 +178,6 @@ impl SyntaxEngine {
                 )
             })
             .collect()
-    }
-}
-
-/// Parses `buffer`, reading it chunk by chunk from the rope, reusing the
-/// unchanged parts of `old` (already told about the edits) if given.
-fn parse(
-    parser: &mut Parser,
-    config: &LanguageConfig,
-    buffer: &Buffer,
-    old: Option<&Tree>,
-) -> Option<Tree> {
-    parser.set_language(&config.language).ok()?;
-    parser.parse_with_options(&mut |byte, _| buffer.chunk_from_byte(byte), old, None)
-}
-
-fn input_edit(edit: &TextEdit) -> InputEdit {
-    let point = |(row, column): (usize, usize)| Point::new(row, column);
-    InputEdit {
-        start_byte: edit.start_byte,
-        old_end_byte: edit.old_end_byte,
-        new_end_byte: edit.new_end_byte,
-        start_position: point(edit.start),
-        old_end_position: point(edit.old_end),
-        new_end_position: point(edit.new_end),
     }
 }
 
@@ -639,11 +590,7 @@ mod tests {
         let mut engine = SyntaxEngine::default();
         engine.highlights_default(&doc);
         let languages = crate::config::Config::default().languages;
-        let index = LANGUAGES
-            .iter()
-            .position(|l| Some(l.name) == languages.detect(doc.path(), ""))
-            .unwrap();
-        let config = load(&LANGUAGES[index]).unwrap();
+        let language = languages.detect(doc.path(), "").unwrap().to_string();
         let step = |doc: &Document, engine: &mut SyntaxEngine, what: &str| {
             let kept: Vec<Vec<Span>> = {
                 let h = engine.highlights_default(doc).unwrap();
@@ -651,9 +598,10 @@ mod tests {
                     .map(|r| h.line(r).to_vec())
                     .collect()
             };
-            let kept_tree = engine.tree(doc.id()).unwrap().root_node().to_sexp();
+            let kept_tree = engine.trees.tree(doc, &language).unwrap();
+            let kept_tree = kept_tree.root_node().to_sexp();
             let fresh_doc = Document::with_text(&doc.buffer().text());
-            let tree = parse(&mut Parser::new(), &config, fresh_doc.buffer(), None).unwrap();
+            let tree = trees::parse_fresh(&language, fresh_doc.buffer()).unwrap();
             assert_eq!(kept_tree, tree.root_node().to_sexp(), "tree after {what}");
             assert_eq!(
                 kept,
@@ -730,8 +678,9 @@ mod tests {
             let whole = ours(file, text);
             for first in 0..doc.buffer().line_count() {
                 with_engine(|engine| {
+                    let trees = SyntaxTrees::default();
                     let some = engine
-                        .highlight(&doc, &languages, first..first + 2)
+                        .highlight(&doc, &languages, &trees, first..first + 2)
                         .unwrap();
                     for (row, line) in whole.iter().enumerate().skip(first).take(2) {
                         assert_eq!(some.line(row), &line[..], "{file} row {row} from {first}");
@@ -746,12 +695,13 @@ mod tests {
     fn highlights_are_kept_until_the_text_changes() {
         let mut engine = SyntaxEngine::default();
         let languages = crate::config::Config::default().languages;
+        let trees = SyntaxTrees::default();
         let mut doc = document("a.rs", "fn a() {}\nfn b() {}\nfn c() {}\n");
-        let first = engine.highlight(&doc, &languages, 0..3).unwrap() as *const Highlights;
-        let again = engine.highlight(&doc, &languages, 1..2).unwrap() as *const Highlights;
+        let first = engine.highlight(&doc, &languages, &trees, 0..3).unwrap() as *const Highlights;
+        let again = engine.highlight(&doc, &languages, &trees, 1..2).unwrap() as *const Highlights;
         assert_eq!(first, again, "a cached range covering the rows is reused");
         doc.insert(crate::core::Position::new(0, 0), "pub ");
-        let after = engine.highlight(&doc, &languages, 0..1).unwrap();
+        let after = engine.highlight(&doc, &languages, &trees, 0..1).unwrap();
         assert_eq!(after.rows(), 0..1, "recomputed after an edit");
         assert_eq!(after.line(0)[0].name(), "keyword", "`pub`");
     }

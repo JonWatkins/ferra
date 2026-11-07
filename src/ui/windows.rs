@@ -94,7 +94,7 @@ pub fn draw_windows(
         let state = views.entry((id, document.id())).or_default();
         let highlights = syntax.as_deref_mut().and_then(|engine| {
             let rows = state.visible_rows(document, window_cursor, rect.height, &editor.options);
-            engine.highlight(document, &editor.languages, rows)
+            engine.highlight(document, &editor.languages, &editor.syntax_trees, rows)
         });
 
         let view = EditorView::new(document, &editor.options, theme)

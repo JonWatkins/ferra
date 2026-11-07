@@ -251,14 +251,19 @@ it stops.
 
   `HIGHLIGHT_NAMES` are the names captures map to (the one with the most
   parts all in the capture's name), and they double as theme scopes.
-- `SyntaxEngine` compiles each language's queries on first use and keeps a
-  tree per document. `Buffer` logs every edit (insert and delete, so undo,
-  redo and reloads too) as byte offsets and points, and the engine feeds
-  the edits since its tree was built to `Tree::edit`, then re-parses
-  reusing the old tree, reading the rope chunk by chunk. A different
-  buffer (`Buffer::id`; clones get new ids), a different language or a log
-  that's moved past (it keeps the last 4,096 edits) means a full parse.
-  Documents over 4M chars aren't parsed.
+- `SyntaxTrees` (`trees.rs`), held by the editor (`Editor::syntax_trees`)
+  so indentation and highlighting share it, keeps a tree per document.
+  `Buffer` logs every edit (insert and delete, so undo, redo and reloads
+  too) as byte offsets and points; asked for a tree, it feeds the edits
+  since the tree was built to `Tree::edit`, then re-parses reusing the old
+  tree, reading the rope chunk by chunk. A different buffer (`Buffer::id`;
+  clones get new ids), a different language or a log that's moved past (it
+  keeps the last 4,096 edits) means a full parse. Documents over 4M chars
+  aren't parsed. Asking needs only `&self` (a `RefCell` inside), since
+  drawing borrows the editor immutably; trees come back as clones, which
+  share their nodes.
+- `SyntaxEngine` compiles each language's queries on first use, and
+  highlights from the trees.
 
 Each window asks the engine for the rows it's about to show
 (`ViewState::visible_rows` scrolls a copy of its viewport the way drawing
@@ -362,8 +367,18 @@ Indentation follows the language's rules where it has them
   outdent line). So nodes opened on one line (`foo(bar(`) add one level,
   and a file indented by a deeper base keeps it. Each row's innermost node
   is found by laying nodes over the rows they cover in start order, so
-  later (nested) ones win: linear in the file, about 100 ms to re-indent
-  15,000 lines in release, most of it the parse.
+  later (nested) ones win.
+- **Only the rows asked for are looked at**: `compute` takes the kept tree
+  (`SyntaxTrees`), runs the query over just their bytes (which catches the
+  nodes around them, and closers on them), and reads the indentation of
+  lines above from the buffer. So Enter, `o` or a closing bracket costs
+  about the same in any size of file: `o` on line 12,000 of a 25,600-line
+  Rust file takes 0.7 ms in release, down from 128 ms when every new line
+  parsed the whole file. The exception is a node closed by a made-up token
+  that ends before the rows (the `{` of `if (x) {` on the line above, which
+  tree-sitter may close at once): the made-up tokens before the rows are
+  found by walking only the branches with errors, and the query is run
+  around each.
 - **Unclosed brackets while typing**: tree-sitter either makes up the
   closing token (`MISSING`) or leaves the bracket loose in an `ERROR` node.
   Either way the node is taken to be open to the end of the text, which is
@@ -991,9 +1006,8 @@ status, branches and history.
 - Reading the terminal's clipboard (an OSC 52 query), so `"+p` over SSH
   could paste what was copied on the local machine; for now that's the
   terminal's own paste.
-- Syntax: indentation (`=`, Enter) parses the file afresh rather than
-  using the engine's tree, which lives in the app, not the editor; files
-  over 4M chars aren't highlighted (the first parse is the cost); and
+- Syntax: files over 4M chars aren't parsed (the first parse is the
+  cost), so they get no highlighting and heuristic indentation; and
   combined injections (JavaScript's `css\`...\``) only gather the matches
   in the rows being drawn.
 - Loading grammars and queries at runtime, Helix-style, instead of

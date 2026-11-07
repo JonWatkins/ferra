@@ -222,15 +222,16 @@ impl Editor {
     /// language's rules (see [`indent::compute`]), or `None` without rules.
     fn rule_indents(&self, rows: RangeInclusive<usize>) -> Option<Vec<Option<usize>>> {
         let language = self.language_of(&self.document)?;
-        let buffer = self.document.buffer();
-        if buffer.len_chars() > crate::syntax::MAX_HIGHLIGHT_CHARS {
+        if !indent::has_rules(language) {
             return None;
         }
+        let buffer = self.document.buffer();
         let style = IndentStyle {
             tab_width: self.options.tab_width.max(1),
             unit: self.indent_width(),
         };
-        indent::compute(language, &buffer.text(), rows, style)
+        let tree = self.syntax_trees.tree(&self.document, language)?;
+        indent::compute(language, &tree, buffer, rows, style)
     }
 
     /// One line's indentation by the rules.

@@ -24,13 +24,14 @@
 //! `<script>`'s raw text) are left alone. Languages where indentation is
 //! meaning (Python, YAML) or that don't nest (Markdown) have no rules.
 
-use std::collections::HashSet;
-use std::ops::RangeInclusive;
+use std::collections::{HashMap, HashSet};
+use std::ops::{Range, RangeInclusive};
 use std::sync::OnceLock;
 
-use tree_sitter::{Node, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
+use tree_sitter::{Node, Point, Query, QueryCursor, StreamingIterator, Tree};
 
 use super::languages::LANGUAGES;
+use crate::core::Buffer;
 use crate::core::columns::display_width;
 
 const RUST: &str = r#"
@@ -186,41 +187,60 @@ pub struct IndentStyle {
 /// have. `None` overall if `language` has no rules or parsing failed.
 pub fn compute(
     language: &str,
-    text: &str,
+    tree: &Tree,
+    buffer: &Buffer,
     rows: RangeInclusive<usize>,
     style: IndentStyle,
 ) -> Option<Vec<Option<usize>>> {
     let query = rules(language)?;
-    let def = LANGUAGES.iter().find(|l| l.name == language)?;
-    let mut parser = Parser::new();
-    parser.set_language(&(def.grammar)()).ok()?;
-    let tree = parser.parse(text, None)?;
-    let lines: Vec<&str> = text.split('\n').collect();
-    let structure = Structure::collect(query, &tree, text);
+    // Only nodes touching the rows matter: the ones they're inside, and
+    // closers on them. One byte before, so an empty last line still
+    // touches what's open at the end.
+    let start = buffer.row_to_byte(*rows.start());
+    let end = buffer.row_to_byte(rows.end().saturating_add(1));
+    let bytes = start.saturating_sub(1)..end.max(start + 1);
+    let mut structure = Structure::collect(query, tree, buffer, bytes.clone());
+    if tree.root_node().has_error() {
+        // A node left open (its closer made up by error recovery) is open
+        // to the end of the text, but if it ends before the rows, the query
+        // above didn't see it: look around each made-up closer before them.
+        let mut missing = Vec::new();
+        missing_before(tree.root_node(), start, &mut missing);
+        for at in missing {
+            let around = Structure::collect(query, tree, buffer, at.saturating_sub(1)..at + 1);
+            let open = around.indents.into_iter().filter(|n| n.unterminated);
+            structure.indents.extend(open);
+        }
+        loose_brackets(tree.root_node(), &mut structure.indents);
+    }
     let innermost = structure.innermost_by_row(&rows);
 
-    let mut widths: Vec<usize> = lines
-        .iter()
-        .map(|line| display_width(leading_blanks(line), style.tab_width))
-        .collect();
+    // Widths decided so far; other lines keep the width they have.
+    let mut decided: HashMap<usize, usize> = HashMap::new();
+    let width_of = |decided: &HashMap<usize, usize>, row: usize| {
+        decided
+            .get(&row)
+            .copied()
+            .unwrap_or_else(|| display_width(leading_blanks(&buffer.line(row)), style.tab_width))
+    };
     let mut result = Vec::new();
     for row in rows.clone() {
-        let Some(line) = lines.get(row) else {
+        if row >= buffer.line_count() {
             result.push(None);
             continue;
-        };
-        let start = line.len() - line.trim_start_matches([' ', '\t']).len();
-        let point = Point::new(row, start);
-        if inside_text(&tree, point) {
+        }
+        let line = buffer.line(row);
+        let point = Point::new(row, leading_blanks(&line).len());
+        if inside_text(tree, point) {
             result.push(None);
             continue;
         }
         let width = match innermost[row - rows.start()] {
             None => 0,
-            Some(node) if structure.outdents_at(point, node) => widths[node.start_row],
-            Some(node) => widths[node.start_row] + style.unit,
+            Some(node) if structure.outdents_at(point, node) => width_of(&decided, node.start_row),
+            Some(node) => width_of(&decided, node.start_row) + style.unit,
         };
-        widths[row] = width;
+        decided.insert(row, width);
         result.push(Some(width));
     }
     Some(result)
@@ -245,12 +265,15 @@ struct IndentNode {
 }
 
 impl Structure {
-    fn collect(query: &Query, tree: &Tree, text: &str) -> Structure {
+    /// The nodes and tokens of `tree` touching `bytes`.
+    fn collect(query: &Query, tree: &Tree, buffer: &Buffer, bytes: Range<usize>) -> Structure {
         let names = query.capture_names();
         let mut indents = Vec::new();
         let mut outdents = HashSet::new();
         let mut cursor = QueryCursor::new();
-        let mut captures = cursor.captures(query, tree.root_node(), text.as_bytes());
+        cursor.set_byte_range(bytes);
+        let text = |node: Node| buffer.byte_chunks(node.byte_range());
+        let mut captures = cursor.captures(query, tree.root_node(), text);
         while let Some((m, index)) = captures.next() {
             let capture = m.captures()[*index];
             let node = capture.node;
@@ -273,9 +296,6 @@ impl Structure {
                 }
                 _ => {}
             }
-        }
-        if tree.root_node().has_error() {
-            loose_brackets(tree.root_node(), &mut indents);
         }
         Structure { indents, outdents }
     }
@@ -354,6 +374,26 @@ fn loose_brackets(node: Node, indents: &mut Vec<IndentNode>) {
     }
 }
 
+/// The positions of the tokens made up by error recovery (`MISSING`)
+/// under `node` that start before byte `before`. Only branches holding an
+/// error are walked.
+fn missing_before(node: Node, before: usize, found: &mut Vec<usize>) {
+    if node.start_byte() >= before {
+        return;
+    }
+    if node.is_missing() {
+        found.push(node.start_byte());
+        return;
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i)
+            && child.has_error()
+        {
+            missing_before(child, before, found);
+        }
+    }
+}
+
 /// Whether `node`'s last token was made up by error recovery.
 fn ends_missing(node: Node) -> bool {
     let mut node = node;
@@ -396,6 +436,18 @@ mod tests {
         tab_width: 4,
         unit: 4,
     };
+
+    /// [`compute`] on `text`, freshly parsed.
+    fn compute(
+        language: &str,
+        text: &str,
+        rows: RangeInclusive<usize>,
+        style: IndentStyle,
+    ) -> Option<Vec<Option<usize>>> {
+        let buffer = Buffer::from_text(text);
+        let tree = super::super::trees::parse_fresh(language, &buffer)?;
+        super::compute(language, &tree, &buffer, rows, style)
+    }
 
     /// `text` re-indented with spaces, blank lines left empty.
     fn reindent(language: &str, text: &str) -> String {
@@ -469,6 +521,41 @@ mod tests {
         let text = "  fn f() {\nx();\n  }";
         let widths = compute("rust", text, 1..=2, STYLE).unwrap();
         assert_eq!(widths, [Some(6), Some(2)]);
+    }
+
+    #[test]
+    fn one_row_at_a_time_matches_the_whole_text() {
+        let samples = [
+            (
+                "rust",
+                "fn main() {\n    let x = foo(\n        1,\n    );\n    if x {\n        y();\n    }\n}\n",
+            ),
+            ("rust", "impl A {\n    fn f() {\n        g(\n"),
+            (
+                "javascript",
+                "function f() {\n    return [\n        1,\n    ];\n}\nif (x) {\n",
+            ),
+            (
+                "go",
+                "func f() {\n    switch x {\n    case 1:\n        y()\n    }\n}\n",
+            ),
+            (
+                "bash",
+                "if a; then\n    b\nelse\n    c\nfi\nfor i in x; do\n    a\n",
+            ),
+            (
+                "html",
+                "<ul>\n    <li>\n        a\n    </li>\n</ul>\n<div>\n",
+            ),
+        ];
+        for (language, text) in samples {
+            let rows = text.split('\n').count() - 1;
+            let whole = compute(language, text, 0..=rows, STYLE).unwrap();
+            for (row, width) in whole.iter().enumerate() {
+                let one = compute(language, text, row..=row, STYLE).unwrap();
+                assert_eq!(one[0], *width, "{language} row {row} of {text:?}");
+            }
+        }
     }
 
     #[test]

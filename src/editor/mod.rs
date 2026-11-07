@@ -91,6 +91,9 @@ pub struct Editor {
     pub options: EditorOptions,
     /// Which files are in which language (`[languages]` config).
     pub languages: crate::config::Languages,
+    /// Each document's syntax tree, kept up to date as it's edited, for
+    /// indentation and highlighting.
+    pub syntax_trees: crate::syntax::SyntaxTrees,
     pub registers: Registers,
     /// The last `f`/`t`/`F`/`T`, for `;` and `,`.
     pub last_char_search: Option<CharSearch>,
