@@ -168,12 +168,11 @@ pub fn register(r: &mut CommandRegistry) {
 /// wrapping this is `j`/`k`.
 fn move_screen_rows(editor: &mut Editor, count: usize, down: bool) {
     if !editor.options.wrap {
-        let lines = if down {
-            count as isize
-        } else {
-            -(count as isize)
-        };
-        editor.document.move_vertical(lines);
+        // `j`/`k`, stepping over closed folds as over one line.
+        let doc = &mut editor.document;
+        let row = doc.cursor().row;
+        let target = doc.step_visible_lines(row, count, down);
+        doc.move_vertical(target as isize - row as isize);
         return;
     }
     let windows = editor.windows();
@@ -183,33 +182,38 @@ fn move_screen_rows(editor: &mut Editor, count: usize, down: bool) {
         &editor.options,
     );
     let tab = editor.options.tab_width;
-    let buffer = editor.document.buffer();
-    let last = buffer.line_count() - 1;
-    let Position { row, col } = editor.document.cursor();
+    let doc = &editor.document;
+    let buffer = doc.buffer();
+    let Position { row, col } = doc.cursor();
     let line = buffer.line(row);
     let starts = layout.row_starts(&line);
-    let part = wrap::row_of(&starts, col);
+    // A closed fold is one row.
+    let part = if doc.closed_fold_at(row).is_some() {
+        0
+    } else {
+        wrap::row_of(&starts, col)
+    };
     let screen_col = editor
         .wanted_screen_column()
         .unwrap_or_else(|| display_col(&line, col, tab) - display_col(&line, starts[part], tab));
 
     let (mut row, mut part) = (row, part);
     for _ in 0..count {
-        let parts = layout.rows(&buffer.line(row));
+        let parts = layout.rows_in(doc, row);
         if down {
             if part + 1 < parts {
                 part += 1;
-            } else if row < last {
-                row += 1;
+            } else if let Some(next) = doc.next_visible_line(row) {
+                row = next;
                 part = 0;
             } else {
                 break;
             }
         } else if part > 0 {
             part -= 1;
-        } else if row > 0 {
-            row -= 1;
-            part = layout.rows(&buffer.line(row)) - 1;
+        } else if let Some(previous) = doc.previous_visible_line(row) {
+            row = previous;
+            part = layout.rows_in(doc, row).saturating_sub(1);
         } else {
             break;
         }

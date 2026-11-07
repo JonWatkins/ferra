@@ -109,7 +109,7 @@ pub fn register(r: &mut CommandRegistry) {
 
 /// Starts an operator, or in visual mode applies it to the selection. A
 /// count on a visual `>` or `<` shifts that many times (`3>`).
-fn begin(cx: &mut Context, operator: Operator) -> CommandResult {
+pub(super) fn begin(cx: &mut Context, operator: Operator) -> CommandResult {
     let times = match operator {
         Operator::Indent | Operator::Outdent => cx.count(),
         _ => 1,

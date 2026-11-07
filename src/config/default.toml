@@ -224,6 +224,7 @@ block-comment = ["/*", "*/"]
 "ui.splash.version" = "#565f89"
 "ui.splash.key" = "#e0af68"
 "ui.splash.text" = "#a9b1d6"
+"ui.fold" = { fg = "#6b7280", modifiers = ["italic"] }
 "ui.popup" = { fg = "#d4d7dd", bg = "#1f2229" }
 "ui.popup.border" = "#4b5263"
 "ui.popup.title" = { fg = "#7aa2f7", modifiers = ["bold"] }
@@ -302,6 +303,16 @@ block-comment = ["/*", "*/"]
 "<PageUp>" = "scroll_page_up"
 "<C-e>" = "scroll_line_down"
 "<C-y>" = "scroll_line_up"
+"za" = "fold_toggle"
+"zc" = "fold_close"
+"zo" = "fold_open"
+"zd" = "fold_open"
+"zR" = "fold_open_all"
+"zE" = "fold_open_all"
+"zM" = "fold_close_all"
+"zf" = "operator_fold"
+"zj" = "fold_next"
+"zk" = "fold_previous"
 "zz" = "view_center"
 "zt" = "view_top"
 "zb" = "view_bottom"
@@ -586,6 +597,7 @@ block-comment = ["/*", "*/"]
 "<PageUp>" = "scroll_page_up"
 "<C-e>" = "scroll_line_down"
 "<C-y>" = "scroll_line_up"
+"zf" = "operator_fold"
 "zz" = "view_center"
 "zt" = "view_top"
 "zb" = "view_bottom"

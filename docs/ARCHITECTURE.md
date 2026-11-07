@@ -794,6 +794,36 @@ under the cursor, splits off a `:line[:col]` suffix, and opens the first of
 "beside the current file" and "from the working directory" that exists,
 through `open`, so it's a jump and `<C-^>` comes back.
 
+### Folding
+
+Fold regions come from indentation (`core/fold.rs`): `region_from(row)` is
+the row and the lines after it indented more (blank lines among them
+included), plus a closing-bracket line at the row's own indent;
+`region_around(row)` is that, or the region of the nearest line above, no
+deeper, that reaches the row. `za`/`zc` close the region around the
+cursor, `zM` every outermost one, `zf` any operator range
+(`Operator::Fold`).
+
+Closed folds live on the `Document` (`document/folds.rs`), as sorted,
+non-overlapping line ranges in a `RefCell`, so readers with `&Document`
+(drawing) can bring them up to date: like the syntax trees, they replay
+the buffer's edit log, so undo and reloads move them as well. A fold after
+an edit shifts with its lines, an edit within its first line leaves it,
+and anything else touching it opens it. A different buffer, or a log
+that's moved past, opens them all.
+
+Everything that walks lines treats a closed fold as one: `j`/`k` turn
+their count of visible lines into buffer lines (`over_folds`, via
+`Document::step_visible_lines`), `gj`/`gk` step with
+`next_visible_line`, `enforce_cursor_rules` keeps the cursor on a fold's
+first line, `apply_operator_over` widens line ranges to whole folds,
+`TextLayout::rows_in` gives a closed fold one screen row (for keeping the
+cursor in sight, the view's last line and the highlight prediction), and
+drawing shows the first line, unwrapped, with a dim `⋯ N more lines`
+(`ui.fold`). `Editor::reveal_cursor` opens folds at the cursor after
+searches, jump motions other than `gg`/`G`, mark jumps, undo and redo, as
+Vim's default `foldopen` does.
+
 ### Reflowing text (`gq`)
 
 `gq` is `Operator::Format` (`gw` with `keep_cursor`) over the lines its
@@ -1166,9 +1196,9 @@ status, branches and history.
   auto-wrapping at `text-width`), use an external `formatprg`, or know
   block comments' middle lines (` * ` in `/* */`); two spaces after a
   sentence become one.
-- Folding (`zf`, `za`, `zc`, `zo`, `zR`, `zM`): needs `j`/`k` and the
-  view to step over hidden lines, and fold ranges kept in place as lines
-  are added and removed.
+- Folding: only by indentation (no syntax-tree or marker folds); closing an
+  outer fold forgets the folds inside it; no fold column; folds aren't
+  saved with the file; relative line numbers count hidden lines.
 - `gf` takes the name as written: no `path`/`suffixesadd` search, and
   `gx` (open a URL) isn't there.
 - `"=` (the expression register).

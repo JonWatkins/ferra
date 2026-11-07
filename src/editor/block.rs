@@ -118,6 +118,10 @@ impl Editor {
                 self.format_text(block.first, block.last, keep_cursor);
                 return Ok(());
             }
+            Operator::Fold => {
+                self.document.close_fold(block.first, block.last);
+                return Ok(());
+            }
             Operator::Indent | Operator::Outdent => {
                 self.shift_block(block, operator == Operator::Indent);
                 return Ok(());

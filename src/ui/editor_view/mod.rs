@@ -55,8 +55,9 @@ impl ViewState {
             height,
             options.scroll_off,
         );
-        // Wrapped lines take more rows, so this may be more than are shown.
-        top..top + height
+        // Every line up to the last shown (closed folds and wrapped lines
+        // change how many that is).
+        top..layout.bottom(document, top, height) + 1
     }
 }
 
@@ -187,7 +188,17 @@ impl StatefulWidget for EditorView<'_> {
         while y < height && row < text.line_count() {
             let line_text = &*text.line(row);
             let line_len = text.line_len(row);
-            let starts = layout.row_starts(line_text);
+            // A closed fold shows as its first line, on one row.
+            let fold = self
+                .document
+                .closed_fold_at(row)
+                .filter(|&(first, _)| first == row);
+            let starts = if fold.is_some() {
+                vec![0]
+            } else {
+                layout.row_starts(line_text)
+            };
+            let wrap = layout.wrap && fold.is_none();
             for (part, &start) in starts.iter().enumerate() {
                 if y >= height {
                     break;
@@ -208,8 +219,10 @@ impl StatefulWidget for EditorView<'_> {
                         end,
                         first: part == 0,
                         last: last_part,
-                        left: if layout.wrap {
+                        left: if wrap {
                             line::display_col(line_text, start, tab_width)
+                        } else if layout.wrap {
+                            0
                         } else {
                             left
                         },
@@ -218,11 +231,16 @@ impl StatefulWidget for EditorView<'_> {
                     text_style,
                     &syntax_styles,
                 );
+                if let Some((first, last)) = fold {
+                    self.draw_fold_note(buf, text_area, screen_y, line_text, last - first, left);
+                }
                 let cursor_here = row == cursor.row
-                    && (crate::core::wrap::row_of(&starts, cursor.col) == part || !layout.wrap);
+                    && (crate::core::wrap::row_of(&starts, cursor.col) == part || !wrap);
                 if cursor_here && !text_area.is_empty() {
-                    let seg_left = if layout.wrap {
+                    let seg_left = if wrap {
                         line::display_col(line_text, start, tab_width)
+                    } else if layout.wrap {
+                        0
                     } else {
                         left
                     };
@@ -234,7 +252,7 @@ impl StatefulWidget for EditorView<'_> {
                 }
                 y += 1;
             }
-            row += 1;
+            row = fold.map_or(row, |(_, last)| last) + 1;
         }
     }
 }
@@ -254,6 +272,34 @@ struct RowPart<'l> {
 }
 
 impl EditorView<'_> {
+    /// After a closed fold's first line: `⋯ N more lines`, dimmed, if it
+    /// fits.
+    fn draw_fold_note(
+        &self,
+        buf: &mut Buffer,
+        text_area: Rect,
+        y: u16,
+        line_text: &str,
+        hidden: usize,
+        left: usize,
+    ) {
+        let width = text_area.width as usize;
+        let end = crate::core::columns::display_width(line_text, self.options.tab_width)
+            .saturating_sub(left);
+        let s = if hidden == 1 { "" } else { "s" };
+        let note = format!("⋯ {hidden} more line{s}");
+        let x = end + 1;
+        if x < width {
+            buf.set_stringn(
+                text_area.x + x as u16,
+                y,
+                &note,
+                width - x,
+                self.theme.get("ui.fold"),
+            );
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn draw_row(
         &self,

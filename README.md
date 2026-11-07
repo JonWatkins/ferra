@@ -45,6 +45,9 @@ type, open a file or split the window.
 | Normal  | `zz` `zt` `zb` (`z.` `z<CR>` `z-`) | Scroll the cursor line to the middle / top / bottom (and go to its first non-blank) |
 | Normal  | `H` `M` `L` (`3H`) | Top / middle / bottom line on screen; motions too (`dL`) |
 | Normal  | `gj` `gk` (`g<Down>` `g<Up>`) | Down / up a screen row, through the rows of a wrapped line |
+| Normal  | `za` `zc` `zo` | Toggle / close / open the fold at the cursor (a line and the lines indented under it) |
+| Normal  | `zM` `zR`, `zf` + motion | Close / open every fold; fold any lines (`zfip`, visual `zf`) |
+| Normal  | `zj` `zk` | Next / previous line that starts a fold |
 | Normal  | `r` + char | Replace characters (`3rx`) |
 | Normal  | `R` | Replace mode: type over the text (`<BS>` puts it back; `3Rab<Esc>` types it three times) |
 | Normal  | `>` `<` + motion, `>>` `<<` | Indent / outdent lines (`>ip`, `3>>`; visual `>` `<`) |
@@ -218,6 +221,15 @@ Ranges work before any `:` command: `%` (the whole file), `5`, `5,10`, `.`
 last visual selection; `:` in visual mode fills it in). A range alone jumps
 to its line (`:42`, `:$`). `:[range]d` and `:[range]y` delete or yank whole
 lines.
+
+### Folding
+
+Folds come from indentation, so they work in any language: a line folds
+with the lines indented under it, and a closing `}`, `)` or `]` after them.
+A closed fold shows as its first line and `⋯ N more lines`; `j` and `k`
+step over it, and `dd`, `yy`, `>>` and other line operators take all of it.
+Searches, mark jumps and undo open a fold they land in; changing text
+inside one opens it too.
 
 ### Sorting
 

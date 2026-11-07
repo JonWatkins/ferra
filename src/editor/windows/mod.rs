@@ -274,27 +274,39 @@ impl TextLayout {
         scroll_off: usize,
     ) -> usize {
         let buffer = document.buffer();
-        let row_in_line = if self.wrap {
+        let folded = document.closed_fold_at(cursor.row).is_some();
+        let row_in_line = if self.wrap && !folded {
             crate::core::wrap::row_of(&self.row_starts(&buffer.line(cursor.row)), cursor.col)
         } else {
             0
         };
-        follow_cursor(
+        let top = follow_cursor(
             top,
             (cursor.row, row_in_line),
             height,
             buffer.line_count(),
             scroll_off,
-            |row| self.rows(&buffer.line(row)),
-        )
+            |row| self.rows_in(document, row),
+        );
+        // The view starts at a fold's first line, not inside it.
+        document.closed_fold_at(top).map_or(top, |(first, _)| first)
+    }
+
+    /// How many screen rows line `row` of `document` takes: a closed fold
+    /// takes one, for its first line, and its other lines none.
+    pub fn rows_in(&self, document: &Document, row: usize) -> usize {
+        match document.closed_fold_at(row) {
+            Some((first, _)) => usize::from(first == row),
+            None => self.rows(&document.buffer().line(row)),
+        }
     }
 
     /// The last line at least partly shown in a view `height` rows tall
-    /// starting at `top`.
+    /// starting at `top` (a closed fold's last line, if it ends there).
     pub fn bottom(&self, document: &Document, top: usize, height: usize) -> usize {
         let buffer = document.buffer();
         let last = buffer.line_count() - 1;
-        if !self.wrap {
+        if !self.wrap && document.closed_folds().is_empty() {
             return (top + height)
                 .saturating_sub(1)
                 .min(last)
@@ -303,11 +315,11 @@ impl TextLayout {
         let mut used = 0;
         let mut row = top.min(last);
         loop {
-            used += self.rows(&buffer.line(row));
-            if used >= height || row == last {
-                return row;
+            used += self.rows_in(document, row);
+            match document.next_visible_line(row) {
+                Some(next) if used < height => row = next,
+                _ => return document.closed_fold_at(row).map_or(row, |(_, end)| end),
             }
-            row += 1;
         }
     }
 }

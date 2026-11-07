@@ -8,6 +8,7 @@ mod command_line;
 mod editing;
 mod ex_commands;
 mod files;
+mod folds;
 mod history;
 mod jumps;
 mod macros;
@@ -45,6 +46,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     command_line::register(registry);
     options::register(registry);
     scrolling::register(registry);
+    folds::register(registry);
 }
 
 #[cfg(test)]

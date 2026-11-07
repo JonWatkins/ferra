@@ -405,6 +405,7 @@ pub(super) fn run(cx: &mut Context, motion: &'static Motion, args: MotionArgs) -
         count: multiply_counts(pending.count, args.count),
         ..args
     };
+    let args = over_folds(doc, motion, args);
     // A failed motion (`dfx` with no `x`) cancels the operator.
     let Some(range) = motion.range(doc.buffer(), cursor, args) else {
         return Ok(());
@@ -414,7 +415,23 @@ pub(super) fn run(cx: &mut Context, motion: &'static Motion, args: MotionArgs) -
         .apply_operator_over(pending.operator, range, register, motion.jump)
 }
 
+/// `j` and `k` step over a closed fold as over one line: their count, in
+/// visible lines, becomes the lines in the buffer that covers.
+fn over_folds(doc: &crate::editor::Document, motion: &Motion, args: MotionArgs) -> MotionArgs {
+    let down = motion.name == DOWN.name;
+    if !(down || motion.name == UP.name) || doc.closed_folds().is_empty() {
+        return args;
+    }
+    let row = doc.cursor().row;
+    let target = doc.step_visible_lines(row, args.n(), down);
+    MotionArgs {
+        count: Some(target.abs_diff(row)),
+        ..args
+    }
+}
+
 fn move_cursor(editor: &mut Editor, motion: &Motion, args: MotionArgs) {
+    let args = over_folds(&editor.document, motion, args);
     let doc = &mut editor.document;
     let cursor = doc.cursor();
     let Some(target) = (motion.target)(doc.buffer(), cursor, args) else {
@@ -430,6 +447,11 @@ fn move_cursor(editor: &mut Editor, motion: &Motion, args: MotionArgs) {
         doc.set_cursor(target);
     }
     editor.note_block_motion(motion.name == LINE_END.name, motion.vertical);
+    // Like Vim's default `foldopen`: searches, marks, `%` and paragraph
+    // moves open a fold they land in; `gg`/`G` don't.
+    if motion.jump && motion.name != FILE_START.name && motion.name != FILE_END.name {
+        editor.reveal_cursor();
+    }
 }
 
 /// `2d3w` deletes six words: counts before and after the operator multiply.

@@ -52,6 +52,7 @@ fn goto_mark(cx: &mut Context, motion: &'static Motion) -> CommandResult {
             position
         };
         doc.set_cursor(target);
+        cx.editor.reveal_cursor();
         return Ok(());
     }
     let args = MotionArgs {

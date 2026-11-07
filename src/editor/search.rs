@@ -178,6 +178,8 @@ impl Editor {
         self.search.highlight = true;
         self.push_jump();
         self.document.set_cursor(hit.position);
+        // A match in a closed fold opens it, as in Vim.
+        self.reveal_cursor();
         self.report_search(&hit);
         Ok(())
     }

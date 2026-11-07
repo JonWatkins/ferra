@@ -10,6 +10,8 @@ pub fn register(r: &mut CommandRegistry) {
                 break;
             }
         }
+        // Show what changed, even in a closed fold.
+        cx.editor.reveal_cursor();
         Ok(())
     });
     r.register(
@@ -28,6 +30,8 @@ pub fn register(r: &mut CommandRegistry) {
                 break;
             }
         }
+        // Show what changed, even in a closed fold.
+        cx.editor.reveal_cursor();
         Ok(())
     });
 }

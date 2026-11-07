@@ -25,6 +25,8 @@ pub enum Operator {
     Format {
         keep_cursor: bool,
     },
+    /// `zf`: closes the lines the range touches into a fold.
+    Fold,
 }
 
 /// An operator waiting for a motion or text object (operator-pending mode).
@@ -80,6 +82,18 @@ impl Editor {
         register: Option<char>,
         jump: bool,
     ) -> Result<(), String> {
+        // Whole lines take in any closed fold they reach into (`dd` on a
+        // fold deletes it all), as in Vim.
+        let range = match range {
+            Range::Lines { first, last } => {
+                let doc = &self.document;
+                Range::Lines {
+                    first: doc.closed_fold_at(first).map_or(first, |(a, _)| a),
+                    last: doc.closed_fold_at(last).map_or(last, |(_, b)| b),
+                }
+            }
+            chars => chars,
+        };
         // These transform the text in place and don't touch registers.
         match operator {
             Operator::Indent | Operator::Outdent => {
@@ -106,6 +120,13 @@ impl Editor {
             Operator::Format { keep_cursor } => {
                 let (first, last) = range.rows();
                 self.format_text(first, last, keep_cursor);
+                return Ok(());
+            }
+            Operator::Fold => {
+                let (first, last) = range.rows();
+                self.document.close_fold(first, last);
+                let col = motion::first_non_blank(self.document.buffer(), first);
+                self.document.set_cursor(Position::new(first, col));
                 return Ok(());
             }
             Operator::Delete | Operator::Change | Operator::Yank => {}
@@ -167,7 +188,8 @@ impl Editor {
                 | Operator::ToggleCase
                 | Operator::Comment
                 | Operator::Reindent
-                | Operator::Format { .. },
+                | Operator::Format { .. }
+                | Operator::Fold,
                 _,
             ) => unreachable!("handled before touching registers"),
         }

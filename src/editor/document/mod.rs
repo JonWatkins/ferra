@@ -1,4 +1,5 @@
 mod file;
+mod folds;
 mod marks;
 
 pub use file::{DiskState, OpenInfo, SaveInfo};
@@ -63,6 +64,8 @@ pub struct Document {
     detected_indent: Option<IndentUnit>,
     /// The indentation chosen with `:indent`, over any detected one.
     chosen_indent: Option<IndentUnit>,
+    /// Closed folds (`zc`), kept in step with edits.
+    folds: folds::Folds,
 }
 
 impl Document {

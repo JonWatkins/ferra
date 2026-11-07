@@ -371,8 +371,23 @@ impl Editor {
             self.mode,
             Mode::Normal | Mode::OperatorPending | Mode::Visual
         ) {
+            // A closed fold shows as its first line, so that's where the
+            // cursor sits.
+            let cursor = self.document.cursor();
+            if let Some((first, _)) = self.document.closed_fold_at(cursor.row)
+                && first != cursor.row
+            {
+                self.document.set_cursor(Position::new(first, cursor.col));
+            }
             self.document.clamp_to_last_char();
         }
+    }
+
+    /// Opens any closed fold the cursor is in, for moves that should show
+    /// where they land (a search, a mark, undo), as Vim's `foldopen` does.
+    pub fn reveal_cursor(&mut self) {
+        let row = self.document.cursor().row;
+        while self.document.open_fold_at(row) {}
     }
 
     /// Housekeeping after every command: enforces cursor rules and closes the
