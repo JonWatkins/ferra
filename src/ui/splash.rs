@@ -12,13 +12,14 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::config::Theme;
 
-/// "ferra", in figlet's standard font.
-pub const LOGO: [&str; 5] = [
-    "  __",
-    " / _| ___ _ __ _ __ __ _",
-    "| |_ / _ \\ '__| '__/ _` |",
-    "|  _|  __/ |  | | | (_| |",
-    "|_|  \\___|_|  |_|  \\__,_|",
+/// "ferra", in block letters (figlet's "ANSI Shadow" style).
+pub const LOGO: [&str; 6] = [
+    "███████╗███████╗██████╗ ██████╗  █████╗",
+    "██╔════╝██╔════╝██╔══██╗██╔══██╗██╔══██╗",
+    "█████╗  █████╗  ██████╔╝██████╔╝███████║",
+    "██╔══╝  ██╔══╝  ██╔══██╗██╔══██╗██╔══██║",
+    "██║     ███████╗██║  ██║██║  ██║██║  ██║",
+    "╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝",
 ];
 
 /// One line of the menu: the keys to press and what they do.
@@ -68,10 +69,12 @@ impl Widget for Splash<'_> {
         );
 
         // Logo, blank, version, blank, menu; without the logo if there
-        // isn't room, and nothing if the menu doesn't fit either.
+        // isn't room for it (either way), and nothing if the menu doesn't
+        // fit either.
         let menu_height = menu.len() + 2;
         let with_logo = LOGO.len() + 1 + menu_height;
-        let show_logo = area.height as usize >= with_logo;
+        let logo_width = LOGO.iter().map(|l| l.width()).max().unwrap_or(0);
+        let show_logo = area.height as usize >= with_logo && area.width as usize >= logo_width;
         let height = if show_logo { with_logo } else { menu_height };
         let menu_width = menu.iter().map(Line::width).max().unwrap_or(0);
         if (area.height as usize) < height || (area.width as usize) < menu_width {
@@ -79,16 +82,13 @@ impl Widget for Splash<'_> {
         }
 
         let mut y = area.y + ((area.height as usize - height) / 2) as u16;
-        let logo_width = LOGO.iter().map(|l| l.width()).max().unwrap_or(0);
-        if show_logo && logo_width <= area.width as usize {
+        if show_logo {
             let style = self.theme.get("ui.splash.logo");
             for line in LOGO {
                 draw_block_line(buf, area, y, logo_width, Line::styled(line, style));
                 y += 1;
             }
             y += 1;
-        } else if show_logo {
-            y += LOGO.len() as u16 + 1;
         }
         let version_width = version.width();
         draw_block_line(buf, area, y, version_width, version);
@@ -145,10 +145,10 @@ mod tests {
     #[test]
     fn logo_version_and_menu_are_centred() {
         let rows = render(60, 20);
-        let logo = rows.iter().position(|r| r.contains("/ _| ___")).unwrap();
-        assert!(rows[logo + 3].contains("\\___|"), "{rows:#?}");
+        let logo = rows.iter().position(|r| r.contains("███████╗")).unwrap();
+        assert!(rows[logo + 5].contains("╚═╝     ╚══════╝"), "{rows:#?}");
         let version = rows.iter().position(|r| r.contains("version")).unwrap();
-        assert_eq!(version, logo + 5, "a blank line after the logo");
+        assert_eq!(version, logo + 7, "a blank line after the logo");
         let menu = rows.iter().position(|r| r.contains(":e <file>")).unwrap();
         assert_eq!(menu, version + 2);
         // The keys line up in a column, and so do the descriptions.
@@ -166,12 +166,28 @@ mod tests {
     }
 
     #[test]
+    fn the_logos_lines_line_up() {
+        let rows = render(60, 20);
+        let logo = rows.iter().position(|r| r.contains("███████╗")).unwrap();
+        let starts: Vec<usize> = (logo..logo + 6)
+            .map(|y| rows[y].chars().take_while(|c| *c == ' ').count())
+            .collect();
+        assert!(starts.iter().all(|&x| x == starts[0]), "{starts:?}");
+    }
+
+    #[test]
     fn small_screens_drop_the_logo_then_everything() {
-        let rows = render(40, 6);
+        let rows = render(60, 9);
         assert!(
-            !rows.iter().any(|r| r.contains("___")),
-            "no room for the logo"
+            !rows.iter().any(|r| r.contains('█')),
+            "too short for the logo"
         );
+        let rows = render(30, 20);
+        assert!(!rows.iter().any(|r| r.contains('█')), "too narrow for it");
+        let top_gap = rows.iter().position(|r| !r.is_empty()).unwrap();
+        let bottom_gap = rows.iter().rev().position(|r| !r.is_empty()).unwrap();
+        assert!(top_gap.abs_diff(bottom_gap) <= 1, "and no gap left for it");
+        let rows = render(40, 6);
         assert!(rows.iter().any(|r| r.contains("open a file")));
         assert!(render(10, 3).iter().all(String::is_empty), "nothing fits");
     }

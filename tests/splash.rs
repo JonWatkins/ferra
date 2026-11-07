@@ -24,7 +24,7 @@ fn starting_without_a_file_shows_the_splash() {
     assert!(app.editor().splash_visible());
     let screen = screen(&mut app);
     assert!(
-        screen.contains("|  _|  __/ |  | | | (_| |"),
+        screen.contains("█████╗  █████╗  ██████╔╝██████╔╝███████║"),
         "the logo:\n{screen}"
     );
     assert!(screen.contains(&format!("version {}", env!("CARGO_PKG_VERSION"))));
