@@ -221,3 +221,52 @@ fn markdown_shows_emphasis_and_highlights_code_blocks() {
     assert_eq!(bold, vec![12, 13, 14, 15], "**bold**");
     assert_eq!(buffer[(5, 2)].fg, KEYWORD, "`fn` in the rust code block");
 }
+
+/// Whether any of rows `rows` of a `height`-row screen has text in `color`.
+fn any_in(app: &mut App, height: u16, rows: std::ops::Range<u16>, color: Color) -> bool {
+    let mut terminal = Terminal::new(TestBackend::new(40, height)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer();
+    rows.into_iter()
+        .any(|y| (0..40).any(|x| buffer[(x, y)].fg == color))
+}
+
+#[test]
+fn far_down_a_long_file_is_highlighted_when_scrolled_to_and_edited() {
+    let dir = tempfile::tempdir().unwrap();
+    let text: String = (0..3000).map(|i| format!("fn f{i}() {{}}\n")).collect();
+    let mut app = app();
+    app.open(&file(&dir, "long.rs", &text));
+    assert!(any_in(&mut app, 6, 0..3, KEYWORD), "the top");
+
+    keys(&mut app, "G");
+    assert!(
+        any_in(&mut app, 6, 0..3, KEYWORD),
+        "the bottom, after jumping"
+    );
+    keys(&mut app, "1500gg");
+    assert!(any_in(&mut app, 6, 0..3, KEYWORD), "the middle");
+
+    keys(&mut app, "ccstruct S;<Esc>");
+    assert!(any_in(&mut app, 6, 0..3, KEYWORD), "after an edit there");
+    keys(&mut app, "Oconst S: &str = \"hi\";<Esc>");
+    assert!(any_in(&mut app, 6, 0..3, STRING), "a new line's string");
+    keys(&mut app, "u");
+    assert!(!any_in(&mut app, 6, 0..3, STRING), "gone after undo");
+}
+
+#[test]
+fn two_windows_far_apart_in_one_file_are_both_highlighted() {
+    let dir = tempfile::tempdir().unwrap();
+    let text: String = (0..3000).map(|i| format!("fn f{i}() {{}}\n")).collect();
+    let mut app = app();
+    app.open(&file(&dir, "long.rs", &text));
+    keys(&mut app, ":split<CR>G");
+    // Two windows of 4 text rows, each with its status line, over the
+    // command line: rows 0-3 and 5-8.
+    assert!(
+        any_in(&mut app, 11, 0..4, KEYWORD),
+        "the window at the bottom"
+    );
+    assert!(any_in(&mut app, 11, 5..9, KEYWORD), "the window at the top");
+}

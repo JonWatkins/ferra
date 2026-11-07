@@ -18,7 +18,7 @@ pub mod text_format;
 pub mod text_object;
 
 pub use block::{Block, BlockRow};
-pub use buffer::Buffer;
+pub use buffer::{Buffer, TextEdit};
 pub use history::{Change, History, Revision};
 pub use indent::IndentUnit;
 pub use position::Position;

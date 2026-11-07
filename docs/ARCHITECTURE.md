@@ -224,25 +224,54 @@ it stops.
   the same compiled set. Markdown is two grammars: blocks, and an
   injection-only inline grammar (`INJECTION_ONLY`) for emphasis, links and
   code spans; its injection query is ours, adding `include-children`
-  because the `inline` node has hidden children. Rust's macro injections
-  are off for speed.
-- `highlight.rs` runs `tree-sitter-highlight` and turns its events into
-  spans per line, in char columns. `HIGHLIGHT_NAMES` are the names queries'
-  captures are mapped to, and they double as theme scopes.
-- `SyntaxEngine` compiles each language's queries on first use and caches
-  highlights per document, keyed on `Document::text_version`. That counter
-  changes on every edit, undo, redo and reload, unlike `edit_count`, which
-  only `.` uses. Documents over 4M chars aren't highlighted.
+  because the `inline` node has hidden children. Rust's macro calls and
+  `macro_rules!` bodies are injected as Rust.
+- `highlight.rs` highlights a range of rows from a syntax tree. It follows
+  `tree-sitter-highlight`'s rules (which ferra used before keeping trees),
+  and the tests check it gives the same spans on samples of every language
+  and on this repo's own Rust, Markdown and TOML:
+  - The locals and highlights queries are compiled as one query, so their
+    captures arrive in document order. A local definition records the
+    highlight its node gets, and references to it in scope take that
+    highlight. Patterns with `(#is-not? local)` skip locals.
+  - Of several highlight patterns matching one node, the last wins.
+  - Highlights paint over earlier ones in the order they start (by
+    position; deeper layers first at the same position; otherwise query
+    order). So a node's highlight shows over its parent's, unless the
+    parent's pattern came later in the query: TOML's
+    `(pair (bare_key)) @property` colours the key, though
+    `(bare_key) @type` matches it first. An injected layer wins a range its
+    host highlights exactly.
+  - Injections in the rows are parsed from the parts of the text their
+    nodes cover (`set_included_ranges`, children excluded unless
+    `include-children`), up to 4 deep. Matches of an `injection.combined`
+    pattern within the rows are parsed together.
+  - With locals, the query starts at the top-level node holding the first
+    row, so definitions above the rows are seen.
 
-The app asks the engine for the active buffer's highlights when drawing.
-The editor pane colours text with them first, then draws search matches and
-the selection on top.
+  `HIGHLIGHT_NAMES` are the names captures map to (the one with the most
+  parts all in the capture's name), and they double as theme scopes.
+- `SyntaxEngine` compiles each language's queries on first use and keeps a
+  tree per document. `Buffer` logs every edit (insert and delete, so undo,
+  redo and reloads too) as byte offsets and points, and the engine feeds
+  the edits since its tree was built to `Tree::edit`, then re-parses
+  reusing the old tree, reading the rope chunk by chunk. A different
+  buffer (`Buffer::id`; clones get new ids), a different language or a log
+  that's moved past (it keeps the last 4,096 edits) means a full parse.
+  Documents over 4M chars aren't parsed.
 
-**Performance.** The whole document is re-highlighted when it changes: about
-30 ms for a 5,000-line Rust file in a release build, and a few ms for
-typical files. The event loop handles all pending keys before redrawing, so
-fast typing, key repeat and pastes cost one re-highlight per frame, not one
-per key.
+Each window asks the engine for the rows it's about to show
+(`ViewState::visible_rows` scrolls a copy of its viewport the way drawing
+will). Highlights are cached per document, up to four row ranges (two
+windows, say), until the text changes. The editor pane colours text with
+them first, then draws search matches and the selection on top.
+
+**Performance.** In a release build, on a 25,600-line Rust file: opening it
+(the first parse) takes about 65 ms; a keystroke after that about 2 ms
+(1.1 ms without macro injections), where re-highlighting the whole file
+took 140 ms; scrolling a line about 0.3 ms. The event loop handles all
+pending keys before redrawing, so fast typing and pastes cost one update
+per frame, not one per key.
 
 ## Editing model
 
@@ -903,10 +932,11 @@ status, branches and history.
   content): files that aren't UTF-8 use the one configured fallback.
 - Clipboard over SSH (OSC 52), and recording pastes into macros and `.`
   (both currently replay without the pasted text).
-- Incremental syntax parsing (feeding edits to tree-sitter and reusing the
-  previous tree), and highlighting only the visible part of very large
-  files. That would also make Rust's macro injections affordable (they're
-  off: 2.5x slower on macro-heavy files).
+- Syntax: indentation (`=`, Enter) parses the file afresh rather than
+  using the engine's tree, which lives in the app, not the editor; files
+  over 4M chars aren't highlighted (the first parse is the cost); and
+  combined injections (JavaScript's `css\`...\``) only gather the matches
+  in the rows being drawn.
 - Loading grammars and queries at runtime, Helix-style, instead of
   compiling them in (each adds to the binary: 15 languages make it about
   17 MB in release, up from 8 MB with 5).

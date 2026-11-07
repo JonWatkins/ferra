@@ -51,10 +51,8 @@ pub const LANGUAGES: &[LanguageDef] = &[
         name: "rust",
         grammar: || tree_sitter_rust::LANGUAGE.into(),
         highlights: &[tree_sitter_rust::HIGHLIGHTS_QUERY],
-        // Rust's injections re-highlight every macro call's contents as
-        // Rust: 2.5x slower on macro-heavy files, for little gain (literals
-        // inside macros are coloured anyway). Left off.
-        injections: "",
+        // Macro calls' and `macro_rules!` bodies are highlighted as Rust.
+        injections: tree_sitter_rust::INJECTIONS_QUERY,
         locals: "",
     },
     LanguageDef {

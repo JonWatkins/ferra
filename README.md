@@ -315,7 +315,12 @@ JSON, YAML, HTML, CSS and Markdown. The status line shows the language.
 
 Languages inside other languages are highlighted too: Markdown's bold,
 italics, links and code spans, fenced code blocks in their own language
-(` ```rust `, ` ```py `), and `<script>` and `<style>` in HTML.
+(` ```rust `, ` ```py `), `<script>` and `<style>` in HTML, and the
+contents of Rust macro calls.
+
+Each file's syntax tree is kept and updated as you edit, and only the lines
+on screen are highlighted, so typing stays instant in files of tens of
+thousands of lines.
 
 A file's language comes from its name (`Makefile`, `.bashrc`), its extension,
 or for scripts without one, the `#!` line (`#!/usr/bin/env python3`). The

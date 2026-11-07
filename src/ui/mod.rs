@@ -32,10 +32,9 @@ use ratatui::{
 };
 
 use crate::config::{StatuslineMode, Theme};
-use std::collections::HashMap;
 
-use crate::editor::{DocumentId, Editor, Mode};
-use crate::syntax::Highlights;
+use crate::editor::{Editor, Mode};
+use crate::syntax::SyntaxEngine;
 
 /// Draws the whole screen and positions the terminal cursor.
 pub fn draw(
@@ -44,7 +43,7 @@ pub fn draw(
     theme: &Theme,
     views: &mut Views,
     pending: &str,
-    syntax: &HashMap<DocumentId, &Highlights>,
+    syntax: Option<&mut SyntaxEngine>,
     splash: &[SplashEntry],
 ) {
     let area = frame.area();

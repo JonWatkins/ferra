@@ -65,7 +65,6 @@ impl Editor {
                 let fallback = self.options.fallback_encoding.0;
                 let (mut document, info) = Document::open_with(&path, fallback)?;
                 document.set_id(self.document.id());
-                document.follow_version_of(&self.document);
                 self.document = document;
                 info
             }

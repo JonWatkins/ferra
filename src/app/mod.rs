@@ -7,7 +7,6 @@ mod normal;
 mod repeat;
 mod terminal;
 
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use repeat::{ChangeRecorder, EditStamp};
@@ -358,30 +357,6 @@ impl App {
             self.syntax.retain(&open);
         }
 
-        // Every buffer on screen needs its highlights, so refresh them all
-        // first, then borrow them together.
-        let shown: Vec<DocumentId> = self
-            .editor
-            .windows()
-            .layout()
-            .windows()
-            .into_iter()
-            .filter_map(|id| self.editor.window_view(id).map(|(doc, _)| doc.id()))
-            .collect();
-        let mut syntax = HashMap::new();
-        if self.editor.options.syntax_highlighting {
-            for &id in &shown {
-                if let Some(document) = self.editor.document_by_id(id) {
-                    self.syntax.refresh(document, &self.editor.languages);
-                }
-            }
-            for &id in &shown {
-                if let Some(highlights) = self.syntax.get(id) {
-                    syntax.insert(id, highlights);
-                }
-            }
-        }
-
         let splash = if self.editor.splash_visible() {
             self.splash_entries()
         } else {
@@ -393,7 +368,10 @@ impl App {
             &self.theme,
             &mut self.views,
             &pending,
-            &syntax,
+            self.editor
+                .options
+                .syntax_highlighting
+                .then_some(&mut self.syntax),
             &splash,
         );
     }

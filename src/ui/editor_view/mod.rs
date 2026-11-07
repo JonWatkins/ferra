@@ -34,6 +34,28 @@ pub struct ViewState {
     pub cursor: Option<Position>,
 }
 
+impl ViewState {
+    /// The rows the pane will show when it's next drawn `height` rows tall
+    /// with the cursor at `cursor`: where it is, scrolled as drawing will
+    /// scroll it.
+    pub fn visible_rows(
+        &self,
+        document: &Document,
+        cursor: TextPosition,
+        height: u16,
+        options: &EditorOptions,
+    ) -> std::ops::Range<usize> {
+        let mut viewport = self.viewport;
+        let target = ScrollTarget {
+            row: cursor.row,
+            col: 0,
+            line_count: document.buffer().line_count(),
+        };
+        viewport.scroll_to(target, 0, height as usize, options.scroll_off);
+        viewport.top..viewport.top + height as usize
+    }
+}
+
 pub struct EditorView<'a> {
     document: &'a Document,
     options: &'a EditorOptions,

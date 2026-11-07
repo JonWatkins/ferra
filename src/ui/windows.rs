@@ -17,7 +17,7 @@ use super::{EditorView, StatusLine, ViewState};
 use crate::config::Theme;
 use crate::editor::windows::Area;
 use crate::editor::{DocumentId, Editor, WindowId};
-use crate::syntax::Highlights;
+use crate::syntax::SyntaxEngine;
 
 /// Scroll state per window, and per buffer within a window, so switching a
 /// window between buffers keeps each one's place.
@@ -38,7 +38,7 @@ pub fn draw_windows(
     theme: &Theme,
     area: Rect,
     views: &mut Views,
-    syntax: &HashMap<DocumentId, &Highlights>,
+    mut syntax: Option<&mut SyntaxEngine>,
     status: Option<WindowStatus>,
 ) -> Option<Position> {
     let windows = editor.windows();
@@ -92,6 +92,10 @@ pub fn draw_windows(
             window_area.height,
         );
         let state = views.entry((id, document.id())).or_default();
+        let highlights = syntax.as_deref_mut().and_then(|engine| {
+            let rows = state.visible_rows(document, window_cursor, rect.height, &editor.options);
+            engine.highlight(document, &editor.languages, rows)
+        });
 
         let view = EditorView::new(document, &editor.options, theme)
             .cursor(window_cursor)
@@ -103,7 +107,7 @@ pub fn draw_windows(
             })
             .block(editor.selection_block().filter(|_| active))
             .search(editor.search_highlight())
-            .syntax(syntax.get(&document.id()).copied());
+            .syntax(highlights);
         frame.render_stateful_widget(view, rect, state);
         if active {
             cursor = state.cursor;
