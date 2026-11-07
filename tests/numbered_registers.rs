@@ -4,7 +4,7 @@
 mod common;
 
 use common::{app_with_config, keys, text};
-use terminal_editor::App;
+use ferra::App;
 
 fn register(app: &App, name: char) -> Option<String> {
     app.editor()

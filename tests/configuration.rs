@@ -3,7 +3,7 @@
 mod common;
 
 use common::{app_with_config, cursor, keys, render, text};
-use terminal_editor::{Config, config::LineNumbers, editor::Mode};
+use ferra::{Config, config::LineNumbers, editor::Mode};
 
 #[test]
 fn user_config_overrides_only_what_it_sets() {
@@ -60,7 +60,7 @@ fn keys_can_be_remapped_and_defaults_kept() {
     assert!(!app.should_quit());
     assert_eq!(
         app.editor().message().unwrap().text,
-        terminal_editor::editor::UNSAVED_CHANGES
+        ferra::editor::UNSAVED_CHANGES
     );
     // ...and quits once there's nothing to lose.
     keys(&mut app, "uu<C-q>");

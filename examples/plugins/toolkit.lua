@@ -1,7 +1,7 @@
--- toolkit.lua: a small example plugin for terminal-editor.
+-- toolkit.lua: a small example plugin for ferra.
 --
 -- Install it by copying (or symlinking) this file into
--- ~/.config/terminal-editor/plugins/. Every command it adds shows up in the
+-- ~/.config/ferra/plugins/. Every command it adds shows up in the
 -- command palette (<Space>p) and can be run with :name.
 --
 -- Rows and columns in the `ctx` API start at 1.

@@ -571,6 +571,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferra"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "color-eyre",
+ "crossterm",
+ "encoding_rs",
+ "ignore",
+ "mlua",
+ "ratatui",
+ "regex",
+ "ropey",
+ "serde",
+ "tempfile",
+ "toml",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-css",
+ "tree-sitter-go",
+ "tree-sitter-highlight",
+ "tree-sitter-html",
+ "tree-sitter-javascript",
+ "tree-sitter-json",
+ "tree-sitter-md",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-toml-ng",
+ "tree-sitter-typescript",
+ "tree-sitter-yaml",
+ "unicode-width",
+]
+
+[[package]]
 name = "filedescriptor"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1980,41 +2015,6 @@ dependencies = [
  "rustix",
  "signal-hook",
  "windows-sys",
-]
-
-[[package]]
-name = "terminal-editor"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "color-eyre",
- "crossterm",
- "encoding_rs",
- "ignore",
- "mlua",
- "ratatui",
- "regex",
- "ropey",
- "serde",
- "tempfile",
- "toml",
- "tree-sitter",
- "tree-sitter-bash",
- "tree-sitter-c",
- "tree-sitter-cpp",
- "tree-sitter-css",
- "tree-sitter-go",
- "tree-sitter-highlight",
- "tree-sitter-html",
- "tree-sitter-javascript",
- "tree-sitter-json",
- "tree-sitter-md",
- "tree-sitter-python",
- "tree-sitter-rust",
- "tree-sitter-toml-ng",
- "tree-sitter-typescript",
- "tree-sitter-yaml",
- "unicode-width",
 ]
 
 [[package]]

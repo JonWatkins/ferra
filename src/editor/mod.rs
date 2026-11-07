@@ -107,6 +107,9 @@ pub struct Editor {
     file_list_request: Option<FileListRequest>,
     /// The last background job number handed out.
     last_job: u64,
+    /// The splash screen was asked for (started with no files) and hasn't
+    /// been dismissed.
+    splash: bool,
     /// Keeps the undo step open across commands (`:normal` over a range).
     undo_held: bool,
     /// What's been typed in the current insert session, for the `.`
@@ -330,6 +333,27 @@ impl Editor {
     pub fn language_of(&self, document: &Document) -> Option<&str> {
         self.languages
             .detect(document.path(), &document.buffer().line(0))
+    }
+
+    /// Shows the splash screen until the user starts working (see
+    /// [`Editor::splash_visible`]).
+    pub fn show_splash(&mut self) {
+        self.splash = true;
+    }
+
+    /// Whether to draw the splash screen: while the editor still holds just
+    /// the untouched starting buffer, in one window.
+    pub fn splash_visible(&self) -> bool {
+        self.splash && self.document.is_pristine_scratch() && self.windows.count() == 1
+    }
+
+    /// Dismisses the splash screen for good once it stops being visible
+    /// (text typed, a file opened, a window split), so it doesn't come back
+    /// when an empty buffer does.
+    pub fn update_splash(&mut self) {
+        if self.splash && !self.splash_visible() {
+            self.splash = false;
+        }
     }
 
     /// A number for a new background job.

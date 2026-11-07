@@ -3,7 +3,7 @@
 mod common;
 
 use common::{app, cursor, keys, text};
-use terminal_editor::editor::Mode;
+use ferra::editor::Mode;
 
 #[test]
 fn starts_in_normal_mode_where_keys_are_commands() {

@@ -6,8 +6,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use common::{app, cursor, keys, render, text};
-use terminal_editor::App;
-use terminal_editor::editor::Mode;
+use ferra::App;
+use ferra::editor::Mode;
 
 struct Workspace {
     dir: tempfile::TempDir,

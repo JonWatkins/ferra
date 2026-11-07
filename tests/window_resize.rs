@@ -4,7 +4,7 @@
 mod common;
 
 use common::{app, keys};
-use terminal_editor::App;
+use ferra::App;
 
 fn heights(app: &App) -> Vec<u16> {
     let sizes = app.editor().windows().sizes();

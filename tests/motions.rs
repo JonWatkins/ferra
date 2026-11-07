@@ -4,8 +4,8 @@
 mod common;
 
 use common::{app, cursor, keys, render, text};
-use terminal_editor::App;
-use terminal_editor::editor::Mode;
+use ferra::App;
+use ferra::editor::Mode;
 
 /// An app containing `content`, with the cursor at the start.
 fn with_text(content: &str) -> App {

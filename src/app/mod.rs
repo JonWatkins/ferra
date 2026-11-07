@@ -179,7 +179,13 @@ impl App {
     }
 
     /// Opens files at startup, one buffer each, showing the first.
+    /// Opens the files named on the command line, or with none, shows the
+    /// splash screen.
     pub fn open_all(&mut self, paths: &[std::path::PathBuf]) {
+        if paths.is_empty() {
+            self.editor.show_splash();
+            return;
+        }
         let mut first = None;
         for path in paths {
             self.open(path);
@@ -334,6 +340,7 @@ impl App {
         if self.edit_stamp().edited_since(before) {
             self.editor.emit(events::Event::BufferChanged);
         }
+        self.editor.update_splash();
         self.dispatch_events();
     }
 
@@ -375,6 +382,11 @@ impl App {
             }
         }
 
+        let splash = if self.editor.splash_visible() {
+            self.splash_entries()
+        } else {
+            Vec::new()
+        };
         ui::draw(
             frame,
             &self.editor,
@@ -382,7 +394,31 @@ impl App {
             &mut self.views,
             &pending,
             &syntax,
+            &splash,
         );
+    }
+
+    /// The splash screen's menu, with the keys actually bound (so a
+    /// rebinding shows up), leaving out commands that aren't bound.
+    fn splash_entries(&self) -> Vec<ui::SplashEntry> {
+        let bound = |command: &str| {
+            self.keymap
+                .keys_for(Mode::Normal, command)
+                .map(|keys| keys.iter().map(ToString::to_string).collect::<String>())
+        };
+        let entry = |keys: Option<String>, description| {
+            keys.map(|keys| ui::SplashEntry { keys, description })
+        };
+        [
+            entry(Some(":e <file>".into()), "open a file"),
+            entry(bound("file_picker"), "find a file"),
+            entry(bound("command_palette"), "browse commands"),
+            entry(bound("insert_mode"), "start writing"),
+            entry(Some(":q".into()), "quit"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     /// When the key timeout should end the sequence being typed, if any.
@@ -471,6 +507,7 @@ impl App {
         if self.edit_stamp().edited_since(before) {
             self.editor.emit(events::Event::BufferChanged);
         }
+        self.editor.update_splash();
         self.dispatch_events();
     }
 

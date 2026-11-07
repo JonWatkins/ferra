@@ -3,8 +3,8 @@
 mod common;
 
 use common::{app, cursor, keys, render, text};
-use terminal_editor::App;
-use terminal_editor::editor::Mode;
+use ferra::App;
+use ferra::editor::Mode;
 
 fn input(app: &App) -> String {
     app.editor().command_line.input().to_string()

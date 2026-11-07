@@ -6,8 +6,8 @@ mod common;
 use std::fs;
 
 use common::{app_with_config, keys, render};
+use ferra::App;
 use ratatui::style::Color;
-use terminal_editor::App;
 
 /// No line numbers, so screen columns are text columns.
 fn plain_app(statusline: &str) -> App {

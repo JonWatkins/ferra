@@ -1,10 +1,10 @@
-//! Command-line arguments: `terminal-editor [OPTIONS] [FILE]`.
+//! Command-line arguments: `ferra [OPTIONS] [FILE]`.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
 pub const USAGE: &str = "\
-Usage: terminal-editor [OPTIONS] [FILE]...
+Usage: ferra [OPTIONS] [FILE]...
 
 Arguments:
   [FILE]...  Files to open, one buffer each; created on save if missing

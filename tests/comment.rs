@@ -5,7 +5,7 @@ mod common;
 use std::fs;
 
 use common::{app_with_config, cursor, keys};
-use terminal_editor::App;
+use ferra::App;
 
 /// The buffer's text as it would be saved: the files here end with a
 /// line break, which the buffer keeps separately.

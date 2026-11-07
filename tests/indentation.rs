@@ -4,7 +4,7 @@
 mod common;
 
 use common::{app, app_with_config, cursor, keys, render, text};
-use terminal_editor::App;
+use ferra::App;
 
 /// An app containing `content` (typed without auto-indent), cursor at start.
 fn with_text(content: &str) -> App {

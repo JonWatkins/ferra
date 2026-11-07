@@ -5,7 +5,7 @@ mod common;
 use std::fs;
 
 use common::{app, keys};
-use terminal_editor::App;
+use ferra::App;
 
 /// What each window shows, in reading order, with the active one marked.
 fn windows(app: &App) -> Vec<String> {

@@ -28,7 +28,7 @@ use crate::events::EventKind;
 use crate::input::Keymap;
 
 const DEFAULT_CONFIG: &str = include_str!("default.toml");
-const APP_DIR: &str = "terminal-editor";
+const APP_DIR: &str = "ferra";
 
 static DEFAULT: LazyLock<Config> =
     LazyLock::new(|| Config::from_toml("").expect("embedded default config must be valid"));
@@ -114,8 +114,8 @@ pub fn config_dir() -> Option<PathBuf> {
     default_path().and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
-/// `$XDG_CONFIG_HOME/terminal-editor/config.toml`, falling back to
-/// `~/.config/terminal-editor/config.toml`.
+/// `$XDG_CONFIG_HOME/ferra/config.toml`, falling back to
+/// `~/.config/ferra/config.toml`.
 pub fn default_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())

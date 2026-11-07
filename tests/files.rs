@@ -6,8 +6,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use common::{app, keys, render, text};
-use terminal_editor::App;
-use terminal_editor::editor::UNSAVED_CHANGES;
+use ferra::App;
+use ferra::editor::UNSAVED_CHANGES;
 
 struct Workspace {
     dir: tempfile::TempDir,
@@ -314,10 +314,9 @@ fn unknown_encodings_are_reported() {
     let mut app = app();
     cmd(&mut app, "fenc klingon");
     assert_eq!(message(&app), "Unknown encoding: klingon");
-    let error =
-        terminal_editor::config::Config::from_toml("[editor]\nfallback-encoding = \"klingon\"")
-            .unwrap_err()
-            .to_string();
+    let error = ferra::config::Config::from_toml("[editor]\nfallback-encoding = \"klingon\"")
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("unknown encoding: klingon"), "{error}");
 }
 

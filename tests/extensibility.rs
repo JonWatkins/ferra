@@ -5,7 +5,7 @@
 mod common;
 
 use common::{app_with_config, keys, text};
-use terminal_editor::commands::Invocation;
+use ferra::commands::Invocation;
 
 #[test]
 fn custom_command_can_be_bound_and_run() {

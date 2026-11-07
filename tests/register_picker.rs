@@ -6,8 +6,8 @@ mod common;
 use std::fs;
 
 use common::{app_with_config, keys, text};
-use terminal_editor::App;
-use terminal_editor::editor::Mode;
+use ferra::App;
+use ferra::editor::Mode;
 
 fn listed(app: &App) -> Vec<String> {
     let picker = app.editor().picker().expect("picker open");

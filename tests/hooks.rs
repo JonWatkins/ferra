@@ -8,9 +8,9 @@ use std::fs;
 use std::rc::Rc;
 
 use common::{app, app_with_config, keys, text};
-use terminal_editor::App;
-use terminal_editor::editor::Mode;
-use terminal_editor::events::{Event, EventKind};
+use ferra::App;
+use ferra::editor::Mode;
+use ferra::events::{Event, EventKind};
 
 fn message(app: &App) -> String {
     app.editor()

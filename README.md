@@ -1,4 +1,12 @@
-# terminal-editor
+# ferra
+
+```text
+  __
+ / _| ___ _ __ _ __ __ _
+| |_ / _ \ '__| '__/ _` |
+|  _|  __/ |  | | | (_| |
+|_|  \___|_|  |_|  \__,_|
+```
 
 A modal, fully configurable terminal text editor written in Rust, inspired by
 Vim, Helix and Emacs.
@@ -6,12 +14,19 @@ Vim, Helix and Emacs.
 ```sh
 cargo run -- notes.md   # open (or create) a file
 cargo run -- a.rs b.rs  # open several files, one buffer each
-cargo run               # start with an empty scratch buffer
+cargo run               # start on the splash screen
+cargo install --path .  # install the `ferra` command
 cargo test              # run all tests
 cargo clippy --all-targets -- -D warnings
 ```
 
 Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
+
+Started without a file, ferra shows a splash screen: the logo, the version
+and a few ways to begin (`:e <file>`, `<Space>f` to find a file, `<Space>p`
+for every command, `i` to start writing, `:q`). The keys listed are the ones
+actually bound, so your own bindings show up there. It goes away once you
+type, open a file or split the window.
 
 ## Default keys
 
@@ -307,7 +322,7 @@ Turn it off with `syntax-highlighting = false` under `[editor]`.
 
 ## Configuration
 
-Create `~/.config/terminal-editor/config.toml` (or under `$XDG_CONFIG_HOME`).
+Create `~/.config/ferra/config.toml` (or under `$XDG_CONFIG_HOME`).
 It's merged over [the defaults](src/config/default.toml), which document
 every option. Example:
 
@@ -356,12 +371,12 @@ Events: `opened`, `before-save`, `after-save`, `mode-changed`,
 
 ## Lua plugins
 
-Put Lua files in `~/.config/terminal-editor/plugins/` (loaded in name order,
-after `~/.config/terminal-editor/init.lua`). Plugins register commands,
+Put Lua files in `~/.config/ferra/plugins/` (loaded in name order,
+after `~/.config/ferra/init.lua`). Plugins register commands,
 hooks and key bindings through the global `editor` table:
 
 ```lua
--- ~/.config/terminal-editor/plugins/todo.lua
+-- ~/.config/ferra/plugins/todo.lua
 editor.command("todo", "Insert a TODO comment above the cursor", function(ctx)
   local row = ctx:cursor()
   local indent = ctx:line(row):match("^%s*")
@@ -402,8 +417,8 @@ complete example (`:todo`, `:duplicate_line`, `:sort_paragraph`,
 `:word_count`, `:insert_date` and an after-save hook). Try it with:
 
 ```sh
-mkdir -p ~/.config/terminal-editor/plugins
-ln -s "$PWD/examples/plugins/toolkit.lua" ~/.config/terminal-editor/plugins/
+mkdir -p ~/.config/ferra/plugins
+ln -s "$PWD/examples/plugins/toolkit.lua" ~/.config/ferra/plugins/
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design.

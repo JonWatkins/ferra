@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use common::{app, app_with_config, cursor, keys, render, text};
-use terminal_editor::App;
+use ferra::App;
 
 fn message(app: &App) -> String {
     app.editor()

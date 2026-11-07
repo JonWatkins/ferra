@@ -188,6 +188,11 @@ block-comment = ["/*", "*/"]
 "text.uri" = { fg = "#7dcfff", modifiers = ["underlined"] }
 "text.reference" = "#7dcfff"
 "ui.window.separator" = "#3b4048"
+# The splash screen shown when starting without a file.
+"ui.splash.logo" = { fg = "#7aa2f7", modifiers = ["bold"] }
+"ui.splash.version" = "#565f89"
+"ui.splash.key" = "#e0af68"
+"ui.splash.text" = "#a9b1d6"
 "ui.popup" = { fg = "#d4d7dd", bg = "#1f2229" }
 "ui.popup.border" = "#4b5263"
 "ui.popup.title" = { fg = "#7aa2f7", modifiers = ["bold"] }

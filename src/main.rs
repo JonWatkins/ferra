@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 
-use terminal_editor::cli::{self, CliAction};
-use terminal_editor::{App, Config, editor::Message};
+use ferra::cli::{self, CliAction};
+use ferra::{App, Config, editor::Message};
 
 fn main() -> color_eyre::Result<ExitCode> {
     color_eyre::install()?;
@@ -13,11 +13,11 @@ fn main() -> color_eyre::Result<ExitCode> {
             return Ok(ExitCode::SUCCESS);
         }
         Ok(CliAction::PrintVersion) => {
-            println!("terminal-editor {}", env!("CARGO_PKG_VERSION"));
+            println!("ferra {}", env!("CARGO_PKG_VERSION"));
             return Ok(ExitCode::SUCCESS);
         }
         Err(error) => {
-            eprintln!("terminal-editor: {error}\n\n{}", cli::USAGE);
+            eprintln!("ferra: {error}\n\n{}", cli::USAGE);
             return Ok(ExitCode::from(2));
         }
     };
@@ -31,7 +31,7 @@ fn main() -> color_eyre::Result<ExitCode> {
 
     let mut app = App::new(config);
     // Plugins load before files open, so their `opened` hooks see them.
-    let plugin_error = terminal_editor::config::config_dir().and_then(|dir| app.load_plugins(&dir));
+    let plugin_error = ferra::config::config_dir().and_then(|dir| app.load_plugins(&dir));
     app.open_all(&files);
     if let Some(error) = plugin_error {
         app.editor_mut().set_message(Message::error(error));

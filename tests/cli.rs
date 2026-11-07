@@ -4,7 +4,7 @@
 use std::process::Command;
 
 fn run(args: &[&str]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_terminal-editor"))
+    let output = Command::new(env!("CARGO_BIN_EXE_ferra"))
         .args(args)
         .output()
         .expect("binary runs");
@@ -20,7 +20,7 @@ fn help_prints_usage() {
     let (code, stdout, _) = run(&["--help"]);
     assert_eq!(code, 0);
     assert!(
-        stdout.contains("Usage: terminal-editor [OPTIONS] [FILE]..."),
+        stdout.contains("Usage: ferra [OPTIONS] [FILE]..."),
         "{stdout}"
     );
 }
@@ -31,7 +31,7 @@ fn version_prints_crate_version() {
     assert_eq!(code, 0);
     assert_eq!(
         stdout.trim(),
-        format!("terminal-editor {}", env!("CARGO_PKG_VERSION"))
+        format!("ferra {}", env!("CARGO_PKG_VERSION"))
     );
 }
 

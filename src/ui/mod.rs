@@ -14,6 +14,7 @@
 mod command_line;
 pub mod editor_view;
 mod picker;
+mod splash;
 mod statusline;
 mod text;
 mod windows;
@@ -21,6 +22,7 @@ mod windows;
 pub use command_line::CommandLineView;
 pub use editor_view::{EditorView, ViewState};
 pub use picker::PickerView;
+pub use splash::{LOGO, Splash, SplashEntry};
 pub use statusline::StatusLine;
 pub use windows::Views;
 
@@ -43,6 +45,7 @@ pub fn draw(
     views: &mut Views,
     pending: &str,
     syntax: &HashMap<DocumentId, &Highlights>,
+    splash: &[SplashEntry],
 ) {
     let area = frame.area();
     let base = theme.get("ui.background").patch(theme.get("ui.text"));
@@ -70,6 +73,9 @@ pub fn draw(
         }
     };
     frame.render_widget(CommandLineView::new(editor, theme), command);
+    if editor.splash_visible() && !splash.is_empty() {
+        frame.render_widget(Splash::new(splash, theme), main);
+    }
 
     // The picker popup floats over the editor pane.
     let popup = editor.picker().filter(|_| editor.mode() == Mode::Picker);

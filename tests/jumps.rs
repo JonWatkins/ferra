@@ -6,7 +6,7 @@ mod common;
 use std::fs;
 
 use common::{app, app_with_config, cursor, keys, text};
-use terminal_editor::App;
+use ferra::App;
 
 fn message(app: &App) -> String {
     app.editor()

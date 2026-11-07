@@ -3,9 +3,9 @@
 mod common;
 
 use common::{app_with_config, cursor, keys, text};
-use terminal_editor::App;
-use terminal_editor::core::{Position, Range};
-use terminal_editor::editor::Mode;
+use ferra::App;
+use ferra::core::{Position, Range};
+use ferra::editor::Mode;
 
 fn message(app: &App) -> String {
     app.editor()

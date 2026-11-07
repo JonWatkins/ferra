@@ -3,9 +3,9 @@
 mod common;
 
 use common::{app, app_with_config, cursor, keys, render, text};
+use ferra::App;
+use ferra::editor::Mode;
 use ratatui::{Terminal, backend::TestBackend, style::Color};
-use terminal_editor::App;
-use terminal_editor::editor::Mode;
 
 /// An app containing `content`, with the cursor at the start.
 fn with_text(content: &str) -> App {

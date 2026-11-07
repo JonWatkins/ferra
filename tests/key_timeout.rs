@@ -4,7 +4,7 @@
 mod common;
 
 use common::{app_with_config, cursor, keys, text};
-use terminal_editor::editor::Mode;
+use ferra::editor::Mode;
 
 #[test]
 fn an_unbound_alt_key_is_esc_then_the_key() {

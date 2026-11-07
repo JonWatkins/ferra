@@ -7,8 +7,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use common::{app, app_with_config, keys};
+use ferra::App;
 use ratatui::{Terminal, backend::TestBackend, style::Color};
-use terminal_editor::App;
 
 const KEYWORD: Color = Color::Rgb(0xbb, 0x9a, 0xf7);
 const STRING: Color = Color::Rgb(0x9e, 0xce, 0x6a);

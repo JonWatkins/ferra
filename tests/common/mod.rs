@@ -1,8 +1,8 @@
 //! Shared helpers for integration tests.
 #![allow(dead_code)] // Each test binary uses a different subset.
 
+use ferra::{App, Config, input::parse_keys};
 use ratatui::{Terminal, backend::TestBackend};
-use terminal_editor::{App, Config, input::parse_keys};
 
 /// An app with the default config.
 pub fn app() -> App {

@@ -3,8 +3,8 @@
 mod common;
 
 use common::{app_with_config, keys, text};
-use terminal_editor::App;
-use terminal_editor::editor::Mode;
+use ferra::App;
+use ferra::editor::Mode;
 
 /// `content` typed without auto-indent, cursor at the start.
 fn with_text(content: &str) -> App {

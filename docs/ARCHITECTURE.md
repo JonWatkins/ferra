@@ -66,6 +66,15 @@ otherwise (`g` in normal mode) it keeps waiting, like Vim. Counts,
 registers and `f`-style arguments never time out. Keys and timeouts share
 `App::tracked`, which records sequences for `.`.
 
+The splash screen (`ui/splash.rs`) is drawn over the editor pane while
+`Editor::splash_visible`: it was asked for (`open_all` with no files) and
+the editor still holds just the untouched starting buffer in one window.
+After every key the app calls `update_splash`, which turns it off for good
+once that stops being true, so undoing back to an empty buffer doesn't
+bring it back. Its menu is built when drawing, with `Keymap::keys_for`
+finding the shortest keys bound to each command, so rebindings show up and
+unbound commands are left out.
+
 The UI only *reads* state. All mutation goes through commands, apart from
 literal text insertion.
 
@@ -771,8 +780,8 @@ status, branches and history.
 
 - `src/config/default.toml` is embedded with `include_str!` and is the single
   source of truth for defaults.
-- The user file (`$XDG_CONFIG_HOME/terminal-editor/config.toml`, otherwise
-  `~/.config/terminal-editor/config.toml`) is deep-merged over the defaults.
+- The user file (`$XDG_CONFIG_HOME/ferra/config.toml`, otherwise
+  `~/.config/ferra/config.toml`) is deep-merged over the defaults.
   Users only write what they change. Binding a key to `""` removes it.
 - Unknown fields, bad colours and bad key notation are errors. A broken config
   doesn't stop startup: the editor falls back to the defaults and shows the

@@ -77,6 +77,38 @@ impl Keymap {
         node.command.as_deref()
     }
 
+    /// The shortest key sequence bound to `command` in `mode`, for showing
+    /// users which keys to press (the splash screen). Ties go to the
+    /// alphabetically first, so the answer doesn't change between runs.
+    pub fn keys_for(&self, mode: Mode, command: &str) -> Option<Vec<KeyPress>> {
+        fn walk(
+            node: &Node,
+            command: &str,
+            path: &mut Vec<KeyPress>,
+            best: &mut Option<Vec<KeyPress>>,
+        ) {
+            if node.command.as_deref() == Some(command) {
+                let better = best
+                    .as_ref()
+                    .is_none_or(|b| (path.len(), keys_text(path)) < (b.len(), keys_text(b)));
+                if better {
+                    *best = Some(path.clone());
+                }
+            }
+            for (key, child) in &node.children {
+                path.push(*key);
+                walk(child, command, path, best);
+                path.pop();
+            }
+        }
+        fn keys_text(keys: &[KeyPress]) -> String {
+            keys.iter().map(ToString::to_string).collect()
+        }
+        let mut best = None;
+        walk(self.modes.get(&mode)?, command, &mut Vec::new(), &mut best);
+        best
+    }
+
     /// Every `(mode, command)` pair that is bound, for validation.
     pub fn bound_commands(&self) -> Vec<(Mode, &str)> {
         fn walk<'a>(node: &'a Node, mode: Mode, out: &mut Vec<(Mode, &'a str)>) {
@@ -215,5 +247,22 @@ mod tests {
         assert_eq!(map.command_at(Mode::Normal, &keys("g")), Some("short"));
         assert_eq!(map.command_at(Mode::Normal, &keys("x")), None);
         assert_eq!(map.command_at(Mode::Insert, &keys("g")), None);
+    }
+
+    #[test]
+    fn keys_for_finds_the_shortest_binding() {
+        let map = keymap(&[
+            (Mode::Normal, "<Space>f", "file_picker"),
+            (Mode::Normal, "<C-p>", "file_picker"),
+            (Mode::Normal, "gg", "goto_file_start"),
+        ]);
+        let shown = |c| {
+            map.keys_for(Mode::Normal, c)
+                .map(|k| k.iter().map(ToString::to_string).collect::<String>())
+        };
+        assert_eq!(shown("file_picker").as_deref(), Some("<C-p>"));
+        assert_eq!(shown("goto_file_start").as_deref(), Some("gg"));
+        assert_eq!(shown("nothing"), None);
+        assert_eq!(map.keys_for(Mode::Insert, "file_picker"), None);
     }
 }
