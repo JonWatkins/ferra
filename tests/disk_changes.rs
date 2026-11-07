@@ -192,3 +192,64 @@ fn marks_outside_the_changed_part_stay_put() {
     keys(&mut app, "gg'a");
     assert_eq!(cursor(&app), (3, 0));
 }
+
+#[test]
+fn watching_reloads_an_unmodified_buffer_without_focus_changing() {
+    let (_dir, path, mut app) = setup("one\n");
+    change_externally(&path, "one\ntwo\n", 5);
+    app.check_files_while_idle();
+    assert_eq!(text(&app), "one\ntwo");
+    assert!(
+        message(&app).ends_with("notes.txt\" reloaded: changed on disk"),
+        "{}",
+        message(&app)
+    );
+    keys(&mut app, "u");
+    assert_eq!(text(&app), "one", "u brings back what was there");
+}
+
+#[test]
+fn watching_waits_until_normal_mode_between_commands() {
+    let (_dir, path, mut app) = setup("one\n");
+    keys(&mut app, "i");
+    change_externally(&path, "two\n", 5);
+    app.check_files_while_idle();
+    assert_eq!(text(&app), "one", "not in the middle of inserting");
+    keys(&mut app, "<Esc>d");
+    app.check_files_while_idle();
+    assert_eq!(text(&app), "one", "not with an operator pending");
+    keys(&mut app, "<Esc>");
+    app.check_files_while_idle();
+    assert_eq!(text(&app), "two");
+}
+
+#[test]
+fn watching_warns_about_a_modified_buffer_once() {
+    let (_dir, path, mut app) = setup("one\n");
+    keys(&mut app, "Ax<Esc>");
+    change_externally(&path, "two\n", 5);
+    app.check_files_while_idle();
+    assert_eq!(text(&app), "onex", "your changes are kept");
+    assert!(
+        message(&app).contains("changed on disk"),
+        "{}",
+        message(&app)
+    );
+    keys(&mut app, ":echo<CR>");
+    app.check_files_while_idle();
+    assert!(!message(&app).contains("changed on disk"), "said once");
+}
+
+#[test]
+fn watching_can_be_turned_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.txt");
+    fs::write(&path, "one\n").unwrap();
+    let mut app = app_with_config("[editor]\nwatch-files = false");
+    app.open(&path);
+    change_externally(&path, "two\n", 5);
+    app.check_files_while_idle();
+    assert_eq!(text(&app), "one");
+    app.handle_focus_gained();
+    assert_eq!(text(&app), "two", "focus still checks");
+}

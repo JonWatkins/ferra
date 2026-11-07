@@ -505,14 +505,23 @@ where they change, so marks elsewhere on them stay put.
   - **Modified tracking:** `History` gives each committed state a
     `Revision`. The document is modified when its revision differs from the
     saved one, so undoing back to the save clears `[+]`.
-  - **External changes:** the file's mtime at read/write time. A save
-    refuses to overwrite a file whose mtime has changed since, or an
-    existing file the document never read, unless forced with `!`.
+  - **External changes:** the file's `FileStamp` (modified time and
+    size) at read/write time. A save refuses to overwrite a file whose
+    stamp has changed since, or an existing file the document never read,
+    unless forced with `!`. The size catches a change made within the
+    timestamp resolution of the last one, unless that kept the size too.
 - Noticing external changes: `Document::disk_state` compares the file's
-  mtime with the one it last read or wrote (`Changed`, `Deleted`).
+  stamp with the one it last read or wrote (`Changed`, `Deleted`).
   `Editor::check_disk_changes` runs on `FocusGained` (the app turns on
   terminal focus reporting) and `:checktime`, and `switch_to` checks the
-  buffer it switches to. An unmodified buffer reloads with
+  buffer it switches to. With `watch-files` (on by default), the event
+  loop also wakes once a second (`WATCH_INTERVAL`, one more deadline
+  beside the key timeout's) and runs it through
+  `App::check_files_while_idle`, which does nothing unless the app is
+  idle (normal mode, no keys pending), so a reload never lands mid-insert
+  or under a pending operator. That's a `stat` per open file a second,
+  rather than OS file-change notifications, which need a dependency and
+  per-platform care (and miss changes on some network filesystems). An unmodified buffer reloads with
   `Document::reload_in_place`, which replaces only the part of the text
   between the common prefix and suffix, as one undo step, so the cursor and
   marks outside it stay put and `u` undoes it. `:e!` uses the same reload.
@@ -972,9 +981,9 @@ status, branches and history.
 - `"=` (the expression register).
 - Window-local options, and per-window or plugin-supplied status line
   elements (the layout is one setting for the active window).
-- External changes are only noticed on focus, buffer switches and
-  `:checktime`, not by watching files; and by mtime only, so a change within
-  the filesystem's timestamp resolution of our own write can be missed.
+- External changes are noticed by polling once a second, not OS file
+  notifications; and a change that keeps both the modified time (within
+  the filesystem's resolution) and the size is missed.
 - Extended attributes and ACLs (e.g. macOS file tags) aren't carried over
   by the rename used for ordinary saves.
 - Guessing legacy encodings (telling Shift-JIS from Windows-1252 by

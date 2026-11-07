@@ -74,7 +74,7 @@ impl Document {
             path: Some(path.clone()),
             format,
             saved_encoding: format.encoding,
-            disk_modified: contents.modified,
+            disk_stamp: contents.stamp,
             ..Document::default()
         };
         let info = OpenInfo {
@@ -99,8 +99,8 @@ impl Document {
         let Some(path) = &self.path else {
             return DiskState::Unchanged;
         };
-        let now = files::modified_time(path);
-        if now == self.disk_modified || self.disk_acknowledged == Some(now) {
+        let now = files::stamp(path);
+        if now == self.disk_stamp || self.disk_acknowledged == Some(now) {
             return DiskState::Unchanged;
         }
         match now {
@@ -112,7 +112,7 @@ impl Document {
     /// Stops [`Document::disk_state`] reporting the file's current state, so
     /// a warning about it is shown once.
     pub fn acknowledge_disk_state(&mut self) {
-        self.disk_acknowledged = self.path.as_deref().map(files::modified_time);
+        self.disk_acknowledged = self.path.as_deref().map(files::stamp);
     }
 
     /// Brings in the file's current contents as one undoable change, so
@@ -152,7 +152,7 @@ impl Document {
         self.history.commit();
 
         self.saved_revision = self.history.revision();
-        self.disk_modified = contents.modified;
+        self.disk_stamp = contents.stamp;
         self.disk_acknowledged = None;
         self.format = format;
         self.saved_encoding = format.encoding;
@@ -194,12 +194,8 @@ impl Document {
         };
 
         if !force {
-            let known = if is_own_file {
-                self.disk_modified
-            } else {
-                None
-            };
-            match (files::modified_time(&path), known) {
+            let known = if is_own_file { self.disk_stamp } else { None };
+            match (files::stamp(&path), known) {
                 (Some(on_disk), Some(known)) if on_disk != known => {
                     return Err(FileError::ChangedOnDisk { path });
                 }
@@ -216,13 +212,13 @@ impl Document {
                 path: path.clone(),
                 message,
             })?;
-        let modified = files::write(&path, &contents)?;
+        let stamp = files::write(&path, &contents)?;
 
         if is_own_file {
             self.path = Some(path.clone());
             self.saved_revision = self.history.revision();
             self.saved_encoding = self.format.encoding;
-            self.disk_modified = modified;
+            self.disk_stamp = stamp;
             self.disk_acknowledged = None;
         }
         Ok(SaveInfo {
@@ -460,6 +456,22 @@ mod tests {
         fs::remove_file(&path).unwrap();
         assert_eq!(doc.disk_state(), DiskState::Deleted, "a new state is new");
         assert_eq!(Document::with_text("x").disk_state(), DiskState::Unchanged);
+    }
+
+    #[test]
+    fn a_change_with_the_same_modified_time_is_noticed_by_its_size() {
+        let fx = Fixture::new();
+        let path = fx.file("a.txt", "one\n");
+        let (doc, _) = Document::open(&path).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        fs::write(&path, "one more\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert_eq!(doc.disk_state(), DiskState::Changed);
     }
 
     #[test]

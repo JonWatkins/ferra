@@ -17,11 +17,21 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-/// A file's bytes and when it was last modified.
+/// A file's bytes, and its stamp when they were read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileContents {
     pub bytes: Vec<u8>,
+    pub stamp: Option<FileStamp>,
+}
+
+/// What's compared to tell whether a file changed: its modified time and
+/// size. The size catches a change made within the filesystem's timestamp
+/// resolution of an earlier one (often a second, or 2 s on FAT), unless it
+/// left the size the same too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileStamp {
     pub modified: Option<SystemTime>,
+    pub len: u64,
 }
 
 /// Reads a file. Returns `Ok(None)` if it doesn't exist, so a new file can
@@ -33,18 +43,21 @@ pub fn read(path: &Path) -> Result<Option<FileContents>, FileError> {
         Err(source) => return Err(FileError::io(path, source)),
     };
     Ok(Some(FileContents {
+        stamp: stamp(path),
         bytes,
-        modified: modified_time(path),
     }))
 }
 
-/// The file's last-modified time, or `None` if it doesn't exist (or the
-/// platform can't say).
-pub fn modified_time(path: &Path) -> Option<SystemTime> {
-    fs::metadata(path).and_then(|m| m.modified()).ok()
+/// The file's stamp, or `None` if it doesn't exist.
+pub fn stamp(path: &Path) -> Option<FileStamp> {
+    let metadata = fs::metadata(path).ok()?;
+    Some(FileStamp {
+        modified: metadata.modified().ok(),
+        len: metadata.len(),
+    })
 }
 
-/// Writes `contents` to `path`, returning the new modified time.
+/// Writes `contents` to `path`, returning the file's new stamp.
 ///
 /// Normally the data goes to a temporary file in the same directory, is
 /// flushed to disk, and is then renamed over the target, so a crash or full
@@ -56,7 +69,7 @@ pub fn modified_time(path: &Path) -> Option<SystemTime> {
 /// lose something: when it has other hard-linked names, when its owner or
 /// group can't be kept, or when no temporary file can be made next to it
 /// (a read-only directory). See [`write_in_place`].
-pub fn write(path: &Path, contents: &[u8]) -> Result<Option<SystemTime>, FileError> {
+pub fn write(path: &Path, contents: &[u8]) -> Result<Option<FileStamp>, FileError> {
     let target = resolve_symlink(path);
     let dir = match target.parent() {
         Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
@@ -66,13 +79,13 @@ pub fn write(path: &Path, contents: &[u8]) -> Result<Option<SystemTime>, FileErr
 
     if existing.as_ref().is_some_and(has_other_names) {
         write_in_place(&target, &dir, contents).map_err(|e| FileError::io(path, e))?;
-        return Ok(modified_time(&target));
+        return Ok(stamp(&target));
     }
     let (temp_path, mut temp) = match create_temp_file(&dir, &target) {
         Ok(created) => created,
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied && existing.is_some() => {
             write_in_place(&target, &dir, contents).map_err(|e| FileError::io(path, e))?;
-            return Ok(modified_time(&target));
+            return Ok(stamp(&target));
         }
         Err(e) => return Err(FileError::io(path, e)),
     };
@@ -82,7 +95,7 @@ pub fn write(path: &Path, contents: &[u8]) -> Result<Option<SystemTime>, FileErr
         drop(temp);
         let _ = fs::remove_file(&temp_path);
         write_in_place(&target, &dir, contents).map_err(|e| FileError::io(path, e))?;
-        return Ok(modified_time(&target));
+        return Ok(stamp(&target));
     }
 
     let result = (|| {
@@ -98,7 +111,7 @@ pub fn write(path: &Path, contents: &[u8]) -> Result<Option<SystemTime>, FileErr
         let _ = fs::remove_file(&temp_path);
         return Err(FileError::io(path, e));
     }
-    Ok(modified_time(&target))
+    Ok(stamp(&target))
 }
 
 /// Whether the file has other hard-linked names, which a rename would leave
@@ -224,10 +237,11 @@ mod tests {
     fn write_then_read_round_trips() {
         let dir = dir();
         let path = dir.path().join("a.txt");
-        let modified = write(&path, b"hello\n").unwrap();
+        let stamp = write(&path, b"hello\n").unwrap();
         let contents = read(&path).unwrap().unwrap();
         assert_eq!(contents.bytes, b"hello\n");
-        assert_eq!(contents.modified, modified);
+        assert_eq!(contents.stamp, stamp);
+        assert_eq!(stamp.unwrap().len, 6);
     }
 
     #[test]

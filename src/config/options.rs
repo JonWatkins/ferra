@@ -32,6 +32,9 @@ pub struct EditorOptions {
     pub clipboard: ClipboardMode,
     /// Which clipboard: "auto", "system" or "terminal" (OSC 52).
     pub clipboard_provider: crate::clipboard::ClipboardProvider,
+    /// Check open files for changes made by other programs every second
+    /// (as well as on focus, buffer switches and `:checktime`).
+    pub watch_files: bool,
     /// The encoding for files that aren't UTF-8 and have no byte-order mark.
     pub fallback_encoding: FallbackEncoding,
     pub cursor_shape: CursorShapes,

@@ -32,6 +32,10 @@ const MAX_KEYS_PER_FRAME: usize = 256;
 /// running (it blocks on input when nothing is).
 const BACKGROUND_POLL: Duration = Duration::from_millis(30);
 
+/// How often open files are checked for changes made by other programs,
+/// with `watch-files`.
+const WATCH_INTERVAL: Duration = Duration::from_secs(1);
+
 pub struct App {
     editor: Editor,
     commands: CommandRegistry,
@@ -220,6 +224,8 @@ impl App {
         let mut shape = None;
         // When a half-typed key sequence gives up waiting.
         let mut deadline: Option<Instant> = None;
+        // When open files are next checked for outside changes.
+        let mut next_watch = Instant::now() + WATCH_INTERVAL;
         while !self.should_quit() {
             terminal.draw(|frame| self.draw(frame))?;
 
@@ -233,9 +239,12 @@ impl App {
                 shape = Some(wanted);
             }
 
-            // Wait for input, for a half-typed key sequence to time out, or
-            // (while a background job runs) for its results.
-            let wait = match (deadline, self.background.busy()) {
+            // Wait for input, for a half-typed key sequence to time out, for
+            // the next check of open files, or (while a background job runs)
+            // for its results.
+            let watch = self.editor.options.watch_files.then_some(next_watch);
+            let due = [deadline, watch].into_iter().flatten().min();
+            let wait = match (due, self.background.busy()) {
                 (Some(due), busy) => {
                     let left = due.saturating_duration_since(Instant::now());
                     Some(if busy {
@@ -256,6 +265,10 @@ impl App {
                 if deadline.is_some_and(|due| Instant::now() >= due) {
                     self.handle_key_timeout();
                     deadline = None;
+                }
+                if watch.is_some_and(|due| Instant::now() >= due) {
+                    self.check_files_while_idle();
+                    next_watch = Instant::now() + WATCH_INTERVAL;
                 }
                 continue;
             }
@@ -297,6 +310,18 @@ impl App {
     pub fn handle_focus_gained(&mut self) {
         self.editor.check_disk_changes();
         self.dispatch_events();
+    }
+
+    /// With `watch-files`, the event loop's regular check of open files for
+    /// changes made by other programs: as on focus, unmodified buffers are
+    /// reloaded and others warned about. Only between commands in normal
+    /// mode, so a reload never lands mid-insert or mid-command. Public so
+    /// tests can trigger it.
+    pub fn check_files_while_idle(&mut self) {
+        if self.editor.options.watch_files && self.is_idle() {
+            self.editor.check_disk_changes();
+            self.dispatch_events();
+        }
     }
 
     /// Text pasted into the terminal (bracketed paste). It goes in exactly as

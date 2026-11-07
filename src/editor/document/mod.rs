@@ -5,7 +5,6 @@ pub use file::{DiskState, OpenInfo, SaveInfo};
 
 use std::borrow::Cow;
 use std::path::PathBuf;
-use std::time::SystemTime;
 
 use crate::core::{Buffer, Change, History, IndentUnit, Position, Revision, TextFormat};
 
@@ -44,10 +43,10 @@ pub struct Document {
     saved_encoding: crate::core::FileEncoding,
     /// The file's modified time when last read or written, to detect
     /// changes made by other programs.
-    disk_modified: Option<SystemTime>,
+    disk_stamp: Option<crate::files::FileStamp>,
     /// The file's modified time (or `None`: deleted) when a change on disk
     /// was last reported, so it's reported once.
-    disk_acknowledged: Option<Option<SystemTime>>,
+    disk_acknowledged: Option<Option<crate::files::FileStamp>>,
     /// Counts edits made through `insert`/`delete` (not undo/redo), so the
     /// app can tell whether a command sequence changed the text.
     edit_count: u64,

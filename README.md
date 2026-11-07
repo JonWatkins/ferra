@@ -306,12 +306,14 @@ it isn't plain UTF-8, and saving writes it back the same way. A character
 the encoding can't hold stops the save with a message (convert with
 `:fenc utf-8`), so nothing is silently replaced.
 
-When another program changes an open file (git, a formatter), the editor
-notices when its terminal comes back into focus or you switch to that
-buffer. A buffer without unsaved changes reloads itself, keeping the cursor
-and marks (`u` undoes the reload). One with unsaved changes keeps them and
-warns you: `:e!` loads the new version, `:w!` keeps yours. In tmux, focus
-events need `set -g focus-events on`; `:checktime` works everywhere.
+When another program changes an open file (git, a formatter, a tool
+editing alongside you), the editor notices within a second while you're
+idle in normal mode, and also when its terminal comes back into focus or
+you switch to that buffer. A buffer without unsaved changes reloads itself,
+keeping the cursor and marks (`u` undoes the reload). One with unsaved
+changes keeps them and warns you: `:e!` loads the new version, `:w!` keeps
+yours. `watch-files = false` leaves it to focus, buffer switches and
+`:checktime`.
 
 Search patterns use Rust [regex syntax](https://docs.rs/regex/latest/regex/#syntax),
 plus Vim's `\<` and `\>` word boundaries. Case is "smart" by default

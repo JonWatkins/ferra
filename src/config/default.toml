@@ -46,6 +46,11 @@ clipboard-provider = "auto"
 # WHATWG label: "windows-1252", "latin1", "shift_jis", "gbk"...). Files are
 # saved back in the encoding they were read in. "utf-8" refuses other files.
 fallback-encoding = "windows-1252"
+# Check open files for changes made by other programs (a formatter, git, a
+# tool editing alongside you) every second while you're idle in normal mode,
+# not only when the terminal regains focus. Unmodified buffers reload (u
+# brings back what was there); modified ones get a warning.
+watch-files = true
 
 # What the active window's status line shows, left, center and right.
 # Elements: mode, file-name, file-base-name, modified, position,
