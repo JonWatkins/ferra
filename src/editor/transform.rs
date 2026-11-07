@@ -1,8 +1,19 @@
 //! Text transformations that aren't deletes or yanks: indenting, changing
 //! case, joining lines, and working out the indentation for a new line.
+//!
+//! Indentation follows the language's rules where it has them
+//! (`syntax::indent`, from the syntax tree): `=` re-indents lines, Enter,
+//! `o` and `O` start a line at the right depth, and typing a closing
+//! bracket first on a line puts it where it belongs. Without rules (Python,
+//! YAML, plain text, or `auto-indent` off for new lines), a new line copies
+//! the indentation of the one it was opened from, one level more after an
+//! opening bracket (or `:` in Python).
+
+use std::ops::RangeInclusive;
 
 use super::Editor;
 use crate::core::{Position, Range, motion};
+use crate::syntax::indent::{self, IndentStyle};
 
 /// How `gu`, `gU` and `g~` change letters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,22 +191,202 @@ impl Editor {
         self.document.set_cursor(start);
     }
 
-    /// The indentation for a new line opened after `row`, with the cursor at
-    /// `col` (where Enter split it): the line's own indentation, plus a
-    /// level if the text before the split ends with an opening bracket.
-    pub fn indent_for_new_line(&self, row: usize, col: usize) -> String {
+    /// Indentation `width` display columns wide, made the configured way.
+    pub fn indent_string(&self, width: usize) -> String {
+        let tab = self.options.tab_width.max(1);
+        whitespace(0, width, tab, self.options.expand_tab)
+    }
+
+    /// The width each line of `rows` should be indented to by the
+    /// language's rules (see [`indent::compute`]), or `None` without rules.
+    fn rule_indents(&self, rows: RangeInclusive<usize>) -> Option<Vec<Option<usize>>> {
+        let language = self.language_of(&self.document)?;
+        let buffer = self.document.buffer();
+        if buffer.len_chars() > crate::syntax::MAX_HIGHLIGHT_CHARS {
+            return None;
+        }
+        let tab = self.options.tab_width.max(1);
+        let style = IndentStyle {
+            tab_width: tab,
+            unit: tab,
+        };
+        indent::compute(language, &buffer.text(), rows, style)
+    }
+
+    /// One line's indentation by the rules.
+    fn rule_indent(&self, row: usize) -> Option<usize> {
+        self.rule_indents(row..=row)?.first().copied().flatten()
+    }
+
+    /// `=`: re-indents lines `first` to `last` by the language's rules.
+    /// Blank lines are emptied; lines inside a multi-line string or comment
+    /// are left alone.
+    pub fn reindent_lines(&mut self, first: usize, last: usize) -> Result<(), String> {
+        let language = self
+            .language_of(&self.document)
+            .ok_or("Can't re-indent: no language for this file")?
+            .to_string();
+        if !indent::has_rules(&language) {
+            return Err(format!(
+                "Can't re-indent: no indentation rules for {language}"
+            ));
+        }
+        let widths = self
+            .rule_indents(first..=last)
+            .ok_or("Can't re-indent: the file is too large")?;
+        for (row, width) in (first..=last).zip(widths) {
+            if let Some(width) = width {
+                self.set_line_indent(row, width);
+            }
+        }
+        let col = motion::first_non_blank(self.document.buffer(), first);
+        self.document.set_cursor(Position::new(first, col));
+        Ok(())
+    }
+
+    /// Replaces line `row`'s leading whitespace with indentation `width`
+    /// wide (or none, if the line is blank).
+    fn set_line_indent(&mut self, row: usize, width: usize) {
+        let line = self.document.buffer().line(row).into_owned();
+        let blanks = line.chars().take_while(|c| matches!(c, ' ' | '\t')).count();
+        let new = if blanks == line.chars().count() {
+            String::new()
+        } else {
+            self.indent_string(width)
+        };
+        if line.chars().take(blanks).ne(new.chars()) {
+            self.document
+                .delete(Position::new(row, 0), Position::new(row, blanks));
+            self.document.insert(Position::new(row, 0), &new);
+        }
+    }
+
+    /// The indentation for line `row`, just opened by Enter or `o` (or by
+    /// `O`, with `above`): by the language's rules, or else the indentation
+    /// of the line it was opened from, one level more after an opening
+    /// bracket. Nothing with `auto-indent` off.
+    pub fn indent_for_opened_line(&self, row: usize, above: bool) -> String {
         if !self.options.auto_indent {
             return String::new();
         }
-        let line = self.document.buffer().line(row);
-        let mut indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-        let before: String = line.chars().take(col).collect();
-        if before.trim_end().ends_with(['{', '(', '[']) {
+        if let Some(width) = self.rule_indent(row) {
+            return self.indent_string(width);
+        }
+        let buffer = self.document.buffer();
+        let from = if above {
+            row + 1
+        } else {
+            row.saturating_sub(1)
+        };
+        if from >= buffer.line_count() || from == row {
+            return String::new();
+        }
+        let line = buffer.line(from);
+        let mut indent: String = line
+            .chars()
+            .take_while(|c| matches!(c, ' ' | '\t'))
+            .collect();
+        let python = self.language_of(&self.document) == Some("python");
+        let trimmed = line.trim_end();
+        if !above && (trimmed.ends_with(['{', '(', '[']) || (python && trimmed.ends_with(':'))) {
             indent.push_str(&self.indent_unit());
         }
         indent
     }
+
+    /// Enter in insert mode: breaks the line and indents the new one.
+    /// Between a pair of brackets (`{|}`), the closing one goes on a line
+    /// of its own too, with the cursor on an indented line between.
+    pub fn insert_line_break(&mut self) {
+        let cursor = self.document.cursor();
+        let line = self.document.buffer().line(cursor.row).into_owned();
+        let before = cursor
+            .col
+            .checked_sub(1)
+            .and_then(|col| line.chars().nth(col));
+        let after = line.chars().nth(cursor.col);
+        let between = self.options.auto_indent
+            && matches!(
+                (before, after),
+                (Some('{'), Some('}')) | (Some('('), Some(')')) | (Some('['), Some(']'))
+            );
+        let row = cursor.row + 1;
+        if !between {
+            self.document.insert_str("\n");
+            let indent = self.indent_for_opened_line(row, false);
+            self.document.insert_str(&indent);
+            return;
+        }
+        let own_indent: String = line
+            .chars()
+            .take_while(|c| matches!(c, ' ' | '\t'))
+            .collect();
+        self.document.insert_str("\n\n");
+        let inner = self.indent_for_opened_line(row, false);
+        let closing = match self.rule_indent(row + 1) {
+            Some(width) => self.indent_string(width),
+            None => own_indent,
+        };
+        self.document.insert(Position::new(row + 1, 0), &closing);
+        self.document.insert(Position::new(row, 0), &inner);
+        self.document
+            .set_cursor(Position::new(row, inner.chars().count()));
+    }
+
+    /// Called as `c` is typed in insert mode. A closing bracket typed first
+    /// on a line re-indents the line by the language's rules, or without
+    /// rules, takes off one level (see [`Editor::dedent_for_closing_bracket`]).
+    pub(super) fn type_with_indent(&mut self, c: char) {
+        let cursor = self.document.cursor();
+        let first_on_line = self
+            .document
+            .buffer()
+            .line(cursor.row)
+            .chars()
+            .take(cursor.col)
+            .all(|c| matches!(c, ' ' | '\t'));
+        let by_rules = self.options.auto_indent
+            && CLOSERS.contains(&c)
+            && first_on_line
+            && self
+                .language_of(&self.document)
+                .is_some_and(indent::has_rules);
+        if !by_rules {
+            self.dedent_for_closing_bracket(c);
+            self.document.insert_char(c);
+            return;
+        }
+        self.document.insert_char(c);
+        if let Some(width) = self.rule_indent(cursor.row) {
+            self.set_line_indent(cursor.row, width);
+            let col = self.indent_string(width).chars().count() + 1;
+            self.document.set_cursor(Position::new(cursor.row, col));
+        }
+    }
 }
+
+/// Whitespace running from display column `from` to `to`: spaces, or tabs
+/// to each tab stop then spaces.
+pub(super) fn whitespace(from: usize, to: usize, tab: usize, expand_tab: bool) -> String {
+    if expand_tab {
+        return " ".repeat(to - from);
+    }
+    let mut text = String::new();
+    let mut col = from;
+    loop {
+        let stop = col - col % tab + tab;
+        if stop > to {
+            break;
+        }
+        text.push('\t');
+        col = stop;
+    }
+    text + &" ".repeat(to - col)
+}
+
+/// The characters a line can be re-indented after typing, when they're the
+/// first thing on it: closing brackets.
+const CLOSERS: [char; 3] = ['}', ')', ']'];
 
 #[cfg(test)]
 mod tests {
@@ -335,21 +526,32 @@ mod tests {
     }
 
     #[test]
-    fn new_line_indent() {
-        let mut e = editor("    let x = foo(\n  y");
+    fn new_line_indent_without_rules() {
+        // No language: the line it was opened from, plus a level after an
+        // opening bracket.
+        let mut e = editor("    let x = foo(\n\n  y\n");
         e.options.tab_width = 4;
-        assert_eq!(
-            e.indent_for_new_line(0, 16),
-            "        ",
-            "after an opening bracket"
-        );
-        assert_eq!(
-            e.indent_for_new_line(0, 8),
-            "    ",
-            "split before the bracket"
-        );
-        assert_eq!(e.indent_for_new_line(1, 3), "  ");
+        assert_eq!(e.indent_for_opened_line(1, false), "        ");
+        assert_eq!(e.indent_for_opened_line(3, false), "  ");
+        assert_eq!(e.indent_for_opened_line(1, true), "  ", "O: the line below");
         e.options.auto_indent = false;
-        assert_eq!(e.indent_for_new_line(0, 16), "");
+        assert_eq!(e.indent_for_opened_line(1, false), "");
+    }
+
+    #[test]
+    fn enter_between_brackets_opens_a_line_inside() {
+        let mut e = editor("  f({})");
+        e.document.set_cursor(Position::new(0, 5));
+        e.insert_line_break();
+        assert_eq!(text(&e), "  f({\n      \n  })");
+        assert_eq!(e.document.cursor(), Position::new(1, 6));
+    }
+
+    #[test]
+    fn whitespace_fills_to_tab_stops() {
+        assert_eq!(whitespace(1, 5, 4, true), "    ");
+        assert_eq!(whitespace(1, 5, 4, false), "\t ");
+        assert_eq!(whitespace(0, 8, 4, false), "\t\t");
+        assert_eq!(whitespace(2, 3, 4, false), " ");
     }
 }

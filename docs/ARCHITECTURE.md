@@ -205,7 +205,8 @@ it stops.
 `syntax/` wraps tree-sitter:
 
 - `languages.rs` lists each built-in language by name: its grammar and
-  queries. A language built on another (TypeScript on JavaScript, C++ on C)
+  queries. `indent.rs` holds the indentation rules (see
+  [Indentation](#indentation)). A language built on another (TypeScript on JavaScript, C++ on C)
   lists its own highlight query first and the base one after, joined, so its
   patterns win. Adding a language is one entry, its grammar crate, and a
   `[languages.name]` table in the default config.
@@ -284,9 +285,7 @@ touch registers. `apply_operator` hands them to `editor/transform.rs`:
 - `change_case` replaces the range with its re-cased text (which may change
   length, e.g. `ß` → `SS`).
 
-`J` and auto-indent live there too. Auto-indent is `indent_for_new_line`:
-the current line's indent, plus a level after an opening bracket. Typing a
-closing bracket on a line that's only indentation removes a level.
+`J` and indentation live there too; see [Indentation](#indentation).
 
 The editor pane draws tabs as spaces up to the next tab stop (`tab-width`).
 `ui/editor_view/line.rs` is the one place that maps character columns to
@@ -313,6 +312,48 @@ register: a line or more (or a delete over a jump motion, `d%`, `d}`, via
 `StoreKind::DeleteOverJump`) shifts `"1`-`"8` down and lands in `"1`;
 anything smaller goes to `"-`. Yanks go to `"0`. Naming a register, or the
 black hole `"_`, skips all of these.
+
+### Indentation
+
+Indentation follows the language's rules where it has them
+(`syntax/indent.rs`), and a heuristic otherwise (`editor/transform.rs`).
+
+- **Rules** are a small tree-sitter query per language, written for ferra:
+  `@indent` marks a node whose lines after its first go one level in (a
+  block, an argument list, an HTML element) and `@outdent` a token that,
+  starting a line, puts it back at the level of the node it closes (`}`,
+  `fi`, `else`, `</div>`). An outdent only counts when its parent is that
+  node, so Go's `switch`, which has no rule, doesn't cancel the block
+  around it with its `}`. Rust, JSON, TOML, JavaScript, TypeScript, TSX,
+  Go, C, C++, Bash, HTML and CSS have rules. Python and YAML don't (there
+  indentation is meaning, not layout), nor does Markdown.
+- **A line's indentation is relative**: that of the line where its
+  innermost open `@indent` node starts, plus a level (or nothing, for an
+  outdent line). So nodes opened on one line (`foo(bar(`) add one level,
+  and a file indented by a deeper base keeps it. Each row's innermost node
+  is found by laying nodes over the rows they cover in start order, so
+  later (nested) ones win: linear in the file, about 100 ms to re-indent
+  15,000 lines in release, most of it the parse.
+- **Unclosed brackets while typing**: tree-sitter either makes up the
+  closing token (`MISSING`) or leaves the bracket loose in an `ERROR` node.
+  Either way the node is taken to be open to the end of the text, which is
+  what makes Enter after `fn main() {` indent.
+- Lines starting inside a multi-line string, comment or raw text
+  (`<script>`) are left alone.
+- **`=`** is `Operator::Reindent`, over the lines its range touches, so
+  `==`, `=ip`, `gg=G`, visual `=` and `.` all work. Blank lines are
+  emptied. A language without rules, or a file without a language, gets a
+  message instead.
+- **New lines** (Enter, `o`, `O`; `indent_for_opened_line`) are
+  indented by the rules once the line exists, so text carried onto it
+  (`}` after Enter) counts. Without rules, the line it was opened from is
+  copied, plus a level after an opening bracket, or `:` in Python. Enter
+  between a pair of brackets (`{|}`) puts the closing one on its own line
+  too, with the cursor on an indented line between.
+- **Typing a closing bracket** first on a line re-indents the line by the
+  rules (`type_with_indent`); without rules it takes off a level.
+- New lines are skipped with `auto-indent = false`; `=` isn't. Files over
+  the highlighting limit fall back to the heuristic.
 
 ### Comments
 
@@ -832,9 +873,10 @@ status, branches and history.
 - Alt keys that *are* bound can't be told apart from a fast Esc then that
   key (terminals send the same bytes), so binding `<A-j>` in insert mode
   means a quick `<Esc>j` runs it.
-- Language-aware indentation (tree-sitter indent queries), and `=` to
-  re-indent. Auto-indent currently copies the previous line and reacts to
-  brackets only.
+- Indentation: no rules for Python or YAML (new lines copy the line
+  above, and `=` declines), no re-indenting as a keyword is typed (Bash's
+  `fi`; only closing brackets trigger it), and the indent unit is always
+  `tab-width` rather than detected from the file.
 - `"=` (the expression register).
 - Window-local options, and per-window or plugin-supplied status line
   elements (the layout is one setting for the active window).

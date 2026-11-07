@@ -42,6 +42,7 @@ type, open a file or split the window.
 | Normal  | `{` `}` | Previous / next empty line (paragraph) |
 | Normal  | `r` + char | Replace characters (`3rx`) |
 | Normal  | `>` `<` + motion, `>>` `<<` | Indent / outdent lines (`>ip`, `3>>`; visual `>` `<`) |
+| Normal  | `=` + motion, `==` | Re-indent lines by the language's rules (`gg=G` for the whole file; visual `=`) |
 | Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |
 | Normal  | `gcc`, `gc` + motion (`gcap`, `gcj`), visual `gc` | Toggle comments on those lines, using the file's language |
 | Normal  | `~` | Toggle case under the cursor and move on |
@@ -97,6 +98,14 @@ as whole lines). Set `clipboard = "unnamed"` under `[editor]` to make every
 yank, delete and `p` use it, or `"off"` to never touch it. Pasting into the
 terminal (Cmd/Ctrl+V) inserts the text exactly as copied, with no
 auto-indent, as one undo step.
+
+**Indentation:** in Rust, JSON, TOML, JavaScript, TypeScript, Go, C, C++,
+Bash, HTML and CSS, indentation follows the syntax tree. Enter and `o`
+start a line at the right depth (Enter between `{}` opens an indented line
+inside), a closing bracket typed first on a line jumps back to its opening
+line's level, and `=` re-indents (`==`, `=ip`, `gg=G`). Other files keep
+the indentation of the line above, one level more after an opening bracket
+(or a `:` in Python).
 
 Macros are stored in their register as key notation (`A;<Esc>j`), so
 `"ap` pastes one to edit and `"ay$` yanks it back. Playback stops at the
@@ -332,7 +341,7 @@ every option. Example:
 [editor]
 tab-width = 2
 expand-tab = true           # indent with spaces; false for tabs
-auto-indent = true          # new lines keep indentation
+auto-indent = true          # indent new lines (by the language's rules where it has them)
 line-numbers = "absolute"   # "absolute" | "relative" | "none"
 scroll-off = 8
 statusline = "global"       # one status line, not one per window

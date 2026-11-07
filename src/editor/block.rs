@@ -9,6 +9,7 @@
 
 use super::registers::{Register, StoreKind};
 use super::transform::CaseChange;
+use super::transform::whitespace;
 use super::{Editor, Mode, Operator, SelectionKind};
 use crate::core::columns::{char_cells, char_col_at, display_col, display_width};
 use crate::core::{Block, Position, Range};
@@ -112,6 +113,7 @@ impl Editor {
         let tab = self.options.tab_width;
         match operator {
             Operator::Comment => return self.toggle_comment(block.first, block.last),
+            Operator::Reindent => return self.reindent_lines(block.first, block.last),
             Operator::Indent | Operator::Outdent => {
                 self.shift_block(block, operator == Operator::Indent);
                 return Ok(());
@@ -401,25 +403,6 @@ impl Editor {
     }
 }
 
-/// Whitespace running from display column `from` to `to`: spaces, or tabs
-/// to each tab stop then spaces.
-fn whitespace(from: usize, to: usize, tab: usize, expand_tab: bool) -> String {
-    if expand_tab {
-        return " ".repeat(to - from);
-    }
-    let mut text = String::new();
-    let mut col = from;
-    loop {
-        let stop = col - col % tab + tab;
-        if stop > to {
-            break;
-        }
-        text.push('\t');
-        col = stop;
-    }
-    text + &" ".repeat(to - col)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,14 +527,6 @@ mod tests {
         );
         assert_eq!(text(&e), "1ab2\n3c 4\n de");
         assert_eq!(e.document.cursor(), pos(0, 1));
-    }
-
-    #[test]
-    fn whitespace_fills_to_tab_stops() {
-        assert_eq!(whitespace(1, 5, 4, true), "    ");
-        assert_eq!(whitespace(1, 5, 4, false), "\t ");
-        assert_eq!(whitespace(0, 8, 4, false), "\t\t");
-        assert_eq!(whitespace(2, 3, 4, false), " ");
     }
 
     #[test]

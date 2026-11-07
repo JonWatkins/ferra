@@ -250,8 +250,7 @@ impl Editor {
     pub fn insert_text_char(&mut self, c: char) {
         match self.mode {
             Mode::Insert => {
-                self.dedent_for_closing_bracket(c);
-                self.document.insert_char(c);
+                self.type_with_indent(c);
                 self.typed.push(c);
             }
             Mode::Command => {

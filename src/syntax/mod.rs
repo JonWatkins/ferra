@@ -11,6 +11,7 @@
 //! (editing the previous tree) is the upgrade path for very large ones.
 
 mod highlight;
+pub mod indent;
 mod languages;
 
 pub use highlight::{HIGHLIGHT_NAMES, Highlights, Span};

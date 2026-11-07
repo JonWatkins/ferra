@@ -9,11 +9,9 @@ use crate::editor::Mode;
 pub fn register(r: &mut CommandRegistry) {
     r.register(
         "insert_newline",
-        "Insert a line break (keeping indentation with auto-indent)",
+        "Insert a line break (indenting the new line with auto-indent)",
         |cx| {
-            let cursor = cx.editor.document.cursor();
-            let indent = cx.editor.indent_for_new_line(cursor.row, cursor.col);
-            cx.editor.document.insert_str(&format!("\n{indent}"));
+            cx.editor.insert_line_break();
             cx.editor.note_typed("\n");
             Ok(())
         },
@@ -116,10 +114,9 @@ pub fn register(r: &mut CommandRegistry) {
         "open_line_below",
         "Open a new line below and enter insert mode",
         |cx| {
-            let row = cx.editor.document.cursor().row;
-            let line_len = cx.editor.document.buffer().line_len(row);
-            let indent = cx.editor.indent_for_new_line(row, line_len);
             cx.editor.document.open_line(true);
+            let row = cx.editor.document.cursor().row;
+            let indent = cx.editor.indent_for_opened_line(row, false);
             cx.editor.document.insert_str(&indent);
             cx.editor.set_mode(Mode::Insert);
             Ok(())
@@ -129,10 +126,9 @@ pub fn register(r: &mut CommandRegistry) {
         "open_line_above",
         "Open a new line above and enter insert mode",
         |cx| {
-            // The new line above takes this line's indentation.
-            let row = cx.editor.document.cursor().row;
-            let indent = cx.editor.indent_for_new_line(row, 0);
             cx.editor.document.open_line(false);
+            let row = cx.editor.document.cursor().row;
+            let indent = cx.editor.indent_for_opened_line(row, true);
             cx.editor.document.insert_str(&indent);
             cx.editor.set_mode(Mode::Insert);
             Ok(())

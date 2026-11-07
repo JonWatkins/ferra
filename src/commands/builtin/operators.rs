@@ -33,6 +33,11 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| begin(cx, Operator::Outdent),
     );
     r.register(
+        "operator_reindent",
+        "Re-indent the lines of a motion or text object by the language's rules (=)",
+        |cx| begin(cx, Operator::Reindent),
+    );
+    r.register(
         "operator_lowercase",
         "Lowercase over a motion or text object (gu)",
         |cx| begin(cx, Operator::Lowercase),

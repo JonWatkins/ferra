@@ -1,4 +1,4 @@
-//! Operators (`d`, `c`, `y`, `>`, `<`, `gu`, `gU`, `g~`, `gc`) and applying
+//! Operators (`d`, `c`, `y`, `>`, `<`, `=`, `gu`, `gU`, `g~`, `gc`) and applying
 //! them to ranges.
 
 use super::registers::{Register, StoreKind};
@@ -18,6 +18,8 @@ pub enum Operator {
     ToggleCase,
     /// `gc`: toggles comments on the lines the range touches.
     Comment,
+    /// `=`: re-indents the lines the range touches by the language's rules.
+    Reindent,
 }
 
 /// An operator waiting for a motion or text object (operator-pending mode).
@@ -92,6 +94,10 @@ impl Editor {
                 let (first, last) = range.rows();
                 return self.toggle_comment(first, last);
             }
+            Operator::Reindent => {
+                let (first, last) = range.rows();
+                return self.reindent_lines(first, last);
+            }
             Operator::Delete | Operator::Change | Operator::Yank => {}
         }
 
@@ -149,7 +155,8 @@ impl Editor {
                 | Operator::Lowercase
                 | Operator::Uppercase
                 | Operator::ToggleCase
-                | Operator::Comment,
+                | Operator::Comment
+                | Operator::Reindent,
                 _,
             ) => unreachable!("handled before touching registers"),
         }

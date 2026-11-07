@@ -8,8 +8,9 @@
 tab-width = 4
 # Indent with spaces (true) or tab characters (false).
 expand-tab = true
-# Enter, o and O keep the current line's indentation (one level more after
-# an opening bracket).
+# Enter, o and O indent the new line: by the language's rules where it has
+# them, otherwise like the line before (one level more after an opening
+# bracket). Typing a closing bracket first on a line re-indents it.
 auto-indent = true
 # "absolute", "relative" (hybrid: current line shows its absolute number) or "none".
 line-numbers = "relative"
@@ -265,6 +266,7 @@ block-comment = ["/*", "*/"]
 "y" = "operator_yank"
 ">" = "operator_indent"
 "<lt>" = "operator_outdent"
+"=" = "operator_reindent"
 "gu" = "operator_lowercase"
 "gU" = "operator_uppercase"
 "g~" = "operator_toggle_case"
@@ -357,6 +359,7 @@ block-comment = ["/*", "*/"]
 "y" = "current_line"
 ">" = "current_line"
 "<lt>" = "current_line"
+"=" = "current_line"
 "u" = "current_line"
 "U" = "current_line"
 "~" = "current_line"
@@ -443,6 +446,7 @@ block-comment = ["/*", "*/"]
 "y" = "operator_yank"
 ">" = "operator_indent"
 "<lt>" = "operator_outdent"
+"=" = "operator_reindent"
 "u" = "operator_lowercase"
 "U" = "operator_uppercase"
 "~" = "operator_toggle_case"
