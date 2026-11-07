@@ -95,6 +95,80 @@ fn indent_shifts_the_blocks_lines() {
 }
 
 #[test]
+fn shifting_starts_at_the_blocks_left_edge() {
+    let mut app = with_text("ab<CR>cd");
+    keys(&mut app, "l<C-v>j>");
+    assert_eq!(text(&app), "a    b\nc    d");
+    assert_eq!(cursor(&app), (0, 1));
+}
+
+#[test]
+fn outdent_only_takes_whitespace_inside_the_block() {
+    // Six spaces between a and b; the block starts at the third.
+    let mut app = with_text("a      b");
+    keys(&mut app, "3l<C-v><");
+    assert_eq!(text(&app), "a  b", "the two spaces left of the block stay");
+    keys(&mut app, "<C-v><");
+    assert_eq!(text(&app), "a  b", "nothing more to take");
+}
+
+#[test]
+fn shifting_skips_rows_that_stop_short_of_the_block() {
+    let mut app = with_text("abc<CR>a<CR>ab  <CR>abc");
+    keys(&mut app, "ll<C-v>3j>");
+    assert_eq!(text(&app), "ab    c\na\nab  \nab    c");
+}
+
+#[test]
+fn shifting_with_tabs_aligns_to_tab_stops() {
+    let mut app = app_with_config("[editor]\nauto-indent = false\nexpand-tab = false");
+    keys(&mut app, "iabcd<Esc>0l<C-v>>");
+    assert_eq!(text(&app), "a\t bcd", "a tab to column 4, then a space");
+}
+
+/// Three rows with a tab (cells 1-3) in the middle one, for blocks that cut
+/// it.
+fn with_a_tab() -> App {
+    let mut app = app_with_config("[editor]\nauto-indent = false\nexpand-tab = false");
+    keys(&mut app, "iabcdef<CR>a\tb<CR>abcdef<Esc>gg0");
+    app
+}
+
+#[test]
+fn deleting_part_of_a_tab_keeps_the_rest_as_spaces() {
+    let mut app = with_a_tab();
+    keys(&mut app, "ll<C-v>jjld");
+    assert_eq!(text(&app), "abef\na b\nabef", "b stays in line with e");
+    assert_eq!(register(&app, '"').as_deref(), Some("cd\n  \ncd"));
+}
+
+#[test]
+fn yanking_part_of_a_tab_gives_spaces() {
+    let mut app = with_a_tab();
+    keys(&mut app, "ll<C-v>jjly");
+    assert_eq!(register(&app, '"').as_deref(), Some("cd\n  \ncd"));
+    assert_eq!(text(&app), "abcdef\na\tb\nabcdef", "unchanged");
+}
+
+#[test]
+fn inserting_in_the_middle_of_a_tab_splits_it() {
+    let mut app = with_a_tab();
+    keys(&mut app, "ll<C-v>jjI|<Esc>");
+    assert_eq!(text(&app), "ab|cdef\na |  b\nab|cdef");
+
+    let mut app = with_a_tab();
+    keys(&mut app, "ll<C-v>jjlcX<Esc>");
+    assert_eq!(text(&app), "abXef\na Xb\nabXef");
+}
+
+#[test]
+fn cutting_wide_characters_leaves_spaces() {
+    let mut app = with_text("abcde<CR>日本x<CR>abcde");
+    keys(&mut app, "l<C-v>jjld");
+    assert_eq!(text(&app), "ade\n  x\nade", "x stays in line with e");
+}
+
+#[test]
 fn line_commands_see_whole_lines() {
     let mut app = with_text("a1<CR>b2<CR>c3");
     keys(&mut app, "l<C-v>jJ");
@@ -153,6 +227,16 @@ fn gv_restores_a_block() {
     let mut app = with_text("abc<CR>abc");
     keys(&mut app, "<C-v>jl<Esc>gvd");
     assert_eq!(text(&app), "c\nc");
+}
+
+#[test]
+fn gv_remembers_a_block_to_each_rows_end() {
+    let mut app = with_text("a<CR>bbb");
+    keys(&mut app, "<C-v>j$<Esc>gvA;<Esc>");
+    assert_eq!(text(&app), "a;\nbbb;", "not padded to the longest row");
+
+    keys(&mut app, "gg0<C-v>j<Esc>gvA!<Esc>");
+    assert_eq!(text(&app), "a!;\nb!bb;", "a later block without $ doesn't");
 }
 
 #[test]

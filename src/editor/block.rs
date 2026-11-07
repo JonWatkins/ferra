@@ -3,6 +3,9 @@
 //!
 //! The shape comes from [`crate::core::Block`], in display columns. Edits
 //! go row by row, bottom to top, so earlier rows' positions stay valid.
+//! A tab or wide character cut by the block's edge leaves spaces for its
+//! cells outside the block (and yanks as spaces for those inside), so the
+//! text around the block stays where it was on screen.
 
 use super::registers::{Register, StoreKind};
 use super::transform::CaseChange;
@@ -93,11 +96,7 @@ impl Editor {
         let tab = self.options.tab_width;
         block
             .rows()
-            .map(|row| {
-                let line = self.document.buffer().line(row);
-                let (start, end) = block.chars_in(&line, tab);
-                line.chars().skip(start).take(end - start).collect()
-            })
+            .map(|row| block.text_in(&self.document.buffer().line(row), tab))
             .collect()
     }
 
@@ -113,11 +112,7 @@ impl Editor {
         match operator {
             Operator::Comment => return self.toggle_comment(block.first, block.last),
             Operator::Indent | Operator::Outdent => {
-                let lines = Range::Lines {
-                    first: block.first,
-                    last: block.last,
-                };
-                self.shift_lines(lines, operator == Operator::Indent);
+                self.shift_block(block, operator == Operator::Indent);
                 return Ok(());
             }
             Operator::Lowercase | Operator::Uppercase | Operator::ToggleCase => {
@@ -170,6 +165,48 @@ impl Editor {
         Ok(())
     }
 
+    /// `>` / `<` on a block: shifts the text from the block's left edge by
+    /// one indent, as Vim does. The whitespace starting there grows or
+    /// shrinks (`<` never takes whitespace from left of the block) and is
+    /// rewritten as tabs or spaces per `expand-tab`. Rows that stop short of
+    /// the block, or have nothing but whitespace in it, are left alone.
+    fn shift_block(&mut self, block: Block, indent: bool) {
+        let tab = self.options.tab_width.max(1);
+        let expand_tab = self.options.expand_tab;
+        for row in block.rows() {
+            let line = self.document.buffer().line(row).into_owned();
+            if !block.reaches(&line, tab) {
+                continue;
+            }
+            let start = char_col_at(&line, block.left, tab);
+            let blanks = line
+                .chars()
+                .skip(start)
+                .take_while(|c| matches!(c, ' ' | '\t'))
+                .count();
+            let end = start + blanks;
+            if end == line.chars().count() {
+                continue;
+            }
+            let from = display_col(&line, start, tab);
+            let to = display_col(&line, end, tab);
+            let new_to = if indent {
+                to + tab
+            } else if to > block.left {
+                to.saturating_sub(tab).max(block.left)
+            } else {
+                continue;
+            };
+            let space = whitespace(from, new_to, tab, expand_tab);
+            if line.chars().skip(start).take(blanks).ne(space.chars()) {
+                self.document
+                    .delete(Position::new(row, start), Position::new(row, end));
+                self.document.insert(Position::new(row, start), &space);
+            }
+        }
+        self.set_cursor_to_block_start(block);
+    }
+
     /// `I` (or `A` with `append`) on a block: types on the first row, then
     /// copies the text to the rest when insert mode ends. `I` skips rows that
     /// stop short of the block; `A` pads them with spaces, or with `$`
@@ -207,26 +244,46 @@ impl Editor {
     }
 
     /// Where `target` is on `row`, padding the row with spaces first if a
-    /// padded column is past its end.
+    /// padded column is past its end, or splitting a tab the column is in
+    /// the middle of.
     fn prepare_row(&mut self, row: usize, target: Target) -> Position {
         let tab = self.options.tab_width;
         let line = self.document.buffer().line(row).to_string();
         let len = line.chars().count();
         let col = match target {
             Target::LineEnd => len,
-            Target::Column(col) => char_col_at(&line, col, tab),
-            Target::PaddedColumn(col) => {
+            Target::Column(col) | Target::PaddedColumn(col) => {
                 let width = display_width(&line, tab);
                 if width < col {
+                    if matches!(target, Target::Column(_)) {
+                        return Position::new(row, len);
+                    }
                     let pad = " ".repeat(col - width);
                     self.document.insert(Position::new(row, len), &pad);
                     len + pad.len()
                 } else {
-                    char_col_at(&line, col, tab)
+                    self.split_tab_at(row, &line, col)
                 }
             }
         };
         Position::new(row, col)
+    }
+
+    /// The character column at display column `col` on `row` (whose text is
+    /// `line`). A tab covering `col` but starting before it becomes spaces,
+    /// so `col` is a character boundary.
+    fn split_tab_at(&mut self, row: usize, line: &str, col: usize) -> usize {
+        let tab = self.options.tab_width;
+        let at = char_col_at(line, col, tab);
+        let (first, last) = char_cells(line, at, tab);
+        if first == col || line.chars().nth(at) != Some('\t') {
+            return at;
+        }
+        let spaces = " ".repeat(last - first + 1);
+        self.document
+            .delete(Position::new(row, at), Position::new(row, at + 1));
+        self.document.insert(Position::new(row, at), &spaces);
+        at + (col - first)
     }
 
     /// Called when insert mode ends: copies the text typed on the first row
@@ -257,10 +314,14 @@ impl Editor {
     fn delete_block(&mut self, block: Block) {
         let tab = self.options.tab_width;
         for row in block.rows().rev() {
-            let (start, end) = block.chars_in(&self.document.buffer().line(row), tab);
-            if start < end {
-                self.document
-                    .delete(Position::new(row, start), Position::new(row, end));
+            let part = block.row(&self.document.buffer().line(row), tab);
+            if !part.is_empty() {
+                let start = Position::new(row, part.start);
+                self.document.delete(start, Position::new(row, part.end));
+                let remainder = part.remainder();
+                if !remainder.is_empty() {
+                    self.document.insert(start, &remainder);
+                }
             }
         }
         self.set_cursor_to_block_start(block);
@@ -336,6 +397,25 @@ impl Editor {
         }
         self.set_cursor_to_block_start(block);
     }
+}
+
+/// Whitespace running from display column `from` to `to`: spaces, or tabs
+/// to each tab stop then spaces.
+fn whitespace(from: usize, to: usize, tab: usize, expand_tab: bool) -> String {
+    if expand_tab {
+        return " ".repeat(to - from);
+    }
+    let mut text = String::new();
+    let mut col = from;
+    loop {
+        let stop = col - col % tab + tab;
+        if stop > to {
+            break;
+        }
+        text.push('\t');
+        col = stop;
+    }
+    text + &" ".repeat(to - col)
 }
 
 #[cfg(test)]
@@ -462,6 +542,28 @@ mod tests {
         );
         assert_eq!(text(&e), "1ab2\n3c 4\n de");
         assert_eq!(e.document.cursor(), pos(0, 1));
+    }
+
+    #[test]
+    fn whitespace_fills_to_tab_stops() {
+        assert_eq!(whitespace(1, 5, 4, true), "    ");
+        assert_eq!(whitespace(1, 5, 4, false), "\t ");
+        assert_eq!(whitespace(0, 8, 4, false), "\t\t");
+        assert_eq!(whitespace(2, 3, 4, false), " ");
+    }
+
+    #[test]
+    fn shifting_a_block_moves_text_from_its_left_edge() {
+        let mut e = selecting("x  y\nx  y", pos(0, 2), pos(1, 2));
+        let block = e.take_block().unwrap();
+        e.apply_block_operator(Operator::Indent, block, None)
+            .unwrap();
+        assert_eq!(text(&e), "x      y\nx      y");
+        let mut e = selecting("x      y", pos(0, 2), pos(0, 2));
+        let block = e.take_block().unwrap();
+        e.apply_block_operator(Operator::Outdent, block, None)
+            .unwrap();
+        assert_eq!(text(&e), "x  y", "the space left of the block stays");
     }
 
     #[test]

@@ -80,6 +80,7 @@ type, open a file or split the window.
 | Block   | `$` | Extend every row to its own end (`$A;` appends to each line) |
 | Block   | `D` `C` | Delete / change from the block to each row's end |
 | Block   | `p` | A one-line register fills every row; a block replaces it column for column |
+| Block   | `>` `<` | Shift the text from the block's left edge (text left of the block stays put) |
 | Normal  | `:` | Command line |
 | Normal  | `3j`, `2dd`, `3u`, ... | Counts work with every command |
 | Insert  | `<Esc>` | Back to normal mode |

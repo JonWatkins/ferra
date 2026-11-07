@@ -16,7 +16,7 @@ pub mod search;
 pub mod text_format;
 pub mod text_object;
 
-pub use block::Block;
+pub use block::{Block, BlockRow};
 pub use buffer::Buffer;
 pub use history::{Change, History, Revision};
 pub use position::Position;

@@ -352,11 +352,21 @@ where they change, so marks elsewhere on them stay put.
   between character and display columns, for the UI too). A character partly
   inside the block (a tab) counts as inside. `to_eol` (`$`) makes each row
   run to its own end; motions report through `Editor::note_block_motion`,
-  and only `$` and vertical moves keep it.
+  and only `$` and vertical moves keep it. `gv` remembers `to_eol` along
+  with the corners.
 - `Selection::range` gives a block's whole lines, so line-based commands
-  (`J`, `:`, `X`, `Y`, `>`) work unchanged. Character operators check
+  (`J`, `:`, `X`, `Y`) work unchanged. Character operators check
   `Editor::take_block` first and go to `editor/block.rs`, which edits row
   by row from the bottom up so earlier rows' positions stay put.
+- A tab or wide character cut by an edge is split as in Vim:
+  `Block::row` counts its cells outside the block, a delete leaves those as
+  spaces, and a yank gives the cells inside as spaces, so the text around
+  the block stays put on screen. `I` (or `c`) at a column in the middle of
+  a tab turns the tab into spaces first.
+- `>` / `<` shift from the block's left edge: the whitespace starting
+  there grows or shrinks by one indent (`<` never takes whitespace from
+  left of the block) and is rewritten as tabs or spaces per `expand-tab`.
+  Rows that stop short of the block, or are blank inside it, are skipped.
 - Yanks store a `blockwise` register (one line per row). Pasting one
   inserts each row at the same display column on successive lines, padding
   short lines and adding lines at the end, and padding pieces to the block's
@@ -803,9 +813,6 @@ status, branches and history.
 
 ## Known gaps / next steps
 
-- Visual block mode: `>`/`<` shift whole lines (Vim shifts from the
-  block's left edge), a tab partly inside a block is taken whole (Vim splits
-  it into spaces), and `gv` doesn't remember `$`.
 - Alt keys that *are* bound can't be told apart from a fast Esc then that
   key (terminals send the same bytes), so binding `<A-j>` in insert mode
   means a quick `<Esc>j` runs it.

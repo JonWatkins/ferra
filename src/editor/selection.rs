@@ -59,6 +59,8 @@ impl Selection {
 pub(super) struct LastSelection {
     selection: Selection,
     cursor: Position,
+    /// A block that ran to each row's end (`$`).
+    to_eol: bool,
 }
 
 impl Editor {
@@ -149,6 +151,7 @@ impl Editor {
             anchor,
             kind: last.selection.kind,
         });
+        self.block_to_eol = last.to_eol;
         self.document.set_cursor(last.cursor);
         self.enforce_cursor_rules();
         true
@@ -167,6 +170,7 @@ impl Editor {
             self.last_selection = Some(LastSelection {
                 selection,
                 cursor: self.document.cursor(),
+                to_eol: selection.kind == SelectionKind::Block && self.block_to_eol,
             });
         }
     }

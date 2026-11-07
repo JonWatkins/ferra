@@ -2,8 +2,9 @@
 //!
 //! A block covers the same display columns on each of its rows, so it lines
 //! up on screen even with tabs and wide characters. A character partly
-//! inside the block counts as inside. With `to_eol` (`$` in block mode) each
-//! row's block runs to the end of that row.
+//! inside the block counts as inside; [`Block::row`] says how many of its
+//! cells stick out, so edits can keep those as spaces (as Vim does). With
+//! `to_eol` (`$` in block mode) each row's block runs to the end of that row.
 
 use super::Buffer;
 use super::columns::{char_cells, display_col};
@@ -72,9 +73,85 @@ impl Block {
         }
     }
 
+    /// The block's part of `line`: [`Block::chars_in`], plus the cells of
+    /// its first and last characters that stick out of the block (a tab or
+    /// wide character cut by an edge).
+    pub fn row(&self, line: &str, tab_width: usize) -> BlockRow {
+        let (start, end) = self.chars_in(line, tab_width);
+        let mut row = BlockRow {
+            start,
+            end,
+            before: 0,
+            after: 0,
+        };
+        if start < end {
+            let (first, _) = char_cells(line, start, tab_width);
+            row.before = self.left.saturating_sub(first);
+            if !self.to_eol {
+                let (_, last) = char_cells(line, end - 1, tab_width);
+                row.after = last.saturating_sub(self.right);
+            }
+        }
+        row
+    }
+
+    /// The block's text on `line`, with the covered cells of characters cut
+    /// by its edges as spaces.
+    pub fn text_in(&self, line: &str, tab_width: usize) -> String {
+        let row = self.row(line, tab_width);
+        if row.before == 0 && row.after == 0 {
+            return line.chars().skip(row.start).take(row.len()).collect();
+        }
+        let mut text = String::new();
+        for (i, c) in line.chars().enumerate().skip(row.start).take(row.len()) {
+            let (first, last) = char_cells(line, i, tab_width);
+            let width = last - first + 1;
+            let mut outside = 0;
+            if i == row.start {
+                outside += row.before;
+            }
+            if i + 1 == row.end {
+                outside += row.after;
+            }
+            if outside == 0 {
+                text.push(c);
+            } else {
+                text.push_str(&" ".repeat(width.saturating_sub(outside)));
+            }
+        }
+        text
+    }
+
     /// Whether `line` reaches the block's left edge.
     pub fn reaches(&self, line: &str, tab_width: usize) -> bool {
         display_col(line, usize::MAX, tab_width) > self.left
+    }
+}
+
+/// One row of a block: the characters `start..end`, of which the first
+/// sticks `before` cells out to the left and the last `after` cells out to
+/// the right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockRow {
+    pub start: usize,
+    pub end: usize,
+    pub before: usize,
+    pub after: usize,
+}
+
+impl BlockRow {
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+
+    /// What's left in place of the deleted characters: spaces for the cells
+    /// outside the block.
+    pub fn remainder(&self) -> String {
+        " ".repeat(self.before + self.after)
     }
 }
 
@@ -105,6 +182,31 @@ mod tests {
         assert_eq!(block(2, 2).chars_in("a\tb", 4), (1, 2));
         // 日 covers cells 0-1, 本 2-3.
         assert_eq!(block(1, 2).chars_in("日本x", 4), (0, 2));
+    }
+
+    #[test]
+    fn rows_count_the_cells_that_stick_out() {
+        // The tab covers cells 1-3; the block is cells 2-4.
+        let row = block(2, 4).row("a\tbc", 4);
+        assert_eq!(
+            (row.start, row.end, row.before, row.after),
+            (1, 3, 1, 0),
+            "the tab's first cell is outside"
+        );
+        assert_eq!(block(2, 4).text_in("a\tbc", 4), "  b");
+        assert_eq!(row.remainder(), " ");
+        // A tab across the right edge (cells 0-3, block 0-1).
+        let row = block(0, 1).row("\tx", 4);
+        assert_eq!((row.before, row.after), (0, 2));
+        assert_eq!(block(0, 1).text_in("\tx", 4), "  ");
+        // Wide characters cut by either edge.
+        assert_eq!(block(1, 2).text_in("日本x", 4), "  ", "half of each");
+        assert_eq!(block(0, 3).text_in("日本x", 4), "日本", "nothing cut");
+        let eol = Block {
+            to_eol: true,
+            ..block(2, 2)
+        };
+        assert_eq!(eol.row("a\tbcdef", 4).after, 0);
     }
 
     #[test]
