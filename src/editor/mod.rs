@@ -142,6 +142,10 @@ pub struct Editor {
     /// The shape of the last selection an operator took, until the app
     /// collects it for `.` (see [`Editor::take_visual_shape`]).
     taken_shape: Option<selection::VisualShape>,
+    /// The indentation a line had before typing a keyword moved it
+    /// (`fi`), by document and row, to put back if the word goes on
+    /// (`file`).
+    keyword_indent: Option<(DocumentId, usize, String)>,
     /// Text typed by `I`/`A`/`c` on a block's first row, copied to the
     /// others when insert mode ends.
     block_insert: Option<block::BlockInsert>,

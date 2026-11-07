@@ -14,7 +14,8 @@ expand-tab = true
 detect-indent = true
 # Enter, o and O indent the new line: by the language's rules where it has
 # them, otherwise like the line before (one level more after an opening
-# bracket). Typing a closing bracket first on a line re-indents it.
+# bracket). Typing a closing bracket first on a line re-indents it, as do
+# keywords like Bash's fi and Python's else:.
 auto-indent = true
 # "absolute", "relative" (hybrid: current line shows its absolute number) or "none".
 line-numbers = "relative"

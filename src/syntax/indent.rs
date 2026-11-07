@@ -118,6 +118,22 @@ const CSS: &str = r#"
 ["}" ")"] @outdent
 "#;
 
+/// Words that, typed as the first on a line, re-indent it by the rules
+/// (`fi` goes back to its `if`), as Vim's `indentkeys` do. A line whose
+/// first word only started as one (`fi` then `l`) is re-indented again.
+pub fn keywords(language: &str) -> &'static [&'static str] {
+    match language {
+        "bash" => &["fi", "done", "esac", "else", "elif", "then", "do"],
+        _ => &[],
+    }
+}
+
+/// Whether typing `>` to finish a closing tag (`</div>`) first on a line
+/// re-indents it by the rules.
+pub fn closes_tags(language: &str) -> bool {
+    matches!(language, "html" | "javascript" | "tsx")
+}
+
 /// The rules for a language, by name: its query sources, joined.
 fn rules_source(language: &str) -> Option<String> {
     Some(match language {
@@ -246,6 +262,9 @@ impl Structure {
                     end: node.end_position(),
                     unterminated: ends_missing(node),
                 }),
+                // A closer made up by error recovery (a `fi` the user
+                // hasn't typed) isn't on the line it's placed at.
+                "outdent" if node.is_missing() => {}
                 "outdent" => {
                     if let Some(parent) = node.parent() {
                         let start = node.start_position();
@@ -294,8 +313,9 @@ impl Structure {
     }
 }
 
-/// Adds the brackets (and HTML start tags) left open inside `ERROR` nodes
-/// under `node`, as indent nodes open to the end of the text.
+/// Adds the brackets (and HTML start tags, and Bash's `then` and `do`) left
+/// open inside `ERROR` nodes under `node`, as indent nodes open to the end
+/// of the text.
 fn loose_brackets(node: Node, indents: &mut Vec<IndentNode>) {
     if node.is_error() {
         let mut open: Vec<Node> = Vec::new();
@@ -303,10 +323,16 @@ fn loose_brackets(node: Node, indents: &mut Vec<IndentNode>) {
             let Some(child) = node.child(i) else {
                 continue;
             };
+            // Bash's blocks open with keywords: `then` and `do` (on the
+            // `if` or `for` line, usually), closed by `fi` and `done`.
             match child.kind() {
-                "{" | "(" | "[" | "start_tag" => open.push(child),
-                "}" | ")" | "]" | "end_tag" => {
+                "{" | "(" | "[" | "start_tag" | "then" | "do" => open.push(child),
+                "}" | ")" | "]" | "end_tag" | "fi" | "done" => {
                     open.pop();
+                }
+                "else" | "elif" => {
+                    open.pop();
+                    open.push(child);
                 }
                 _ => {}
             }
@@ -455,6 +481,11 @@ mod tests {
             ("c", "int main() {\n"),
             ("go", "func main() {\n"),
             ("bash", "if x; then\n"),
+            // The made-up `fi` sits on the new line; it isn't typed there.
+            ("bash", "if x; then\n    file=1\n"),
+            ("bash", "for i in x; do\n    a\n"),
+            // Unparseable, with `then` left loose in an error.
+            ("bash", "if a; then\n    b\n\nx"),
             ("html", "<div>\n"),
             ("json", "{\n"),
         ] {

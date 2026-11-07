@@ -110,9 +110,13 @@ auto-indent, as one undo step. `.` and macros repeat pastes too.
 Bash, HTML and CSS, indentation follows the syntax tree. Enter and `o`
 start a line at the right depth (Enter between `{}` opens an indented line
 inside), a closing bracket typed first on a line jumps back to its opening
-line's level, and `=` re-indents (`==`, `=ip`, `gg=G`). Other files keep
+line's level, and `=` re-indents (`==`, `=ip`, `gg=G`). So do Bash's
+`fi`, `done`, `else` and friends, and closing tags in HTML. Other files keep
 the indentation of the line above, one level more after an opening bracket
-(or a `:` in Python).
+or a trailing `:` in Python and YAML. In Python, a line after `return`,
+`pass`, `break`... goes back a level, and typing the `:` of `else:`,
+`elif ...:`, `except ...:` or `finally:` lines it up with its `if` or
+`try`.
 
 Each file is indented the way it already is: tabs, or however many spaces
 its lines step in by, worked out from its first 1000 lines when it's

@@ -367,7 +367,11 @@ Indentation follows the language's rules where it has them
 - **Unclosed brackets while typing**: tree-sitter either makes up the
   closing token (`MISSING`) or leaves the bracket loose in an `ERROR` node.
   Either way the node is taken to be open to the end of the text, which is
-  what makes Enter after `fn main() {` indent.
+  what makes Enter after `fn main() {` indent. Bash's `then` and `do`
+  count as opening brackets there (`fi`, `done` closing; `else`, `elif`
+  both). A made-up closer is never an `@outdent`: the `fi` tree-sitter
+  supplies for an unfinished `if` sits at the start of the empty line
+  being opened, and would otherwise pull it out of the block.
 - Lines starting inside a multi-line string, comment or raw text
   (`<script>`) are left alone.
 - **`=`** is `Operator::Reindent`, over the lines its range touches, so
@@ -377,11 +381,27 @@ Indentation follows the language's rules where it has them
 - **New lines** (Enter, `o`, `O`; `indent_for_opened_line`) are
   indented by the rules once the line exists, so text carried onto it
   (`}` after Enter) counts. Without rules, the line it was opened from is
-  copied, plus a level after an opening bracket, or `:` in Python. Enter
+  copied, plus a level after an opening bracket, or a trailing `:` in
+  Python and YAML (and YAML's `: |` and `: >`), and less a level after
+  Python's `return`, `pass`, `raise`, `break` and `continue`. Enter
   between a pair of brackets (`{|}`) puts the closing one on its own line
   too, with the cursor on an indented line between.
-- **Typing a closing bracket** first on a line re-indents the line by the
-  rules (`type_with_indent`); without rules it takes off a level.
+- **Typing re-indents the line** when what's typed settles where it goes
+  (`type_with_indent`), like Vim's `indentkeys`:
+  - A closing bracket first on a line: by the rules, or without rules one
+    level less.
+  - With rules, the line's first word while it's one of the language's
+    keywords (`indent::keywords`: Bash's `fi`, `done`, `esac`, `else`,
+    `elif`, `then`, `do`), and the `>` ending a closing tag (`</div>`)
+    first on a line in HTML and JSX. The indentation the keyword replaced
+    is remembered (`Editor::keyword_indent`), and put back if the word
+    carries on (`fi` → `file`), since the half-typed line may not parse
+    as anything better.
+  - Python has no rules, so the `:` ending an `else:`, `elif`, `except`
+    or `finally` line moves it to the nearest line above that starts the
+    block it continues (`if`/`elif` for `elif`; `try`/`except` for
+    `except`...), looking only at lines no deeper than it and than every
+    line between. Waiting for the `:` means `elsewhere = 1` is left alone.
 - New lines are skipped with `auto-indent = false`; `=` isn't. Files over
   the highlighting limit fall back to the heuristic.
 - **The indent style** (`Editor::indent_style`, an `IndentUnit`: tabs or
@@ -943,9 +963,9 @@ status, branches and history.
 - Alt keys that *are* bound can't be told apart from a fast Esc then that
   key (terminals send the same bytes), so binding `<A-j>` in insert mode
   means a quick `<Esc>j` runs it.
-- Indentation: no rules for Python or YAML (new lines copy the line
-  above, and `=` declines), and no re-indenting as a keyword is typed
-  (Bash's `fi`; only closing brackets trigger it). Indent styles can't be
+- Indentation: no tree rules for Python or YAML (typing them uses the
+  heuristics above, and `=` declines), nor keywords for languages other
+  than Bash and Python (Lua's `end`, Ruby's). Indent styles can't be
   set per language in config (Helix's `indent = { unit = ... }`), and
   Vim's mix of a `shiftwidth` narrower than tabs (4-column levels made of
   tabs and spaces) isn't supported.

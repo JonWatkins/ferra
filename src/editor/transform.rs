@@ -306,10 +306,39 @@ impl Editor {
             .chars()
             .take_while(|c| matches!(c, ' ' | '\t'))
             .collect();
-        let python = self.language_of(&self.document) == Some("python");
+        let language = self.language_of(&self.document);
+        let python = language == Some("python");
+        let yaml = language == Some("yaml");
         let trimmed = line.trim_end();
-        if !above && (trimmed.ends_with(['{', '(', '[']) || (python && trimmed.ends_with(':'))) {
+        if above {
+            return indent;
+        }
+        let opens = trimmed.ends_with(['{', '(', '['])
+            || ((python || yaml) && trimmed.ends_with(':'))
+            || (yaml
+                && [": |", ": >", ": |-", ": >-"]
+                    .iter()
+                    .any(|s| trimmed.ends_with(s)));
+        let first_word = trimmed
+            .trim_start()
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()
+            .unwrap_or_default();
+        let ends_block =
+            python && ["return", "pass", "raise", "break", "continue"].contains(&first_word);
+        if opens {
             indent.push_str(&self.indent_unit());
+        } else if ends_block {
+            // The block is done: one level less.
+            let tab = self.options.tab_width.max(1);
+            let width = indent.chars().fold(0, |col, c| {
+                if c == '\t' {
+                    col - col % tab + tab
+                } else {
+                    col + 1
+                }
+            });
+            indent = self.indent_string(width.saturating_sub(self.indent_width()));
         }
         indent
     }
@@ -353,35 +382,172 @@ impl Editor {
             .set_cursor(Position::new(row, inner.chars().count()));
     }
 
-    /// Called as `c` is typed in insert mode. A closing bracket typed first
-    /// on a line re-indents the line by the language's rules, or without
-    /// rules, takes off one level (see [`Editor::dedent_for_closing_bracket`]).
+    /// Called as `c` is typed in insert mode, to re-indent the line when
+    /// what's typed settles where it goes (with `auto-indent`):
+    ///
+    /// - A closing bracket typed first on a line: by the language's rules,
+    ///   or without rules, one level less (see
+    ///   [`Editor::dedent_for_closing_bracket`]).
+    /// - With rules, the first word on a line while it's a keyword that
+    ///   closes or continues a block (Bash's `fi`, `else`; see
+    ///   [`indent::keywords`]), or just stopped being one (`fi` → `fil`),
+    ///   and the `>` that ends a closing tag (`</div>`) first on a line.
+    /// - In Python, the `:` ending `else:`, `elif ...:`, `except ...:` or
+    ///   `finally:` lines it up with its `if` or `try`.
     pub(super) fn type_with_indent(&mut self, c: char) {
         let cursor = self.document.cursor();
-        let first_on_line = self
+        let language = self.language_of(&self.document).map(str::to_string);
+        let with_rules =
+            self.options.auto_indent && language.as_deref().is_some_and(indent::has_rules);
+        let before: String = self
             .document
             .buffer()
             .line(cursor.row)
             .chars()
             .take(cursor.col)
-            .all(|c| matches!(c, ' ' | '\t'));
-        let by_rules = self.options.auto_indent
-            && CLOSERS.contains(&c)
-            && first_on_line
-            && self
-                .language_of(&self.document)
-                .is_some_and(indent::has_rules);
-        if !by_rules {
+            .collect();
+        let first_on_line = before.chars().all(|c| matches!(c, ' ' | '\t'));
+        if !(with_rules && CLOSERS.contains(&c) && first_on_line) {
             self.dedent_for_closing_bracket(c);
-            self.document.insert_char(c);
-            return;
         }
         self.document.insert_char(c);
-        if let Some(width) = self.rule_indent(cursor.row) {
-            self.set_line_indent(cursor.row, width);
-            let col = self.indent_string(width).chars().count() + 1;
-            self.document.set_cursor(Position::new(cursor.row, col));
+        if !self.options.auto_indent {
+            return;
         }
+        let row = cursor.row;
+        let typed = format!("{}{c}", before.trim_start());
+        let language = language.as_deref().unwrap_or_default();
+        let reindent = if with_rules {
+            let first_word = (c.is_alphanumeric() || c == '_')
+                && typed.chars().all(|c| c.is_alphanumeric() || c == '_');
+            let keywords = indent::keywords(language);
+            let was = typed.strip_suffix(c).unwrap_or_default();
+            (CLOSERS.contains(&c) && first_on_line)
+                || (first_word && (keywords.contains(&typed.as_str()) || keywords.contains(&was)))
+                || (c == '>' && typed.starts_with("</") && indent::closes_tags(language))
+        } else {
+            false
+        };
+        let id = self.document.id();
+        let no_longer_keyword = with_rules
+            && (c.is_alphanumeric() || c == '_')
+            && indent::keywords(language).contains(&typed.strip_suffix(c).unwrap_or_default());
+        let restore = self
+            .keyword_indent
+            .take()
+            .filter(|(doc, at, _)| no_longer_keyword && *doc == id && *at == row);
+        if let Some((_, _, old)) = restore {
+            // The keyword moved the line; the word it became doesn't.
+            let tab = self.options.tab_width.max(1);
+            let width = old.chars().fold(0, |col, c| {
+                if c == '\t' {
+                    col - col % tab + tab
+                } else {
+                    col + 1
+                }
+            });
+            self.reindent_typed_line(row, width);
+        } else if reindent {
+            if let Some(width) = self.rule_indent(row) {
+                let line = self.document.buffer().line(row);
+                let old: String = line
+                    .chars()
+                    .take_while(|c| matches!(c, ' ' | '\t'))
+                    .collect();
+                self.reindent_typed_line(row, width);
+                self.keyword_indent = Some((id, row, old));
+            }
+        } else if language == "python"
+            && c == ':'
+            && self.at_line_end()
+            && let Some(width) = self.python_block_continuation(row, &typed)
+        {
+            self.reindent_typed_line(row, width);
+        }
+    }
+
+    /// Whether only blanks follow the cursor on its line.
+    fn at_line_end(&self) -> bool {
+        let cursor = self.document.cursor();
+        self.document
+            .buffer()
+            .line(cursor.row)
+            .chars()
+            .skip(cursor.col)
+            .all(char::is_whitespace)
+    }
+
+    /// Re-indents `row`, where the cursor is, to `width`, keeping the cursor
+    /// on the same character.
+    fn reindent_typed_line(&mut self, row: usize, width: usize) {
+        let blanks = |doc: &super::Document| {
+            doc.buffer()
+                .line(row)
+                .chars()
+                .take_while(|c| matches!(c, ' ' | '\t'))
+                .count()
+        };
+        let old = blanks(&self.document);
+        let col = self.document.cursor().col;
+        self.set_line_indent(row, width);
+        let new = blanks(&self.document);
+        self.document
+            .set_cursor(Position::new(row, (col + new).saturating_sub(old)));
+    }
+
+    /// For a Python line `typed` (without its indentation) that continues a
+    /// block (`else:`, `elif x:`, `except E:`, `finally:`), the indent of
+    /// the `if`, `try`... it belongs to: the nearest line above, no deeper
+    /// than this one and than any line between, that starts with one.
+    fn python_block_continuation(&self, row: usize, typed: &str) -> Option<usize> {
+        let word: String = typed
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let openers: &[&str] = match word.as_str() {
+            "else" => &["if", "elif", "for", "while", "try", "except"],
+            "elif" => &["if", "elif"],
+            "except" => &["try", "except"],
+            "finally" => &["try", "except", "else"],
+            _ => return None,
+        };
+        let tab = self.options.tab_width.max(1);
+        let buffer = self.document.buffer();
+        let width_of = |line: &str| {
+            line.chars()
+                .take_while(|c| matches!(c, ' ' | '\t'))
+                .fold(0, |col, c| {
+                    if c == '\t' {
+                        col - col % tab + tab
+                    } else {
+                        col + 1
+                    }
+                })
+        };
+        let mut bound = width_of(&buffer.line(row));
+        for above in (0..row).rev() {
+            let line = buffer.line(above);
+            let text = line.trim_start();
+            if text.is_empty() || text.starts_with('#') {
+                continue;
+            }
+            let width = width_of(&line);
+            if width > bound {
+                continue;
+            }
+            let first: String = text
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if openers.contains(&first.as_str()) && text.trim_end().ends_with(':') {
+                return Some(width);
+            }
+            bound = width;
+            if width == 0 {
+                return None;
+            }
+        }
+        None
     }
 }
 
