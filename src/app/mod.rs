@@ -19,7 +19,7 @@ use crate::commands::{CommandRegistry, Invocation};
 use crate::config::{Config, Theme};
 use crate::editor::{DocumentId, Editor, Message, Mode};
 use crate::events;
-use crate::input::{InputHandler, KeyCode, KeyPress, Keymap, Lookup, Outcome};
+use crate::input::{InputHandler, KeyCode, KeyPress, Keymap, Lookup, Outcome, paste_keys};
 use crate::plugins::PluginHost;
 use crate::syntax::SyntaxEngine;
 use crate::ui::{self, Views};
@@ -47,6 +47,9 @@ pub struct App {
     plugins: Option<PluginHost>,
     /// True while `.` feeds the last change back in, so it isn't re-recorded.
     replaying: bool,
+    /// The text of a paste being replayed key by key (from a macro or
+    /// `.`), between `<PasteStart>` and `<PasteEnd>`.
+    paste: Option<String>,
     /// Work running on other threads (the file picker's listing).
     background: background::Background,
 }
@@ -84,6 +87,7 @@ impl App {
             macros: macros::MacroState::default(),
             plugins: None,
             replaying: false,
+            paste: None,
             background: background::Background::default(),
         };
         let mode = app.editor.options.clipboard;
@@ -295,16 +299,30 @@ impl App {
     }
 
     /// Text pasted into the terminal (bracketed paste). It goes in exactly as
-    /// copied: no auto-indent, no key bindings, one undo step.
+    /// copied: no auto-indent, no key bindings, one undo step (see
+    /// [`App::paste`]). Macros and `.` record it as `<PasteStart>`, its text
+    /// and `<PasteEnd>`, and put it in the same way when replayed.
+    pub fn handle_paste(&mut self, text: &str) {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        let keys = paste_keys(&text);
+        for &key in &keys {
+            self.record_macro_key(key);
+        }
+        if self.replaying {
+            self.paste(&text);
+            return;
+        }
+        self.tracked(&keys, |app| app.paste(&text));
+    }
+
+    /// Puts in pasted `text`.
     ///
     /// In insert mode it's typed at the cursor (and joins the insert
     /// session); on a line that's only indentation so far, a paste with its
-    /// own indentation replaces it. In normal and visual mode it's put in before the cursor,
-    /// like `P`. Prompts and pickers take the first line.
-    pub fn handle_paste(&mut self, text: &str) {
-        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    /// own indentation replaces it. In normal and visual mode it's put in
+    /// before the cursor, like `P`. Prompts and pickers take the first line.
+    fn paste(&mut self, text: &str) {
         self.input.reset();
-        let before = self.edit_stamp();
         match self.editor.mode() {
             Mode::Insert => {
                 // On a line that's only (auto-)indentation so far, a paste
@@ -319,8 +337,8 @@ impl App {
                     doc.delete(cursor.with_col(0), cursor);
                     doc.set_cursor(cursor.with_col(0));
                 }
-                doc.insert_str(&text);
-                self.editor.note_typed(&text);
+                doc.insert_str(text);
+                self.editor.note_typed(text);
             }
             Mode::Command | Mode::Picker => {
                 let first_line = text.lines().next().unwrap_or_default();
@@ -331,16 +349,19 @@ impl App {
             Mode::Normal | Mode::Visual | Mode::OperatorPending => {
                 self.editor.set_mode(Mode::Normal);
                 let doc = &mut self.editor.document;
-                let end = doc.insert(doc.cursor(), &text);
+                let end = doc.insert(doc.cursor(), text);
                 doc.set_cursor(end.with_col(end.col.saturating_sub(1)));
                 self.editor.finish_command();
             }
         }
-        if self.edit_stamp().edited_since(before) {
-            self.editor.emit(events::Event::BufferChanged);
+    }
+
+    /// Puts in a replayed paste whose `<PasteEnd>` never came (a macro
+    /// edited by hand), so it doesn't swallow the keys after it.
+    fn finish_open_paste(&mut self) {
+        if let Some(text) = self.paste.take() {
+            self.paste(&text);
         }
-        self.editor.update_splash();
-        self.dispatch_events();
     }
 
     /// Replaces the clipboard behind `"+` (the system one by default).
@@ -418,13 +439,13 @@ impl App {
             self.process_key(key);
             return;
         }
-        self.tracked(Some(key), |app| app.process_key(key));
+        self.tracked(&[key], |app| app.process_key(key));
     }
 
     /// The key timeout passed with a key sequence half typed (see
     /// [`InputHandler::timeout`]). Public so tests can trigger it.
     pub fn handle_key_timeout(&mut self) {
-        self.tracked(None, |app| {
+        self.tracked(&[], |app| {
             let outcomes = app.input.timeout(app.editor.mode(), &app.keymap);
             app.apply_outcomes(outcomes);
         });
@@ -454,24 +475,24 @@ impl App {
     }
 
     /// Runs `handle`, recording keys for `.` and firing change events.
-    fn tracked(&mut self, key: Option<KeyPress>, handle: impl FnOnce(&mut Self)) {
+    fn tracked(&mut self, keys: &[KeyPress], handle: impl FnOnce(&mut Self)) {
         let before = self.edit_stamp();
 
         // Record each sequence from idle to idle, for `.`.
         if self.is_idle() {
             self.changes.begin(before);
         }
-        if let Some(key) = key {
-            if self.input.is_idle() {
-                self.changes.mark_binding_start();
-            }
+        if !keys.is_empty() && self.input.is_idle() && self.paste.is_none() {
+            self.changes.mark_binding_start();
+        }
+        for &key in keys {
             self.changes.push(key);
         }
         // Counts are marked so `.` with a count can replace them all. Only
         // normal-mode counts (not a visual selection's motion counts).
         let counts_count = matches!(self.editor.mode(), Mode::Normal | Mode::OperatorPending);
         handle(self);
-        if key.is_some() && counts_count && self.input.took_count() {
+        if !keys.is_empty() && counts_count && self.input.took_count() {
             self.changes.mark_count();
         }
         if let Some(shape) = self.editor.take_visual_shape() {
@@ -523,10 +544,28 @@ impl App {
     /// Normal mode with nothing typed but not yet run: the boundary between
     /// one command sequence and the next.
     fn is_idle(&self) -> bool {
-        self.editor.mode() == Mode::Normal && self.input.is_idle()
+        self.editor.mode() == Mode::Normal && self.input.is_idle() && self.paste.is_none()
     }
 
     fn process_key(&mut self, key: KeyPress) {
+        // A replayed paste: collect its text, then put it in.
+        if let Some(text) = &mut self.paste {
+            if key.code == KeyCode::PasteEnd {
+                self.finish_open_paste();
+            } else if let Some(c) = key.as_pasted() {
+                text.push(c);
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::PasteStart => {
+                self.input.reset();
+                self.paste = Some(String::new());
+                return;
+            }
+            KeyCode::PasteEnd => return,
+            _ => {}
+        }
         let outcomes = self.input.handle(key, self.editor.mode(), &self.keymap);
         self.apply_outcomes(outcomes);
     }
@@ -643,6 +682,7 @@ impl App {
         for key in keys {
             self.process_key(key);
         }
+        self.finish_open_paste();
         self.replaying = false;
     }
 }

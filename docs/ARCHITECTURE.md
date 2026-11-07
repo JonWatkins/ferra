@@ -693,6 +693,18 @@ Bracketed paste is on while the editor runs. `Event::Paste` goes to
 brings its own indentation replaces the auto-indent on an otherwise blank
 line.
 
+So that `.` and macros can repeat a paste, it's recorded as keys, as
+Neovim does internally: `<PasteStart>`, a key per character (`<CR>` for a
+line break, `<Tab>` for a tab), `<PasteEnd>` (`input::paste_keys`). The
+keys are recorded as a whole and the text put in at once (not fed through
+`handle_key` one by one, which would be slow for a big paste). When keys
+are replayed (a macro, `.`, `:normal`), `process_key` collects those
+between the markers into `App::paste` instead of running them as bindings,
+then puts the text in the same way. A collecting paste isn't idle, so `.`
+records it as part of the change it's in. A `<PasteStart>` with no
+`<PasteEnd>` (a macro edited by hand) is put in when the playback ends,
+so it can't swallow later keys. A count on `.` doesn't multiply a paste.
+
 ### Commands that take a character
 
 A command registered with `.takes_char()` (`f`, `t`, `F`, `T`, `r`) gets
@@ -930,8 +942,7 @@ status, branches and history.
   by the rename used for ordinary saves.
 - Guessing legacy encodings (telling Shift-JIS from Windows-1252 by
   content): files that aren't UTF-8 use the one configured fallback.
-- Clipboard over SSH (OSC 52), and recording pastes into macros and `.`
-  (both currently replay without the pasted text).
+- Clipboard over SSH (OSC 52).
 - Syntax: indentation (`=`, Enter) parses the file afresh rather than
   using the engine's tree, which lives in the app, not the editor; files
   over 4M chars aren't highlighted (the first parse is the cost); and

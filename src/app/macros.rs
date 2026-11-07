@@ -131,6 +131,7 @@ impl App {
         self.macros.depth -= 1;
         if self.macros.depth == 0 {
             self.macros.failed = false;
+            self.finish_open_paste();
         }
     }
 

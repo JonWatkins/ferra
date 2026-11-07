@@ -7,7 +7,7 @@
 mod key;
 mod keymap;
 
-pub use key::{KeyCode, KeyPress, Modifiers, parse_keys};
+pub use key::{KeyCode, KeyPress, Modifiers, parse_keys, paste_keys};
 pub use keymap::{KeyBindings, Keymap, Lookup};
 
 use crate::editor::Mode;

@@ -43,6 +43,7 @@ impl App {
             }
             // Like Vim, an unfinished command (still inserting, an operator
             // waiting) ends as if `<Esc>` were pressed.
+            self.finish_open_paste();
             if !self.is_idle() {
                 self.handle_key(KeyPress::plain(KeyCode::Esc));
             }

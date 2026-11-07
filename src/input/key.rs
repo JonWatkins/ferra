@@ -24,6 +24,12 @@ pub enum KeyCode {
     PageUp,
     PageDown,
     F(u8),
+    /// Marks the start of text pasted into the terminal, so macros and `.`
+    /// can hold a paste: the keys up to [`KeyCode::PasteEnd`] are its text
+    /// (`<CR>` for a line break, `<Tab>` for a tab), put in as one paste
+    /// rather than typed. See [`paste_keys`].
+    PasteStart,
+    PasteEnd,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -90,6 +96,16 @@ impl KeyPress {
         }
     }
 
+    /// The character this key stands for inside a paste (see
+    /// [`paste_keys`]).
+    pub fn as_pasted(&self) -> Option<char> {
+        match self.code {
+            KeyCode::Enter => Some('\n'),
+            KeyCode::Tab => Some('\t'),
+            _ => self.as_text(),
+        }
+    }
+
     /// The digit value, if this is an unmodified digit key.
     pub fn as_digit(&self) -> Option<usize> {
         self.as_text()?.to_digit(10).map(|d| d as usize)
@@ -135,6 +151,22 @@ impl KeyPress {
 }
 
 /// Parses a key sequence like `gg` or `<C-w>v` into key presses.
+/// `text` pasted into the terminal, as keys: `<PasteStart>`, a key per
+/// character (line breaks as `<CR>`, tabs as `<Tab>`), then `<PasteEnd>`.
+pub fn paste_keys(text: &str) -> Vec<KeyPress> {
+    let text = text.chars().map(|c| {
+        KeyPress::plain(match c {
+            '\n' => KeyCode::Enter,
+            '\t' => KeyCode::Tab,
+            c => KeyCode::Char(c),
+        })
+    });
+    std::iter::once(KeyPress::plain(KeyCode::PasteStart))
+        .chain(text)
+        .chain(std::iter::once(KeyPress::plain(KeyCode::PasteEnd)))
+        .collect()
+}
+
 pub fn parse_keys(notation: &str) -> Result<Vec<KeyPress>, String> {
     let mut keys = Vec::new();
     let mut rest = notation;
@@ -189,6 +221,8 @@ fn parse_bracketed(inner: &str) -> Result<KeyPress, String> {
         "end" => KeyCode::End,
         "pageup" => KeyCode::PageUp,
         "pagedown" => KeyCode::PageDown,
+        "pastestart" => KeyCode::PasteStart,
+        "pasteend" => KeyCode::PasteEnd,
         lower => {
             let mut chars = name.chars();
             match (chars.next(), chars.next()) {
@@ -224,6 +258,8 @@ impl fmt::Display for KeyPress {
             KeyCode::PageUp => "PageUp".into(),
             KeyCode::PageDown => "PageDown".into(),
             KeyCode::F(n) => format!("F{n}"),
+            KeyCode::PasteStart => "PasteStart".into(),
+            KeyCode::PasteEnd => "PasteEnd".into(),
         };
 
         let Modifiers { ctrl, alt, shift } = self.modifiers;
@@ -343,5 +379,15 @@ mod tests {
         assert_eq!(KeyPress::ctrl('a').as_text(), None);
         assert_eq!(char_key('7').as_digit(), Some(7));
         assert_eq!(char_key('x').as_digit(), None);
+    }
+
+    #[test]
+    fn pastes_round_trip_through_notation() {
+        let keys = paste_keys("a <b>\n\tc");
+        let notation: String = keys.iter().map(ToString::to_string).collect();
+        assert_eq!(notation, "<PasteStart>a<Space><lt>b><CR><Tab>c<PasteEnd>");
+        assert_eq!(parse_keys(&notation).unwrap(), keys);
+        let text: String = keys.iter().filter_map(KeyPress::as_pasted).collect();
+        assert_eq!(text, "a <b>\n\tc");
     }
 }

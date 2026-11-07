@@ -97,7 +97,7 @@ copies a line out, `"+p` pastes text in (text ending in a line break pastes
 as whole lines). Set `clipboard = "unnamed"` under `[editor]` to make every
 yank, delete and `p` use it, or `"off"` to never touch it. Pasting into the
 terminal (Cmd/Ctrl+V) inserts the text exactly as copied, with no
-auto-indent, as one undo step.
+auto-indent, as one undo step. `.` and macros repeat pastes too.
 
 **Indentation:** in Rust, JSON, TOML, JavaScript, TypeScript, Go, C, C++,
 Bash, HTML and CSS, indentation follows the syntax tree. Enter and `o`
@@ -117,7 +117,10 @@ buffer, and `:indent auto` looks at the text again.
 
 Macros are stored in their register as key notation (`A;<Esc>j`), so
 `"ap` pastes one to edit and `"ay$` yanks it back. Playback stops at the
-first failing command.
+first failing command. Text pasted into the terminal while recording is
+kept between `<PasteStart>` and `<PasteEnd>` (`A<PasteStart>two<CR>lines<PasteEnd><Esc>`),
+and goes back in as a paste: exactly, without auto-indent or insert-mode
+bindings like `jk`.
 
 ## The command line
 
