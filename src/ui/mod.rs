@@ -12,6 +12,7 @@
 //! ```
 
 mod command_line;
+mod completion_menu;
 pub mod editor_view;
 mod picker;
 mod splash;
@@ -20,6 +21,7 @@ mod text;
 mod windows;
 
 pub use command_line::CommandLineView;
+pub use completion_menu::CompletionMenu;
 pub use editor_view::{EditorView, ViewState};
 pub use picker::PickerView;
 pub use splash::{LOGO, Splash, SplashEntry};
@@ -74,6 +76,15 @@ pub fn draw(
     frame.render_widget(CommandLineView::new(editor, theme), command);
     if editor.splash_visible() && !splash.is_empty() {
         frame.render_widget(Splash::new(splash, theme), main);
+    }
+
+    // The completion menu floats by the cursor.
+    if editor.mode() == Mode::Insert
+        && let (Some(completion), Some(cursor)) = (editor.completion(), window_cursor)
+    {
+        let menu = CompletionMenu::new(completion, theme);
+        let area = menu.area(cursor, main);
+        frame.render_widget(menu, area);
     }
 
     // The picker popup floats over the editor pane.

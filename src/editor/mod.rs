@@ -5,6 +5,7 @@
 
 mod buffers;
 mod command_line;
+mod completion;
 mod document;
 mod files;
 mod jumps;
@@ -25,6 +26,7 @@ pub mod windows;
 
 pub use buffers::BufferInfo;
 pub use command_line::{CommandLine, Completion, CompletionContext, Prompt};
+pub use completion::WordCompletion;
 pub use document::{DiskState, Document, DocumentId, OpenInfo, SaveInfo};
 pub use files::UNSAVED_CHANGES;
 pub use jumps::{Jump, JumpList};
@@ -163,6 +165,10 @@ pub struct Editor {
     /// The screen column `gj`/`gk` aim for, while the cursor stays where
     /// they left it (so a short row on the way doesn't lose it).
     screen_column: Option<(DocumentId, Position, usize)>,
+    /// Insert-mode word completion in progress (`<C-n>`).
+    completion: Option<WordCompletion>,
+    /// Whether the key being handled used the completion.
+    completion_used: bool,
     /// Text typed by `I`/`A`/`c` on a block's first row, copied to the
     /// others when insert mode ends.
     block_insert: Option<block::BlockInsert>,
@@ -441,6 +447,16 @@ impl Editor {
     /// (a line break, a tab, a paste), for the `.` register.
     pub fn note_typed(&mut self, text: &str) {
         if self.mode == Mode::Insert {
+            self.typed.push_str(text);
+        }
+    }
+
+    /// Completion replaced the last `removed` characters typed with `text`.
+    pub(crate) fn note_typed_replacing(&mut self, removed: usize, text: &str) {
+        if self.mode == Mode::Insert {
+            for _ in 0..removed {
+                self.typed.pop();
+            }
             self.typed.push_str(text);
         }
     }

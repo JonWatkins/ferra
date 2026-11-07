@@ -22,6 +22,32 @@ pub fn register(r: &mut CommandRegistry) {
         Ok(())
     });
     r.register(
+        "complete_next",
+        "Complete the word before the cursor from words in the buffers, or go to the next match (<C-n>)",
+        |cx| cx.editor.complete(true),
+    );
+    r.register(
+        "complete_previous",
+        "Complete the word before the cursor looking backward, or go to the previous match (<C-p>)",
+        |cx| cx.editor.complete(false),
+    );
+    r.register(
+        "complete_accept",
+        "Keep the completion chosen (<C-y>)",
+        |cx| {
+            cx.editor.accept_completion();
+            Ok(())
+        },
+    );
+    r.register(
+        "complete_cancel",
+        "Put back what was typed before completing (<C-e>)",
+        |cx| {
+            cx.editor.cancel_completion();
+            Ok(())
+        },
+    );
+    r.register(
         "indent_style",
         "Show how this buffer indents, or indent it with [tabs | spaces [N] | N | auto]",
         indent_style,

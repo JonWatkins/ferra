@@ -355,6 +355,8 @@ impl App {
     /// before the cursor, like `P`. Prompts and pickers take the first line.
     fn paste(&mut self, text: &str) {
         self.input.reset();
+        self.editor.note_key_for_completion();
+        self.editor.end_completion_unless_used();
         match self.editor.mode() {
             Mode::Insert => {
                 // On a line that's only (auto-)indentation so far, a paste
@@ -617,8 +619,10 @@ impl App {
             KeyCode::PasteEnd => return,
             _ => {}
         }
+        self.editor.note_key_for_completion();
         let outcomes = self.input.handle(key, self.editor.mode(), &self.keymap);
         self.apply_outcomes(outcomes);
+        self.editor.end_completion_unless_used();
     }
 
     fn apply_outcomes(&mut self, outcomes: Vec<Outcome>) {

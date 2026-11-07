@@ -781,6 +781,26 @@ where they happened (consecutive edits on one line update the last entry).
 `g;`/`g,` step through it, and `'.` is its newest entry. Positions aren't
 adjusted for later edits; they're clamped when used.
 
+### Word completion
+
+`<C-n>`/`<C-p>` in insert mode complete the word before the cursor
+(`editor/completion.rs`). The first press gathers matches: words starting
+with what's typed, from the cursor outward through the buffer (forward
+for `<C-n>`, backward for `<C-p>`, wrapping, the cursor's own line split
+at the cursor), then the other open buffers, without repeats, up to 500.
+The nearest goes in at once; later presses step through the matches and
+what was typed, as a ring. Each step replaces the word in the buffer, so
+the text is always what you see, and the `".` register's text follows.
+
+Completion ends with the first key that doesn't use it: `App::process_key`
+clears a flag before each key and ends a completion no completion command
+set it for. That covers typing on, moving, `<Esc>` and pastes, and works
+the same during macros and `.`. `<C-y>` ends it keeping the match;
+`<C-e>` puts back what was typed first. The menu (`ui/completion_menu.rs`)
+is drawn at the cursor in the `ui.popup` colours, lined up with the word,
+below its row or above when there's no room, showing up to 10 matches and
+scrolling to the selected one.
+
 ### Clipboard and pasting
 
 `clipboard::Clipboard` is a two-method trait (`get`, `set`). The app gives
@@ -1082,6 +1102,10 @@ status, branches and history.
   set per language in config (Helix's `indent = { unit = ... }`), and
   Vim's mix of a `shiftwidth` narrower than tabs (4-column levels made of
   tabs and spaces) isn't supported.
+- Completion: only words from the open buffers (no paths, whole lines,
+  dictionaries or LSP, nor Vim's `<C-x>` sub-modes), matched by prefix
+  (not fuzzily). `.` replays the `<C-n>` keys, so it completes again
+  rather than repeating the word chosen, which differs if the buffer has.
 - `"=` (the expression register).
 - Soft wrap: a line taller than the whole window can't be scrolled through (the view
   starts at a line's start; Vim shows `@` rows, Neovim smooth-scrolls),

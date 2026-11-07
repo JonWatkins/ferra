@@ -92,6 +92,8 @@ type, open a file or split the window.
 | Normal  | `3j`, `2dd`, `3u`, ... | Counts work with every command |
 | Insert  | `<Esc>` | Back to normal mode |
 | Insert  | `<C-r>{register}` | Insert a register's text (`<C-r>"` the last yank, `<C-r>.` the last insert, `<C-r>+` the clipboard) |
+| Insert  | `<C-n>` `<C-p>` | Complete the word before the cursor from the open buffers' words (nearest first); again for the next / previous match, round to what you typed |
+| Insert  | `<C-y>` `<C-e>` | While completing: keep the match / put back what you typed (any other key keeps it and carries on) |
 | Command | `<CR>` / `<Esc>` | Run / cancel |
 
 Text objects: `iw` `aw`, `ip` `ap` (paragraph), `i"` `a"`, `i'` `a'`, `` i` `` `` a` ``, `i(` `a(`

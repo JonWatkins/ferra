@@ -618,6 +618,10 @@ block-comment = ["/*", "*/"]
 "<BS>" = "picker_backspace"
 
 [keys.insert]
+"<C-n>" = "complete_next"
+"<C-p>" = "complete_previous"
+"<C-y>" = "complete_accept"
+"<C-e>" = "complete_cancel"
 "<PageDown>" = "scroll_page_down"
 "<PageUp>" = "scroll_page_up"
 "<Esc>" = "normal_mode"
