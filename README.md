@@ -458,8 +458,13 @@ as `Cargo.toml`, else the one with `.git`).
 | Markdown | `marksman` | `brew install marksman` |
 
 If a server isn't installed, opening such a file says so once, quietly,
-and everything else works as before. `:lsp` lists the servers: running,
-starting, stopped (and why) or not found.
+and everything else works as before. `:lsp` lists the servers: running
+(and what they're busy with), starting, stopped (and why) or not found.
+While a server works, the status line says what on (`rust-analyzer:
+Indexing 45%`). `:lsp-restart` restarts the buffer's server (or `:lsp-restart
+gopls`, or `all`), for one that's stuck or stopped or whose config you
+changed, and tries again servers that weren't found, so one installed
+since starts without restarting ferra.
 
 Problems are underlined, with the line number coloured and the first one's
 message after the line (`● expected i32, found &str`). `]d` and `[d` go to

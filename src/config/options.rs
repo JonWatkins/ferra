@@ -183,6 +183,8 @@ pub enum StatusElement {
     Indent,
     /// How many errors and warnings a language server reports (`E2 W1`).
     Diagnostics,
+    /// What a language server is busy with (`rust-analyzer: Indexing 45%`).
+    LspProgress,
     /// Keys typed so far for a command (`2d`).
     PendingKeys,
     /// `recording @a` while recording a macro.
@@ -210,6 +212,7 @@ const STATUS_ELEMENTS: &[(StatusElement, &str)] = &[
     (StatusElement::FileLineEnding, "file-line-ending"),
     (StatusElement::Indent, "indent"),
     (StatusElement::Diagnostics, "diagnostics"),
+    (StatusElement::LspProgress, "lsp-progress"),
     (StatusElement::PendingKeys, "pending-keys"),
     (StatusElement::Recording, "recording"),
     (StatusElement::Separator, "separator"),

@@ -38,6 +38,8 @@ struct Seen {
     /// queries for the project's symbols.
     signature_context: Value,
     symbol_queries: Vec<String>,
+    /// How many times the server has been started.
+    starts: usize,
 }
 
 struct FakeServer {
@@ -53,6 +55,7 @@ impl Spawner for FakeServer {
         let (client_reads, server_writes) = io::pipe()?;
         let (server_reads, client_writes) = io::pipe()?;
         let seen = Arc::clone(&self.seen);
+        seen.lock().unwrap().starts += 1;
         let utf8 = self.utf8;
         let dir = root.to_path_buf();
         std::thread::spawn(move || serve(server_reads, server_writes, utf8, &seen, &dir));
@@ -128,6 +131,30 @@ fn serve(
                 let text = params["textDocument"]["text"].as_str().unwrap().to_string();
                 seen.lock().unwrap().text = text.clone();
                 publish(&mut output, &params["textDocument"]["uri"], seen, utf8);
+                // As rust-analyzer does on starting: progress, begun and
+                // then reported on.
+                if text.contains("indexing") {
+                    let progress = |value: Value| {
+                        json!({"jsonrpc": "2.0", "method": "$/progress",
+                               "params": {"token": "idx", "value": value}})
+                    };
+                    write_message(
+                        &mut output,
+                        &json!({"jsonrpc": "2.0", "id": 101,
+                        "method": "window/workDoneProgress/create", "params": {"token": "idx"}}),
+                    )
+                    .unwrap();
+                    write_message(
+                        &mut output,
+                        &progress(json!({"kind": "begin", "title": "Indexing", "percentage": 0})),
+                    )
+                    .unwrap();
+                    write_message(
+                        &mut output,
+                        &progress(json!({"kind": "report", "message": "3/7", "percentage": 45})),
+                    )
+                    .unwrap();
+                }
                 // As rust-analyzer does after `cargo check`: a file that isn't
                 // open has a problem too.
                 let other = root.join(OTHER);
@@ -144,6 +171,18 @@ fn serve(
                     )
                     .unwrap();
                 }
+            }
+            "textDocument/didChange" if seen.lock().unwrap().text.contains("indexing") => {
+                for change in params["contentChanges"].as_array().unwrap() {
+                    let mut seen = seen.lock().unwrap();
+                    seen.text = apply(&seen.text, change, utf8);
+                }
+                write_message(
+                    &mut output,
+                    &json!({"jsonrpc": "2.0", "method": "$/progress",
+                    "params": {"token": "idx", "value": {"kind": "end"}}}),
+                )
+                .unwrap();
             }
             "textDocument/didChange" => {
                 for change in params["contentChanges"].as_array().unwrap() {
@@ -1510,5 +1549,88 @@ fn no_diagnostics_says_so() {
     assert_eq!(
         app.editor().message().unwrap().text,
         "No diagnostics in this buffer"
+    );
+}
+
+#[test]
+fn a_servers_progress_shows_in_the_status_line_until_it_ends() {
+    let (_dir, mut app, _) = with_server("// indexing\n", true);
+    until(&mut app, |a| a.editor().lsp_progress().is_some());
+    assert_eq!(
+        app.editor().lsp_progress(),
+        Some("rust-analyzer: Indexing 45%")
+    );
+    let rows = render(&mut app, 80, 6).rows;
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("rust-analyzer: Indexing 45%")),
+        "{rows:#?}"
+    );
+    keys(&mut app, ":lsp<CR>");
+    assert!(
+        app.editor()
+            .message()
+            .unwrap()
+            .text
+            .contains("running (Indexing 45%)"),
+        "{}",
+        app.editor().message().unwrap().text
+    );
+    // It ends (on an edit, here).
+    keys(&mut app, "Ax<Esc>");
+    until(&mut app, |a| a.editor().lsp_progress().is_none());
+    assert!(!render(&mut app, 80, 6).rows.join("").contains("Indexing"));
+}
+
+#[test]
+fn lsp_restart_starts_the_server_again() {
+    let (_dir, mut app, seen) = with_server("let bad = 1;\n", true);
+    until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
+    assert_eq!(seen.lock().unwrap().starts, 1);
+    keys(&mut app, ":lsp-restart<CR>");
+    app.update_lsp();
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "Restarting rust-analyzer"
+    );
+    // Started again, with the file open in it and its diagnostics back.
+    until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
+    assert_eq!(seen.lock().unwrap().starts, 2);
+    keys(&mut app, ":lsp-restart nothing<CR>");
+    app.update_lsp();
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "No language server to restart (see :lsp)"
+    );
+}
+
+/// A server that isn't installed, counting the tries.
+struct MissingCounted(Arc<Mutex<usize>>);
+
+impl Spawner for MissingCounted {
+    fn spawn(&self, _: &ServerConfig, _: &Path) -> io::Result<Streams> {
+        *self.0.lock().unwrap() += 1;
+        Err(io::Error::new(io::ErrorKind::NotFound, "no such program"))
+    }
+}
+
+#[test]
+fn lsp_restart_tries_servers_that_werent_found_again() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("a.rs"), "x\n").unwrap();
+    let tries = Arc::new(Mutex::new(0));
+    let mut app = app();
+    app.lsp_mut()
+        .set_spawner(Box::new(MissingCounted(Arc::clone(&tries))));
+    app.open(&dir.path().join("a.rs"));
+    app.update_lsp();
+    app.update_lsp();
+    assert_eq!(*tries.lock().unwrap(), 1, "tried once");
+    keys(&mut app, ":lsp-restart<CR>");
+    app.update_lsp();
+    assert_eq!(
+        *tries.lock().unwrap(),
+        2,
+        "and again (once it's installed, say)"
     );
 }

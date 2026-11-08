@@ -88,12 +88,13 @@ watch-files = true
 # Elements: mode, file-name, file-base-name, modified, position,
 # position-percentage, total-lines, file-type, file-encoding (only when not
 # plain UTF-8), file-line-ending, indent ("2 spaces", "tabs"), diagnostics
-# (language server errors and warnings: E2 W1), pending-keys,
-# recording, separator, spacer.
+# (language server errors and warnings: E2 W1), lsp-progress (what a
+# language server is busy with: "rust-analyzer: Indexing 45%"),
+# pending-keys, recording, separator, spacer.
 [editor.statusline-layout]
 left = ["mode", "file-name", "modified"]
 center = []
-right = ["recording", "pending-keys", "diagnostics", "file-encoding", "file-type", "position"]
+right = ["recording", "pending-keys", "lsp-progress", "diagnostics", "file-encoding", "file-type", "position"]
 
 [editor.search]
 # "smart" (case-insensitive unless the pattern has a capital), "sensitive"
@@ -320,6 +321,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.statusline.visual" = { fg = "#16181d", bg = "#bb9af7", modifiers = ["bold"] }
 "ui.statusline.picker" = { fg = "#16181d", bg = "#7dcfff", modifiers = ["bold"] }
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
+"ui.statusline.lsp" = { fg = "#6b7280", bg = "#1f2229" }
 "ui.statusline.recording" = { fg = "#f7768e", bg = "#1f2229", modifiers = ["bold"] }
 "ui.statusline.modified" = { fg = "#e0af68", bg = "#1f2229", modifiers = ["bold"] }
 # The status lines of windows other than the active one.

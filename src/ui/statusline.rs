@@ -231,6 +231,10 @@ impl Active<'_> {
                     styled(format!("{text} "), scope)
                 }
             }
+            StatusElement::LspProgress => match editor.lsp_progress() {
+                Some(progress) => styled(format!(" {progress} "), "ui.statusline.lsp"),
+                None => Span::raw(""),
+            },
             StatusElement::Plugin(name) => Span::styled(
                 editor
                     .plugin_status(name)

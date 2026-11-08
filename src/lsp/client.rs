@@ -198,6 +198,9 @@ pub struct Client {
     /// The title of the last command it was asked to run (a code
     /// action's), for the message when it sends edits back.
     pub command_title: Option<String>,
+    /// What it's busy with, by progress token, in the order begun: the
+    /// title, and the latest message and percentage.
+    progress: Vec<(String, String, Option<String>, Option<u64>)>,
 }
 
 impl Client {
@@ -240,6 +243,7 @@ impl Client {
             settings: serde_json::to_value(&config.settings).unwrap_or_else(|_| json!({})),
             capabilities: Value::Null,
             command_title: None,
+            progress: Vec::new(),
         };
         let root_uri = path_to_uri(root);
         let name = root.file_name().map_or_else(
@@ -317,7 +321,8 @@ impl Client {
                         "symbol": {},
                         "executeCommand": { "dynamicRegistration": false },
                     },
-                    "window": { "workDoneProgress": false },
+                    // `$/progress`: what it's busy with, for the status line.
+                    "window": { "workDoneProgress": true },
                 },
             }),
             Pending::Initialize,
@@ -581,6 +586,49 @@ impl Client {
             }
             None => Answer::Done,
         }
+    }
+
+    /// Follows a `$/progress` notification: work begun, reported on, or
+    /// ended.
+    pub fn note_progress(&mut self, params: &Value) {
+        let token = match &params["token"] {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        let value = &params["value"];
+        let message = value["message"].as_str().map(str::to_string);
+        let percentage = value["percentage"].as_u64();
+        match value["kind"].as_str() {
+            Some("begin") => {
+                let title = value["title"].as_str().unwrap_or("").to_string();
+                self.progress.retain(|(t, ..)| *t != token);
+                self.progress.push((token, title, message, percentage));
+            }
+            Some("report") => {
+                if let Some(work) = self.progress.iter_mut().find(|(t, ..)| *t == token) {
+                    if message.is_some() {
+                        work.2 = message;
+                    }
+                    if percentage.is_some() {
+                        work.3 = percentage;
+                    }
+                }
+            }
+            Some("end") => self.progress.retain(|(t, ..)| *t != token),
+            _ => {}
+        }
+    }
+
+    /// What it's busy with (`Indexing 45%`, or the title and message), if
+    /// anything: the work begun first.
+    pub fn busy_with(&self) -> Option<String> {
+        let (_, title, message, percentage) = self.progress.first()?;
+        let text = match (percentage, message) {
+            (Some(p), _) => format!("{title} {p}%"),
+            (None, Some(m)) if !m.is_empty() => format!("{title}: {m}"),
+            _ => title.clone(),
+        };
+        Some(text.trim().to_string())
     }
 
     /// The version of `id` the server last had sent.

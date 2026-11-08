@@ -74,6 +74,15 @@ pub fn register(r: &mut CommandRegistry) {
     );
     r.alias("lsp", "lsp_info");
     r.register(
+        "lsp_restart",
+        "Restart this buffer's language server, or [name]'s (a command or language; all for every one), and try again those not found",
+        |cx| {
+            cx.editor.request_lsp_restart(&cx.args.join(" "));
+            Ok(())
+        },
+    );
+    r.alias("lsp-restart", "lsp_restart");
+    r.register(
         "format",
         "Have the language server format the buffer",
         |cx| cx.editor.format(false),

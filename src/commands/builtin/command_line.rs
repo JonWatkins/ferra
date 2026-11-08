@@ -127,10 +127,20 @@ pub(super) fn run_command_line(cx: &mut Context, input: &str) -> CommandResult {
     let rest = rest.trim_start();
 
     // The name is a run of letters, digits and `_` (so `s/a/b/` needs no
-    // space), or failing that the first word (for aliases like `q!`).
+    // space), or failing that the first word (for aliases like `q!`). One
+    // with `-`s (`lsp-restart`) counts if it's a command's, so `s-a-b-` is
+    // still `s` with `-` as its delimiter.
     let name_len = rest
         .find(|c: char| !(c.is_alphanumeric() || c == '_'))
         .unwrap_or(rest.len());
+    let hyphened = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '-'))
+        .unwrap_or(rest.len());
+    let name_len = if hyphened > name_len && cx.registry.contains(&rest[..hyphened]) {
+        hyphened
+    } else {
+        name_len
+    };
     let name_len = if rest.starts_with('|') {
         0
     } else if name_len == 0 {
@@ -260,6 +270,20 @@ mod tests {
         let mut e = editor(text, Position::default(), Mode::Command);
         input.chars().for_each(|c| e.insert_text_char(c));
         e
+    }
+
+    #[test]
+    fn names_with_hyphens_count_only_if_theyre_commands() {
+        let mut e = command_editor("a-b", "s-a-c-");
+        run(&mut e, "command_line_execute", None);
+        assert_eq!(e.document.buffer().text(), "c-b", "`s` with `-` delimiters");
+        let mut e = command_editor("", "lsp-restart");
+        run(&mut e, "command_line_execute", None);
+        assert_eq!(
+            e.take_lsp_restart().as_deref(),
+            Some(""),
+            "`lsp-restart`, not `lsp`"
+        );
     }
 
     #[test]

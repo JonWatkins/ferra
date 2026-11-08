@@ -131,14 +131,65 @@ impl Lsp {
             return false;
         }
         let handled = self.receive(editor);
+        let restarted = editor
+            .take_lsp_restart()
+            .is_some_and(|which| self.restart(editor, &which));
         self.sync(editor);
         let asked = self.send_requests(editor);
         let status = self.status();
-        let changed = handled > 0 || asked || status != editor.lsp_status();
+        // The first server busy with something, for the status line.
+        let progress = self
+            .clients
+            .iter()
+            .find_map(|c| c.busy_with().map(|work| format!("{}: {work}", c.name)));
+        let changed = handled > 0
+            || asked
+            || restarted
+            || status != editor.lsp_status()
+            || progress.as_deref() != editor.lsp_progress();
         if status != editor.lsp_status() {
             editor.set_lsp_status(status);
         }
+        editor.set_lsp_progress(progress);
         changed
+    }
+
+    /// `:lsp-restart`: stops the servers `which` names (`""`: this buffer's;
+    /// a command or language; `all`), so the next sync starts them again
+    /// for the files open, and forgets which commands weren't found or
+    /// failed, so they're tried again. Returns true (something changed).
+    fn restart(&mut self, editor: &mut Editor, which: &str) -> bool {
+        let language = editor.language_of(&editor.document).map(str::to_string);
+        let active = editor.document.id();
+        let named = |c: &Client| match which {
+            "" => c.has_document(active) || Some(&c.language) == language.as_ref(),
+            "all" => true,
+            name => c.name == name || c.language == name,
+        };
+        let (gone, kept): (Vec<Client>, Vec<Client>) = std::mem::take(&mut self.clients)
+            .into_iter()
+            .partition(named);
+        self.clients = kept;
+        let retried = self.missing.len() + self.failed.len();
+        self.missing.clear();
+        self.failed.clear();
+        let names: Vec<String> = gone.iter().map(|c| c.name.clone()).collect();
+        for mut client in gone {
+            let documents: Vec<DocumentId> = client.document_uris().map(|(d, _)| d).collect();
+            for document in documents {
+                editor.set_diagnostics(document, Vec::new());
+                self.raw_diagnostics.remove(&document);
+            }
+            client.shutdown();
+            // Dropping it ends the process.
+        }
+        let text = match (names.is_empty(), retried) {
+            (false, _) => format!("Restarting {}", names.join(", ")),
+            (true, 0) => "No language server to restart (see :lsp)".to_string(),
+            (true, _) => "Trying the servers that weren't found again".to_string(),
+        };
+        editor.set_message(Message::info(text));
+        true
     }
 
     /// One line per server, for `:lsp`.
@@ -149,7 +200,10 @@ impl Lsp {
             .map(|c| {
                 let state = match &c.state {
                     State::Starting => "starting".to_string(),
-                    State::Ready => "running".to_string(),
+                    State::Ready => match c.busy_with() {
+                        Some(work) => format!("running ({work})"),
+                        None => "running".to_string(),
+                    },
                     State::Stopped(why) => format!("stopped: {why}"),
                 };
                 format!(
@@ -332,6 +386,7 @@ impl Lsp {
                     .unwrap_or_default();
                 self.raw_diagnostics.insert(document, raw);
             }
+            (Some("$/progress"), None) => client.note_progress(&message["params"]),
             (Some("window/showMessage"), None) => {
                 let params = &message["params"];
                 let text = format!(

@@ -1141,7 +1141,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 Planned: plugin UI, the rest of LSP support (diagnostics, hover, go to
 definition and references, completion, formatting, rename, code actions
-signature help, and symbol and diagnostic pickers are done), an
+signature help, symbol and diagnostic pickers, progress and restarting
+are done), an
 agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
@@ -1184,8 +1185,7 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 Started: see [Language servers](#language-servers) for the client,
 diagnostics, hover and going to definitions and references, and [Word
 completion](#word-completion) for completion. Still to come,
-in order: servers' progress in the status line and `:lsp-restart`,
-inlay hints, and highlighting the other uses of the symbol under the
+in order: inlay hints, and highlighting the other uses of the symbol under the
 cursor.
 
 ### Agent harness
@@ -1365,6 +1365,19 @@ not. The answer is dropped unless the editor is still where it was asked
   Commands often make their changes by sending `workspace/applyEdit`
   back, which `Lsp` answers by making the edit (with the action's title
   in the message).
+- Progress and restarting: ferra says it takes `workDoneProgress`, so
+  servers send `$/progress` (begin, report, end, by token; their
+  `window/workDoneProgress/create` request is answered like any other).
+  Each `Client` keeps the work begun and not ended; the first server busy
+  with something gives the status line's `lsp-progress` element its text
+  (`rust-analyzer: Indexing 45%`, else the title and message) and `:lsp`
+  its "running (…)". `:lsp-restart [name]` (the command line takes a name
+  with `-`s when it's a command's, so `:s-a-b-` is still `:s`) leaves a
+  request on the editor that `Lsp::update` takes before syncing: the
+  servers it names (the buffer's, by command or language, or `all`) are
+  sent `shutdown` and dropped (which ends their processes), their
+  diagnostics cleared, and which commands weren't found or failed is
+  forgotten; the sync after starts what the open files need.
 - Diagnostics pickers: `<Space>d` lists the buffer's diagnostics,
   `<Space>D` every buffer's and those for files that aren't open: a
   `publishDiagnostics` for a file with no buffer is placed by the file's
@@ -1466,11 +1479,9 @@ not. The answer is dropped unless the editor is still where it was asked
   rename files, no range formatting (`=` and `gq` stay ferra's own), and no list of diagnostics in a
   picker. Hover is Markdown made plain (no tables, and lists keep their
   `-`); it can't be focused, searched or copied from, and it isn't shown
-  in insert mode. Servers' `$/progress` and
-  `window/logMessage` are ignored (so `:lsp` says "running" while
-  rust-analyzer is still indexing), as are dynamic registrations and
-  `workspace/applyEdit`. A server that stops isn't restarted (there's no
-  `:lsp-restart` yet), and changing its config needs a restart of ferra.
+  in insert mode. `window/logMessage` and dynamic registrations are
+  ignored. A server that stops isn't restarted by itself (`:lsp-restart`
+  does it), and changing its config takes a `:lsp-restart`.
   Diagnostics moved with edits can be a little off until the server's
   next list where an edit replaced their text; marks still don't follow
   undo.

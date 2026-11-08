@@ -179,6 +179,12 @@ pub struct Editor {
     insert_repeat: Option<(usize, bool)>,
     /// How each language server is doing, for `:lsp` (set by the app).
     lsp_status: Vec<String>,
+    /// What a language server is busy with (`rust-analyzer: Indexing 45%`),
+    /// for the status line.
+    lsp_progress: Option<String>,
+    /// `:lsp-restart`: which servers to restart (`""` for this buffer's),
+    /// waiting for the app's `Lsp`.
+    lsp_restart: Option<String>,
     /// Requests for language servers, waiting for the app to send them.
     lsp_requests: Vec<lsp::LspRequest>,
     /// A language server's hover, shown by the cursor.
@@ -309,6 +315,27 @@ impl Editor {
     /// How the language servers are doing, one line each.
     pub fn lsp_status(&self) -> &[String] {
         &self.lsp_status
+    }
+
+    pub fn set_lsp_progress(&mut self, progress: Option<String>) {
+        self.lsp_progress = progress;
+    }
+
+    /// What a language server is busy with, if anything.
+    pub fn lsp_progress(&self) -> Option<&str> {
+        self.lsp_progress.as_deref()
+    }
+
+    /// `:lsp-restart [name]`: restarts this buffer's language server, or the
+    /// one with that command or language (`all` for every one), and tries
+    /// again those that weren't found.
+    pub fn request_lsp_restart(&mut self, which: &str) {
+        self.lsp_restart = Some(which.trim().to_string());
+    }
+
+    /// The restart asked for, if any (for the app's `Lsp`).
+    pub fn take_lsp_restart(&mut self) -> Option<String> {
+        self.lsp_restart.take()
     }
 
     /// What plugin status function `name` last returned.
