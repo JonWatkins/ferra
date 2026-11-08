@@ -92,6 +92,7 @@ fn serve(
                         "referencesProvider": features,
                         "completionProvider": {"triggerCharacters": ["."]},
                         "documentFormattingProvider": features,
+                        "renameProvider": features,
                     }}),
                 );
                 // Servers ask things too; this must be answered.
@@ -195,6 +196,44 @@ fn serve(
                         {"label": "resolved", "data": {"id": 7}},
                     ]}),
                 );
+            }
+            "textDocument/rename" => {
+                let text = seen.lock().unwrap().text.clone();
+                let word = word_at(&text, &params["position"]);
+                if word == "fine" {
+                    write_message(
+                        &mut output,
+                        &json!({"jsonrpc": "2.0", "id": message["id"],
+                                "error": {"code": -32602, "message": "can't rename that"}}),
+                    )
+                    .unwrap();
+                    continue;
+                }
+                let new_name = params["newName"].as_str().unwrap();
+                let renames = |text: &str| -> Vec<Value> {
+                    let mut edits = Vec::new();
+                    for (line, line_text) in text.split('\n').enumerate() {
+                        for (col, _) in line_text.match_indices(&word) {
+                            let at = |c: usize| json!({"line": line, "character": c});
+                            edits.push(
+                                json!({"range": {"start": at(col), "end": at(col + word.len())},
+                                              "newText": new_name}),
+                            );
+                        }
+                    }
+                    edits
+                };
+                let mut changes = vec![json!({
+                    "textDocument": {"uri": params["textDocument"]["uri"], "version": null},
+                    "edits": renames(&text),
+                })];
+                let other = root.join(OTHER);
+                if let Ok(other_text) = fs::read_to_string(&other) {
+                    let uri = ferra::lsp::convert::path_to_uri(&other.canonicalize().unwrap());
+                    changes.push(json!({"textDocument": {"uri": uri, "version": null},
+                                        "edits": renames(&other_text)}));
+                }
+                reply(&mut output, json!({"documentChanges": changes}));
             }
             "textDocument/formatting" => {
                 let text = seen.lock().unwrap().text.clone();
@@ -881,4 +920,67 @@ fn a_snippet_leaves_the_cursor_at_its_first_stop() {
     assert_eq!(common::cursor(&app), (1, 7), "inside the brackets");
     keys(&mut app, "42");
     assert_eq!(text(&app), "// maybe\no.call(42)");
+}
+
+#[test]
+fn rename_changes_the_name_everywhere_as_one_change() {
+    let (_dir, mut app, _) = with_server("fn bad() {}\nbad();\nlet x = bad;\n", true);
+    ready(&mut app);
+    keys(&mut app, "jw:rename good<CR>");
+    until(&mut app, |a| text(a).starts_with("fn good"));
+    assert_eq!(text(&app), "fn good() {}\ngood();\nlet x = good;");
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "Renamed to good: 3 changes in 1 file"
+    );
+    keys(&mut app, "u");
+    assert_eq!(text(&app), "fn bad() {}\nbad();\nlet x = bad;", "one undo");
+}
+
+#[test]
+fn rename_changes_other_files_and_leaves_them_to_save() {
+    let (dir, mut app, _) = with_server("use other;\nother();\n", true);
+    let other = dir.path().join(OTHER);
+    fs::write(&other, "pub fn other() {}\n").unwrap();
+    ready(&mut app);
+    keys(&mut app, "w:rename another<CR>");
+    until(&mut app, |a| text(a).starts_with("use another"));
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "Renamed to another: 3 changes in 2 files (1 other file not saved yet: :wa)"
+    );
+    assert!(
+        app.editor().document.name().ends_with("main.rs"),
+        "still here"
+    );
+    assert_eq!(fs::read_to_string(&other).unwrap(), "pub fn other() {}\n");
+    keys(&mut app, ":wa<CR>");
+    assert_eq!(fs::read_to_string(&other).unwrap(), "pub fn another() {}\n");
+}
+
+#[test]
+fn f2_starts_a_rename_of_the_word_under_the_cursor() {
+    let (_dir, mut app, _) = with_server("let bad = 1;\n", true);
+    ready(&mut app);
+    keys(&mut app, "w<F2>");
+    assert_eq!(app.editor().command_line.input(), "rename bad");
+    keys(&mut app, "<C-w>better<CR>");
+    until(&mut app, |a| text(a) == "let better = 1;");
+}
+
+#[test]
+fn rename_says_why_it_cant() {
+    let (_dir, mut app, _) = with_server("fine\n", true);
+    ready(&mut app);
+    keys(&mut app, ":rename ok<CR>");
+    until(&mut app, |a| {
+        a.editor()
+            .message()
+            .is_some_and(|m| m.text == "rust-analyzer: can't rename that")
+    });
+    keys(&mut app, ":rename<CR>");
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "Rename to what? :rename new_name"
+    );
 }

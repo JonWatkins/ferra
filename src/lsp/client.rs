@@ -164,6 +164,7 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
         LspFeature::Completion => ("textDocument/completion", "completionProvider"),
         LspFeature::ResolveCompletion => ("completionItem/resolve", "completionProvider"),
         LspFeature::Format => ("textDocument/formatting", "documentFormattingProvider"),
+        LspFeature::Rename => ("textDocument/rename", "renameProvider"),
     }
 }
 
@@ -251,6 +252,7 @@ impl Client {
                         "typeDefinition": { "linkSupport": true },
                         "implementation": { "linkSupport": true },
                         "references": {},
+                        "rename": { "prepareSupport": false },
                         // Snippets go in as their text, with the cursor at
                         // the first tab stop (the CSS and HTML servers
                         // complete nothing without them).
@@ -269,7 +271,13 @@ impl Client {
                             "contextSupport": true,
                         },
                     },
-                    "workspace": { "workspaceFolders": true, "configuration": true },
+                    "workspace": {
+                        "workspaceFolders": true,
+                        "configuration": true,
+                        // Edits by file, with the version they're for; no
+                        // creating, renaming or deleting files.
+                        "workspaceEdit": { "documentChanges": true },
+                    },
                     "window": { "workDoneProgress": false },
                 },
             }),
@@ -377,6 +385,9 @@ impl Client {
         match request.feature {
             LspFeature::References => {
                 params["context"] = json!({ "includeDeclaration": true });
+            }
+            LspFeature::Rename => {
+                params["newName"] = json!(request.text.clone().unwrap_or_default());
             }
             LspFeature::Completion => {
                 params["context"] = match request.trigger {

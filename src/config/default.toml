@@ -506,6 +506,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "gy" = "goto_type_definition"
 "gI" = "goto_implementation"
 "gr" = "goto_references"
+"<F2>" = "rename_prompt"
+"<Space>n" = "rename_prompt"
 "ZZ" = "exit"
 "ZQ" = "force_quit"
 

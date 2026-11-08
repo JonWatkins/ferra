@@ -265,6 +265,7 @@ order before the sorted ones, and `//` is the last search.
 | `K` | Hover: what the language server says about the symbol under the cursor (`K` again scrolls) |
 | `gd` `gD` `gy` | Go to the definition, declaration, or type's definition |
 | `gr` `gI` | References, implementations: gone to if there's one, else listed in a picker |
+| `<F2>` `<Space>n`, `:rename name` | Rename the symbol under the cursor everywhere (the keys start `:rename` with its name to edit) |
 | `:b 2`, `:b name`, `:b #` | Switch by number, part of the name, or to the previous buffer |
 | `:bd` | Close the buffer (`:bd!` discards changes) |
 | `:wa`, `:wqa` | Write all / write all and quit |
@@ -493,6 +494,13 @@ options = { format-on-save = true }   # or format-on-save = true in [editor]
 Saving waits up to 2 seconds for the server; if it can't format (none
 running, an error, too slow), the file is saved as it is and the message
 says why.
+
+`<F2>` (or `<Space>n`) renames the symbol under the cursor: it starts
+`:rename` with the current name for you to edit, and on `<CR>` the server
+changes it everywhere it's used, in this file and others. Each file's
+changes are one undo step; files that weren't open are opened in the
+background and left unsaved, as the message says, so `:wa` saves them
+(or `:b` to look first).
 
 Some servers check more when you save: rust-analyzer finds syntax errors
 as you type, but type and borrow errors come from `cargo check`, which it

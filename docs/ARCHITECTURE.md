@@ -1130,7 +1130,7 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 ## Roadmap: deferred features
 
 Planned: plugin UI, the rest of LSP support (diagnostics, hover, go to
-definition and references, completion and formatting are done), an
+definition and references, completion, formatting and rename are done), an
 agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
@@ -1173,8 +1173,8 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 Started: see [Language servers](#language-servers) for the client,
 diagnostics, hover and going to definitions and references, and [Word
 completion](#word-completion) for completion. Still to come,
-in order: rename and code actions (through `apply_text_edits`, one undo
-step each), signature help, and a picker list of diagnostics.
+in order: code actions (through `apply_workspace_edit`, as rename), signature
+help, and a picker list of diagnostics.
 
 ### Agent harness
 
@@ -1316,6 +1316,16 @@ not. The answer is dropped unless the editor is still where it was asked
   built-in `BeforeSave` hook runs `format(quiet)` before the config's
   hooks, and a failure doesn't stop the save, only adds to its message
   (`note_for_save`).
+- Rename: `:rename name` queues an `LspRequest` carrying the name (`text`);
+  `<F2>` opens the command line with `rename <word>` in it. The answer is
+  a `WorkspaceEdit` (`changes` by URI, or `documentChanges`; ferra says it
+  takes the latter but no file operations, so creating, renaming and
+  deleting files are left out and counted). `apply_workspace_edit` makes
+  each file's edits: in its buffer if it's open, else in one opened in
+  the background (`buffer_for_path`: no jump, not shown, left modified),
+  through `edit_document`, which makes them one undo step of their own in
+  any buffer (`Document::apply_edits`, the same as formatting's). The
+  message counts changes and files, and the other files left unsaved.
 
 ## Configuration
 
@@ -1376,8 +1386,9 @@ not. The answer is dropped unless the editor is still where it was asked
 
 ## Known gaps / next steps
 
-- Language servers: no rename, code actions, signature help or document
-  symbols yet, no range formatting (`=` and `gq` stay ferra's own), and no list of diagnostics in a
+- Language servers: no code actions, signature help or document symbols
+  yet; rename doesn't check the name first (`prepareRename`), and doesn't
+  rename files, no range formatting (`=` and `gq` stay ferra's own), and no list of diagnostics in a
   picker. Hover is Markdown made plain (no tables, and lists keep their
   `-`); it can't be focused, searched or copied from, and it isn't shown
   in insert mode. Servers' `$/progress` and

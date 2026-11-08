@@ -22,6 +22,7 @@ pub enum LspFeature {
     /// The rest of a completion item that was taken (its import).
     ResolveCompletion,
     Format,
+    Rename,
 }
 
 impl LspFeature {
@@ -36,6 +37,7 @@ impl LspFeature {
             LspFeature::References => "references",
             LspFeature::Completion | LspFeature::ResolveCompletion => "completion",
             LspFeature::Format => "formatting",
+            LspFeature::Rename => "renaming",
         }
     }
 
@@ -50,13 +52,14 @@ impl LspFeature {
             LspFeature::References => "References",
             LspFeature::Completion | LspFeature::ResolveCompletion => "Completions",
             LspFeature::Format => "Formatting",
+            LspFeature::Rename => "Rename",
         }
     }
 }
 
 /// A request waiting to be sent: `feature` at `position` in `document`,
 /// as its text was at `edit_seq`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspRequest {
     pub feature: LspFeature,
     pub document: DocumentId,
@@ -72,6 +75,8 @@ pub struct LspRequest {
     pub word_start: Position,
     /// For resolving: which completion item (see `ServerItem::resolve`).
     pub item: Option<(u64, usize)>,
+    /// For renaming: the new name.
+    pub text: Option<String>,
 }
 
 /// A place a server pointed to: a file, and a row and char column in it.
@@ -140,25 +145,58 @@ impl Editor {
     /// cursor on the text it was on: moved along by edits before it, and
     /// kept at its line and column (as far as it can be) in one that
     /// replaces the text it was in.
-    pub fn apply_text_edits(&mut self, mut edits: Vec<(Position, Position, String)>) {
-        // Last first, so each edit's place is still where it was.
-        edits.sort_by_key(|e| std::cmp::Reverse(e.0));
-        let mut cursor = self.document.cursor();
-        for (start, end, text) in edits {
-            self.document.delete(start, end);
-            let new_end = self.document.insert(start, &text);
-            if end <= cursor {
-                cursor = moved(cursor, end, new_end);
-            } else if start < cursor {
-                cursor = cursor.min(new_end);
-            }
-        }
-        self.document.set_cursor(cursor);
+    pub fn apply_text_edits(&mut self, edits: Vec<(Position, Position, String)>) {
+        self.document.apply_edits(edits);
         // In insert mode the cursor can be after the last char (after a
         // word just completed).
         if self.mode() != Mode::Insert {
             self.document.clamp_to_last_char();
         }
+    }
+
+    /// Buffer `id`, to change.
+    pub fn document_by_id_mut(&mut self, id: DocumentId) -> Option<&mut Document> {
+        if self.document.id() == id {
+            return Some(&mut self.document);
+        }
+        self.background.iter_mut().find(|d| d.id() == id)
+    }
+
+    /// The buffer with `path` open, opening it in the background (not
+    /// shown, no jump) if it isn't: for edits to files that aren't open (a
+    /// rename's).
+    pub fn buffer_for_path(&mut self, path: &Path) -> Result<DocumentId, String> {
+        if let Some(id) = self.find_open_path(path) {
+            return Ok(id);
+        }
+        let fallback = self.options.fallback_encoding.0;
+        let (mut document, info) =
+            Document::open_with(path, fallback).map_err(|e| e.to_string())?;
+        let id = self.new_document_id();
+        document.set_id(id);
+        self.background.push(document);
+        self.emit(crate::events::Event::Opened { path: info.path });
+        Ok(id)
+    }
+
+    /// Makes `edits` (see [`Document::apply_edits`]) to buffer `id`, as one
+    /// undo step of their own. Returns whether there was such a buffer.
+    pub fn edit_document(
+        &mut self,
+        id: DocumentId,
+        edits: Vec<(Position, Position, String)>,
+    ) -> bool {
+        let active = id == self.document.id();
+        let Some(document) = self.document_by_id_mut(id) else {
+            return false;
+        };
+        document.commit();
+        document.apply_edits(edits);
+        document.commit();
+        if active && self.mode() != Mode::Insert {
+            self.document.clamp_to_last_char();
+        }
+        true
     }
 
     /// Asks the language server for `feature` at the cursor (`K`, `gd`...).
@@ -180,7 +218,22 @@ impl Editor {
             trigger: None,
             word_start: self.document.cursor(),
             item: None,
+            text: None,
         });
+        Ok(())
+    }
+
+    /// `:rename name`: has the language server rename the symbol under
+    /// the cursor to `name`, everywhere it's used.
+    pub fn request_rename(&mut self, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Rename to what? :rename new_name".into());
+        }
+        self.request_lsp(LspFeature::Rename)?;
+        if let Some(request) = self.lsp_requests.last_mut() {
+            request.text = Some(name.to_string());
+        }
         Ok(())
     }
 
@@ -317,6 +370,29 @@ impl Editor {
     }
 }
 
+impl Document {
+    /// Replaces each `start..end` with its text (a server's edits: they
+    /// don't overlap, and are all about the text as it is now), keeping the
+    /// cursor on the text it was on: moved along by edits before it, and
+    /// kept at its line and column (as far as it can be) in one that
+    /// replaces the text it was in.
+    pub fn apply_edits(&mut self, mut edits: Vec<(Position, Position, String)>) {
+        // Last first, so each edit's place is still where it was.
+        edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+        let mut cursor = self.cursor();
+        for (start, end, text) in edits {
+            self.delete(start, end);
+            let new_end = self.insert(start, &text);
+            if end <= cursor {
+                cursor = moved(cursor, end, new_end);
+            } else if start < cursor {
+                cursor = cursor.min(new_end);
+            }
+        }
+        self.set_cursor(cursor);
+    }
+}
+
 /// Where `cursor` (after `end`) is once the text up to `end` is replaced
 /// by text ending at `new_end`.
 fn moved(cursor: Position, end: Position, new_end: Position) -> Position {
@@ -390,7 +466,7 @@ mod tests {
         let mut editor = Editor::default();
         editor.open(&path).unwrap();
         editor.request_lsp(LspFeature::Hover).unwrap();
-        let request = editor.take_lsp_requests()[0];
+        let request = editor.take_lsp_requests().remove(0);
         assert!(editor.still_at(&request));
         editor.document.set_cursor(Position::new(0, 4));
         assert!(!editor.still_at(&request), "the cursor moved");

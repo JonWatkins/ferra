@@ -86,9 +86,11 @@ impl Lsp {
             trigger: None,
             word_start: editor.document.cursor(),
             item: None,
+            text: None,
         };
         let options = &editor.options;
         let (name, encoding, client_id) = (client.name.clone(), client.encoding, client.id);
+        let edit_seq = request.edit_seq;
         let id = client.request_format(request, options.tab_width, options.expand_tab);
 
         self.formatted = None;
@@ -116,7 +118,7 @@ impl Lsp {
         // Made only if nothing changed while waiting (it can't, but a
         // server's edits on the wrong text would garble it).
         let buffer = editor.document.buffer();
-        if editor.document.id() != document || buffer.edit_seq() != request.edit_seq {
+        if editor.document.id() != document || buffer.edit_seq() != edit_seq {
             return Err("The text changed while formatting".into());
         }
         let edits = edits
@@ -255,6 +257,18 @@ pub(super) fn answer(
         editor.make_other_edits(edits);
         return;
     }
+    if request.feature == LspFeature::Rename {
+        let name = request.text.clone().unwrap_or_default();
+        let text = apply_workspace_edit(editor, &result, client.encoding).map(|done| match done {
+            Applied { changes: 0, .. } => "Nothing to rename here".to_string(),
+            done => format!("Renamed to {name}: {}", done.describe()),
+        });
+        match text {
+            Ok(text) => editor.set_message(Message::info(text)),
+            Err(error) => editor.lsp_failed(error),
+        }
+        return;
+    }
     if request.feature == LspFeature::Hover {
         let markdown = hover_markdown(&result["contents"]);
         if markdown.trim().is_empty() {
@@ -268,6 +282,97 @@ pub(super) fn answer(
     if let Err(error) = editor.show_locations(request.feature, locations) {
         editor.set_message(Message::info(error));
     }
+}
+
+/// What applying a workspace edit did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct Applied {
+    pub changes: usize,
+    pub files: usize,
+    /// Files changed that aren't the buffer being edited: left unsaved.
+    pub others: usize,
+    /// Creating, renaming or deleting files, which ferra doesn't do.
+    pub skipped: usize,
+}
+
+impl Applied {
+    /// `3 changes in 2 files (1 other file not saved yet: :wa)`.
+    pub fn describe(&self) -> String {
+        let plural =
+            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let mut text = format!(
+            "{} in {}",
+            plural(self.changes, "change", "changes"),
+            plural(self.files, "file", "files")
+        );
+        if self.others > 0 {
+            text.push_str(&format!(
+                " ({} not saved yet: :wa)",
+                plural(self.others, "other file", "other files")
+            ));
+        }
+        if self.skipped > 0 {
+            text.push_str(&format!(
+                "; {} left out",
+                plural(self.skipped, "file operation", "file operations")
+            ));
+        }
+        text
+    }
+}
+
+/// Makes a `WorkspaceEdit`'s changes (`changes` by URI, or
+/// `documentChanges`), each file's as one undo step, opening files that
+/// aren't open in the background. Creating, renaming and deleting files
+/// is left out (and counted).
+pub(super) fn apply_workspace_edit(
+    editor: &mut Editor,
+    edit: &Value,
+    encoding: Encoding,
+) -> Result<Applied, String> {
+    let mut files: Vec<(&str, &Vec<Value>)> = Vec::new();
+    let mut applied = Applied::default();
+    if let Some(changes) = edit["documentChanges"].as_array() {
+        for change in changes {
+            match (
+                change["textDocument"]["uri"].as_str(),
+                change["edits"].as_array(),
+            ) {
+                (Some(uri), Some(edits)) => files.push((uri, edits)),
+                _ => applied.skipped += 1,
+            }
+        }
+    } else if let Some(changes) = edit["changes"].as_object() {
+        for (uri, edits) in changes {
+            if let Some(edits) = edits.as_array() {
+                files.push((uri, edits));
+            }
+        }
+    }
+    let active = editor.document.id();
+    for (uri, edits) in files {
+        if edits.is_empty() {
+            continue;
+        }
+        let path = convert::uri_to_path(uri).ok_or_else(|| format!("Can't edit {uri}"))?;
+        let id = editor.buffer_for_path(&path)?;
+        let buffer = editor.document_by_id(id).expect("just found").buffer();
+        let converted = edits
+            .iter()
+            .map(|e| {
+                let start = convert::from_lsp(buffer, &e["range"]["start"], encoding);
+                let end = convert::from_lsp(buffer, &e["range"]["end"], encoding);
+                (start, end, e["newText"].as_str().unwrap_or("").to_string())
+            })
+            .collect();
+        editor.edit_document(id, converted);
+        applied.changes += edits.len();
+        applied.files += 1;
+        if id != active {
+            applied.others += 1;
+        }
+    }
+    Ok(applied)
 }
 
 /// The items in a completion answer (`CompletionItem[]`, a
@@ -627,6 +732,7 @@ mod tests {
             trigger: None,
             word_start: Position::new(0, 2),
             item: None,
+            text: None,
         };
         let range = |from: u64| {
             json!({"start": {"line": 0, "character": from},
@@ -661,6 +767,60 @@ mod tests {
                 (2, "arity", "usize", "ar_ity"),
                 (2, "Argh", "struct", "Argh"),
             ]
+        );
+    }
+
+    #[test]
+    fn workspace_edits_by_uri_and_what_was_left_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.rs");
+        let b = dir.path().join("b.rs");
+        std::fs::write(&a, "old here\n").unwrap();
+        std::fs::write(&b, "x old\nold\n").unwrap();
+        let mut editor = Editor::default();
+        editor.open(&a).unwrap();
+        let edit = |line: u64, from: u64, to: u64| {
+            json!({"range": {"start": {"line": line, "character": from},
+                             "end": {"line": line, "character": to}}, "newText": "new"})
+        };
+        let changes = json!({"changes": {
+            convert::path_to_uri(&a): [edit(0, 0, 3)],
+            convert::path_to_uri(&b): [edit(0, 2, 5), edit(1, 0, 3)],
+        }});
+        let applied = apply_workspace_edit(&mut editor, &changes, Encoding::Utf8).unwrap();
+        assert_eq!(
+            applied,
+            Applied {
+                changes: 3,
+                files: 2,
+                others: 1,
+                skipped: 0
+            }
+        );
+        assert_eq!(editor.document.buffer().text(), "new here");
+        let other = editor.find_open_path(&b).unwrap();
+        let other = editor.document_by_id(other).unwrap();
+        assert_eq!(other.buffer().text(), "x new\nnew");
+        assert!(other.is_modified(), "left for :wa");
+
+        let with_ops = json!({"documentChanges": [
+            {"kind": "rename", "oldUri": "file:///x", "newUri": "file:///y"},
+        ]});
+        let applied = apply_workspace_edit(&mut editor, &with_ops, Encoding::Utf8).unwrap();
+        assert_eq!(applied.skipped, 1);
+        assert_eq!(
+            applied.describe(),
+            "0 changes in 0 files; 1 file operation left out"
+        );
+        let many = Applied {
+            changes: 1,
+            files: 1,
+            others: 2,
+            skipped: 0,
+        };
+        assert_eq!(
+            many.describe(),
+            "1 change in 1 file (2 other files not saved yet: :wa)"
         );
     }
 

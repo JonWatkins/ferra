@@ -145,6 +145,7 @@ impl Editor {
             trigger,
             word_start: start,
             item: None,
+            text: None,
         });
         Ok(())
     }
@@ -322,6 +323,7 @@ impl Editor {
                 trigger: None,
                 word_start: completion.start,
                 item: Some(resolve),
+                text: None,
             });
         }
         // A snippet's cursor place: counted from the completion's start

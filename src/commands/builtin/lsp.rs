@@ -79,6 +79,26 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.format(false),
     );
     r.alias("fmt", "format");
+    r.register(
+        "rename",
+        "Rename the symbol under the cursor to [name], everywhere the language server finds it",
+        |cx| {
+            let name = cx.args.join(" ");
+            cx.editor.request_rename(&name)
+        },
+    );
+    r.register(
+        "rename_prompt",
+        "Rename the symbol under the cursor: :rename with its name to edit (<F2>, <Space>n)",
+        |cx| {
+            let word = cx.editor.word_under_cursor(false).unwrap_or_default();
+            cx.editor.open_command_line();
+            for c in format!("rename {word}").chars() {
+                cx.editor.command_line.push(c);
+            }
+            Ok(())
+        },
+    );
     // `format-on-save`: before the hooks from config, so theirs see the
     // formatted text. Not formatting doesn't stop the save.
     r.on(
