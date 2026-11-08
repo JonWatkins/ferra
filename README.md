@@ -518,6 +518,9 @@ changes are one undo step; files that weren't open are opened in the
 background and left unsaved, as the message says, so `:wa` saves them
 (or `:b` to look first).
 
+Resting the cursor on a symbol in normal mode highlights its other uses
+in view (`highlight-references = false` under `[editor]` turns it off).
+
 `<Space>d` lists this file's errors and warnings in a picker, errors
 first, to filter and go to; `<Space>D` lists every open file's and those
 the servers have found in files that aren't open (rust-analyzer checks

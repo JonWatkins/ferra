@@ -272,6 +272,12 @@ pub(super) fn answer(
         LspFeature::Completion => editor.still_completing(&request),
         // Shown if the picker's still open with that query (checked there).
         LspFeature::WorkspaceSymbols => true,
+        // Shown while the text is as it was (wherever the cursor is now:
+        // it's drawn only while on one of them).
+        LspFeature::DocumentHighlight => {
+            editor.document.id() == request.document
+                && editor.document.buffer().edit_seq() == request.edit_seq
+        }
         // Shown wherever typing has got to since, while it's in the buffer.
         LspFeature::SignatureHelp => editor.document.id() == request.document,
         // The item was taken: its import goes in if it's the same buffer.
@@ -331,6 +337,22 @@ pub(super) fn answer(
             })
             .collect();
         editor.make_other_edits(edits);
+        return;
+    }
+    if request.feature == LspFeature::DocumentHighlight {
+        let buffer = editor.document.buffer();
+        let ranges = result
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|h| {
+                (
+                    convert::from_lsp(buffer, &h["range"]["start"], client.encoding),
+                    convert::from_lsp(buffer, &h["range"]["end"], client.encoding),
+                )
+            })
+            .collect();
+        editor.set_references(request.document, request.edit_seq, ranges);
         return;
     }
     if matches!(

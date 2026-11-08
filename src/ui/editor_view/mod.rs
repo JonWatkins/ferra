@@ -68,6 +68,8 @@ pub struct EditorView<'a> {
     selection: Option<Range>,
     block: Option<crate::core::Block>,
     search: Option<&'a SearchPattern>,
+    /// The other uses of the symbol under the cursor (a language server's).
+    references: &'a [(crate::core::Position, crate::core::Position)],
     syntax: Option<&'a Highlights>,
     /// A language server's diagnostics for the document, in order.
     diagnostics: &'a [crate::editor::diagnostics::Diagnostic],
@@ -86,6 +88,7 @@ impl<'a> EditorView<'a> {
             selection: None,
             block: None,
             search: None,
+            references: &[],
             syntax: None,
             diagnostics: &[],
             cursor: None,
@@ -123,6 +126,15 @@ impl<'a> EditorView<'a> {
     /// Highlights matches of `search` (the active or last search, if any).
     pub fn search(mut self, search: Option<&'a SearchPattern>) -> Self {
         self.search = search;
+        self
+    }
+
+    /// Highlights the uses of the symbol under the cursor.
+    pub fn references(
+        mut self,
+        ranges: &'a [(crate::core::Position, crate::core::Position)],
+    ) -> Self {
+        self.references = ranges;
         self
     }
 
@@ -439,6 +451,16 @@ impl EditorView<'_> {
                 highlight(span.start, span.end, syntax_styles[span.highlight]);
             }
         }
+        let reference = self.theme.get("ui.highlight.reference");
+        for (start, end) in self.references {
+            if start.row <= row && row <= end.row {
+                let from = if start.row == row { start.col } else { 0 };
+                let to = if end.row == row { end.col } else { line_len };
+                if from < to {
+                    highlight(from, to, reference);
+                }
+            }
+        }
         if let Some(pattern) = self.search {
             let style = self.theme.get("ui.search.match");
             for (from, to) in pattern.matches_in_line(line_text) {
@@ -600,6 +622,26 @@ mod tests {
         let hint = theme().get("ui.diagnostic.hint").fg;
         assert_eq!(buf[(3, 0)].fg, hint.unwrap());
         assert_ne!(Some(buf[(3, 2)].fg), hint);
+    }
+
+    #[test]
+    fn references_are_drawn_with_their_background() {
+        let doc = Document::with_text("let value = value;");
+        let ranges = [
+            (TextPos::new(0, 4), TextPos::new(0, 9)),
+            (TextPos::new(0, 12), TextPos::new(0, 17)),
+        ];
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        let options = options(LineNumbers::Absolute);
+        EditorView::new(&doc, &options, &theme())
+            .references(&ranges)
+            .render(area, &mut buf, &mut ViewState::default());
+        let bg = theme().get("ui.highlight.reference").bg.unwrap();
+        let marked: String = (0..30)
+            .map(|x| if buf[(x, 0)].bg == bg { '^' } else { ' ' })
+            .collect();
+        assert_eq!(marked.trim_end(), "         ^^^^^   ^^^^^");
     }
 
     #[test]

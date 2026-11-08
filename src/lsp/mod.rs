@@ -53,6 +53,16 @@ pub struct Lsp {
     /// Each document's diagnostics as its server sent them, to send back
     /// with code action requests.
     raw_diagnostics: HashMap<DocumentId, Vec<Value>>,
+    /// Where the cursor was last seen (buffer, place, text's edit count),
+    /// since when, and whether the server's been asked about it: it's asked
+    /// for the symbol's other uses once the cursor rests.
+    resting: Option<(
+        DocumentId,
+        crate::core::Position,
+        u64,
+        std::time::Instant,
+        bool,
+    )>,
     /// The answer to the formatting request being waited for.
     formatted: Option<Result<Value, client::ResponseError>>,
 }
@@ -73,6 +83,7 @@ impl Default for Lsp {
             actions: features::Stash::default(),
             raw_diagnostics: HashMap::new(),
             formatted: None,
+            resting: None,
         }
     }
 }
@@ -135,6 +146,7 @@ impl Lsp {
             .take_lsp_restart()
             .is_some_and(|which| self.restart(editor, &which));
         self.sync(editor);
+        self.ask_about_resting_cursor(editor);
         let asked = self.send_requests(editor);
         let status = self.status();
         // The first server busy with something, for the status line.
@@ -152,6 +164,41 @@ impl Lsp {
         }
         editor.set_lsp_progress(progress);
         changed
+    }
+
+    /// Once the cursor has rested in normal mode for a moment, asks for the
+    /// other uses of the symbol under it (with `highlight-references`).
+    fn ask_about_resting_cursor(&mut self, editor: &mut Editor) {
+        const REST: std::time::Duration = std::time::Duration::from_millis(150);
+        if !editor.options.highlight_references
+            || editor.mode() != crate::editor::Mode::Normal
+            || editor.document.path().is_none()
+        {
+            self.resting = None;
+            return;
+        }
+        let here = (
+            editor.document.id(),
+            editor.document.cursor(),
+            editor.document.buffer().edit_seq(),
+        );
+        match &mut self.resting {
+            Some((doc, at, seq, since, asked)) if (*doc, *at, *seq) == here => {
+                if !*asked && since.elapsed() >= REST {
+                    *asked = true;
+                    // Already showing for this place: nothing to ask.
+                    if editor.references_shown().is_empty()
+                        && editor.request_lsp(LspFeature::DocumentHighlight).is_ok()
+                        && let Some(request) = editor.lsp_requests_mut().last_mut()
+                    {
+                        request.manual = false;
+                    }
+                }
+            }
+            _ => {
+                self.resting = Some((here.0, here.1, here.2, std::time::Instant::now(), false));
+            }
+        }
     }
 
     /// `:lsp-restart`: stops the servers `which` names (`""`: this buffer's;

@@ -174,6 +174,10 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
         LspFeature::SignatureHelp => ("textDocument/signatureHelp", "signatureHelpProvider"),
         LspFeature::DocumentSymbols => ("textDocument/documentSymbol", "documentSymbolProvider"),
         LspFeature::WorkspaceSymbols => ("workspace/symbol", "workspaceSymbolProvider"),
+        LspFeature::DocumentHighlight => (
+            "textDocument/documentHighlight",
+            "documentHighlightProvider",
+        ),
     }
 }
 
@@ -271,6 +275,7 @@ impl Client {
                         "references": {},
                         "rename": { "prepareSupport": false },
                         "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+                        "documentHighlight": {},
                         "signatureHelp": {
                             "signatureInformation": {
                                 "documentationFormat": ["markdown", "plaintext"],

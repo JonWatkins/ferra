@@ -1141,8 +1141,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 Planned: plugin UI, the rest of LSP support (diagnostics, hover, go to
 definition and references, completion, formatting, rename, code actions
-signature help, symbol and diagnostic pickers, progress and restarting
-are done), an
+signature help, symbol and diagnostic pickers, progress and restarting,
+and highlighting references are done), an
 agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
@@ -1185,8 +1185,8 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 Started: see [Language servers](#language-servers) for the client,
 diagnostics, hover and going to definitions and references, and [Word
 completion](#word-completion) for completion. Still to come,
-in order: inlay hints, and highlighting the other uses of the symbol under the
-cursor.
+in order: inlay hints, which need inline virtual text in the layout (see
+Decorations above).
 
 ### Agent harness
 
@@ -1365,6 +1365,14 @@ not. The answer is dropped unless the editor is still where it was asked
   Commands often make their changes by sending `workspace/applyEdit`
   back, which `Lsp` answers by making the edit (with the action's title
   in the message).
+- Highlighting references: `Lsp::update` notes where the cursor is
+  (buffer, place, edit count); once it's rested there 150 ms in normal
+  mode it queues a quiet `DocumentHighlight` request (once per place).
+  The answer is kept with the edit count it's for (`set_references`), and
+  `references_shown` gives the view the ranges only while the text is
+  unchanged, in normal mode, with the cursor on one of them, so moving off
+  or editing hides them at once. Drawn under search matches and the
+  selection, in `ui.highlight.reference`.
 - Progress and restarting: ferra says it takes `workDoneProgress`, so
   servers send `$/progress` (begin, report, end, by token; their
   `window/workDoneProgress/create` request is answered like any other).

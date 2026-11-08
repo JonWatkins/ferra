@@ -32,6 +32,8 @@ pub enum LspFeature {
     SignatureHelp,
     /// The buffer's symbols (functions, types...).
     DocumentSymbols,
+    /// The other uses of the symbol under the cursor, to highlight.
+    DocumentHighlight,
     /// The project's symbols matching a query (`text`).
     WorkspaceSymbols,
 }
@@ -54,6 +56,7 @@ impl LspFeature {
             | LspFeature::ResolveCodeAction => "code actions",
             LspFeature::SignatureHelp => "signature help",
             LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols => "symbols",
+            LspFeature::DocumentHighlight => "highlights",
         }
     }
 
@@ -75,6 +78,7 @@ impl LspFeature {
             LspFeature::SignatureHelp => "Signature",
             LspFeature::DocumentSymbols => "Symbols",
             LspFeature::WorkspaceSymbols => "Project symbols",
+            LspFeature::DocumentHighlight => "Highlights",
         }
     }
 }
@@ -134,10 +138,57 @@ pub trait Formatter: std::fmt::Debug {
     fn format(&mut self, editor: &mut Editor, quiet: bool) -> Result<(), String>;
 }
 
+/// The uses of the symbol under the cursor, as the server found them for
+/// a buffer's text at `edit_seq`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct References {
+    pub document: DocumentId,
+    pub edit_seq: u64,
+    pub ranges: Vec<(Position, Position)>,
+}
+
 /// The id hover documents have: never one of the editor's buffers.
 pub const HOVER_DOCUMENT: DocumentId = DocumentId(u64::MAX);
 
 impl Editor {
+    /// Keeps the uses of the symbol under the cursor, found for `document`'s
+    /// text at `edit_seq`.
+    pub fn set_references(
+        &mut self,
+        document: DocumentId,
+        edit_seq: u64,
+        ranges: Vec<(Position, Position)>,
+    ) {
+        self.references = Some(References {
+            document,
+            edit_seq,
+            ranges,
+        });
+    }
+
+    /// The uses of the symbol under the cursor to highlight: while the text
+    /// is as it was when they were found, in normal mode, and the cursor is
+    /// on one of them (moving off hides them until the server's asked about
+    /// the new place).
+    pub fn references_shown(&self) -> &[(Position, Position)] {
+        let Some(references) = &self.references else {
+            return &[];
+        };
+        let cursor = self.document.cursor();
+        let current = references.document == self.document.id()
+            && references.edit_seq == self.document.buffer().edit_seq()
+            && self.mode() == Mode::Normal
+            && references
+                .ranges
+                .iter()
+                .any(|(start, end)| *start <= cursor && cursor < *end);
+        if current && self.options.highlight_references {
+            &references.ranges
+        } else {
+            &[]
+        }
+    }
+
     /// Lets `:format` and `format-on-save` ask language servers.
     pub fn set_formatter(&mut self, formatter: Box<dyn Formatter>) {
         self.formatter = Some(formatter);
@@ -389,6 +440,11 @@ impl Editor {
             request.text = Some(name.to_string());
         }
         Ok(())
+    }
+
+    /// The requests waiting to be sent (to adjust the one just made).
+    pub fn lsp_requests_mut(&mut self) -> &mut Vec<LspRequest> {
+        &mut self.lsp_requests
     }
 
     /// The requests made since this was last called, oldest first.

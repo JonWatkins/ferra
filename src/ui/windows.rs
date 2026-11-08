@@ -113,6 +113,11 @@ pub fn draw_windows(
             })
             .block(editor.selection_block().filter(|_| active))
             .search(editor.search_highlight())
+            .references(if active {
+                editor.references_shown()
+            } else {
+                &[]
+            })
             .syntax(highlights)
             .diagnostics(editor.diagnostics(document.id()));
         frame.render_stateful_widget(view, rect, state);

@@ -78,6 +78,9 @@ lsp = true
 # <Tab> or <C-y> takes one, typing on ignores them. Off: only on
 # <C-Space> or <C-x><C-o>.
 auto-complete = true
+# Resting the cursor on a symbol in normal mode highlights its other uses
+# in view, from the language server.
+highlight-references = true
 # Check open files for changes made by other programs (a formatter, git, a
 # tool editing alongside you) every second while you're idle in normal mode,
 # not only when the terminal regains focus. Unmodified buffers reload (u
@@ -253,6 +256,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.cursorline" = { bg = "#1f2229" }
 "ui.selection" = { bg = "#33467c" }
 "ui.search.match" = { fg = "#16181d", bg = "#e0af68" }
+# The other uses of the symbol under the cursor (a language server's).
+"ui.highlight.reference" = { bg = "#2c3242" }
 
 # Syntax highlighting. Scopes fall back to their parent, so "function.method"
 # uses "function" unless it's set itself.

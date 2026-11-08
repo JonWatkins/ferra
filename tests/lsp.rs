@@ -109,6 +109,7 @@ fn serve(
                         "documentFormattingProvider": features,
                         "renameProvider": features,
                         "documentSymbolProvider": features,
+                        "documentHighlightProvider": features,
                         "workspaceSymbolProvider": features,
                         "signatureHelpProvider": {"triggerCharacters": ["("],
                                                   "retriggerCharacters": [","]},
@@ -349,6 +350,21 @@ fn serve(
                     }], "activeSignature": 0, "activeParameter": commas})
                 });
                 reply(&mut output, result.into());
+            }
+            "textDocument/documentHighlight" => {
+                let text = seen.lock().unwrap().text.clone();
+                let word = word_at(&text, &params["position"]);
+                let mut found = Vec::new();
+                for (line, line_text) in text.split('\n').enumerate() {
+                    for (col, _) in line_text
+                        .match_indices(word.as_str())
+                        .filter(|_| !word.is_empty())
+                    {
+                        let at = |c: usize| json!({"line": line, "character": c});
+                        found.push(json!({"range": {"start": at(col), "end": at(col + word.len())}, "kind": 2}));
+                    }
+                }
+                reply(&mut output, Value::Array(found));
             }
             "textDocument/documentSymbol" => {
                 let text = seen.lock().unwrap().text.clone();
@@ -1632,5 +1648,59 @@ fn lsp_restart_tries_servers_that_werent_found_again() {
         *tries.lock().unwrap(),
         2,
         "and again (once it's installed, say)"
+    );
+}
+
+fn references(app: &App) -> Vec<(usize, usize)> {
+    app.editor()
+        .references_shown()
+        .iter()
+        .map(|(start, _)| (start.row, start.col))
+        .collect()
+}
+
+#[test]
+fn resting_on_a_symbol_highlights_its_other_uses() {
+    let (_dir, mut app, seen) = with_server("let value = 1;\nfine\nvalue + value\n", true);
+    ready(&mut app);
+    keys(&mut app, "w");
+    until(&mut app, |a| references(a).len() == 3);
+    assert_eq!(references(&app), [(0, 4), (2, 0), (2, 8)]);
+    // Moving off it hides them straight away; resting elsewhere asks again.
+    keys(&mut app, "j");
+    assert!(references(&app).is_empty());
+    keys(&mut app, "k");
+    assert_eq!(references(&app).len(), 3, "back on it: shown again");
+    // An edit hides them until the server's asked about the new text.
+    keys(&mut app, "x");
+    assert!(references(&app).is_empty());
+    let asked = |seen: &Mutex<Seen>| {
+        seen.lock()
+            .unwrap()
+            .methods
+            .iter()
+            .filter(|m| *m == "textDocument/documentHighlight")
+            .count()
+    };
+    let before = asked(&seen);
+    until(&mut app, |_| asked(&seen) > before);
+}
+
+#[test]
+fn highlight_references_can_be_turned_off() {
+    let (_dir, mut app, seen) = with_server("let value = 1;\nvalue\n", true);
+    ready(&mut app);
+    keys(&mut app, ":set nohighlight-references<CR>w");
+    for _ in 0..40 {
+        app.update_lsp();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(references(&app).is_empty());
+    assert!(
+        !seen
+            .lock()
+            .unwrap()
+            .methods
+            .contains(&"textDocument/documentHighlight".into())
     );
 }

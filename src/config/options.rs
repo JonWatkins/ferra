@@ -54,6 +54,9 @@ pub struct EditorOptions {
     /// Show the language server's completions as you type in insert mode
     /// (otherwise only on `<C-Space>` or `<C-x><C-o>`).
     pub auto_complete: bool,
+    /// Highlight the other uses of the symbol under the cursor (from the
+    /// language server), once the cursor rests on it.
+    pub highlight_references: bool,
     /// Check open files for changes made by other programs every second
     /// (as well as on focus, buffer switches and `:checktime`).
     pub watch_files: bool,

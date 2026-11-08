@@ -191,6 +191,8 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
+    /// The uses of the symbol under the cursor (a language server's).
+    references: Option<lsp::References>,
     /// Servers' diagnostics for files that aren't open, by path.
     file_diagnostics: HashMap<std::path::PathBuf, Vec<diagnostics::Diagnostic>>,
     /// The project symbol picker's query when the server was last asked.
