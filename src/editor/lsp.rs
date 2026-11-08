@@ -18,6 +18,9 @@ pub enum LspFeature {
     TypeDefinition,
     Implementation,
     References,
+    Completion,
+    /// The rest of a completion item that was taken (its import).
+    ResolveCompletion,
 }
 
 impl LspFeature {
@@ -30,6 +33,7 @@ impl LspFeature {
             LspFeature::TypeDefinition => "type definition",
             LspFeature::Implementation => "implementation",
             LspFeature::References => "references",
+            LspFeature::Completion | LspFeature::ResolveCompletion => "completion",
         }
     }
 
@@ -42,6 +46,7 @@ impl LspFeature {
             LspFeature::TypeDefinition => "Type definitions",
             LspFeature::Implementation => "Implementations",
             LspFeature::References => "References",
+            LspFeature::Completion | LspFeature::ResolveCompletion => "Completions",
         }
     }
 }
@@ -55,6 +60,15 @@ pub struct LspRequest {
     pub position: Position,
     pub buffer_id: u64,
     pub edit_seq: u64,
+    /// Asked for with a key, so a server that can't answer says so (rather
+    /// than a completion asked for as you type).
+    pub manual: bool,
+    /// For completion: the character typed that might start one (`.`),
+    /// and where the word being completed starts.
+    pub trigger: Option<char>,
+    pub word_start: Position,
+    /// For resolving: which completion item (see `ServerItem::resolve`).
+    pub item: Option<(u64, usize)>,
 }
 
 /// A place a server pointed to: a file, and a row and char column in it.
@@ -98,6 +112,10 @@ impl Editor {
             position: self.document.cursor(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
+            manual: true,
+            trigger: None,
+            word_start: self.document.cursor(),
+            item: None,
         });
         Ok(())
     }

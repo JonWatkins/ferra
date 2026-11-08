@@ -923,9 +923,48 @@ clears a flag before each key and ends a completion no completion command
 set it for. That covers typing on, moving, `<Esc>` and pastes, and works
 the same during macros and `.`. `<C-y>` ends it keeping the match;
 `<C-e>` puts back what was typed first. The menu (`ui/completion_menu.rs`)
-is drawn at the cursor in the `ui.popup` colours, lined up with the word,
-below its row or above when there's no room, showing up to 10 matches and
-scrolling to the selected one.
+is drawn at the cursor in the `ui.popup` colours with a border like the
+hover's, its text lined up with the word, below its row or above when
+there's no room, showing up to 10 matches (each label with the letters
+typed in `ui.popup.match`, and its detail dimmed beside it) and scrolling
+to the selected one, with `n/total` in the border when they don't all fit.
+
+#### Completion from language servers
+
+`editor/server_completion.rs` uses the same `WordCompletion` (its
+`labels`, `details` and `server` part are for this), so the menu, `<C-n>`,
+`<C-p>`, `<C-e>` and the `.` bookkeeping are shared. What differs:
+
+- It's asked for, not gathered. `end_completion_unless_used` notes whether
+  the key changed the text (`text_before_key`), and if so `auto_complete`
+  queues an `LspRequest` (feature `Completion`) when two letters of a word
+  are typed, or with the character before the cursor as a possible
+  trigger: `Lsp` drops that unless it's one of the server's
+  `triggerCharacters`. Requests made as you type are quiet: no message
+  when there's no server or it can't complete. `<C-Space>` asks anyway.
+- Nothing goes in until chosen (`selected` starts at `None`). The answer
+  is kept whole (`ServerCompletion::all`) and narrowed locally on each key
+  that keeps the cursor in the same word (`refilter_server_completion`),
+  instead of ending: items starting with what's typed first, then
+  starting with it in another case, then fuzzy matches, each tier in the
+  server's `sortText` order. A list marked `isIncomplete` is asked for
+  again as typing goes on. An answer is used if the editor is still
+  completing the same word (`still_completing`: same buffer and row, same
+  word start, insert mode), however much more of it was typed, but never
+  replaces an item already chosen with `<C-n>`.
+- Items become `ServerItem`s in `lsp/features.rs`: the text to put in (the
+  `textEdit`'s new text from the word's start, or `insertText`, or the
+  label; snippets made plain, as ferra says it has no snippet support),
+  the filter and sort text, a detail (`labelDetails`, `detail`, or the
+  kind's name) and the other edits (`additionalTextEdits`).
+- `<C-y>` and `<Tab>` (`insert_tab` checks for the menu) take the chosen
+  item or the first, and make its other edits (last first, the cursor
+  moved with text edited before it). Items whose import comes only on
+  asking (the server has `resolveProvider`, or the item carries `data`, as
+  rust-analyzer's do though it claims not to resolve) keep a
+  `(answer, index)`; `Lsp` keeps the last four answers' raw items, and
+  taking one sends `completionItem/resolve` with it, making the
+  `additionalTextEdits` that come back.
 
 ### Clipboard and pasting
 
@@ -1078,8 +1117,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 ## Roadmap: deferred features
 
-Planned: plugin UI, the rest of LSP support (diagnostics, hover and go to
-definition and references are done), an
+Planned: plugin UI, the rest of LSP support (diagnostics, hover, go to
+definition and references, and completion are done), an
 agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
@@ -1120,10 +1159,10 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 ### LSP support
 
 Started: see [Language servers](#language-servers) for the client,
-diagnostics, hover and going to definitions and references. Still to come,
-in order: completion (a float in insert mode), formatting, rename and code
-actions (each one undo step, through the command registry), and a picker
-list of diagnostics.
+diagnostics, hover and going to definitions and references, and [Word
+completion](#word-completion) for completion. Still to come,
+in order: formatting, rename and code actions (each one undo step, through
+the command registry), signature help, and a picker list of diagnostics.
 
 ### Agent harness
 
@@ -1308,8 +1347,8 @@ not. The answer is dropped unless the editor is still where it was asked
 
 ## Known gaps / next steps
 
-- Language servers: no completion, formatting, rename, code actions,
-  signature help or document symbols yet, and no list of diagnostics in a
+- Language servers: no formatting, rename, code actions, signature help
+  or document symbols yet, and no list of diagnostics in a
   picker. Hover is Markdown made plain (no tables, and lists keep their
   `-`); it can't be focused, searched or copied from, and it isn't shown
   in insert mode. Servers' `$/progress` and
@@ -1329,9 +1368,13 @@ not. The answer is dropped unless the editor is still where it was asked
   than Bash and Python (Lua's `end`, Ruby's). Vim's mix of a `shiftwidth`
   narrower than tabs (4-column levels made of tabs and spaces) isn't
   supported. Window options (`wrap`) can't be set per language.
-- Completion: words, file names and whole lines (no dictionaries,
-  omni-completion or LSP, nor Vim's other `<C-x>` modes), matched by
-  prefix (not fuzzily). `.` replays the `<C-n>` keys, so it completes again
+- Completion: words, file names, whole lines and the language server's
+  (no dictionaries, nor Vim's other `<C-x>` modes); words matched by
+  prefix (not fuzzily). Server completions: no snippets (tab stops),
+  documentation isn't shown beside the menu, and items are filtered by
+  ferra rather than asked for again on each key (unless the server says
+  its list is incomplete). `<Tab>` takes an item only while the menu's
+  up; `<CR>` always starts a new line. `.` replays the `<C-n>` keys, so it completes again
   rather than repeating the word chosen, which differs if the buffer has.
 - Formatting: no external `formatprg`, block comments' middle lines
   (` * ` in `/* */`) aren't leaders, and two spaces after a sentence

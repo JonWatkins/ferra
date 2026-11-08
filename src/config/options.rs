@@ -49,6 +49,9 @@ pub struct EditorOptions {
     pub kitty_keyboard: bool,
     /// Start language servers for open files (see `[languages]`).
     pub lsp: bool,
+    /// Show the language server's completions as you type in insert mode
+    /// (otherwise only on `<C-Space>` or `<C-x><C-o>`).
+    pub auto_complete: bool,
     /// Check open files for changes made by other programs every second
     /// (as well as on focus, buffer switches and `:checktime`).
     pub watch_files: bool,

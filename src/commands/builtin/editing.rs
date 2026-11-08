@@ -15,7 +15,11 @@ pub fn register(r: &mut CommandRegistry) {
             Ok(())
         },
     );
-    r.register("insert_tab", "Insert one level of indentation", |cx| {
+    r.register("insert_tab", "Insert one level of indentation, or take the language server's completion when its menu is up", |cx| {
+        if cx.editor.server_completion_showing() {
+            cx.editor.accept_completion();
+            return Ok(());
+        }
         let indent = cx.editor.indent_unit();
         cx.editor.document.insert_str(&indent);
         cx.editor.note_typed("\t");
@@ -70,6 +74,11 @@ pub fn register(r: &mut CommandRegistry) {
         "complete_line",
         "Complete the whole line from lines starting the same way (<C-x><C-l>)",
         |cx| cx.editor.complete_line(),
+    );
+    r.register(
+        "complete_lsp",
+        "Show the language server's completions for the word before the cursor (<C-Space>, <C-x><C-o>)",
+        |cx| cx.editor.request_completion(),
     );
     r.register(
         "complete_accept",

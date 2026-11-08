@@ -24,13 +24,34 @@ pub struct WordCompletion {
     pub start: Position,
     /// What was typed of it.
     pub typed: String,
-    /// The matches, nearest first in the direction completion started.
+    /// The matches, nearest first in the direction completion started:
+    /// the text each puts in.
     pub items: Vec<String>,
     /// The match in the text, or `None` for what was typed.
     pub selected: Option<usize>,
+    /// What the menu shows for each item, if not its text (a server's
+    /// label, `area(…)`), and beside it (`fn(&self) -> f64`). Empty, or
+    /// one per item.
+    pub labels: Vec<String>,
+    pub details: Vec<String>,
+    /// For a language server's completion: all it offered, which `items`
+    /// are filtered from as typing goes on.
+    pub server: Option<super::server_completion::ServerCompletion>,
 }
 
-fn is_word_char(c: char) -> bool {
+impl WordCompletion {
+    /// What the menu shows for item `i`.
+    pub fn label(&self, i: usize) -> &str {
+        self.labels.get(i).unwrap_or(&self.items[i])
+    }
+
+    /// What the menu shows beside item `i`.
+    pub fn detail(&self, i: usize) -> &str {
+        self.details.get(i).map_or("", String::as_str)
+    }
+}
+
+pub(super) fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
@@ -188,14 +209,22 @@ impl Editor {
             typed,
             items,
             selected: Some(0),
+            labels: Vec::new(),
+            details: Vec::new(),
+            server: None,
         });
         self.show_completion_choice();
         Ok(())
     }
 
-    /// `<C-y>`: keeps the match in the text and stops completing.
+    /// `<C-y>`: keeps the match in the text and stops completing. A
+    /// server's completion takes the first item if none is chosen, and
+    /// makes the edits that go with it (an import).
     pub fn accept_completion(&mut self) {
         self.completion_used = true;
+        if self.completion.as_ref().is_some_and(|c| c.server.is_some()) {
+            self.accept_server_completion();
+        }
         self.completion = None;
     }
 
@@ -212,18 +241,31 @@ impl Editor {
     /// Called before each key; see [`Editor::end_completion_unless_used`].
     pub fn note_key_for_completion(&mut self) {
         self.completion_used = false;
+        let buffer = self.document.buffer();
+        self.text_before_key = (self.document.id(), buffer.id(), buffer.edit_seq());
     }
 
     /// Called after each key: a key that didn't use the completion (typing
-    /// on, moving, `<Esc>`) keeps the choice and ends it.
+    /// on, moving, `<Esc>`) keeps the choice and ends it. A server's
+    /// completion instead follows the word as it's typed, and typing may
+    /// start one (with `auto-complete`).
     pub fn end_completion_unless_used(&mut self) {
-        if !self.completion_used {
+        if self.completion_used {
+            return;
+        }
+        let server = self.completion.as_ref().is_some_and(|c| c.server.is_some());
+        if !(server && self.refilter_server_completion()) {
             self.completion = None;
+        }
+        let buffer = self.document.buffer();
+        let typed = self.text_before_key != (self.document.id(), buffer.id(), buffer.edit_seq());
+        if typed {
+            self.auto_complete();
         }
     }
 
     /// Puts the selected match (or what was typed) in place of the word.
-    fn show_completion_choice(&mut self) {
+    pub(super) fn show_completion_choice(&mut self) {
         let Some(completion) = &self.completion else {
             return;
         };

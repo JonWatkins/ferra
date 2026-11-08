@@ -88,6 +88,7 @@ fn serve(
                         "positionEncoding": encoding, "textDocumentSync": 2,
                         "hoverProvider": features, "definitionProvider": features,
                         "referencesProvider": features,
+                        "completionProvider": {"triggerCharacters": ["."]},
                     }}),
                 );
                 // Servers ask things too; this must be answered.
@@ -145,6 +146,32 @@ fn serve(
                     Value::Array(places)
                 };
                 reply(&mut output, result);
+            }
+            "textDocument/completion" => {
+                let import = json!({"range": {"start": {"line": 0, "character": 0},
+                                              "end": {"line": 0, "character": 0}},
+                                    "newText": "use imported;\n"});
+                reply(
+                    &mut output,
+                    json!({"isIncomplete": false, "items": [
+                        {"label": "bad_word", "kind": 6, "detail": "i32"},
+                        {"label": "badge()", "insertText": "badge", "kind": 3},
+                        {"label": "basket", "insertText": "basket(${1:n})$0",
+                         "insertTextFormat": 2},
+                        {"label": "fine", "kind": 14},
+                        {"label": "imported", "additionalTextEdits": [import]},
+                        {"label": "resolved", "data": {"id": 7}},
+                    ]}),
+                );
+            }
+            "completionItem/resolve" => {
+                let mut item = params.clone();
+                item["additionalTextEdits"] = json!([{
+                    "range": {"start": {"line": 0, "character": 0},
+                              "end": {"line": 0, "character": 0}},
+                    "newText": "use resolved;\n",
+                }]);
+                reply(&mut output, item);
             }
             "shutdown" => reply(&mut output, Value::Null),
             "exit" => return,
@@ -310,10 +337,11 @@ fn edits_reach_the_server_one_at_a_time() {
         keys(&mut app, step);
         until(&mut app, |a| seen.lock().unwrap().text == text(a));
     }
-    until(&mut app, |a| diagnostic_starts(a).len() == 2);
-    // "é finebad" and "a bad", as the server's copy says too.
+    // "é finebad" and "a bad", as the server's copy says too. (Waiting for
+    // these places, not just two diagnostics: the list for the text before
+    // the last edit can still be the latest one in.)
     assert_eq!(text(&app), "é finebad\n\na bad");
-    assert_eq!(diagnostic_starts(&app), [(0, 6), (2, 2)]);
+    until(&mut app, |a| diagnostic_starts(a) == [(0, 6), (2, 2)]);
 }
 
 #[test]
@@ -576,4 +604,116 @@ fn servers_that_cant_answer_say_so() {
         app.editor().message().unwrap().text,
         "No language server for this buffer (see :lsp)"
     );
+}
+
+/// The labels in the completion menu.
+fn menu(app: &App) -> Vec<String> {
+    app.editor().completion().map_or(Vec::new(), |c| {
+        (0..c.items.len()).map(|i| c.label(i).to_string()).collect()
+    })
+}
+
+#[test]
+fn typing_shows_the_servers_completions_and_more_narrows_them() {
+    let (_dir, mut app, _) = with_server("\n", true);
+    ready(&mut app);
+    keys(&mut app, "ib");
+    app.update_lsp();
+    assert!(menu(&app).is_empty(), "not after one letter");
+    keys(&mut app, "a");
+    until(&mut app, |a| !menu(a).is_empty());
+    assert_eq!(
+        menu(&app),
+        ["bad_word", "badge()", "basket"],
+        "matching `ba`"
+    );
+    assert_eq!(text(&app), "ba", "nothing goes in until chosen");
+    let screen = render(&mut app, 60, 10).rows.join("\n");
+    assert!(
+        screen.contains("│ bad_word  i32"),
+        "with details:\n{screen}"
+    );
+    assert!(
+        screen.contains("│ badge()   function"),
+        "or kinds:\n{screen}"
+    );
+
+    keys(&mut app, "dg");
+    app.update_lsp();
+    assert_eq!(menu(&app), ["badge()"]);
+    keys(&mut app, "<Tab>");
+    assert_eq!(text(&app), "badge", "the text to put in, not the label");
+    assert!(menu(&app).is_empty());
+}
+
+#[test]
+fn ctrl_n_puts_items_in_and_ctrl_e_puts_back_what_was_typed() {
+    let (_dir, mut app, _) = with_server("\n", true);
+    ready(&mut app);
+    keys(&mut app, "iba");
+    until(&mut app, |a| !menu(a).is_empty());
+    keys(&mut app, "<C-n><C-n>");
+    assert_eq!(text(&app), "badge");
+    keys(&mut app, "<C-n>");
+    assert_eq!(text(&app), "basket(n)", "a snippet as plain text");
+    keys(&mut app, "<C-e>");
+    assert_eq!(text(&app), "ba");
+    assert!(menu(&app).is_empty());
+}
+
+#[test]
+fn a_space_or_moving_away_closes_it() {
+    let (_dir, mut app, _) = with_server("\n", true);
+    ready(&mut app);
+    keys(&mut app, "iba");
+    until(&mut app, |a| !menu(a).is_empty());
+    keys(&mut app, " ");
+    assert!(menu(&app).is_empty());
+    assert_eq!(text(&app), "ba ");
+}
+
+#[test]
+fn characters_the_server_completes_after_start_it() {
+    let (_dir, mut app, _) = with_server("\n", true);
+    ready(&mut app);
+    keys(&mut app, "ix;");
+    app.update_lsp();
+    assert!(menu(&app).is_empty(), "`;` isn't one of the server's");
+    keys(&mut app, "x.");
+    until(&mut app, |a| menu(a).len() == 6);
+    keys(&mut app, "fi");
+    app.update_lsp();
+    assert_eq!(menu(&app), ["fine"]);
+}
+
+#[test]
+fn taking_an_item_makes_its_import_too() {
+    let (_dir, mut app, _) = with_server("fn main() {\n    \n}\n", true);
+    ready(&mut app);
+    keys(&mut app, "jA");
+    keys(&mut app, "imp");
+    until(&mut app, |a| menu(a) == ["imported"]);
+    keys(&mut app, "<C-y>");
+    assert_eq!(text(&app), "use imported;\nfn main() {\n    imported\n}");
+    assert_eq!(common::cursor(&app), (2, 12), "still after the word");
+
+    // One whose import comes from resolving it, once taken.
+    keys(&mut app, "<CR>reso");
+    until(&mut app, |a| menu(a) == ["resolved"]);
+    keys(&mut app, "<Tab>");
+    until(&mut app, |a| text(a).starts_with("use resolved;"));
+    assert_eq!(common::cursor(&app), (4, 12));
+    keys(&mut app, "x");
+    assert!(text(&app).contains("    resolvedx\n"), "{}", text(&app));
+}
+
+#[test]
+fn without_auto_complete_ctrl_space_asks() {
+    let (_dir, mut app, _) = with_server("\n", true);
+    ready(&mut app);
+    keys(&mut app, ":set noauto-complete<CR>ibad");
+    app.update_lsp();
+    assert!(menu(&app).is_empty());
+    keys(&mut app, "<C-Space>");
+    until(&mut app, |a| menu(a) == ["bad_word", "badge()"]);
 }

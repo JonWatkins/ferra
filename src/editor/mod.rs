@@ -18,6 +18,7 @@ pub mod picker;
 pub mod registers;
 mod replace;
 mod search;
+pub mod server_completion;
 pub use search::{SearchDone, SearchHit};
 mod block;
 mod comment;
@@ -183,6 +184,9 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
+    /// The buffer and its edit count before the key being handled, to tell
+    /// whether it changed the text (for completing as you type).
+    text_before_key: (DocumentId, u64, u64),
     /// Language servers' diagnostics, by buffer.
     diagnostics: HashMap<DocumentId, Vec<diagnostics::Diagnostic>>,
     /// What each Lua `editor.status` function last returned, by name, for

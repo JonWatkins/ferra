@@ -66,8 +66,14 @@ clipboard-provider = "auto"
 # saved back in the encoding they were read in. "utf-8" refuses other files.
 fallback-encoding = "windows-1252"
 # Start the language server set for a file's language (language-server in
-# [languages] below) when it's opened: diagnostics in the text, ]d and [d.
+# [languages] below) when it's opened: diagnostics in the text, ]d and [d,
+# K, gd, gr and completion.
 lsp = true
+# In insert mode, show the language server's completions as you type (two
+# letters of a word, or after `.` and the like). <C-n> and <C-p> choose,
+# <Tab> or <C-y> takes one, typing on ignores them. Off: only on
+# <C-Space> or <C-x><C-o>.
+auto-complete = true
 # Check open files for changes made by other programs (a formatter, git, a
 # tool editing alongside you) every second while you're idle in normal mode,
 # not only when the terminal regains focus. Unmodified buffers reload (u
@@ -736,6 +742,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<C-e>" = "complete_cancel"
 "<C-x><C-f>" = "complete_path"
 "<C-x><C-l>" = "complete_line"
+"<C-x><C-o>" = "complete_lsp"
+"<C-Space>" = "complete_lsp"
 "<PageDown>" = "scroll_page_down"
 "<PageUp>" = "scroll_page_up"
 "<Esc>" = "normal_mode"

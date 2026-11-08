@@ -44,6 +44,9 @@ pub struct Lsp {
     /// Off until the editor runs in a terminal (or a test sets a spawner),
     /// so tests that open files don't start real servers.
     enabled: bool,
+    /// The last few completion answers' items as the servers sent them, to
+    /// send one back to be resolved when it's taken.
+    completions: features::Stash,
 }
 
 impl Default for Lsp {
@@ -58,6 +61,7 @@ impl Default for Lsp {
             missing: HashSet::new(),
             failed: HashMap::new(),
             enabled: false,
+            completions: features::Stash::default(),
         }
     }
 }
@@ -177,7 +181,7 @@ impl Lsp {
                         editor.set_message(Message::error(format!("{}: {error}", client.name)));
                     }
                     Answer::Feature(request, result) => {
-                        features::answer(editor, client, request, result);
+                        features::answer(editor, client, request, result, &mut self.completions);
                     }
                 }
             }

@@ -99,11 +99,13 @@ fn the_menu_shows_the_matches_by_the_cursor() {
     let mut app = typing_fo();
     keys(&mut app, "<C-n>");
     let rows = render(&mut app, 40, 10).rows;
-    assert!(rows[2].contains(" foobar "), "{rows:?}");
-    assert!(rows[3].contains(" foobaz "), "{rows:?}");
+    // In a border, lined up under the word.
+    assert_eq!(rows[2].trim_end(), "   ┌────────┐", "{rows:?}");
+    assert_eq!(rows[3].trim_end(), "   │ foobar │", "{rows:?}");
+    assert_eq!(rows[4].trim_end(), "   │ foobaz │", "{rows:?}");
     keys(&mut app, "<C-y>");
     let rows = render(&mut app, 40, 10).rows;
-    assert!(!rows[2].contains("foobar"), "gone once done: {rows:?}");
+    assert!(!rows[3].contains("foobar"), "gone once done: {rows:?}");
 }
 
 #[test]

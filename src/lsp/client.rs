@@ -161,6 +161,8 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
         LspFeature::TypeDefinition => ("textDocument/typeDefinition", "typeDefinitionProvider"),
         LspFeature::Implementation => ("textDocument/implementation", "implementationProvider"),
         LspFeature::References => ("textDocument/references", "referencesProvider"),
+        LspFeature::Completion => ("textDocument/completion", "completionProvider"),
+        LspFeature::ResolveCompletion => ("completionItem/resolve", "completionProvider"),
     }
 }
 
@@ -248,6 +250,20 @@ impl Client {
                         "typeDefinition": { "linkSupport": true },
                         "implementation": { "linkSupport": true },
                         "references": {},
+                        // Plain text, not snippets: what's chosen goes in
+                        // as it is.
+                        "completion": {
+                            "completionItem": {
+                                "snippetSupport": false,
+                                "labelDetailsSupport": true,
+                                "documentationFormat": ["markdown", "plaintext"],
+                                // Imports can come once an item is taken
+                                // (rust-analyzer only offers items needing
+                                // one when they can).
+                                "resolveSupport": { "properties": ["additionalTextEdits"] },
+                            },
+                            "contextSupport": true,
+                        },
                     },
                     "workspace": { "workspaceFolders": true, "configuration": true },
                     "window": { "workDoneProgress": false },
@@ -301,6 +317,27 @@ impl Client {
         )
     }
 
+    /// Whether the server fills in completion items' details on asking.
+    pub fn resolves_completions(&self) -> bool {
+        self.capabilities["completionProvider"]["resolveProvider"].as_bool() == Some(true)
+    }
+
+    /// Asks for the rest of completion `item` (as the server sent it).
+    pub fn resolve_completion(&mut self, request: LspRequest, item: Value) {
+        self.request("completionItem/resolve", item, Pending::Feature(request));
+    }
+
+    /// Whether typing `c` should start completing (`.` in most languages).
+    pub fn completes_after(&self, c: char) -> bool {
+        self.capabilities["completionProvider"]["triggerCharacters"]
+            .as_array()
+            .is_some_and(|chars| {
+                chars
+                    .iter()
+                    .any(|t| t.as_str() == Some(c.encode_utf8(&mut [0; 4])))
+            })
+    }
+
     /// Asks for `request`'s feature in the document it's in (which the
     /// server has open), at LSP position `position`.
     pub fn request_feature(&mut self, request: LspRequest, position: Value) {
@@ -312,8 +349,17 @@ impl Client {
             "textDocument": { "uri": synced.uri },
             "position": position,
         });
-        if request.feature == LspFeature::References {
-            params["context"] = json!({ "includeDeclaration": true });
+        match request.feature {
+            LspFeature::References => {
+                params["context"] = json!({ "includeDeclaration": true });
+            }
+            LspFeature::Completion => {
+                params["context"] = match request.trigger {
+                    Some(c) => json!({ "triggerKind": 2, "triggerCharacter": c.to_string() }),
+                    None => json!({ "triggerKind": 1 }),
+                };
+            }
+            _ => {}
         }
         self.request(method, params, Pending::Feature(request));
     }

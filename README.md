@@ -105,6 +105,8 @@ type, open a file or split the window.
 | Insert  | `<C-n>` `<C-p>` | Complete the word before the cursor from the open buffers' words (nearest first); again for the next / previous match, round to what you typed |
 | Insert  | `<C-x><C-f>` | Complete a file name: from the directory the path before the cursor names, beside the current file (`<C-x><C-f>` again goes into a directory) |
 | Insert  | `<C-x><C-l>` | Complete the whole line from the lines that start with what you've typed on it, nearest above first |
+| Insert  | `<C-Space>` `<C-x><C-o>` | The language server's completions (they also come up by themselves as you type: see [Language servers](#language-servers)) |
+| Insert  | `<Tab>` | With the language server's completions up: take the chosen one (or the first) |
 | Insert  | `<C-y>` `<C-e>` | While completing: keep the match / put back what you typed (any other key keeps it and carries on) |
 | Command | `<CR>` / `<Esc>` | Run / cancel |
 
@@ -465,6 +467,19 @@ of its type; `gr` lists the references and `gI` the implementations (of a
 trait or interface). A single place is gone to straight away, opening its
 file if need be; several are listed in a picker, with each line's text.
 Each go-to is a jump, so `<C-o>` comes back.
+
+In insert mode the server's completions come up as you type: after two
+letters of a word, or a character it completes after (`.`, `::`). The menu
+shows each with its type or kind, the letters typed picked out. Nothing
+goes in until you choose: `<C-n>` and `<C-p>` put the items in turn,
+`<Tab>` or `<C-y>` takes the chosen one (or the first), and `<C-e>` puts
+back what you typed. Typing more of the word narrows the list (those
+starting with what you typed first); anything else (a space, `<Esc>`,
+moving) closes it. Taking an item also makes the edits that come with it,
+such as rust-analyzer adding `use std::collections::HashMap;`. Set
+`auto-complete = false` under `[editor]` to have it only on `<C-Space>`
+or `<C-x><C-o>`. `<C-n>` without the menu up still completes words from
+the buffers, as in Vim.
 
 Some servers check more when you save: rust-analyzer finds syntax errors
 as you type, but type and borrow errors come from `cargo check`, which it
