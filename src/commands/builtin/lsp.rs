@@ -93,6 +93,16 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.request_signature_help(),
     );
     r.register(
+        "diagnostics_picker",
+        "List this buffer's errors and warnings in a picker, to go to one (<Space>d)",
+        |cx| cx.editor.diagnostics_picker(false),
+    );
+    r.register(
+        "project_diagnostics_picker",
+        "List every open file's errors and warnings, and those servers found in the rest of the project (<Space>D)",
+        |cx| cx.editor.diagnostics_picker(true),
+    );
+    r.register(
         "symbol_picker",
         "Pick one of this file's symbols (functions, types...) to go to (<Space>s)",
         |cx| cx.editor.request_lsp(LspFeature::DocumentSymbols),

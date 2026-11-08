@@ -512,6 +512,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>n" = "rename_prompt"
 "<Space>s" = "symbol_picker"
 "<Space>S" = "project_symbol_picker"
+"<Space>d" = "diagnostics_picker"
+"<Space>D" = "project_diagnostics_picker"
 "<Space>a" = "code_actions"
 "ZZ" = "exit"
 "ZQ" = "force_quit"

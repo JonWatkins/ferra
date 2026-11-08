@@ -295,9 +295,20 @@ impl Lsp {
                     .document_uris()
                     .find(|(_, open)| *open == uri)
                     .map(|(d, _)| d);
-                let Some(document) = by_uri.or_else(|| {
-                    convert::uri_to_path(uri).and_then(|path| document_at(editor, &path))
-                }) else {
+                let path = convert::uri_to_path(uri);
+                let Some(document) =
+                    by_uri.or_else(|| path.as_deref().and_then(|p| document_at(editor, p)))
+                else {
+                    // A file that isn't open (rust-analyzer reports the whole
+                    // crate after `cargo check`): kept for the project's
+                    // diagnostics picker, placed by the file's text.
+                    if let Some(path) = path {
+                        let text = std::fs::read_to_string(&path).unwrap_or_default();
+                        let buffer = crate::core::Buffer::from_text(&text);
+                        let diagnostics =
+                            to_diagnostics(&buffer, &params["diagnostics"], client.encoding);
+                        editor.set_file_diagnostics(path, diagnostics);
+                    }
                     return;
                 };
                 // A list for text since changed would put back places the
@@ -313,19 +324,7 @@ impl Lsp {
                 let Some(doc) = editor.document_by_id(document) else {
                     return;
                 };
-                let buffer = doc.buffer();
-                let diagnostics = params["diagnostics"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|d| Diagnostic {
-                        start: convert::from_lsp(buffer, &d["range"]["start"], encoding),
-                        end: convert::from_lsp(buffer, &d["range"]["end"], encoding),
-                        severity: Severity::from_lsp(d["severity"].as_u64()),
-                        message: d["message"].as_str().unwrap_or_default().to_string(),
-                        source: d["source"].as_str().map(str::to_string),
-                    })
-                    .collect();
+                let diagnostics = to_diagnostics(doc.buffer(), &params["diagnostics"], encoding);
                 editor.set_diagnostics(document, diagnostics);
                 let raw = params["diagnostics"]
                     .as_array()
@@ -477,6 +476,26 @@ impl Lsp {
         }
         self.clients.clear();
     }
+}
+
+/// A `publishDiagnostics` list as diagnostics in `buffer` (positions in
+/// chars).
+fn to_diagnostics(
+    buffer: &crate::core::Buffer,
+    list: &Value,
+    encoding: convert::Encoding,
+) -> Vec<Diagnostic> {
+    list.as_array()
+        .into_iter()
+        .flatten()
+        .map(|d| Diagnostic {
+            start: convert::from_lsp(buffer, &d["range"]["start"], encoding),
+            end: convert::from_lsp(buffer, &d["range"]["end"], encoding),
+            severity: Severity::from_lsp(d["severity"].as_u64()),
+            message: d["message"].as_str().unwrap_or_default().to_string(),
+            source: d["source"].as_str().map(str::to_string),
+        })
+        .collect()
 }
 
 /// The open document at `path`, if any.

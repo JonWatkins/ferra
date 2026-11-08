@@ -83,6 +83,12 @@ impl Editor {
         }
         let fallback = self.options.fallback_encoding.0;
         let (mut document, info) = Document::open_with(path, fallback)?;
+        // What a server reported for it while it wasn't open, until it
+        // reports again.
+        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if let Some(diagnostics) = self.file_diagnostics.remove(&canonical) {
+            document.set_diagnostics(diagnostics);
+        }
         if !self.document.is_pristine_scratch() {
             self.push_jump();
         }

@@ -125,8 +125,25 @@ fn serve(
                 .unwrap();
             }
             "textDocument/didOpen" => {
-                seen.lock().unwrap().text = params["textDocument"]["text"].as_str().unwrap().into();
+                let text = params["textDocument"]["text"].as_str().unwrap().to_string();
+                seen.lock().unwrap().text = text.clone();
                 publish(&mut output, &params["textDocument"]["uri"], seen, utf8);
+                // As rust-analyzer does after `cargo check`: a file that isn't
+                // open has a problem too.
+                let other = root.join(OTHER);
+                if text.contains("project") && other.exists() {
+                    let uri = ferra::lsp::convert::path_to_uri(&other.canonicalize().unwrap());
+                    let at = |c: u64| json!({"line": 1, "character": c});
+                    write_message(
+                        &mut output,
+                        &json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+                        "params": {"uri": uri, "diagnostics": [{
+                            "range": {"start": at(4), "end": at(9)},
+                            "severity": 2, "message": "unused thing", "source": "fake",
+                        }]}}),
+                    )
+                    .unwrap();
+                }
             }
             "textDocument/didChange" => {
                 for change in params["contentChanges"].as_array().unwrap() {
@@ -1418,4 +1435,80 @@ fn space_shift_s_searches_the_project_as_you_type() {
     keys(&mut app, "_<CR>");
     until(&mut app, |a| a.editor().document.name().ends_with(OTHER));
     assert_eq!(common::cursor(&app), (1, 3));
+}
+
+#[test]
+fn space_d_lists_this_files_diagnostics_to_go_to() {
+    let (_dir, mut app, _) = with_server("let bad = 1;\nfine\nbad;\n", true);
+    until(&mut app, |a| a.editor().diagnostics(doc(a)).len() == 2);
+    keys(&mut app, "<Space>d");
+    assert_eq!(picker_labels(&mut app), ["1:5  bad word", "3:1  bad word"]);
+    let screen = render(&mut app, 80, 14).rows.join("\n");
+    assert!(screen.contains("error fake"), "{screen}");
+    keys(&mut app, "<C-n><CR>");
+    assert_eq!(common::cursor(&app), (2, 0));
+}
+
+#[test]
+fn space_shift_d_lists_the_projects_with_files_not_open() {
+    let (dir, mut app, _) = with_server("// project\nlet bad = 1;\n", true);
+    fs::write(dir.path().join(OTHER), "fn x() {\n    let thing = 1;\n}\n").unwrap();
+    until(&mut app, |a| a.editor().diagnostics(doc(a)).len() == 1);
+    // The other file's comes in after (no way to wait on it but to look).
+    for _ in 0..20 {
+        app.update_lsp();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    keys(&mut app, "<Space>D");
+    // The files aren't under the current folder here, so their paths are
+    // in full (resolved alike): just their ends.
+    let picker = app.editor().picker().unwrap();
+    let labels: Vec<String> = picker
+        .matches()
+        .iter()
+        .map(|m| picker.item(m).label.clone())
+        .collect();
+    let dir = dir.path().canonicalize().unwrap().display().to_string();
+    assert_eq!(
+        labels,
+        [
+            format!("{dir}/main.rs:2:5  bad word"),
+            format!("{dir}/other.rs:2:5  unused thing"),
+        ],
+        "errors first"
+    );
+    keys(&mut app, "unused");
+    assert!(
+        render(&mut app, 120, 14)
+            .rows
+            .join("\n")
+            .contains("unused thing")
+    );
+    keys(&mut app, "<C-u>");
+    // Going to it opens it with its diagnostic already there.
+    keys(&mut app, "<C-n><CR>");
+    assert!(
+        app.editor().document.name().ends_with(OTHER),
+        "{}",
+        app.editor().document.name()
+    );
+    assert_eq!(common::cursor(&app), (1, 4));
+    assert_eq!(diagnostic_starts(&app), [(1, 4)]);
+    keys(&mut app, ":b main<CR><Space>d<C-n>");
+    assert_eq!(
+        picker_labels(&mut app),
+        ["2:5  bad word"],
+        "only this file's"
+    );
+}
+
+#[test]
+fn no_diagnostics_says_so() {
+    let (_dir, mut app, _) = with_server("fine\n", true);
+    ready(&mut app);
+    keys(&mut app, "<Space>d");
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "No diagnostics in this buffer"
+    );
 }

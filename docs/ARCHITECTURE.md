@@ -1141,7 +1141,7 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 Planned: plugin UI, the rest of LSP support (diagnostics, hover, go to
 definition and references, completion, formatting, rename, code actions
-signature help and symbol pickers are done), an
+signature help, and symbol and diagnostic pickers are done), an
 agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
@@ -1184,7 +1184,7 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 Started: see [Language servers](#language-servers) for the client,
 diagnostics, hover and going to definitions and references, and [Word
 completion](#word-completion) for completion. Still to come,
-in order: a picker list of diagnostics, servers' progress in the status line and `:lsp-restart`,
+in order: servers' progress in the status line and `:lsp-restart`,
 inlay hints, and highlighting the other uses of the symbol under the
 cursor.
 
@@ -1365,6 +1365,15 @@ not. The answer is dropped unless the editor is still where it was asked
   Commands often make their changes by sending `workspace/applyEdit`
   back, which `Lsp` answers by making the edit (with the action's title
   in the message).
+- Diagnostics pickers: `<Space>d` lists the buffer's diagnostics,
+  `<Space>D` every buffer's and those for files that aren't open: a
+  `publishDiagnostics` for a file with no buffer is placed by the file's
+  text read from disk and kept on the editor by path
+  (`set_file_diagnostics`), and opening the file gives its buffer those
+  until the server reports again. Errors come first, then by file and
+  place; the label is `path:line:col  message` (the path relative to the
+  current folder if it's in it), which a narrow picker shortens from the
+  start. Built by the editor alone: no request.
 - Symbols: `<Space>s` asks for `textDocument/documentSymbol`, whose
   answer is nested `DocumentSymbol`s (flattened, each child's detail
   naming its parent: "method in Circle") or flat `SymbolInformation`s

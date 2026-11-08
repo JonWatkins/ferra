@@ -268,6 +268,7 @@ order before the sorted ones, and `//` is the last search.
 | `K` | Hover: what the language server says about the symbol under the cursor (`K` again scrolls) |
 | `gd` `gD` `gy` | Go to the definition, declaration, or type's definition |
 | `gr` `gI` | References, implementations: gone to if there's one, else listed in a picker |
+| `<Space>d`, `<Space>D` | Diagnostics: this file's errors and warnings, or the whole project's, in a picker (errors first) |
 | `<Space>s`, `<Space>S` | Symbols: this file's (functions, types, methods), or search the project's as you type, to go to one |
 | `<Space>a` | Code actions: the language server's fixes and changes for the cursor (or the visual selection), in a picker |
 | `<F2>` `<Space>n`, `:rename name` | Rename the symbol under the cursor everywhere (the keys start `:rename` with its name to edit) |
@@ -511,6 +512,12 @@ changes it everywhere it's used, in this file and others. Each file's
 changes are one undo step; files that weren't open are opened in the
 background and left unsaved, as the message says, so `:wa` saves them
 (or `:b` to look first).
+
+`<Space>d` lists this file's errors and warnings in a picker, errors
+first, to filter and go to; `<Space>D` lists every open file's and those
+the servers have found in files that aren't open (rust-analyzer checks
+the whole crate on `:w`). Opening one of those shows its diagnostics
+straight away.
 
 `<Space>s` lists the file's symbols (`area`, "method in Circle") in a
 picker, to filter and go to; `<Space>S` searches the whole project's, the

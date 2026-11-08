@@ -1,6 +1,9 @@
 //! Diagnostics: errors and warnings a language server reports for a
 //! buffer, shown in the text and stepped through with `]d`/`[d`.
 
+use std::path::{Path, PathBuf};
+
+use super::picker::{Picker, PickerAction, PickerItem};
 use super::{DocumentId, Editor, Message};
 use crate::core::Position;
 
@@ -58,6 +61,91 @@ impl Diagnostic {
 }
 
 impl Editor {
+    /// Keeps the diagnostics for `path`, a file that isn't open (for the
+    /// project's diagnostics picker). An empty list forgets them.
+    pub fn set_file_diagnostics(&mut self, path: PathBuf, mut diagnostics: Vec<Diagnostic>) {
+        if diagnostics.is_empty() {
+            self.file_diagnostics.remove(&path);
+        } else {
+            diagnostics.sort_by_key(|d| (d.start, d.severity));
+            self.file_diagnostics.insert(path, diagnostics);
+        }
+    }
+
+    /// `<Space>d` (`<Space>D` with `all`): lists this buffer's diagnostics
+    /// (or every buffer's, and those servers reported for files that aren't
+    /// open) in a picker to go to, the most serious first.
+    pub fn diagnostics_picker(&mut self, all: bool) -> Result<(), String> {
+        let mut found: Vec<(PathBuf, Diagnostic)> = Vec::new();
+        let documents: Vec<&super::Document> = if all {
+            std::iter::once(&self.document)
+                .chain(&self.background)
+                .collect()
+        } else {
+            vec![&self.document]
+        };
+        for document in documents {
+            let Some(path) = document.path() else {
+                continue;
+            };
+            for d in document.diagnostics() {
+                found.push((path.to_path_buf(), d.clone()));
+            }
+        }
+        if all {
+            for (path, list) in &self.file_diagnostics {
+                // Open since: its buffer's are the ones that count.
+                if self.find_open_path(path).is_some() {
+                    continue;
+                }
+                found.extend(list.iter().map(|d| (path.clone(), d.clone())));
+            }
+        }
+        if found.is_empty() {
+            let place = if all {
+                "the open files or project"
+            } else {
+                "this buffer"
+            };
+            return Err(format!("No diagnostics in {place}"));
+        }
+        // Errors first, then by file and place.
+        found.sort_by(|(pa, a), (pb, b)| (a.severity, pa, a.start).cmp(&(b.severity, pb, b.start)));
+        let here = std::env::current_dir()
+            .ok()
+            .and_then(|d| std::fs::canonicalize(d).ok());
+        let items = found
+            .into_iter()
+            .map(|(path, d)| {
+                let place = format!("{}:{}", d.start.row + 1, d.start.col + 1);
+                let message = d.message.lines().next().unwrap_or_default();
+                let label = if all {
+                    format!("{}:{place}  {message}", shown_path(&path, here.as_deref()))
+                } else {
+                    format!("{place}  {message}")
+                };
+                let detail = match &d.source {
+                    Some(source) => format!("{} {source}", d.severity.id()),
+                    None => d.severity.id().to_string(),
+                };
+                PickerItem {
+                    label,
+                    detail,
+                    action: PickerAction::GoTo(path, d.start),
+                }
+            })
+            .collect();
+        // A long label loses its start (the path's), keeping the file's
+        // name, the place and the message.
+        let title = if all {
+            "Project diagnostics"
+        } else {
+            "Diagnostics"
+        };
+        self.open_picker(Picker::new(title, items));
+        Ok(())
+    }
+
     /// Replaces document `id`'s diagnostics. They're kept on the
     /// document, which moves them along as its text is edited.
     pub fn set_diagnostics(&mut self, id: DocumentId, diagnostics: Vec<Diagnostic>) {
@@ -114,6 +202,17 @@ impl Editor {
             .filter(|d| d.start.row <= row && row <= d.end.row)
             .min_by_key(|d| d.severity)
     }
+}
+
+/// `path` relative to the current folder when it's in it, else in full
+/// (resolved, so a file is written the same way whether its path came from
+/// its buffer or a server).
+fn shown_path(path: &Path, here: Option<&Path>) -> String {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    here.and_then(|dir| canonical.strip_prefix(dir).ok())
+        .unwrap_or(&canonical)
+        .display()
+        .to_string()
 }
 
 #[cfg(test)]
