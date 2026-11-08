@@ -250,6 +250,9 @@ impl Editor {
     /// completion instead follows the word as it's typed, and typing may
     /// start one (with `auto-complete`).
     pub fn end_completion_unless_used(&mut self) {
+        let buffer = self.document.buffer();
+        let typed = self.text_before_key != (self.document.id(), buffer.id(), buffer.edit_seq());
+        self.signature_after_key(typed);
         if self.completion_used {
             return;
         }
@@ -257,8 +260,6 @@ impl Editor {
         if !(server && self.refilter_server_completion()) {
             self.completion = None;
         }
-        let buffer = self.document.buffer();
-        let typed = self.text_before_key != (self.document.id(), buffer.id(), buffer.edit_seq());
         if typed {
             self.auto_complete();
         }

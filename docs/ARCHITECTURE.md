@@ -950,8 +950,9 @@ to the selected one, with `n/total` in the border when they don't all fit.
   is kept whole (`ServerCompletion::all`) and narrowed locally on each key
   that keeps the cursor in the same word (`refilter_server_completion`),
   instead of ending: items starting with what's typed first, then
-  starting with it in another case, then fuzzy matches, each tier in the
-  server's `sortText` order. A list marked `isIncomplete` is asked for
+  starting with it in another case, then fuzzy matches whose first letter
+  starts a word in the item (`fm` for `flat_map`, not `0` for `log10`),
+  each tier in the server's `sortText` order. A list marked `isIncomplete` is asked for
   again as typing goes on (rust-analyzer marks all of them so): an
   answer that arrives while a newer completion request for the buffer
   is waiting isn't read (`handle_response`), and reading one reads the
@@ -1139,8 +1140,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 ## Roadmap: deferred features
 
 Planned: plugin UI, the rest of LSP support (diagnostics, hover, go to
-definition and references, completion, formatting, rename and code actions
-are done), an
+definition and references, completion, formatting, rename, code actions
+and signature help are done), an
 agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
@@ -1183,7 +1184,10 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 Started: see [Language servers](#language-servers) for the client,
 diagnostics, hover and going to definitions and references, and [Word
 completion](#word-completion) for completion. Still to come,
-in order: signature help, and a picker list of diagnostics.
+in order: symbol pickers (this file's and the project's), a picker list of
+diagnostics, servers' progress in the status line and `:lsp-restart`,
+inlay hints, and highlighting the other uses of the symbol under the
+cursor.
 
 ### Agent harness
 
@@ -1362,6 +1366,18 @@ not. The answer is dropped unless the editor is still where it was asked
   Commands often make their changes by sending `workspace/applyEdit`
   back, which `Lsp` answers by making the edit (with the action's title
   in the message).
+- Signature help (`editor/signature.rs`, drawn by `ui/signature.rs`): after
+  each key that changes the text in insert mode, a `SignatureHelp` request
+  is queued with the character before the cursor; `Lsp` sends it if that's
+  one of the server's trigger or retrigger characters (`(`, `,`), or on any
+  change while a signature is showing (`isRetrigger`), so the active
+  parameter follows the cursor. An answer with a newer request waiting
+  isn't read, as for completion. The active signature's label is shown
+  with its active parameter (by substring, or UTF-16 offsets) in
+  `ui.popup.match`, and the first paragraph of its documentation (code
+  blocks left out) wrapped to at most four rows. No signature in the
+  answer closes it; so does leaving insert mode. It goes above the line,
+  so the completion menu can be below, or below when there's no room.
 
 ## Configuration
 
@@ -1422,8 +1438,9 @@ not. The answer is dropped unless the editor is still where it was asked
 
 ## Known gaps / next steps
 
-- Language servers: no signature help or document symbols yet, nor a
-  sign that code actions are available; code actions that create, rename
+- Language servers: no document or workspace symbols yet, nor a sign
+  that code actions are available; signature help shows one signature
+  (no keys to step through overloads); code actions that create, rename
   or delete files leave that part out; rename doesn't check the name first (`prepareRename`), and doesn't
   rename files, no range formatting (`=` and `gq` stay ferra's own), and no list of diagnostics in a
   picker. Hover is Markdown made plain (no tables, and lists keep their

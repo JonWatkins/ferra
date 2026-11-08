@@ -757,6 +757,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<C-x><C-l>" = "complete_line"
 "<C-x><C-o>" = "complete_lsp"
 "<C-Space>" = "complete_lsp"
+"<C-s>" = "signature_help"
 "<PageDown>" = "scroll_page_down"
 "<PageUp>" = "scroll_page_up"
 "<Esc>" = "normal_mode"

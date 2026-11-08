@@ -61,17 +61,33 @@ pub struct ServerCompletion {
 }
 
 /// How well `typed` matches `filter`: 0 if it starts with it, 1 if it does
-/// in another case, 2 if its letters are in it in order (fuzzily).
+/// in another case, 2 if its letters are in it in order (fuzzily) and the
+/// first starts a word in it (`fm` for `flat_map`, `ce` for
+/// `createElement`, but not `0` for `log10`).
 fn match_tier(typed: &str, filter: &str) -> Option<u8> {
     if filter.starts_with(typed) {
         Some(0)
     } else if filter.to_lowercase().starts_with(&typed.to_lowercase()) {
         Some(1)
-    } else if fuzzy_match(typed, filter).is_some() {
+    } else if starts_a_word(typed.chars().next()?, filter) && fuzzy_match(typed, filter).is_some() {
         Some(2)
     } else {
         None
     }
+}
+
+/// Whether `c` (in any case) starts a word in `text`: at its start, after
+/// something that isn't a letter or digit, or as a capital after a small
+/// letter (camelCase).
+fn starts_a_word(c: char, text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    chars.iter().enumerate().any(|(i, &t)| {
+        let same = t.to_lowercase().eq(c.to_lowercase());
+        let start = i == 0
+            || !chars[i - 1].is_alphanumeric()
+            || (chars[i - 1].is_lowercase() && t.is_uppercase());
+        same && start
+    })
 }
 
 impl Editor {
@@ -385,7 +401,12 @@ mod tests {
     fn matches_rank_prefix_then_other_case_then_fuzzy() {
         assert_eq!(match_tier("ar", "area"), Some(0));
         assert_eq!(match_tier("ar", "ArithmeticError"), Some(1));
-        assert_eq!(match_tier("ar", "_parse_args"), Some(2));
+        assert_eq!(match_tier("ar", "_parse_args"), Some(2), "`args` is a word");
+        assert_eq!(match_tier("fm", "flat_map"), Some(2));
+        assert_eq!(match_tier("ce", "createElement"), Some(2));
+        assert_eq!(match_tier("el", "createElement"), Some(2), "camelCase word");
+        assert_eq!(match_tier("0", "log10"), None, "not at a word's start");
+        assert_eq!(match_tier("rt", "parts"), None);
         assert_eq!(match_tier("ar", "xyz"), None);
         assert_eq!(match_tier("", "anything"), Some(0));
     }

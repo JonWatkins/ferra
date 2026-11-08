@@ -19,6 +19,7 @@ pub mod registers;
 mod replace;
 mod search;
 pub mod server_completion;
+pub mod signature;
 pub use search::{SearchDone, SearchHit};
 mod block;
 mod comment;
@@ -184,6 +185,8 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
+    /// A language server's signature help, shown while typing a call.
+    signature: Option<signature::SignatureHelp>,
     /// Added to the next save's message (see `note_for_save`).
     save_note: Option<String>,
     /// How `:format` reaches language servers (set by the app).

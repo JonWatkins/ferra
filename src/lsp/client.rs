@@ -171,6 +171,7 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
             ("textDocument/codeAction", "codeActionProvider")
         }
         LspFeature::ResolveCodeAction => ("codeAction/resolve", "codeActionProvider"),
+        LspFeature::SignatureHelp => ("textDocument/signatureHelp", "signatureHelpProvider"),
     }
 }
 
@@ -263,6 +264,14 @@ impl Client {
                         "implementation": { "linkSupport": true },
                         "references": {},
                         "rename": { "prepareSupport": false },
+                        "signatureHelp": {
+                            "signatureInformation": {
+                                "documentationFormat": ["markdown", "plaintext"],
+                                "parameterInformation": { "labelOffsetSupport": true },
+                                "activeParameterSupport": true,
+                            },
+                            "contextSupport": true,
+                        },
                         "codeAction": {
                             "codeActionLiteralSupport": {
                                 "codeActionKind": { "valueSet": [
@@ -427,6 +436,20 @@ impl Client {
         self.request("completionItem/resolve", item, Pending::Feature(request));
     }
 
+    /// Whether typing `c` should ask for the signature (`(`, `,`).
+    pub fn signature_triggered_by(&self, c: char) -> bool {
+        let provider = &self.capabilities["signatureHelpProvider"];
+        ["triggerCharacters", "retriggerCharacters"]
+            .iter()
+            .any(|key| {
+                provider[key].as_array().is_some_and(|chars| {
+                    chars
+                        .iter()
+                        .any(|t| t.as_str() == Some(c.encode_utf8(&mut [0; 4])))
+                })
+            })
+    }
+
     /// Whether typing `c` should start completing (`.` in most languages).
     pub fn completes_after(&self, c: char) -> bool {
         self.capabilities["completionProvider"]["triggerCharacters"]
@@ -455,6 +478,17 @@ impl Client {
             }
             LspFeature::Rename => {
                 params["newName"] = json!(request.text.clone().unwrap_or_default());
+            }
+            LspFeature::SignatureHelp => {
+                let mut context = json!({
+                    "triggerKind": if request.manual { 1 } else { 3 },
+                    "isRetrigger": request.text.is_some(),
+                });
+                if let Some(c) = request.trigger.filter(|c| self.signature_triggered_by(*c)) {
+                    context["triggerKind"] = json!(2);
+                    context["triggerCharacter"] = json!(c.to_string());
+                }
+                params["context"] = context;
             }
             LspFeature::Completion => {
                 params["context"] = match request.trigger {
@@ -511,13 +545,15 @@ impl Client {
             // Typing on asks again; an answer with a newer one on its way
             // would only be replaced, so it's not worth reading.
             Some(Pending::Feature(request))
-                if request.feature == LspFeature::Completion
-                    && self.pending.iter().any(|(later, pending)| {
-                        *later > id
-                            && matches!(pending, Pending::Feature(r)
-                                if r.feature == LspFeature::Completion
+                if matches!(
+                    request.feature,
+                    LspFeature::Completion | LspFeature::SignatureHelp
+                ) && self.pending.iter().any(|(later, pending)| {
+                    *later > id
+                        && matches!(pending, Pending::Feature(r)
+                                if r.feature == request.feature
                                     && r.document == request.document)
-                    }) =>
+                }) =>
             {
                 Answer::Done
             }

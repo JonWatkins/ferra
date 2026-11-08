@@ -13,6 +13,7 @@ use super::{Lsp, State};
 use crate::core::Position;
 use crate::editor::lsp::{Location, LspFeature, LspRequest};
 use crate::editor::server_completion::ServerItem;
+use crate::editor::signature::SignatureHelp;
 use crate::editor::{Editor, Message};
 
 /// Recent completion answers' items, by answer.
@@ -167,7 +168,21 @@ impl Lsp {
                 editor.set_message(Message::info(text));
                 continue;
             };
-            if let Some(c) = request.trigger
+            let mut request = request;
+            if request.feature == LspFeature::SignatureHelp && !request.manual {
+                // Asked as you type: on a character the server names, or on
+                // any change while it's showing (so the parameter follows).
+                let showing = editor.signature_help().is_some();
+                let triggered = request
+                    .trigger
+                    .is_some_and(|c| client.signature_triggered_by(c));
+                if !showing && !triggered {
+                    continue;
+                }
+                // `isRetrigger` in the request.
+                request.text = showing.then(String::new);
+            } else if let Some(c) = request.trigger
+                && request.feature == LspFeature::Completion
                 && !client.completes_after(c)
             {
                 continue;
@@ -255,6 +270,8 @@ pub(super) fn answer(
     let stash = stashes.completions;
     let current = match request.feature {
         LspFeature::Completion => editor.still_completing(&request),
+        // Shown wherever typing has got to since, while it's in the buffer.
+        LspFeature::SignatureHelp => editor.document.id() == request.document,
         // The item was taken: its import goes in if it's the same buffer.
         LspFeature::ResolveCompletion => editor.document.id() == request.document,
         // Chosen from the list: made unless the text changed meanwhile.
@@ -314,6 +331,11 @@ pub(super) fn answer(
         editor.make_other_edits(edits);
         return;
     }
+    if request.feature == LspFeature::SignatureHelp {
+        let help = signature_help(&result);
+        editor.show_signature_help(&request, help);
+        return;
+    }
     if request.feature == LspFeature::CodeAction {
         // Those the server says can't be done here are left out.
         let actions: Vec<Value> = result
@@ -364,6 +386,84 @@ pub(super) fn answer(
     if let Err(error) = editor.show_locations(request.feature, locations) {
         editor.set_message(Message::info(error));
     }
+}
+
+/// The signature to show from a `SignatureHelp` answer: the active one,
+/// with its active parameter's place in its label, and the parameter's
+/// documentation (or else the signature's). `None` for none.
+fn signature_help(result: &Value) -> Option<SignatureHelp> {
+    let signatures = result["signatures"].as_array().filter(|s| !s.is_empty())?;
+    let index =
+        (result["activeSignature"].as_u64().unwrap_or(0) as usize).min(signatures.len() - 1);
+    let signature = &signatures[index];
+    let label = signature["label"].as_str()?.to_string();
+    let parameters = signature["parameters"].as_array();
+    // The signature's own active parameter wins over the answer's.
+    let active = signature["activeParameter"]
+        .as_u64()
+        .or_else(|| result["activeParameter"].as_u64())
+        .and_then(|i| parameters?.get(i as usize));
+    let place = active.and_then(|parameter| match &parameter["label"] {
+        // A substring of the signature's label.
+        Value::String(text) => {
+            let byte = label.find(text.as_str())?;
+            let start = label[..byte].chars().count();
+            Some((start, start + text.chars().count()))
+        }
+        // Offsets into it, in UTF-16 units.
+        Value::Array(offsets) => {
+            let at = |i: usize| offsets.get(i).and_then(Value::as_u64).map(|n| n as usize);
+            let utf16_to_chars = |units: usize| {
+                let mut seen = 0;
+                label
+                    .chars()
+                    .take_while(|c| {
+                        seen += c.len_utf16();
+                        seen <= units
+                    })
+                    .count()
+            };
+            Some((utf16_to_chars(at(0)?), utf16_to_chars(at(1)?)))
+        }
+        _ => None,
+    });
+    let documentation = |value: &Value| -> Vec<String> {
+        let text = match value {
+            Value::String(text) => text.as_str(),
+            Value::Object(markup) => markup["value"].as_str().unwrap_or(""),
+            _ => "",
+        };
+        // The first paragraph, up to three lines, leaving out code blocks
+        // (the signature is the code).
+        let mut in_code = false;
+        text.lines()
+            .map(str::trim_end)
+            .filter(|l| {
+                if l.trim_start().starts_with("```") {
+                    in_code = !in_code;
+                    return false;
+                }
+                !in_code
+            })
+            .skip_while(|l| l.trim().is_empty())
+            .take_while(|l| !l.trim().is_empty())
+            .take(3)
+            .map(str::to_string)
+            .collect()
+    };
+    let mut docs = active
+        .map(|p| documentation(&p["documentation"]))
+        .unwrap_or_default();
+    if docs.is_empty() {
+        docs = documentation(&signature["documentation"]);
+    }
+    Some(SignatureHelp {
+        label,
+        active: place,
+        index,
+        total: signatures.len(),
+        documentation: docs,
+    })
 }
 
 /// Makes code action `action`: its edits, then its command (which the
@@ -896,6 +996,33 @@ mod tests {
                 (2, "Argh", "struct", "Argh"),
             ]
         );
+    }
+
+    #[test]
+    fn signatures_with_the_active_parameter_by_name_or_offsets() {
+        // `é` is one UTF-16 unit but two bytes; `😀` two units.
+        let answer = json!({"signatures": [
+            {"label": "f(a: u8)", "parameters": [{"label": "a: u8"}]},
+            {"label": "é😀(x, why)", "activeParameter": 1,
+             "documentation": {"kind": "markdown", "value": "```rust\nfn g()\n```\nDoes g.\n\nMore."},
+             "parameters": [{"label": [4, 5]}, {"label": [7, 10], "documentation": ""}]},
+        ], "activeSignature": 1, "activeParameter": 0});
+        let help = signature_help(&answer).unwrap();
+        assert_eq!((help.index, help.total), (1, 2));
+        let (s, e) = help.active.unwrap();
+        let active: String = help.label.chars().skip(s).take(e - s).collect();
+        assert_eq!(active, "why", "the signature's own active parameter");
+        assert_eq!(
+            help.documentation,
+            ["Does g."],
+            "first paragraph, no fences"
+        );
+
+        let first = json!({"signatures": [{"label": "f(a: u8)", "parameters": [{"label": "a: u8"}]}],
+                           "activeParameter": 0});
+        assert_eq!(signature_help(&first).unwrap().active, Some((2, 7)));
+        assert_eq!(signature_help(&json!({"signatures": []})), None);
+        assert_eq!(signature_help(&Value::Null), None);
     }
 
     #[test]

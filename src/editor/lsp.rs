@@ -29,6 +29,7 @@ pub enum LspFeature {
     ApplyCodeAction,
     /// The rest of a chosen action that came without its edits.
     ResolveCodeAction,
+    SignatureHelp,
 }
 
 impl LspFeature {
@@ -47,6 +48,7 @@ impl LspFeature {
             LspFeature::CodeAction
             | LspFeature::ApplyCodeAction
             | LspFeature::ResolveCodeAction => "code actions",
+            LspFeature::SignatureHelp => "signature help",
         }
     }
 
@@ -65,6 +67,7 @@ impl LspFeature {
             LspFeature::CodeAction
             | LspFeature::ApplyCodeAction
             | LspFeature::ResolveCodeAction => "Code actions",
+            LspFeature::SignatureHelp => "Signature",
         }
     }
 }

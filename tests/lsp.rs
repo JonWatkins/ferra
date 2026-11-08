@@ -34,6 +34,8 @@ struct Seen {
     /// answer to the server's `workspace/applyEdit`.
     action_range: Value,
     applied: Value,
+    /// The context the last signature help request came with.
+    signature_context: Value,
 }
 
 struct FakeServer {
@@ -101,6 +103,8 @@ fn serve(
                         "completionProvider": {"triggerCharacters": ["."]},
                         "documentFormattingProvider": features,
                         "renameProvider": features,
+                        "signatureHelpProvider": {"triggerCharacters": ["("],
+                                                  "retriggerCharacters": [","]},
                         "codeActionProvider": if features {
                             json!({"resolveProvider": true})
                         } else {
@@ -258,6 +262,33 @@ fn serve(
                         }]}}}}),
                 )
                 .unwrap();
+            }
+            "textDocument/signatureHelp" => {
+                seen.lock().unwrap().signature_context = params["context"].clone();
+                let text = seen.lock().unwrap().text.clone();
+                let p = &params["position"];
+                let line = text
+                    .split('\n')
+                    .nth(p["line"].as_u64().unwrap() as usize)
+                    .unwrap_or("");
+                let before = &line[..(p["character"].as_u64().unwrap() as usize).min(line.len())];
+                // In `call(` unless it's closed: the commas since say which
+                // parameter.
+                let open = before
+                    .rfind("call(")
+                    .filter(|&at| !before[at..].contains(')'));
+                let result = open.map(|at| {
+                    let commas = before[at..].matches(',').count();
+                    json!({"signatures": [{
+                        "label": "call(first: u8, second: u8)",
+                        "documentation": "Calls it.",
+                        "parameters": [
+                            {"label": "first: u8", "documentation": "The first."},
+                            {"label": [16, 26]},
+                        ],
+                    }], "activeSignature": 0, "activeParameter": commas})
+                });
+                reply(&mut output, result.into());
             }
             "textDocument/rename" => {
                 let text = seen.lock().unwrap().text.clone();
@@ -1184,4 +1215,72 @@ fn a_list_for_text_since_changed_is_left_out() {
         [(0, 2)],
         "not the old list's (0, 0)"
     );
+}
+
+fn active_parameter(app: &App) -> Option<String> {
+    let help = app.editor().signature_help()?;
+    let (start, end) = help.active?;
+    Some(help.label.chars().skip(start).take(end - start).collect())
+}
+
+#[test]
+fn typing_a_call_shows_its_signature_above_the_line() {
+    // Room above the line for it (with none, it goes below).
+    let (_dir, mut app, seen) = with_server(&"\n".repeat(8), true);
+    ready(&mut app);
+    keys(&mut app, "Gocall(");
+    until(&mut app, |a| a.editor().signature_help().is_some());
+    assert_eq!(active_parameter(&app).as_deref(), Some("first: u8"));
+    let context = seen.lock().unwrap().signature_context.clone();
+    assert_eq!(context["triggerCharacter"], "(");
+    let rows = render(&mut app, 60, 12).rows;
+    let at = rows.iter().position(|r| r.contains("call(first")).unwrap();
+    let typing = rows
+        .iter()
+        .position(|r| r.contains("call(") && !r.contains("first"))
+        .unwrap();
+    assert!(at < typing, "above the line: {rows:#?}");
+    assert!(rows[at + 2].contains("The first."), "{rows:#?}");
+
+    // Typing on: the parameter follows.
+    keys(&mut app, "1, ");
+    until(&mut app, |a| {
+        active_parameter(a).as_deref() == Some("second: u8")
+    });
+    assert_eq!(seen.lock().unwrap().signature_context["isRetrigger"], true);
+    // Closing the call closes it.
+    keys(&mut app, "2)");
+    until(&mut app, |a| a.editor().signature_help().is_none());
+}
+
+#[test]
+fn leaving_insert_mode_closes_the_signature() {
+    let (_dir, mut app, _) = with_server("\n", true);
+    ready(&mut app);
+    keys(&mut app, "icall(");
+    until(&mut app, |a| a.editor().signature_help().is_some());
+    keys(&mut app, "<Esc>");
+    assert!(app.editor().signature_help().is_none());
+    assert!(
+        !render(&mut app, 60, 8)
+            .rows
+            .join("\n")
+            .contains("first: u8")
+    );
+}
+
+#[test]
+fn ctrl_s_asks_for_the_signature() {
+    let (_dir, mut app, _) = with_server("call(1, \nx\n", true);
+    ready(&mut app);
+    keys(&mut app, "A<C-s>");
+    until(&mut app, |a| {
+        active_parameter(a).as_deref() == Some("second: u8")
+    });
+    keys(&mut app, "<Esc>jA<C-s>");
+    until(&mut app, |a| {
+        a.editor()
+            .message()
+            .is_some_and(|m| m.text == "No signature here")
+    });
 }

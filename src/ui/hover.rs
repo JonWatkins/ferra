@@ -216,7 +216,7 @@ fn shown_lines(hover: &Hover, highlights: Option<&Highlights>) -> Vec<ShownLine>
 
 /// `chars` split into rows at most `width` cells wide, between words where
 /// there's a space to break at: each row's char range.
-fn wrap(chars: &[char], width: usize) -> Vec<(usize, usize)> {
+pub(super) fn wrap(chars: &[char], width: usize) -> Vec<(usize, usize)> {
     if chars.is_empty() {
         return vec![(0, 0)];
     }

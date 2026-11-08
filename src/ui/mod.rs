@@ -16,6 +16,7 @@ mod completion_menu;
 pub mod editor_view;
 mod hover;
 mod picker;
+mod signature;
 mod splash;
 mod statusline;
 mod text;
@@ -93,6 +94,15 @@ pub fn draw(
     frame.render_widget(CommandLineView::new(editor, theme), command);
     if editor.splash_visible() && !splash.is_empty() {
         frame.render_widget(Splash::new(splash, theme), main);
+    }
+
+    // A call's signature floats above the line being typed.
+    if editor.mode() == Mode::Insert
+        && let (Some(help), Some(cursor)) = (editor.signature_help(), window_cursor)
+    {
+        let view = signature::SignatureView::new(help, theme);
+        let area = view.area(cursor, main);
+        frame.render_widget(view, area);
     }
 
     // The completion menu floats by the cursor.
