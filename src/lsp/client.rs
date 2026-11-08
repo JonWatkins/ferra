@@ -251,11 +251,14 @@ impl Client {
                         "typeDefinition": { "linkSupport": true },
                         "implementation": { "linkSupport": true },
                         "references": {},
-                        // Plain text, not snippets: what's chosen goes in
-                        // as it is.
+                        // Snippets go in as their text, with the cursor at
+                        // the first tab stop (the CSS and HTML servers
+                        // complete nothing without them).
                         "completion": {
+                            // clangd's: edits before the word (`.` to `->`).
+                            "editsNearCursor": true,
                             "completionItem": {
-                                "snippetSupport": false,
+                                "snippetSupport": true,
                                 "labelDetailsSupport": true,
                                 "documentationFormat": ["markdown", "plaintext"],
                                 // Imports can come once an item is taken

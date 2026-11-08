@@ -313,18 +313,21 @@ fn completion_items(
                 .or_else(|| item["insertText"].as_str())
                 .unwrap_or(&label)
                 .to_string();
-            let edit_range = edit.get("range").or_else(|| edit.get("replace"));
-            if let Some(edit_range) = edit_range {
-                let (start, _) = range(edit_range);
-                if start < request.word_start && start.row == request.word_start.row {
-                    let before = buffer.text_range(start, request.word_start);
-                    if let Some(rest) = text.strip_prefix(&before) {
-                        text = rest.to_string();
-                    }
-                }
-            }
+            // Where it goes in: from the start of its edit's range when
+            // that's before the word on its line (the TypeScript server
+            // replaces the `.` typed with `?.` for an optional value, clangd
+            // with `->` for a pointer), else from the word's start.
+            let edit_range = edit
+                .get("range")
+                .or_else(|| edit.get("insert"))
+                .or_else(|| edit.get("replace"));
+            let start = edit_range
+                .map(|r| range(r).0)
+                .filter(|s| s.row == request.word_start.row && *s < request.word_start)
+                .unwrap_or(request.word_start);
+            let mut cursor = None;
             if item["insertTextFormat"].as_u64() == Some(2) {
-                text = strip_snippet(&text);
+                (text, cursor) = expand_snippet(&text);
             }
             let detail = [
                 item["labelDetails"]["detail"].as_str(),
@@ -347,6 +350,8 @@ fn completion_items(
                 })
                 .collect();
             ServerItem {
+                start,
+                cursor,
                 filter: item["filterText"].as_str().unwrap_or(&label).to_string(),
                 sort: item["sortText"].as_str().unwrap_or(&label).to_string(),
                 label,
@@ -372,27 +377,61 @@ fn items_raw(result: &Value) -> Vec<Value> {
     }
 }
 
-/// A snippet (`area(${1:r})$0`) as plain text: its placeholders' text,
-/// without the tab stops.
-fn strip_snippet(snippet: &str) -> String {
+/// A snippet (`printf(${1:fmt}, ${2:args})$0`) as plain text, and where
+/// the cursor goes after it's put in, in chars: the first tab stop (`$1`),
+/// or else the last (`$0`). The first stop's placeholder is left out, as
+/// there's no selecting it for typing over (`printf(|, args)`); the
+/// others' text is kept.
+fn expand_snippet(snippet: &str) -> (String, Option<usize>) {
+    let mut stops = Vec::new();
+    let first_stop = (1..100)
+        .find(|n| snippet.contains(&format!("${{{n}:")) || snippet.contains(&format!("${n}")));
+    let text = expand_into(snippet, 0, &mut stops, first_stop);
+    let first = stops
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .min_by_key(|(n, _)| *n)
+        .or_else(|| stops.iter().find(|(n, _)| *n == 0))
+        .map(|&(_, at)| at);
+    (text, first)
+}
+
+/// Expands `snippet`, whose text starts `offset` chars in, noting each tab
+/// stop's number and place in `stops`.
+fn expand_into(
+    snippet: &str,
+    offset: usize,
+    stops: &mut Vec<(u32, usize)>,
+    blank: Option<u32>,
+) -> String {
     let mut out = String::new();
+    let mut len = 0;
     let mut chars = snippet.chars().peekable();
+    let number = |chars: &mut std::iter::Peekable<std::str::Chars>| {
+        let mut digits = String::new();
+        while let Some(d) = chars.next_if(char::is_ascii_digit) {
+            digits.push(d);
+        }
+        digits.parse::<u32>().ok()
+    };
     while let Some(c) = chars.next() {
         match c {
             '\\' => {
                 if let Some(next) = chars.next() {
                     out.push(next);
+                    len += 1;
                 }
             }
             '$' if chars.peek().is_some_and(char::is_ascii_digit) => {
-                while chars.peek().is_some_and(char::is_ascii_digit) {
-                    chars.next();
+                if let Some(n) = number(&mut chars) {
+                    stops.push((n, offset + len));
                 }
             }
             '$' if chars.peek() == Some(&'{') => {
                 chars.next();
-                while chars.peek().is_some_and(char::is_ascii_digit) {
-                    chars.next();
+                let n = number(&mut chars);
+                if let Some(n) = n {
+                    stops.push((n, offset + len));
                 }
                 // `${1:text}` keeps `text` (which may nest); `${1|a,b|}`
                 // the first choice.
@@ -411,16 +450,22 @@ fn strip_snippet(snippet: &str) -> String {
                     }
                     inner.push(c);
                 }
-                let inner = if let Some(rest) = inner.strip_prefix(':') {
-                    strip_snippet(rest)
+                let inner = if n.is_some() && n == blank {
+                    String::new()
+                } else if let Some(rest) = inner.strip_prefix(':') {
+                    expand_into(rest, offset + len, stops, blank)
                 } else if let Some(choices) = inner.strip_prefix('|') {
                     choices.split([',', '|']).next().unwrap_or("").to_string()
                 } else {
                     String::new()
                 };
+                len += inner.chars().count();
                 out.push_str(&inner);
             }
-            _ => out.push(c),
+            _ => {
+                out.push(c);
+                len += 1;
+            }
         }
     }
     out
@@ -538,12 +583,34 @@ mod tests {
     }
 
     #[test]
-    fn snippets_become_plain_text() {
-        assert_eq!(strip_snippet("area(${1:r}, ${2:s})$0"), "area(r, s)");
-        assert_eq!(strip_snippet("if ${1:x} {\n\t$0\n}"), "if x {\n\t\n}");
-        assert_eq!(strip_snippet("${1:outer ${2:inner}}"), "outer inner");
-        assert_eq!(strip_snippet("${1|one,two|}"), "one");
-        assert_eq!(strip_snippet("cost \\$5"), "cost $5");
+    fn snippets_become_text_with_the_cursors_place() {
+        let expand = |s: &str| expand_snippet(s);
+        // The first stop's placeholder is left for typing in.
+        assert_eq!(
+            expand("area(${1:r}, ${2:s})$0"),
+            ("area(, s)".into(), Some(5))
+        );
+        assert_eq!(
+            expand("if ${1:x} {\n\t$0\n}"),
+            ("if  {\n\t\n}".into(), Some(3))
+        );
+        assert_eq!(
+            expand("color: $0;"),
+            ("color: ;".into(), Some(7)),
+            "only $0"
+        );
+        assert_eq!(
+            expand("a ${2:b ${1:c}}"),
+            ("a b ".into(), Some(4)),
+            "nested $1"
+        );
+        assert_eq!(expand("area()$0"), ("area()".into(), Some(6)));
+        assert_eq!(
+            expand("${1|one,two|}"),
+            ("one".into(), Some(0)),
+            "a choice: the first"
+        );
+        assert_eq!(expand("cost \\$5"), ("cost $5".into(), None));
     }
 
     #[test]
@@ -566,8 +633,8 @@ mod tests {
                                        "end": {"line": 0, "character": 4}})
         };
         let result = json!({"isIncomplete": true, "items": [
-            // An edit from the `.`: what goes in is from the word on.
-            {"label": "area", "textEdit": {"range": range(1), "newText": ".area"},
+            // An edit from the `.`: it goes in from there.
+            {"label": "area", "textEdit": {"range": range(1), "newText": "?.area"},
              "labelDetails": {"detail": "(&self) -> f64"}},
             {"label": "arity", "detail": "usize\nmore", "filterText": "ar_ity",
              "sortText": "0"},
@@ -578,14 +645,21 @@ mod tests {
         assert_eq!(raw.len(), 3);
         let shown: Vec<_> = items
             .iter()
-            .map(|i| (i.text.as_str(), i.detail.as_str(), i.filter.as_str()))
+            .map(|i| {
+                (
+                    i.start.col,
+                    i.text.as_str(),
+                    i.detail.as_str(),
+                    i.filter.as_str(),
+                )
+            })
             .collect();
         assert_eq!(
             shown,
             [
-                ("area", "(&self) -> f64", "area"),
-                ("arity", "usize", "ar_ity"),
-                ("Argh", "struct", "Argh"),
+                (1, "?.area", "(&self) -> f64", "area"),
+                (2, "arity", "usize", "ar_ity"),
+                (2, "Argh", "struct", "Argh"),
             ]
         );
     }

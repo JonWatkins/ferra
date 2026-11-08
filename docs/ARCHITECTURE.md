@@ -953,10 +953,22 @@ to the selected one, with `n/total` in the border when they don't all fit.
   word start, insert mode), however much more of it was typed, but never
   replaces an item already chosen with `<C-n>`.
 - Items become `ServerItem`s in `lsp/features.rs`: the text to put in (the
-  `textEdit`'s new text from the word's start, or `insertText`, or the
-  label; snippets made plain, as ferra says it has no snippet support),
-  the filter and sort text, a detail (`labelDetails`, `detail`, or the
-  kind's name) and the other edits (`additionalTextEdits`).
+  `textEdit`'s new text, or `insertText`, or the label) and where it goes
+  in (`start`: the edit's start when that's before the word on its line,
+  as the TypeScript server's `?.` and clangd's `->` replace the `.` typed,
+  else the word's start), the filter and sort text, a detail
+  (`labelDetails`, `detail`, or the kind's name) and the other edits
+  (`additionalTextEdits`). The completion's `start` is the earliest item
+  start, and each item's text is laid out from there (`.` + `area`), so
+  they all replace the same text and `<C-n>` steps through them as for
+  words; each is matched against what's typed from its own start or the
+  word's, whichever matches better (TypeScript's filter text has the `.`,
+  clangd's doesn't, which it only sends with `editsNearCursor`).
+- Snippets (ferra says it supports them: the CSS and HTML servers
+  complete nothing otherwise) go in as text (`expand_snippet`): later
+  placeholders' text kept, the first stop's left empty, and taking the
+  item puts the cursor there (`call(|)`), or at `$0`. There's no moving
+  on to later stops.
 - `<C-y>` and `<Tab>` (`insert_tab` checks for the menu) take the chosen
   item or the first, and make its other edits (last first, the cursor
   moved with text edited before it). Items whose import comes only on
@@ -1255,8 +1267,10 @@ reported once.
 Diagnostics live on the `Editor` by document (`editor/diagnostics.rs`),
 sorted, with positions converted to chars. `EditorView` draws them: an
 underline in `diagnostic.<severity>` (with the underline colour), the line
-number in `ui.diagnostic.<severity>`, and the first message after the
-line's text. They're replaced by the server's next list rather than moved
+number in `ui.diagnostic.<severity>` and the message after the line's
+text, both on the line it starts on (one over a whole file, like
+rust-analyzer's "not included in the module tree", would otherwise repeat
+on every line); empty lines inside a range aren't underlined. They're replaced by the server's next list rather than moved
 with edits, so between an edit and the server's answer they can sit a
 little off.
 
@@ -1385,8 +1399,8 @@ not. The answer is dropped unless the editor is still where it was asked
   supported. Window options (`wrap`) can't be set per language.
 - Completion: words, file names, whole lines and the language server's
   (no dictionaries, nor Vim's other `<C-x>` modes); words matched by
-  prefix (not fuzzily). Server completions: no snippets (tab stops),
-  documentation isn't shown beside the menu, and items are filtered by
+  prefix (not fuzzily). Server completions: snippets have no tab stops to
+  move between (only the first is where the cursor goes), documentation isn't shown beside the menu, and items are filtered by
   ferra rather than asked for again on each key (unless the server says
   its list is incomplete). `<Tab>` takes an item only while the menu's
   up; `<CR>` always starts a new line. `.` replays the `<C-n>` keys, so it completes again

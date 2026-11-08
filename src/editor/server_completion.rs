@@ -26,8 +26,14 @@ const MAX_SHOWN: usize = 200;
 pub struct ServerItem {
     /// What the menu shows (`area(…)`).
     pub label: String,
-    /// What goes in, in place of the word typed (`area`).
+    /// What goes in (`area`), from `start` to the cursor: usually the
+    /// start of the word being typed, but some go in from before it (in
+    /// place of a `.` typed).
     pub text: String,
+    pub start: Position,
+    /// Where the cursor goes in `text` (in chars) once it's taken: a
+    /// snippet's first tab stop. `None`: after it.
+    pub cursor: Option<usize>,
     /// What typing is matched against, and the server's order.
     pub filter: String,
     pub sort: String,
@@ -45,10 +51,27 @@ pub struct ServerItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerCompletion {
     pub all: Vec<ServerItem>,
+    /// Where the word being completed starts. (The completion's `start` is
+    /// the earliest of its items' starts.)
+    pub word_start: Position,
     /// Which of `all` each shown item is.
     pub shown: Vec<usize>,
     /// The server has more than it sent: ask again as typing goes on.
     pub incomplete: bool,
+}
+
+/// How well `typed` matches `filter`: 0 if it starts with it, 1 if it does
+/// in another case, 2 if its letters are in it in order (fuzzily).
+fn match_tier(typed: &str, filter: &str) -> Option<u8> {
+    if filter.starts_with(typed) {
+        Some(0)
+    } else if filter.to_lowercase().starts_with(&typed.to_lowercase()) {
+        Some(1)
+    } else if fuzzy_match(typed, filter).is_some() {
+        Some(2)
+    } else {
+        None
+    }
 }
 
 impl Editor {
@@ -164,14 +187,22 @@ impl Editor {
             self.completion = None;
             return;
         }
+        // From the earliest any item goes in, so they all replace the same
+        // text and stepping through them works as for words.
+        let start = items
+            .iter()
+            .map(|i| i.start)
+            .min()
+            .unwrap_or(request.word_start);
         self.completion = Some(WordCompletion {
-            start: request.word_start,
+            start,
             typed: String::new(),
             items: Vec::new(),
             selected: None,
             labels: Vec::new(),
             details: Vec::new(),
             server: Some(ServerCompletion {
+                word_start: request.word_start,
                 all: items,
                 shown: Vec::new(),
                 incomplete,
@@ -186,35 +217,37 @@ impl Editor {
     /// false (and the caller ends it) if the cursor has left the word or
     /// nothing matches.
     pub(super) fn refilter_server_completion(&mut self) -> bool {
-        let (start, cursor) = self.word_before_cursor();
+        let (word_start, cursor) = self.word_before_cursor();
+        let buffer = self.document.buffer();
         let Some(completion) = &mut self.completion else {
             return false;
         };
-        if self.mode != Mode::Insert || start != completion.start {
-            return false;
-        }
-        let typed = self.document.buffer().text_range(start, cursor);
         let Some(server) = &mut completion.server else {
             return false;
         };
-        // Those starting with what's typed first, then those starting with
-        // it in another case, then looser (fuzzy) matches; the server's
-        // order within each.
-        let lower = typed.to_lowercase();
+        if self.mode != Mode::Insert || word_start != server.word_start {
+            return false;
+        }
+        let start = completion.start;
+        let typed = buffer.text_range(start, cursor);
+        // Each item is matched against what's typed from where it goes in
+        // (`.ap` for one that replaces the `.`). Those starting with it
+        // first, then those starting with it in another case, then looser
+        // (fuzzy) matches; the server's order within each.
         let mut matches: Vec<(u8, usize)> = server
             .all
             .iter()
             .enumerate()
             .filter_map(|(i, item)| {
-                let tier = if item.filter.starts_with(&typed) {
-                    0
-                } else if item.filter.to_lowercase().starts_with(&lower) {
-                    1
-                } else if fuzzy_match(&typed, &item.filter).is_some() {
-                    2
-                } else {
-                    return None;
-                };
+                // Its filter text may include what's before the word (the
+                // TypeScript server's `.?.append`) or not (clangd's `x` for
+                // `->x`): the better of the two.
+                let from_item = buffer.text_range(item.start, cursor);
+                let from_word = buffer.text_range(word_start, cursor);
+                let tier = [from_item, from_word]
+                    .iter()
+                    .filter_map(|typed| match_tier(typed, &item.filter))
+                    .min()?;
                 Some((tier, i))
             })
             .collect();
@@ -224,16 +257,22 @@ impl Editor {
         });
         matches.truncate(MAX_SHOWN);
         server.shown = matches.into_iter().map(|(_, i)| i).collect();
+        // Each item's text from the completion's start: what's between that
+        // and where the item goes in (a `.`), then its own.
+        let texts: Vec<String> = server
+            .shown
+            .iter()
+            .map(|&i| {
+                let item = &server.all[i];
+                buffer.text_range(start, item.start) + &item.text
+            })
+            .collect();
         // Just the word as typed: nothing to offer.
-        let only_itself = server.shown.len() == 1 && server.all[server.shown[0]].text == typed;
+        let only_itself = texts.len() == 1 && texts[0] == typed;
         if server.shown.is_empty() || only_itself {
             return false;
         }
-        completion.items = server
-            .shown
-            .iter()
-            .map(|&i| server.all[i].text.clone())
-            .collect();
+        completion.items = texts;
         completion.labels = server
             .shown
             .iter()
@@ -285,6 +324,21 @@ impl Editor {
                 item: Some(resolve),
             });
         }
+        // A snippet's cursor place: counted from the completion's start
+        // (where its text is), past what's before the item's own start.
+        if let Some(at) = item.cursor {
+            let text = &completion.items[i];
+            let before = text.chars().count() - item.text.chars().count();
+            let mut place = completion.start;
+            for c in text.chars().take(before + at) {
+                place = if c == '\n' {
+                    Position::new(place.row + 1, 0)
+                } else {
+                    place.with_col(place.col + 1)
+                };
+            }
+            self.document.set_cursor(place);
+        }
         let edits = item.other_edits.clone();
         self.make_other_edits(edits);
     }
@@ -300,5 +354,19 @@ impl Editor {
             .filter(|(from, to, _)| !(*to > start && *from < cursor))
             .collect();
         self.apply_text_edits(edits);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_rank_prefix_then_other_case_then_fuzzy() {
+        assert_eq!(match_tier("ar", "area"), Some(0));
+        assert_eq!(match_tier("ar", "ArithmeticError"), Some(1));
+        assert_eq!(match_tier("ar", "_parse_args"), Some(2));
+        assert_eq!(match_tier("ar", "xyz"), None);
+        assert_eq!(match_tier("", "anything"), Some(0));
     }
 }

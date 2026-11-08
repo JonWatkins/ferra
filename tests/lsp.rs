@@ -150,6 +150,35 @@ fn serve(
                 };
                 reply(&mut output, result);
             }
+            "textDocument/completion" if seen.lock().unwrap().text.contains("maybe") => {
+                // Items that go in from before the word: in place of the
+                // `.` typed (as the TypeScript server and clangd do).
+                let p = &params["position"];
+                let (line, col) = (
+                    p["line"].as_u64().unwrap(),
+                    p["character"].as_u64().unwrap(),
+                );
+                let text = seen.lock().unwrap().text.clone();
+                let line_text = text.split('\n').nth(line as usize).unwrap_or("");
+                let word = line_text[..col as usize]
+                    .chars()
+                    .rev()
+                    .take_while(|c| c.is_alphanumeric())
+                    .count() as u64;
+                let dot = json!({"start": {"line": line, "character": col - word - 1},
+                                 "end": {"line": line, "character": col}});
+                reply(
+                    &mut output,
+                    json!([
+                        {"label": "thing", "filterText": ".?.thing",
+                         "textEdit": {"range": dot, "newText": "?.thing"}},
+                        {"label": "field", "filterText": "field",
+                         "textEdit": {"range": dot, "newText": "->field"}},
+                        {"label": "call(arg)", "filterText": "call",
+                         "insertText": "call(${1:arg})$0", "insertTextFormat": 2},
+                    ]),
+                );
+            }
             "textDocument/completion" => {
                 let import = json!({"range": {"start": {"line": 0, "character": 0},
                                               "end": {"line": 0, "character": 0}},
@@ -686,7 +715,11 @@ fn ctrl_n_puts_items_in_and_ctrl_e_puts_back_what_was_typed() {
     keys(&mut app, "<C-n><C-n>");
     assert_eq!(text(&app), "badge");
     keys(&mut app, "<C-n>");
-    assert_eq!(text(&app), "basket(n)", "a snippet as plain text");
+    assert_eq!(
+        text(&app),
+        "basket()",
+        "a snippet, its first stop left to fill"
+    );
     keys(&mut app, "<C-e>");
     assert_eq!(text(&app), "ba");
     assert!(menu(&app).is_empty());
@@ -817,4 +850,35 @@ fn a_server_that_doesnt_answer_doesnt_stop_the_save() {
         message.ends_with("written (not formatted: rust-analyzer took too long to format)"),
         "{message}"
     );
+}
+
+#[test]
+fn items_can_replace_the_dot_typed_before_them() {
+    let (_dir, mut app, _) = with_server("// maybe\n\n", true);
+    ready(&mut app);
+    // The TypeScript server's optional `?.`, matched with its `.`.
+    keys(&mut app, "jix.th");
+    until(&mut app, |a| menu(a) == ["thing"]);
+    keys(&mut app, "<Tab>");
+    assert_eq!(text(&app), "// maybe\nx?.thing");
+    assert_eq!(common::cursor(&app), (1, 8));
+    // clangd's `->`, whose filter text leaves the `.` out: offered as soon
+    // as the `.` is typed.
+    keys(&mut app, "<Esc>ccp.");
+    until(&mut app, |a| menu(a).len() == 3);
+    keys(&mut app, "fi<Tab>");
+    assert_eq!(text(&app), "// maybe\np->field");
+}
+
+#[test]
+fn a_snippet_leaves_the_cursor_at_its_first_stop() {
+    let (_dir, mut app, _) = with_server("// maybe\n\n", true);
+    ready(&mut app);
+    keys(&mut app, "jio.ca");
+    until(&mut app, |a| menu(a) == ["call(arg)"]);
+    keys(&mut app, "<C-y>");
+    assert_eq!(text(&app), "// maybe\no.call()");
+    assert_eq!(common::cursor(&app), (1, 7), "inside the brackets");
+    keys(&mut app, "42");
+    assert_eq!(text(&app), "// maybe\no.call(42)");
 }

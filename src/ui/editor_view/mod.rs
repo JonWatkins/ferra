@@ -371,11 +371,13 @@ impl EditorView<'_> {
         } else {
             String::new()
         };
-        // The most serious diagnostic on the line colours its number.
+        // The most serious diagnostic starting on the line colours its
+        // number and shows its message (once, where it starts, as one
+        // that covers the whole file would otherwise be on every line).
         let on_line = self
             .diagnostics
             .iter()
-            .filter(|d| d.start.row <= row && row <= d.end.row)
+            .filter(|d| d.start.row == row)
             .min_by_key(|d| d.severity);
         let gutter_style = match on_line {
             Some(d) => self.theme.get(gutter_scope).patch(
@@ -454,8 +456,12 @@ impl EditorView<'_> {
             } else {
                 line_len
             };
-            // An empty range still marks the char it's at.
-            let to = to.max(from + 1);
+            // An empty range still marks the char it's at; the empty lines
+            // inside a longer one aren't marked.
+            let to = if d.start == d.end { from + 1 } else { to };
+            if to <= from {
+                continue;
+            }
             highlight(
                 from,
                 to,
@@ -520,6 +526,103 @@ mod tests {
             scroll_off: 0,
             ..EditorOptions::default()
         }
+    }
+
+    fn diagnostic(
+        start: (usize, usize),
+        end: (usize, usize),
+        severity: crate::editor::diagnostics::Severity,
+        message: &str,
+    ) -> crate::editor::diagnostics::Diagnostic {
+        crate::editor::diagnostics::Diagnostic {
+            start: TextPos::new(start.0, start.1),
+            end: TextPos::new(end.0, end.1),
+            severity,
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    fn render_with(
+        doc: &Document,
+        diagnostics: &[crate::editor::diagnostics::Diagnostic],
+        w: u16,
+        h: u16,
+    ) -> Buffer {
+        let area = Rect::new(0, 0, w, h);
+        let mut buf = Buffer::empty(area);
+        let options = options(LineNumbers::Absolute);
+        EditorView::new(doc, &options, &theme())
+            .diagnostics(diagnostics)
+            .render(area, &mut buf, &mut ViewState::default());
+        buf
+    }
+
+    /// The default config's theme, which has the diagnostic styles.
+    fn theme() -> Theme {
+        crate::config::Config::default().theme
+    }
+
+    fn underlined(buf: &Buffer, y: u16) -> String {
+        (0..buf.area.width)
+            .map(|x| {
+                let cell = &buf[(x, y)];
+                if cell.modifier.contains(ratatui::style::Modifier::UNDERLINED) {
+                    '^'
+                } else {
+                    ' '
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_diagnostics_message_shows_once_where_it_starts() {
+        use crate::editor::diagnostics::Severity;
+        let doc = Document::with_text("struct A {\n\n    x: u8,\n}");
+        // Like rust-analyzer's "not included in the module tree", over
+        // the whole file.
+        let whole = diagnostic((0, 0), (3, 1), Severity::Hint, "not in the tree");
+        let buf = render_with(&doc, &[whole], 40, 4);
+        assert_eq!(
+            row_text(&buf, 0).trim_end(),
+            "   1 struct A {  ● not in the tree"
+        );
+        for y in 1..4 {
+            assert!(!row_text(&buf, y).contains('●'), "row {y}");
+        }
+        // Underlined throughout, but the empty line isn't marked.
+        assert_eq!(underlined(&buf, 0).trim_end(), "     ^^^^^^^^^^");
+        assert_eq!(underlined(&buf, 1).trim_end(), "", "empty line");
+        assert_eq!(underlined(&buf, 2).trim_end(), "     ^^^^^^^^^^");
+        assert_eq!(underlined(&buf, 3).trim_end(), "     ^");
+        // Only the first line's number takes its colour.
+        let hint = theme().get("ui.diagnostic.hint").fg;
+        assert_eq!(buf[(3, 0)].fg, hint.unwrap());
+        assert_ne!(Some(buf[(3, 2)].fg), hint);
+    }
+
+    #[test]
+    fn the_most_serious_diagnostic_on_a_line_is_the_one_shown() {
+        use crate::editor::diagnostics::Severity;
+        let doc = Document::with_text("let x = y;");
+        let warning = diagnostic((0, 4), (0, 5), Severity::Warning, "unused x");
+        let error = diagnostic((0, 8), (0, 9), Severity::Error, "no y");
+        // An empty range at the end still marks a cell.
+        let at_end = diagnostic((0, 10), (0, 10), Severity::Info, "end");
+        let buf = render_with(&doc, &[warning, error, at_end], 40, 1);
+        assert_eq!(row_text(&buf, 0).trim_end(), "   1 let x = y;  ● no y");
+        assert_eq!(underlined(&buf, 0).trim_end(), "         ^   ^ ^");
+        let colour = |scope: &str| theme().get(scope).fg.unwrap();
+        assert_eq!(
+            buf[(19, 0)].fg,
+            colour("ui.diagnostic.error"),
+            "the message"
+        );
+        let underline = |x: u16| buf[(x, 0)].underline_color;
+        let underline_of = |scope: &str| theme().get(scope).underline_color.unwrap();
+        assert_eq!(underline(9), underline_of("diagnostic.warning"));
+        assert_eq!(underline(13), underline_of("diagnostic.error"));
     }
 
     #[test]
