@@ -30,6 +30,10 @@ pub enum LspFeature {
     /// The rest of a chosen action that came without its edits.
     ResolveCodeAction,
     SignatureHelp,
+    /// The buffer's symbols (functions, types...).
+    DocumentSymbols,
+    /// The project's symbols matching a query (`text`).
+    WorkspaceSymbols,
 }
 
 impl LspFeature {
@@ -49,6 +53,7 @@ impl LspFeature {
             | LspFeature::ApplyCodeAction
             | LspFeature::ResolveCodeAction => "code actions",
             LspFeature::SignatureHelp => "signature help",
+            LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols => "symbols",
         }
     }
 
@@ -68,6 +73,8 @@ impl LspFeature {
             | LspFeature::ApplyCodeAction
             | LspFeature::ResolveCodeAction => "Code actions",
             LspFeature::SignatureHelp => "Signature",
+            LspFeature::DocumentSymbols => "Symbols",
+            LspFeature::WorkspaceSymbols => "Project symbols",
         }
     }
 }
@@ -278,6 +285,78 @@ impl Editor {
             })
             .collect();
         self.open_picker(Picker::new("Code actions", items).keep_label_start());
+    }
+
+    /// `<Space>S`: opens a picker of the project's symbols, which the
+    /// language server searches for as the query is typed.
+    pub fn request_workspace_symbols(&mut self) -> Result<(), String> {
+        self.request_lsp(LspFeature::WorkspaceSymbols)?;
+        if let Some(request) = self.lsp_requests.last_mut() {
+            request.text = Some(String::new());
+        }
+        self.symbol_query = Some(String::new());
+        self.open_picker(
+            Picker::new(LspFeature::WorkspaceSymbols.title(), Vec::new()).searched_by_server(),
+        );
+        Ok(())
+    }
+
+    /// After each key: if the project symbol picker's query changed, asks
+    /// the server again.
+    pub fn search_symbols_after_key(&mut self) {
+        let query = self
+            .picker
+            .as_ref()
+            .filter(|p| p.is_searched_by_server() && self.mode() == Mode::Picker)
+            .map(|p| p.query().to_string());
+        let Some(query) = query else {
+            self.symbol_query = None;
+            return;
+        };
+        if self.symbol_query.as_deref() == Some(query.as_str()) {
+            return;
+        }
+        self.symbol_query = Some(query.clone());
+        // The picker's buffer is the one it was opened from.
+        if self.request_lsp(LspFeature::WorkspaceSymbols).is_ok()
+            && let Some(request) = self.lsp_requests.last_mut()
+        {
+            request.text = Some(query);
+        }
+    }
+
+    /// Lists `symbols` (a label, what it is, where) in a picker, or for the
+    /// project's, replaces what the open picker has if `query` is still
+    /// what's typed in it.
+    pub fn show_symbols(
+        &mut self,
+        feature: LspFeature,
+        query: Option<&str>,
+        symbols: Vec<(String, String, Location)>,
+    ) {
+        let items: Vec<PickerItem> = symbols
+            .into_iter()
+            .map(|(label, detail, location)| PickerItem {
+                label,
+                detail,
+                action: PickerAction::GoTo(location.path, location.position),
+            })
+            .collect();
+        if feature == LspFeature::WorkspaceSymbols {
+            let picker = self
+                .picker
+                .as_mut()
+                .filter(|p| p.is_searched_by_server() && Some(p.query()) == query);
+            if let Some(picker) = picker {
+                picker.replace_items(items);
+            }
+            return;
+        }
+        if items.is_empty() {
+            self.set_message(Message::info("No symbols in this buffer"));
+            return;
+        }
+        self.open_picker(Picker::new(feature.title(), items).keep_label_start());
     }
 
     /// Makes the code action chosen from the list.

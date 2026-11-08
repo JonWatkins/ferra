@@ -185,6 +185,8 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
+    /// The project symbol picker's query when the server was last asked.
+    symbol_query: Option<String>,
     /// A language server's signature help, shown while typing a call.
     signature: Option<signature::SignatureHelp>,
     /// Added to the next save's message (see `note_for_save`).

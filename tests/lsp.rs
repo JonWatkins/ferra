@@ -34,8 +34,10 @@ struct Seen {
     /// answer to the server's `workspace/applyEdit`.
     action_range: Value,
     applied: Value,
-    /// The context the last signature help request came with.
+    /// The context the last signature help request came with, and the
+    /// queries for the project's symbols.
     signature_context: Value,
+    symbol_queries: Vec<String>,
 }
 
 struct FakeServer {
@@ -103,6 +105,8 @@ fn serve(
                         "completionProvider": {"triggerCharacters": ["."]},
                         "documentFormattingProvider": features,
                         "renameProvider": features,
+                        "documentSymbolProvider": features,
+                        "workspaceSymbolProvider": features,
                         "signatureHelpProvider": {"triggerCharacters": ["("],
                                                   "retriggerCharacters": [","]},
                         "codeActionProvider": if features {
@@ -290,6 +294,59 @@ fn serve(
                 });
                 reply(&mut output, result.into());
             }
+            "textDocument/documentSymbol" => {
+                let text = seen.lock().unwrap().text.clone();
+                let symbols = text_symbols(&text);
+                let result = if text.contains("flat") {
+                    // The older, flat form: a location and a container each.
+                    let uri = &params["textDocument"]["uri"];
+                    symbols
+                        .iter()
+                        .map(|(name, kind, at, parent)| {
+                            json!({"name": name, "kind": kind,
+                                   "location": {"uri": uri, "range": {"start": at, "end": at}},
+                                   "containerName": parent})
+                        })
+                        .collect()
+                } else {
+                    let mut top: Vec<Value> = Vec::new();
+                    for (name, kind, at, parent) in symbols {
+                        let symbol = json!({"name": name, "kind": kind, "children": [],
+                                            "range": {"start": at, "end": at},
+                                            "selectionRange": {"start": at, "end": at}});
+                        match (parent, top.last_mut()) {
+                            (Some(_), Some(last)) => {
+                                last["children"].as_array_mut().unwrap().push(symbol)
+                            }
+                            _ => top.push(symbol),
+                        }
+                    }
+                    top
+                };
+                reply(&mut output, Value::Array(result));
+            }
+            "workspace/symbol" => {
+                let query = params["query"].as_str().unwrap().to_string();
+                seen.lock().unwrap().symbol_queries.push(query.clone());
+                let mut found = Vec::new();
+                let main = root.join("main.rs").canonicalize().unwrap();
+                let other = root.join(OTHER);
+                let files = [
+                    (main, Some(seen.lock().unwrap().text.clone())),
+                    (other.clone(), fs::read_to_string(&other).ok()),
+                ];
+                for (path, text) in files {
+                    let Some(text) = text else { continue };
+                    let uri = ferra::lsp::convert::path_to_uri(&path.canonicalize().unwrap());
+                    for (name, kind, at, parent) in text_symbols(&text) {
+                        if !query.is_empty() && name.contains(&query) {
+                            found.push(json!({"name": name, "kind": kind, "containerName": parent,
+                                              "location": {"uri": uri, "range": {"start": at, "end": at}}}));
+                        }
+                    }
+                }
+                reply(&mut output, Value::Array(found));
+            }
             "textDocument/rename" => {
                 let text = seen.lock().unwrap().text.clone();
                 let word = word_at(&text, &params["position"]);
@@ -407,6 +464,39 @@ fn format_edits(text: &str) -> Vec<Value> {
         }
     }
     edits
+}
+
+/// The symbols the fake server finds: `struct X` lines, the `fn`s indented
+/// under them (their methods), and other `fn`s: name, kind, where the name
+/// is, and what it's in.
+fn text_symbols(text: &str) -> Vec<(String, u64, Value, Option<String>)> {
+    let mut symbols = Vec::new();
+    let mut current: Option<String> = None;
+    for (line, line_text) in text.split('\n').enumerate() {
+        let trimmed = line_text.trim_start();
+        let indented = trimmed.len() < line_text.len();
+        let (kind, rest) = if let Some(rest) = trimmed.strip_prefix("struct ") {
+            (23, rest)
+        } else if let Some(rest) = trimmed.strip_prefix("fn ") {
+            (if indented { 6 } else { 12 }, rest)
+        } else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let col = line_text.find(&name).unwrap();
+        let at = json!({"line": line, "character": col});
+        let parent = if kind == 6 { current.clone() } else { None };
+        if kind == 23 {
+            current = Some(name.clone());
+        } else if !indented {
+            current = None;
+        }
+        symbols.push((name, kind, at, parent));
+    }
+    symbols
 }
 
 /// The word at an LSP position (in bytes) in `text`.
@@ -1283,4 +1373,49 @@ fn ctrl_s_asks_for_the_signature() {
             .message()
             .is_some_and(|m| m.text == "No signature here")
     });
+}
+
+const SHAPES: &str = "struct Circle {\n    fn area() {}\n    fn scale() {}\n}\nfn main() {}\n";
+
+#[test]
+fn space_s_lists_the_files_symbols_to_go_to() {
+    let (_dir, mut app, _) = with_server(SHAPES, true);
+    ready(&mut app);
+    keys(&mut app, "G<Space>s");
+    until(&mut app, |a| a.editor().picker().is_some());
+    assert_eq!(picker_labels(&mut app), ["Circle", "area", "scale", "main"]);
+    let screen = render(&mut app, 80, 14).rows.join("\n");
+    assert!(screen.contains("method in Circle"), "{screen}");
+    assert!(screen.contains("struct"), "{screen}");
+    keys(&mut app, "sca<CR>");
+    assert_eq!(common::cursor(&app), (2, 7));
+    keys(&mut app, "<C-o>");
+    assert_eq!(common::cursor(&app).0, 4, "a jump back to the last line");
+}
+
+#[test]
+fn flat_symbol_lists_say_what_each_is_in() {
+    let (_dir, mut app, _) = with_server(&format!("// flat\n{SHAPES}"), true);
+    ready(&mut app);
+    keys(&mut app, "<Space>s");
+    until(&mut app, |a| a.editor().picker().is_some());
+    assert_eq!(picker_labels(&mut app), ["Circle", "area", "scale", "main"]);
+    let screen = render(&mut app, 80, 14).rows.join("\n");
+    assert!(screen.contains("method in Circle"), "{screen}");
+}
+
+#[test]
+fn space_shift_s_searches_the_project_as_you_type() {
+    let (dir, mut app, seen) = with_server(SHAPES, true);
+    fs::write(dir.path().join(OTHER), "fn helper() {}\nfn area_of() {}\n").unwrap();
+    ready(&mut app);
+    keys(&mut app, "<Space>S");
+    assert_eq!(app.editor().picker().unwrap().title(), "Project symbols");
+    keys(&mut app, "are");
+    until(&mut app, |a| a.editor().picker().unwrap().total() == 2);
+    assert_eq!(picker_labels(&mut app), ["area", "area_of"]);
+    assert_eq!(seen.lock().unwrap().symbol_queries, ["", "a", "ar", "are"]);
+    keys(&mut app, "_<CR>");
+    until(&mut app, |a| a.editor().document.name().ends_with(OTHER));
+    assert_eq!(common::cursor(&app), (1, 3));
 }

@@ -93,6 +93,16 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.request_signature_help(),
     );
     r.register(
+        "symbol_picker",
+        "Pick one of this file's symbols (functions, types...) to go to (<Space>s)",
+        |cx| cx.editor.request_lsp(LspFeature::DocumentSymbols),
+    );
+    r.register(
+        "project_symbol_picker",
+        "Search the project's symbols to go to one, as the language server finds them (<Space>S)",
+        |cx| cx.editor.request_workspace_symbols(),
+    );
+    r.register(
         "code_actions",
         "List the language server's fixes and changes for the cursor or selection, to make one (<Space>a)",
         |cx| cx.editor.request_code_actions(),

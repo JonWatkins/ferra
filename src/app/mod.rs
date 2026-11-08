@@ -434,6 +434,7 @@ impl App {
                 first_line
                     .chars()
                     .for_each(|c| self.editor.insert_text_char(c));
+                self.editor.search_symbols_after_key();
             }
             Mode::Normal | Mode::Visual | Mode::OperatorPending => {
                 self.editor.set_mode(Mode::Normal);
@@ -742,6 +743,7 @@ impl App {
         self.apply_outcomes(outcomes);
         self.editor.end_completion_unless_used();
         self.editor.end_hover_unless_used();
+        self.editor.search_symbols_after_key();
     }
 
     fn apply_outcomes(&mut self, outcomes: Vec<Outcome>) {

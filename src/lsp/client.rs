@@ -172,6 +172,8 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
         }
         LspFeature::ResolveCodeAction => ("codeAction/resolve", "codeActionProvider"),
         LspFeature::SignatureHelp => ("textDocument/signatureHelp", "signatureHelpProvider"),
+        LspFeature::DocumentSymbols => ("textDocument/documentSymbol", "documentSymbolProvider"),
+        LspFeature::WorkspaceSymbols => ("workspace/symbol", "workspaceSymbolProvider"),
     }
 }
 
@@ -264,6 +266,7 @@ impl Client {
                         "implementation": { "linkSupport": true },
                         "references": {},
                         "rename": { "prepareSupport": false },
+                        "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
                         "signatureHelp": {
                             "signatureInformation": {
                                 "documentationFormat": ["markdown", "plaintext"],
@@ -311,6 +314,7 @@ impl Client {
                         "workspaceEdit": { "documentChanges": true },
                         // Servers' commands can ask ferra to make edits.
                         "applyEdit": true,
+                        "symbol": {},
                         "executeCommand": { "dynamicRegistration": false },
                     },
                     "window": { "workDoneProgress": false },
@@ -472,6 +476,12 @@ impl Client {
             "textDocument": { "uri": synced.uri },
             "position": position,
         });
+        // These are about the file, or the project: no position.
+        if request.feature == LspFeature::DocumentSymbols {
+            params = json!({ "textDocument": { "uri": synced.uri } });
+        } else if request.feature == LspFeature::WorkspaceSymbols {
+            params = json!({ "query": request.text.clone().unwrap_or_default() });
+        }
         match request.feature {
             LspFeature::References => {
                 params["context"] = json!({ "includeDeclaration": true });
@@ -547,7 +557,9 @@ impl Client {
             Some(Pending::Feature(request))
                 if matches!(
                     request.feature,
-                    LspFeature::Completion | LspFeature::SignatureHelp
+                    LspFeature::Completion
+                        | LspFeature::SignatureHelp
+                        | LspFeature::WorkspaceSymbols
                 ) && self.pending.iter().any(|(later, pending)| {
                     *later > id
                         && matches!(pending, Pending::Feature(r)

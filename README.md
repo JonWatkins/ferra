@@ -268,6 +268,7 @@ order before the sorted ones, and `//` is the last search.
 | `K` | Hover: what the language server says about the symbol under the cursor (`K` again scrolls) |
 | `gd` `gD` `gy` | Go to the definition, declaration, or type's definition |
 | `gr` `gI` | References, implementations: gone to if there's one, else listed in a picker |
+| `<Space>s`, `<Space>S` | Symbols: this file's (functions, types, methods), or search the project's as you type, to go to one |
 | `<Space>a` | Code actions: the language server's fixes and changes for the cursor (or the visual selection), in a picker |
 | `<F2>` `<Space>n`, `:rename name` | Rename the symbol under the cursor everywhere (the keys start `:rename` with its name to edit) |
 | `:b 2`, `:b name`, `:b #` | Switch by number, part of the name, or to the previous buffer |
@@ -510,6 +511,10 @@ changes it everywhere it's used, in this file and others. Each file's
 changes are one undo step; files that weren't open are opened in the
 background and left unsaved, as the message says, so `:wa` saves them
 (or `:b` to look first).
+
+`<Space>s` lists the file's symbols (`area`, "method in Circle") in a
+picker, to filter and go to; `<Space>S` searches the whole project's, the
+server looking again as you type. Either is a jump, so `<C-o>` comes back.
 
 `<Space>a` lists what the server can do at the cursor, or for the
 selection in visual mode: quick fixes for the diagnostics there

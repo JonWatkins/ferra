@@ -1141,7 +1141,7 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 Planned: plugin UI, the rest of LSP support (diagnostics, hover, go to
 definition and references, completion, formatting, rename, code actions
-and signature help are done), an
+signature help and symbol pickers are done), an
 agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
@@ -1184,8 +1184,7 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 Started: see [Language servers](#language-servers) for the client,
 diagnostics, hover and going to definitions and references, and [Word
 completion](#word-completion) for completion. Still to come,
-in order: symbol pickers (this file's and the project's), a picker list of
-diagnostics, servers' progress in the status line and `:lsp-restart`,
+in order: a picker list of diagnostics, servers' progress in the status line and `:lsp-restart`,
 inlay hints, and highlighting the other uses of the symbol under the
 cursor.
 
@@ -1366,6 +1365,17 @@ not. The answer is dropped unless the editor is still where it was asked
   Commands often make their changes by sending `workspace/applyEdit`
   back, which `Lsp` answers by making the edit (with the action's title
   in the message).
+- Symbols: `<Space>s` asks for `textDocument/documentSymbol`, whose
+  answer is nested `DocumentSymbol`s (flattened, each child's detail
+  naming its parent: "method in Circle") or flat `SymbolInformation`s
+  (their `containerName`); `<Space>S` opens an empty picker marked
+  `searched_by_server` and asks `workspace/symbol` for its query, and
+  `search_symbols_after_key` asks again whenever the query changes, the
+  answer replacing the picker's items if the query's still the same
+  (older answers with a newer request waiting aren't read). Places are
+  found as for go to definition (`resolve_places`: the line from the
+  buffer, or the file read once), and the items are
+  `PickerAction::GoTo`.
 - Signature help (`editor/signature.rs`, drawn by `ui/signature.rs`): after
   each key that changes the text in insert mode, a `SignatureHelp` request
   is queued with the character before the cursor; `Lsp` sends it if that's
@@ -1438,8 +1448,10 @@ not. The answer is dropped unless the editor is still where it was asked
 
 ## Known gaps / next steps
 
-- Language servers: no document or workspace symbols yet, nor a sign
-  that code actions are available; signature help shows one signature
+- Language servers: no sign that code actions are available; the project
+  symbol picker shows what the server found, which ferra then filters by
+  its own fuzzy match (a server that matches more loosely may have some
+  left out); signature help shows one signature
   (no keys to step through overloads); code actions that create, rename
   or delete files leave that part out; rename doesn't check the name first (`prepareRename`), and doesn't
   rename files, no range formatting (`=` and `gq` stay ferra's own), and no list of diagnostics in a

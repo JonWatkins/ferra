@@ -75,6 +75,9 @@ pub struct Picker {
     keep_label_start: bool,
     /// The background job still adding items (the file listing), if any.
     loading: Option<u64>,
+    /// The items come from a language server searching for the query (the
+    /// project's symbols): asked again as it changes.
+    server_search: bool,
 }
 
 impl Picker {
@@ -87,6 +90,7 @@ impl Picker {
             selected: 0,
             keep_label_start: false,
             loading: None,
+            server_search: false,
         };
         picker.refilter();
         picker
@@ -97,6 +101,25 @@ impl Picker {
     pub fn loading_from(mut self, job: u64) -> Self {
         self.loading = Some(job);
         self
+    }
+
+    /// Marks the picker as searched by a language server (see
+    /// [`Picker::replace_items`]).
+    pub fn searched_by_server(mut self) -> Self {
+        self.server_search = true;
+        self
+    }
+
+    pub fn is_searched_by_server(&self) -> bool {
+        self.server_search
+    }
+
+    /// Replaces the items (a server's answer to the query), keeping the
+    /// query; the first match is highlighted.
+    pub fn replace_items(&mut self, items: Vec<PickerItem>) {
+        self.items = items;
+        self.selected = 0;
+        self.refilter();
     }
 
     /// The background job still adding items, if any.

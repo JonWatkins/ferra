@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::client::{Client, ResponseError};
 use super::convert::{self, Encoding};
@@ -270,6 +270,8 @@ pub(super) fn answer(
     let stash = stashes.completions;
     let current = match request.feature {
         LspFeature::Completion => editor.still_completing(&request),
+        // Shown if the picker's still open with that query (checked there).
+        LspFeature::WorkspaceSymbols => true,
         // Shown wherever typing has got to since, while it's in the buffer.
         LspFeature::SignatureHelp => editor.document.id() == request.document,
         // The item was taken: its import goes in if it's the same buffer.
@@ -331,6 +333,14 @@ pub(super) fn answer(
         editor.make_other_edits(edits);
         return;
     }
+    if matches!(
+        request.feature,
+        LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols
+    ) {
+        let symbols = symbols(editor, request.document, &result, client.encoding);
+        editor.show_symbols(request.feature, request.text.as_deref(), symbols);
+        return;
+    }
     if request.feature == LspFeature::SignatureHelp {
         let help = signature_help(&result);
         editor.show_signature_help(&request, help);
@@ -385,6 +395,111 @@ pub(super) fn answer(
     let locations = locations(editor, &result, client.encoding);
     if let Err(error) = editor.show_locations(request.feature, locations) {
         editor.set_message(Message::info(error));
+    }
+}
+
+/// The symbols in a `documentSymbol` answer (`DocumentSymbol`s, nested, in
+/// `document`; or flat `SymbolInformation`s) or a `workspace/symbol` one:
+/// each one's name, what it is (`method in Circle`), and where it is, in
+/// order.
+fn symbols(
+    editor: &Editor,
+    document: crate::editor::DocumentId,
+    result: &Value,
+    encoding: Encoding,
+) -> Vec<(String, String, Location)> {
+    // Nested `DocumentSymbol`s, in this file: their `selectionRange` is the
+    // name; what they're in is their parent.
+    fn nested(symbols: &[Value], parent: Option<&str>, out: &mut Vec<(String, String, Value)>) {
+        for symbol in symbols {
+            let name = symbol["name"].as_str().unwrap_or("").to_string();
+            let kind = symbol_kind(symbol["kind"].as_u64());
+            let detail = match parent {
+                Some(parent) => format!("{kind} in {parent}"),
+                None => kind.to_string(),
+            };
+            out.push((name.clone(), detail, symbol["selectionRange"].clone()));
+            if let Some(children) = symbol["children"].as_array() {
+                nested(children, Some(&name), out);
+            }
+        }
+    }
+    let list = result.as_array().map_or(&[][..], Vec::as_slice);
+    let mut named: Vec<(String, String, Value)> = Vec::new();
+    let places: Vec<Value> = if list
+        .first()
+        .is_some_and(|s| s.get("selectionRange").is_some())
+    {
+        nested(list, None, &mut named);
+        let path = editor
+            .document_by_id(document)
+            .and_then(|d| d.path())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        let uri = convert::path_to_uri(&path);
+        named
+            .iter()
+            .map(|(_, _, range)| json!({ "uri": uri, "range": range }))
+            .collect()
+    } else {
+        // `SymbolInformation`s or `WorkspaceSymbol`s: a location each, in
+        // any file, and the name of what they're in (a `WorkspaceSymbol`'s
+        // location can lack a range: its file's start, then).
+        list.iter()
+            .map(|symbol| {
+                let name = symbol["name"].as_str().unwrap_or("").to_string();
+                let kind = symbol_kind(symbol["kind"].as_u64());
+                let detail = match symbol["containerName"].as_str().filter(|c| !c.is_empty()) {
+                    Some(container) => format!("{kind} in {container}"),
+                    None => kind.to_string(),
+                };
+                named.push((name, detail, Value::Null));
+                let location = &symbol["location"];
+                let range = location
+                    .get("range")
+                    .cloned()
+                    .unwrap_or_else(|| json!({ "start": { "line": 0, "character": 0 } }));
+                json!({ "uri": location["uri"], "range": range })
+            })
+            .collect()
+    };
+    named
+        .into_iter()
+        .zip(resolve_places(editor, &places, encoding))
+        .filter_map(|((name, detail, _), place)| Some((name, detail, place?)))
+        .collect()
+}
+
+/// A short name for an LSP `SymbolKind`.
+fn symbol_kind(kind: Option<u64>) -> &'static str {
+    match kind {
+        Some(1) => "file",
+        Some(2) => "module",
+        Some(3) => "namespace",
+        Some(4) => "package",
+        Some(5) => "class",
+        Some(6) => "method",
+        Some(7) => "property",
+        Some(8) => "field",
+        Some(9) => "constructor",
+        Some(10) => "enum",
+        Some(11) => "interface",
+        Some(12) => "function",
+        Some(13) => "variable",
+        Some(14) => "constant",
+        Some(15) => "string",
+        Some(16) => "number",
+        Some(17) => "boolean",
+        Some(18) => "array",
+        Some(19) => "object",
+        Some(20) => "key",
+        Some(21) => "null",
+        Some(22) => "enum member",
+        Some(23) => "struct",
+        Some(24) => "event",
+        Some(25) => "operator",
+        Some(26) => "type parameter",
+        _ => "symbol",
     }
 }
 
@@ -860,44 +975,59 @@ fn locations(editor: &Editor, result: &Value, encoding: Encoding) -> Vec<Locatio
         Value::Object(_) => vec![result],
         _ => Vec::new(),
     };
-    // Files not open in the editor, read once each.
-    let mut files: HashMap<PathBuf, Option<String>> = HashMap::new();
+    // A `LocationLink` points at the name in `targetSelectionRange`.
+    let places: Vec<Value> = items
+        .iter()
+        .map(|item| match item.get("targetUri") {
+            Some(uri) => json!({ "uri": uri, "range": item["targetSelectionRange"] }),
+            None => (*item).clone(),
+        })
+        .collect();
     let mut found: Vec<Location> = Vec::new();
-    for item in items {
-        // A `LocationLink` points at the name in `targetSelectionRange`.
-        let (uri, start) = match item.get("targetUri") {
-            Some(uri) => (uri, &item["targetSelectionRange"]["start"]),
-            None => (&item["uri"], &item["range"]["start"]),
-        };
-        let Some(path) = uri.as_str().and_then(convert::uri_to_path) else {
-            continue;
-        };
-        let row = start["line"].as_u64().unwrap_or(0) as usize;
-        let character = start["character"].as_u64().unwrap_or(0) as usize;
-        let line = match editor.find_open_path(&path) {
-            Some(id) => editor.document_by_id(id).and_then(|d| {
-                let buffer = d.buffer();
-                (row < buffer.line_count()).then(|| buffer.line(row).to_string())
-            }),
-            None => files
-                .entry(path.clone())
-                .or_insert_with(|| std::fs::read_to_string(&path).ok())
-                .as_deref()
-                .and_then(|text| text.lines().nth(row))
-                .map(str::to_string),
-        }
-        .unwrap_or_default();
-        let col = convert::col_from_lsp(&line, character, encoding);
-        let location = Location {
-            path,
-            position: Position::new(row, col),
-            line: line.trim_end_matches(['\n', '\r']).to_string(),
-        };
+    for location in resolve_places(editor, &places, encoding)
+        .into_iter()
+        .flatten()
+    {
         if !found.contains(&location) {
             found.push(location);
         }
     }
     found
+}
+
+/// Each `Location` (`{uri, range}`) as a path and a char position, with the
+/// text of its line: from the buffer if the file is open, else read from
+/// disk (once per file). `None` for one that isn't a file.
+fn resolve_places(editor: &Editor, places: &[Value], encoding: Encoding) -> Vec<Option<Location>> {
+    let mut files: HashMap<PathBuf, Option<String>> = HashMap::new();
+    places
+        .iter()
+        .map(|place| {
+            let path = place["uri"].as_str().and_then(convert::uri_to_path)?;
+            let start = &place["range"]["start"];
+            let row = start["line"].as_u64().unwrap_or(0) as usize;
+            let character = start["character"].as_u64().unwrap_or(0) as usize;
+            let line = match editor.find_open_path(&path) {
+                Some(id) => editor.document_by_id(id).and_then(|d| {
+                    let buffer = d.buffer();
+                    (row < buffer.line_count()).then(|| buffer.line(row).to_string())
+                }),
+                None => files
+                    .entry(path.clone())
+                    .or_insert_with(|| std::fs::read_to_string(&path).ok())
+                    .as_deref()
+                    .and_then(|text| text.lines().nth(row))
+                    .map(str::to_string),
+            }
+            .unwrap_or_default();
+            let col = convert::col_from_lsp(&line, character, encoding);
+            Some(Location {
+                path,
+                position: Position::new(row, col),
+                line: line.trim_end_matches(['\n', '\r']).to_string(),
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
