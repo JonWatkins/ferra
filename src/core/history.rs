@@ -144,10 +144,18 @@ impl History {
     /// Undoes the last transaction. Returns where the cursor should go, or
     /// `None` if there was nothing to undo.
     pub fn undo(&mut self, buffer: &mut Buffer) -> Option<Position> {
+        self.undo_noting(buffer, &mut Vec::new())
+    }
+
+    /// Like [`undo`](Self::undo), adding the changes made to `made`, in
+    /// order, so what follows the text (diagnostics) can follow them too.
+    pub fn undo_noting(&mut self, buffer: &mut Buffer, made: &mut Vec<Change>) -> Option<Position> {
         self.commit();
         let transaction = self.undo.pop()?;
         for change in transaction.changes.iter().rev() {
-            change.inverted().apply(buffer);
+            let inverted = change.inverted();
+            inverted.apply(buffer);
+            made.push(inverted);
         }
         let cursor = transaction.changes.first().map(Change::position);
         self.redo.push(transaction);
@@ -156,10 +164,16 @@ impl History {
 
     /// Redoes the last undone transaction.
     pub fn redo(&mut self, buffer: &mut Buffer) -> Option<Position> {
+        self.redo_noting(buffer, &mut Vec::new())
+    }
+
+    /// Like [`redo`](Self::redo), adding the changes made to `made`.
+    pub fn redo_noting(&mut self, buffer: &mut Buffer, made: &mut Vec<Change>) -> Option<Position> {
         self.commit();
         let transaction = self.redo.pop()?;
         for change in &transaction.changes {
             change.apply(buffer);
+            made.push(change.clone());
         }
         let cursor = transaction.changes.first().map(Change::position);
         self.undo.push(transaction);

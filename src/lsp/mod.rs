@@ -288,6 +288,15 @@ impl Lsp {
                 }) else {
                     return;
                 };
+                // A list for text since changed would put back places the
+                // edits moved diagnostics from; a newer one is coming.
+                let sent = client.document_version(document);
+                let for_version = params["version"].as_i64();
+                if let (Some(sent), Some(for_version)) = (sent, for_version)
+                    && for_version < sent
+                {
+                    return;
+                }
                 let encoding = client.encoding;
                 let Some(doc) = editor.document_by_id(document) else {
                     return;

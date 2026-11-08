@@ -191,8 +191,6 @@ pub struct Editor {
     /// The buffer and its edit count before the key being handled, to tell
     /// whether it changed the text (for completing as you type).
     text_before_key: (DocumentId, u64, u64),
-    /// Language servers' diagnostics, by buffer.
-    diagnostics: HashMap<DocumentId, Vec<diagnostics::Diagnostic>>,
     /// What each Lua `editor.status` function last returned, by name, for
     /// `plugin:<name>` status line elements (the app refreshes them before
     /// drawing).

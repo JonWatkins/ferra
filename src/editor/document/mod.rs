@@ -63,6 +63,9 @@ pub struct Document {
     /// Rows being followed through edits (`:g` visits them); `None` once
     /// a row's line is deleted.
     tracked_rows: Option<Vec<Option<usize>>>,
+    /// A language server's diagnostics, moved along as the text is edited
+    /// until it sends new ones.
+    diagnostics: Vec<crate::editor::diagnostics::Diagnostic>,
     /// How the file was indented when read (see [`crate::core::indent`]).
     detected_indent: Option<IndentUnit>,
     /// The indentation chosen with `:indent`, over any detected one.
@@ -240,6 +243,7 @@ impl Document {
         let end = self.buffer.insert_text(at, text);
         self.marks.after_insert(at, end);
         self.track_insert(at, end);
+        self.diagnostics_after_insert(at, end);
         self.record_change(at);
         self.edit_count += 1;
         self.history.record(Change::Insert {
@@ -258,6 +262,7 @@ impl Document {
         let text = self.buffer.delete_range(start, end);
         self.marks.after_delete(start, end);
         self.track_delete(start, end);
+        self.diagnostics_after_delete(start, end);
         self.record_change(start);
         self.edit_count += 1;
         self.history.record(Change::Delete {
@@ -333,6 +338,79 @@ impl Document {
         }
     }
 
+    // --- Diagnostics -------------------------------------------------------
+
+    /// A language server's diagnostics for the text, in order.
+    pub fn diagnostics(&self) -> &[crate::editor::diagnostics::Diagnostic] {
+        &self.diagnostics
+    }
+
+    /// Replaces the diagnostics (sorted here).
+    pub fn set_diagnostics(
+        &mut self,
+        mut diagnostics: Vec<crate::editor::diagnostics::Diagnostic>,
+    ) {
+        diagnostics.sort_by_key(|d| (d.start, d.severity));
+        self.diagnostics = diagnostics;
+    }
+
+    /// Text went in at `at`, ending at `end`: what's after it moves along.
+    /// A diagnostic's start moves with text put in right at it (it's still
+    /// on the same word), its end doesn't (typing after a word doesn't
+    /// stretch its underline).
+    fn diagnostics_after_insert(&mut self, at: Position, end: Position) {
+        let shift = |p: Position| {
+            if p.row == at.row {
+                Position::new(end.row, end.col + (p.col - at.col))
+            } else {
+                Position::new(p.row + (end.row - at.row), p.col)
+            }
+        };
+        for d in &mut self.diagnostics {
+            if d.start >= at {
+                d.start = shift(d.start);
+            }
+            if d.end > at {
+                d.end = shift(d.end);
+            }
+            d.end = d.end.max(d.start);
+        }
+    }
+
+    /// `start..end` was deleted: what's after it moves back, and what was
+    /// in it goes to `start`.
+    fn diagnostics_after_delete(&mut self, start: Position, end: Position) {
+        let shift = |p: Position| {
+            if p <= start {
+                p
+            } else if p < end {
+                start
+            } else if p.row == end.row {
+                Position::new(start.row, start.col + (p.col - end.col))
+            } else {
+                Position::new(p.row - (end.row - start.row), p.col)
+            }
+        };
+        for d in &mut self.diagnostics {
+            d.start = shift(d.start);
+            d.end = shift(d.end);
+        }
+    }
+
+    /// Follows changes made other than by `insert` and `delete` (undo).
+    fn diagnostics_after_changes(&mut self, changes: &[Change]) {
+        for change in changes {
+            match change {
+                Change::Insert { at, text } => {
+                    self.diagnostics_after_insert(*at, crate::core::end_of(*at, text));
+                }
+                Change::Delete { at, text } => {
+                    self.diagnostics_after_delete(*at, crate::core::end_of(*at, text));
+                }
+            }
+        }
+    }
+
     // --- Tracked rows -----------------------------------------------------
 
     /// Starts following `rows` through edits: they shift as lines are
@@ -398,7 +476,9 @@ impl Document {
 
     /// Undoes one step. Returns `false` if there was nothing to undo.
     pub fn undo(&mut self) -> bool {
-        let undone = self.history.undo(&mut self.buffer);
+        let mut made = Vec::new();
+        let undone = self.history.undo_noting(&mut self.buffer, &mut made);
+        self.diagnostics_after_changes(&made);
         if let Some(pos) = undone {
             self.set_cursor(pos);
         }
@@ -407,7 +487,9 @@ impl Document {
 
     /// Redoes one step. Returns `false` if there was nothing to redo.
     pub fn redo(&mut self) -> bool {
-        let redone = self.history.redo(&mut self.buffer);
+        let mut made = Vec::new();
+        let redone = self.history.redo_noting(&mut self.buffer, &mut made);
+        self.diagnostics_after_changes(&made);
         if let Some(pos) = redone {
             self.set_cursor(pos);
         }
@@ -421,6 +503,72 @@ mod tests {
 
     fn pos(row: usize, col: usize) -> Position {
         Position::new(row, col)
+    }
+
+    fn diagnostic(
+        start: (usize, usize),
+        end: (usize, usize),
+    ) -> crate::editor::diagnostics::Diagnostic {
+        crate::editor::diagnostics::Diagnostic {
+            start: pos(start.0, start.1),
+            end: pos(end.0, end.1),
+            severity: crate::editor::diagnostics::Severity::Error,
+            message: "x".into(),
+            source: None,
+        }
+    }
+
+    fn spans(doc: &Document) -> Vec<((usize, usize), (usize, usize))> {
+        doc.diagnostics()
+            .iter()
+            .map(|d| ((d.start.row, d.start.col), (d.end.row, d.end.col)))
+            .collect()
+    }
+
+    #[test]
+    fn diagnostics_follow_their_text_through_edits() {
+        // `bad` on the second line.
+        let mut doc = Document::with_text("one\nlet bad = 1;\nthree");
+        doc.set_diagnostics(vec![diagnostic((1, 4), (1, 7))]);
+        doc.insert(pos(1, 0), "    ");
+        assert_eq!(spans(&doc), [((1, 8), (1, 11))], "along the line");
+        doc.insert(pos(0, 0), "zero\n");
+        assert_eq!(spans(&doc), [((2, 8), (2, 11))], "down a line");
+        doc.insert(pos(2, 11), "ly");
+        assert_eq!(
+            spans(&doc),
+            [((2, 8), (2, 11))],
+            "typing after it doesn't stretch it"
+        );
+        doc.insert(pos(2, 8), "very");
+        assert_eq!(
+            spans(&doc),
+            [((2, 12), (2, 15))],
+            "typing right before it moves it"
+        );
+        doc.delete(pos(0, 0), pos(2, 4));
+        assert_eq!(spans(&doc), [((0, 8), (0, 11))], "lines above deleted");
+        doc.delete(pos(0, 9), pos(0, 15));
+        assert_eq!(
+            spans(&doc),
+            [((0, 8), (0, 9))],
+            "partly deleted: what's left"
+        );
+        doc.delete(pos(0, 0), pos(0, 12));
+        assert_eq!(spans(&doc), [((0, 0), (0, 0))], "all deleted: where it was");
+    }
+
+    #[test]
+    fn diagnostics_follow_undo_and_redo() {
+        let mut doc = Document::with_text("a\nbad");
+        doc.set_diagnostics(vec![diagnostic((1, 0), (1, 3))]);
+        doc.insert(pos(0, 0), "x\ny\n");
+        doc.commit();
+        assert_eq!(spans(&doc), [((3, 0), (3, 3))]);
+        doc.undo();
+        assert_eq!(spans(&doc), [((1, 0), (1, 3))]);
+        doc.redo();
+        assert_eq!(spans(&doc), [((3, 0), (3, 3))]);
     }
 
     #[test]

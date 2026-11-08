@@ -522,6 +522,11 @@ impl Client {
         }
     }
 
+    /// The version of `id` the server last had sent.
+    pub fn document_version(&self, id: DocumentId) -> Option<i64> {
+        self.documents.get(&id).map(|s| s.version)
+    }
+
     /// Whether the server has `id` open.
     pub fn has_document(&self, id: DocumentId) -> bool {
         self.documents.contains_key(&id)

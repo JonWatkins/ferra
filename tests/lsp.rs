@@ -412,10 +412,20 @@ fn publish(output: &mut io::PipeWriter, uri: &Value, seen: &Mutex<Seen>, utf8: b
             }));
         }
     }
+    let mut params = json!({"uri": uri, "diagnostics": diagnostics});
+    // A file saying `stale` gets a list said to be for its first version
+    // (as a slow server's can be), with a diagnostic at its start.
+    if text.contains("stale") {
+        params["version"] = json!(1);
+        params["diagnostics"] = json!([{
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}},
+            "severity": 1, "message": "old", "source": "fake",
+        }]);
+    }
     write_message(
         output,
         &json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-                "params": {"uri": uri, "diagnostics": diagnostics}}),
+                "params": params}),
     )
     .unwrap();
 }
@@ -1138,5 +1148,40 @@ fn a_server_without_code_actions_says_so() {
     assert_eq!(
         app.editor().message().unwrap().text,
         "rust-analyzer doesn't offer code actions"
+    );
+}
+
+#[test]
+fn diagnostics_move_with_edits_before_the_server_answers() {
+    let (_dir, mut app, _) = with_server("let bad = 1;\nfine\n", true);
+    until(&mut app, |a| diagnostic_starts(a) == [(0, 4)]);
+    // A line added above, and the line indented: drawn where the text went
+    // straight away, not where it was, before the server's new list.
+    keys(&mut app, "Onew line<Esc>j>>");
+    assert_eq!(diagnostic_starts(&app), [(1, 8)]);
+    let rows = render(&mut app, 60, 6).rows;
+    assert!(!rows[0].contains('●'), "{rows:?}");
+    assert!(rows[1].contains("let bad = 1;  ● bad word"), "{rows:?}");
+    keys(&mut app, "u");
+    assert_eq!(diagnostic_starts(&app), [(1, 4)], "undo moves it back");
+    // And the server's list, when it comes, agrees.
+    until(&mut app, |a| diagnostic_starts(a) == [(1, 4)]);
+}
+
+#[test]
+fn a_list_for_text_since_changed_is_left_out() {
+    let (_dir, mut app, seen) = with_server("x bad\n", true);
+    until(&mut app, |a| diagnostic_starts(a) == [(0, 2)]);
+    keys(&mut app, "Astale<Esc>");
+    until(&mut app, |a| seen.lock().unwrap().text == text(a));
+    // Let the server's (out of date) list through.
+    for _ in 0..20 {
+        app.update_lsp();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        diagnostic_starts(&app),
+        [(0, 2)],
+        "not the old list's (0, 0)"
     );
 }

@@ -58,19 +58,17 @@ impl Diagnostic {
 }
 
 impl Editor {
-    /// Replaces document `id`'s diagnostics.
-    pub fn set_diagnostics(&mut self, id: DocumentId, mut diagnostics: Vec<Diagnostic>) {
-        diagnostics.sort_by_key(|d| (d.start, d.severity));
-        if diagnostics.is_empty() {
-            self.diagnostics.remove(&id);
-        } else {
-            self.diagnostics.insert(id, diagnostics);
+    /// Replaces document `id`'s diagnostics. They're kept on the
+    /// document, which moves them along as its text is edited.
+    pub fn set_diagnostics(&mut self, id: DocumentId, diagnostics: Vec<Diagnostic>) {
+        if let Some(document) = self.document_by_id_mut(id) {
+            document.set_diagnostics(diagnostics);
         }
     }
 
     /// Document `id`'s diagnostics, in order.
     pub fn diagnostics(&self, id: DocumentId) -> &[Diagnostic] {
-        self.diagnostics.get(&id).map_or(&[], Vec::as_slice)
+        self.document_by_id(id).map_or(&[], |d| d.diagnostics())
     }
 
     /// `]d` / `[d`: moves to the `count`th next (or previous) diagnostic in

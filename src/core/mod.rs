@@ -23,7 +23,7 @@ pub mod wrap;
 
 pub use block::{Block, BlockRow};
 pub use buffer::{Buffer, TextEdit};
-pub use history::{Change, History, Revision};
+pub use history::{Change, History, Revision, end_of};
 pub use indent::IndentUnit;
 pub use position::Position;
 pub use range::{MotionKind, Range};

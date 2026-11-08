@@ -1174,8 +1174,7 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 Started: see [Language servers](#language-servers) for the client,
 diagnostics, hover and going to definitions and references, and [Word
 completion](#word-completion) for completion. Still to come,
-in order: signature help, a picker list of diagnostics, and moving
-diagnostics with edits until the server's next list.
+in order: signature help, and a picker list of diagnostics.
 
 ### Agent harness
 
@@ -1265,15 +1264,24 @@ reported once.
   `shutdown` then `exit`, waiting up to 300 ms before the processes are
   killed.
 
-Diagnostics live on the `Editor` by document (`editor/diagnostics.rs`),
+Diagnostics live on their `Document` (set through `editor/diagnostics.rs`),
 sorted, with positions converted to chars. `EditorView` draws them: an
 underline in `diagnostic.<severity>` (with the underline colour), the line
 number in `ui.diagnostic.<severity>` and the message after the line's
 text, both on the line it starts on (one over a whole file, like
 rust-analyzer's "not included in the module tree", would otherwise repeat
-on every line); empty lines inside a range aren't underlined. They're replaced by the server's next list rather than moved
-with edits, so between an edit and the server's answer they can sit a
-little off.
+on every line); empty lines inside a range aren't underlined.
+
+Between an edit and the server's next list, diagnostics move with the
+text, as marks do: each `Document` keeps its own (`Editor::diagnostics`
+and `set_diagnostics` reach them by id), and its `insert` and `delete`
+shift those after the change (a start moves with text put in right at it,
+an end doesn't, so typing after a word doesn't stretch its underline;
+text deleted from under one shrinks it). Undo and redo report the changes
+they make (`History::undo_noting`), so diagnostics follow them too. A list
+the server says is for an older version than ferra last sent
+(`publishDiagnostics`' `version`) is left out: it would put back places
+the edits moved diagnostics from, and a newer one follows.
 
 Requests from the editor (`K`, `gd`, `gr`...) keep the layers apart: the
 commands only queue an `LspRequest` (`editor/lsp.rs`: the feature, the
@@ -1413,8 +1421,10 @@ not. The answer is dropped unless the editor is still where it was asked
   `window/logMessage` are ignored (so `:lsp` says "running" while
   rust-analyzer is still indexing), as are dynamic registrations and
   `workspace/applyEdit`. A server that stops isn't restarted (there's no
-  `:lsp-restart` yet), and changing its config needs a restart of ferra. Diagnostics don't move with edits until
-  the server sends new ones.
+  `:lsp-restart` yet), and changing its config needs a restart of ferra.
+  Diagnostics moved with edits can be a little off until the server's
+  next list where an edit replaced their text; marks still don't follow
+  undo.
 
 - Without the kitty keyboard protocol (tmux, Terminal.app, older xterms),
   Alt keys that *are* bound can't be told apart from a fast Esc then that
