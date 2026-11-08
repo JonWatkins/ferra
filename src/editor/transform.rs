@@ -118,6 +118,37 @@ impl Editor {
         doc.set_cursor(Position::new(first, col));
     }
 
+    /// `<S-Tab>` or `<C-d>` (`<C-t>` with `indent`) in insert mode: shifts
+    /// the cursor's line one level, the cursor staying on the same text
+    /// (or at the indentation's end, if it was in what was taken away).
+    pub fn shift_line_keeping_cursor(&mut self, indent: bool) {
+        let cursor = self.document.cursor();
+        let indent_len = |editor: &Editor| {
+            editor
+                .document
+                .buffer()
+                .line(cursor.row)
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .count()
+        };
+        let before = indent_len(self);
+        self.shift_lines(
+            Range::Lines {
+                first: cursor.row,
+                last: cursor.row,
+            },
+            indent,
+        );
+        let after = indent_len(self);
+        let col = if cursor.col >= before {
+            cursor.col - before + after
+        } else {
+            cursor.col.min(after)
+        };
+        self.document.set_cursor(Position::new(cursor.row, col));
+    }
+
     /// `gq` (`gw` with `keep_cursor`): reflows lines `first` to `last` to
     /// `text-width` (see [`format_lines`](crate::core::format::format_lines)),
     /// keeping indentation and the language's line-comment marker. The

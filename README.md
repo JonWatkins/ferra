@@ -51,6 +51,8 @@ type, open a file or split the window.
 | Normal  | `r` + char | Replace characters (`3rx`) |
 | Normal  | `R` | Replace mode: type over the text (`<BS>` puts it back; `3Rab<Esc>` types it three times) |
 | Normal  | `>` `<` + motion, `>>` `<<` | Indent / outdent lines (`>ip`, `3>>`; visual `>` `<`) |
+| Normal  | `<S-Tab>` | Outdent the line, like `<<` (`3<S-Tab>`) |
+| Insert  | `<S-Tab>` `<C-d>`, `<C-t>` | Outdent / indent the line by one level as you type, the cursor staying on its text (`<Tab>` puts in a level at the cursor) |
 | Normal  | `=` + motion, `==` | Re-indent lines by the language's rules (`gg=G` for the whole file; visual `=`) |
 | Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |
 | Normal  | `gcc`, `gc` + motion (`gcap`, `gcj`), visual `gc` | Toggle comments on those lines, using the file's language |
@@ -89,7 +91,7 @@ type, open a file or split the window.
 | Visual  | `d` `x` `c` `s` `y` | Delete / change / yank the selection |
 | Visual  | `D` `X` `C` `S` `Y` | Same, on whole lines |
 | Visual  | `p` `P` | Replace the selection (`p` keeps the replaced text, so it can swap) |
-| Visual  | `>` `<` | Shift the selected lines (`3>` three times); `.` repeats on as many lines |
+| Visual  | `>` `<`, `<Tab>` `<S-Tab>` | Shift the selected lines (`3>` three times); `.` repeats on as many lines |
 | Visual  | `o` | Move to the other end of the selection (`O`: other side of the row, in a block) |
 | Visual  | `v` `V` `<C-v>` `<Esc>` | Switch selection kind / leave |
 | Block   | `d` `y` `c` `u` `U` `~` | Act on the rectangle; `y` then `p` pastes it back as a column |

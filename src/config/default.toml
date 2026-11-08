@@ -334,6 +334,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 #
 # Motions are shared by [keys.normal] (move the cursor) and [keys.operator]
 # (the range for d/c/y). A register can be selected with "x before a command.
+
 [keys.normal]
 "<Esc>" = "clear_search_highlight"
 "<C-v>" = "visual_block_mode"
@@ -499,6 +500,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "[b" = "buffer_prev"
 "]d" = "goto_next_diagnostic"
 "[d" = "goto_prev_diagnostic"
+"<S-Tab>" = "outdent_line"
 # Language servers: hover, and going to what the cursor's on.
 "K" = "hover"
 "gd" = "goto_definition"
@@ -725,10 +727,13 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "a<lt>" = "around_angle"
 "i>" = "inner_angle"
 "a>" = "around_angle"
+"<Space>a" = "code_actions"
+"<Tab>" = "operator_indent"
+"<S-Tab>" = "operator_outdent"
 
 # The picker popup (<Space>b buffers, <Space>f files, <Space>p commands,
 # <Space>r registers). Typing filters.
-"<Space>a" = "code_actions"
+
 [keys.picker]
 "<Esc>" = "picker_cancel"
 "<C-c>" = "picker_cancel"
@@ -766,6 +771,9 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Right>" = "move_right"
 "<Home>" = "goto_line_start"
 "<End>" = "goto_line_end"
+"<S-Tab>" = "insert_outdent"
+"<C-d>" = "insert_outdent"
+"<C-t>" = "insert_indent"
 
 [keys.command]
 "<Esc>" = "command_line_cancel"

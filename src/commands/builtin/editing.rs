@@ -26,6 +26,33 @@ pub fn register(r: &mut CommandRegistry) {
         Ok(())
     });
     r.register(
+        "insert_outdent",
+        "Take one level of indentation off the line, keeping the cursor on its text (<S-Tab>, <C-d> in insert mode)",
+        |cx| {
+            cx.editor.shift_line_keeping_cursor(false);
+            Ok(())
+        },
+    );
+    r.register(
+        "insert_indent",
+        "Indent the line one level, keeping the cursor on its text (<C-t> in insert mode)",
+        |cx| {
+            cx.editor.shift_line_keeping_cursor(true);
+            Ok(())
+        },
+    );
+    r.register(
+        "outdent_line",
+        "Take one level of indentation off [count] lines, like << (<S-Tab>)",
+        |cx| {
+            let first = cx.editor.document.cursor().row;
+            let last = (first + cx.count() - 1).min(cx.editor.document.buffer().line_count() - 1);
+            cx.editor
+                .shift_lines(crate::core::Range::Lines { first, last }, false);
+            Ok(())
+        },
+    );
+    r.register(
         "increment",
         "Add [count] to the number under or after the cursor (<C-a>)",
         |cx| cx.editor.increment(cx.count() as i128),
