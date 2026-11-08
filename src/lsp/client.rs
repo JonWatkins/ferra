@@ -508,6 +508,19 @@ impl Client {
                 Some(error) => Answer::Failed(error["message"].as_str().unwrap_or("failed").into()),
                 None => Answer::Done,
             },
+            // Typing on asks again; an answer with a newer one on its way
+            // would only be replaced, so it's not worth reading.
+            Some(Pending::Feature(request))
+                if request.feature == LspFeature::Completion
+                    && self.pending.iter().any(|(later, pending)| {
+                        *later > id
+                            && matches!(pending, Pending::Feature(r)
+                                if r.feature == LspFeature::Completion
+                                    && r.document == request.document)
+                    }) =>
+            {
+                Answer::Done
+            }
             Some(Pending::Feature(request)) => {
                 let result = match message.get("error") {
                     Some(error) => Err(ResponseError {

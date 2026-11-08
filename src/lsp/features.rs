@@ -138,8 +138,11 @@ impl Lsp {
 
     /// Sends the editor's requests, each to the server with its document
     /// open (synced just before, so it has the text the request is about).
-    pub(super) fn send_requests(&mut self, editor: &mut Editor) {
-        for request in editor.take_lsp_requests() {
+    /// Returns whether there were any (which may have set a message).
+    pub(super) fn send_requests(&mut self, editor: &mut Editor) -> bool {
+        let requests = editor.take_lsp_requests();
+        let any = !requests.is_empty();
+        for request in requests {
             let Some(document) = editor.document_by_id(request.document) else {
                 continue;
             };
@@ -230,6 +233,7 @@ impl Lsp {
             let position = convert::to_lsp(document.buffer(), request.position, client.encoding);
             client.request_feature(request, position);
         }
+        any
     }
 }
 
@@ -516,6 +520,19 @@ fn completion_items(
             convert::from_lsp(buffer, &range["end"], encoding),
         )
     };
+    // Items' edits are nearly all on the word's line: it's read once, not
+    // once per item (there can be hundreds).
+    let row = request.word_start.row;
+    let line = buffer.line(row);
+    let start_of = |range: &Value| {
+        let start = &range["start"];
+        if start["line"].as_u64() == Some(row as u64) {
+            let character = start["character"].as_u64().unwrap_or(0) as usize;
+            Position::new(row, convert::col_from_lsp(&line, character, encoding))
+        } else {
+            convert::from_lsp(buffer, start, encoding)
+        }
+    };
     let items = items
         .iter()
         .map(|item| {
@@ -537,7 +554,7 @@ fn completion_items(
                 .or_else(|| edit.get("insert"))
                 .or_else(|| edit.get("replace"));
             let start = edit_range
-                .map(|r| range(r).0)
+                .map(start_of)
                 .filter(|s| s.row == request.word_start.row && *s < request.word_start)
                 .unwrap_or(request.word_start);
             let mut cursor = None;

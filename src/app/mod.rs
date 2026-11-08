@@ -257,8 +257,15 @@ impl App {
         let mut deadline: Option<Instant> = None;
         // When open files are next checked for outside changes.
         let mut next_watch = Instant::now() + WATCH_INTERVAL;
+        // Drawn after input, and otherwise only when something changes (a
+        // server's message, a background job's results): waking to check
+        // for those doesn't redraw.
+        let mut redraw = true;
         while !self.should_quit() {
-            terminal.draw(|frame| self.draw(frame))?;
+            if redraw {
+                terminal.draw(|frame| self.draw(frame))?;
+                redraw = false;
+            }
 
             let wanted = self
                 .editor
@@ -299,18 +306,22 @@ impl App {
                 Some(wait) => event::poll(wait)?,
                 None => true,
             };
-            self.handle_background();
+            redraw |= self.handle_background();
             if !input_ready {
+                redraw |= self.update_lsp();
                 if deadline.is_some_and(|due| Instant::now() >= due) {
                     self.handle_key_timeout();
                     deadline = None;
+                    redraw = true;
                 }
                 if watch.is_some_and(|due| Instant::now() >= due) {
                     self.check_files_while_idle();
                     next_watch = Instant::now() + WATCH_INTERVAL;
+                    redraw = true;
                 }
                 continue;
             }
+            redraw = true;
 
             // Handle every key that's already waiting before drawing again,
             // so a burst of input (fast typing, key repeat, a paste) costs
@@ -504,8 +515,9 @@ impl App {
 
     /// Handles what language servers sent and sends them the latest
     /// changes. Called before each draw; public so tests can drive it.
-    pub fn update_lsp(&mut self) {
-        self.lsp.borrow_mut().update(&mut self.editor);
+    /// Returns whether anything happened that changes what's shown.
+    pub fn update_lsp(&mut self) -> bool {
+        self.lsp.borrow_mut().update(&mut self.editor)
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {

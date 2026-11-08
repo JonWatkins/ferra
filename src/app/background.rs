@@ -108,11 +108,15 @@ impl App {
     }
 
     /// Applies every update that has arrived, without waiting.
-    pub(super) fn handle_background(&mut self) {
+    /// Applies what background jobs sent. Returns whether there was any.
+    pub(super) fn handle_background(&mut self) -> bool {
+        let mut any = false;
         while let Ok(update) = self.background.receiver.try_recv() {
             self.apply_update(update);
+            any = true;
         }
         self.stop_unwanted_listing();
+        any
     }
 
     /// Waits for every running job to finish, applying their updates. For

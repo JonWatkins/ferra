@@ -232,6 +232,16 @@ impl Editor {
         }
         let start = completion.start;
         let typed = buffer.text_range(start, cursor);
+        // What's typed from the word's start, and from each other place
+        // items go in (there are only one or two): taken from the buffer
+        // once, not for each of hundreds of items.
+        let from_word = buffer.text_range(word_start, cursor);
+        let mut from_starts: Vec<(Position, String)> = Vec::new();
+        for item in &server.all {
+            if item.start != word_start && !from_starts.iter().any(|(p, _)| *p == item.start) {
+                from_starts.push((item.start, buffer.text_range(item.start, cursor)));
+            }
+        }
         // Each item is matched against what's typed from where it goes in
         // (`.ap` for one that replaces the `.`). Those starting with it
         // first, then those starting with it in another case, then looser
@@ -244,9 +254,11 @@ impl Editor {
                 // Its filter text may include what's before the word (the
                 // TypeScript server's `.?.append`) or not (clangd's `x` for
                 // `->x`): the better of the two.
-                let from_item = buffer.text_range(item.start, cursor);
-                let from_word = buffer.text_range(word_start, cursor);
-                let tier = [from_item, from_word]
+                let from_item = from_starts
+                    .iter()
+                    .find(|(p, _)| *p == item.start)
+                    .map_or(from_word.as_str(), |(_, text)| text.as_str());
+                let tier = [from_item, from_word.as_str()]
                     .iter()
                     .filter_map(|typed| match_tier(typed, &item.filter))
                     .min()?;
@@ -266,7 +278,11 @@ impl Editor {
             .iter()
             .map(|&i| {
                 let item = &server.all[i];
-                buffer.text_range(start, item.start) + &item.text
+                if item.start == start {
+                    item.text.clone()
+                } else {
+                    buffer.text_range(start, item.start) + &item.text
+                }
             })
             .collect();
         // Just the word as typed: nothing to offer.

@@ -306,7 +306,11 @@ them first, then draws search matches and the selection on top.
 (1.1 ms without macro injections), where re-highlighting the whole file
 took 140 ms; scrolling a line about 0.3 ms. The event loop handles all
 pending keys before redrawing, so fast typing and pastes cost one update
-per frame, not one per key.
+per frame, not one per key. Debug builds compile the dependencies
+optimized (`[profile.dev.package."*"]` in `Cargo.toml`): tree-sitter,
+ratatui and serde_json do most of a frame's work, and unoptimized they
+made typing lag (27 ms of CPU per key with TypeScript's completions,
+against 4 ms).
 
 ## Editing model
 
@@ -948,7 +952,12 @@ to the selected one, with `n/total` in the border when they don't all fit.
   instead of ending: items starting with what's typed first, then
   starting with it in another case, then fuzzy matches, each tier in the
   server's `sortText` order. A list marked `isIncomplete` is asked for
-  again as typing goes on. An answer is used if the editor is still
+  again as typing goes on (rust-analyzer marks all of them so): an
+  answer that arrives while a newer completion request for the buffer
+  is waiting isn't read (`handle_response`), and reading one reads the
+  word's line once rather than per item, as narrowing takes the text
+  typed from the buffer once rather than per item (there can be a
+  thousand: TypeScript's). An answer is used if the editor is still
   completing the same word (`still_completing`: same buffer and row, same
   word start, insert mode), however much more of it was typed, but never
   replaces an item already chosen with `<C-n>`.
@@ -1260,7 +1269,9 @@ reported once.
   `workspace/configuration` with each `section` of the settings (`{}`
   where there's none: the vscode servers ignore `null`),
   `workspace/workspaceFolders` with the root, anything else with `null`.
-  The event loop polls every 30 ms while a server runs. On quit,
+  The event loop checks every 30 ms while a server runs, but only redraws
+  when `update` says something happened (a message handled, a request
+  sent, a server's state changed), or after input. On quit,
   `shutdown` then `exit`, waiting up to 300 ms before the processes are
   killed.
 

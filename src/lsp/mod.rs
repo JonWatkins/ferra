@@ -123,14 +123,22 @@ impl Lsp {
 
     /// Handles what servers sent, then starts servers for newly opened
     /// files and sends the changes made since last time.
-    pub fn update(&mut self, editor: &mut Editor) {
+    /// Returns whether anything happened that could change what's shown
+    /// (a message handled, a request sent, a server's state), so the event
+    /// loop only redraws then.
+    pub fn update(&mut self, editor: &mut Editor) -> bool {
         if !self.enabled || !editor.options.lsp {
-            return;
+            return false;
         }
-        self.receive(editor);
+        let handled = self.receive(editor);
         self.sync(editor);
-        self.send_requests(editor);
-        editor.set_lsp_status(self.status());
+        let asked = self.send_requests(editor);
+        let status = self.status();
+        let changed = handled > 0 || asked || status != editor.lsp_status();
+        if status != editor.lsp_status() {
+            editor.set_lsp_status(status);
+        }
+        changed
     }
 
     /// One line per server, for `:lsp`.
@@ -173,13 +181,17 @@ impl Lsp {
         lines
     }
 
-    fn receive(&mut self, editor: &mut Editor) {
+    /// Handles what servers sent; returns how many messages there were.
+    fn receive(&mut self, editor: &mut Editor) -> usize {
+        let mut handled = 0;
         while let Ok(incoming) = self.receiver.try_recv() {
+            handled += 1;
             match incoming {
                 Incoming::Message(id, message) => self.handle(id, message, editor),
                 Incoming::Closed(id) => self.closed(id, editor),
             }
         }
+        handled
     }
 
     /// Server `id`'s output ended: it's stopped, and its diagnostics go.
