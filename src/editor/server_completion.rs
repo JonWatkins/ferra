@@ -146,6 +146,7 @@ impl Editor {
             word_start: start,
             item: None,
             text: None,
+            end: cursor,
         });
         Ok(())
     }
@@ -324,6 +325,7 @@ impl Editor {
                 word_start: completion.start,
                 item: Some(resolve),
                 text: None,
+                end: self.document.cursor(),
             });
         }
         // A snippet's cursor place: counted from the completion's start

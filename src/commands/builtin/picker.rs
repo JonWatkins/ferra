@@ -151,6 +151,10 @@ pub fn register(r: &mut CommandRegistry) {
                 Ok(())
             }
             Some(PickerAction::OpenFile(path)) => cx.editor.open(&path).map_err(|e| e.to_string()),
+            Some(PickerAction::CodeAction(answer, index)) => {
+                cx.editor.apply_code_action(answer, index);
+                Ok(())
+            }
             Some(PickerAction::GoTo(path, position)) => {
                 cx.editor.goto_location(&crate::editor::lsp::Location {
                     path,

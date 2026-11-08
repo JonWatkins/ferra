@@ -48,6 +48,11 @@ pub struct Lsp {
     /// The last few completion answers' items as the servers sent them, to
     /// send one back to be resolved when it's taken.
     completions: features::Stash,
+    /// The last few code action lists, to make the one chosen.
+    actions: features::Stash,
+    /// Each document's diagnostics as its server sent them, to send back
+    /// with code action requests.
+    raw_diagnostics: HashMap<DocumentId, Vec<Value>>,
     /// The answer to the formatting request being waited for.
     formatted: Option<Result<Value, client::ResponseError>>,
 }
@@ -65,6 +70,8 @@ impl Default for Lsp {
             failed: HashMap::new(),
             enabled: false,
             completions: features::Stash::default(),
+            actions: features::Stash::default(),
+            raw_diagnostics: HashMap::new(),
             formatted: None,
         }
     }
@@ -213,7 +220,11 @@ impl Lsp {
                         self.formatted = Some(result);
                     }
                     Answer::Feature(request, result) => {
-                        features::answer(editor, client, request, result, &mut self.completions);
+                        let stashes = features::Stashes {
+                            completions: &mut self.completions,
+                            actions: &mut self.actions,
+                        };
+                        features::answer(editor, client, request, result, stashes);
                     }
                 }
             }
@@ -235,6 +246,28 @@ impl Lsp {
                         "uri": convert::path_to_uri(&client.root),
                         "name": client.root.display().to_string(),
                     }]),
+                    // A command it ran (a code action's) wants edits made.
+                    "workspace/applyEdit" => {
+                        let params = &message["params"];
+                        match features::apply_workspace_edit(
+                            editor,
+                            &params["edit"],
+                            client.encoding,
+                        ) {
+                            Ok(applied) => {
+                                let label = params["label"]
+                                    .as_str()
+                                    .or(client.command_title.as_deref())
+                                    .unwrap_or("Changed");
+                                editor.set_message(Message::info(format!(
+                                    "{label}: {}",
+                                    applied.describe()
+                                )));
+                                json!({ "applied": true })
+                            }
+                            Err(error) => json!({ "applied": false, "failureReason": error }),
+                        }
+                    }
                     _ => Value::Null,
                 };
                 client.respond(request.clone(), result);
@@ -273,6 +306,11 @@ impl Lsp {
                     })
                     .collect();
                 editor.set_diagnostics(document, diagnostics);
+                let raw = params["diagnostics"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                self.raw_diagnostics.insert(document, raw);
             }
             (Some("window/showMessage"), None) => {
                 let params = &message["params"];

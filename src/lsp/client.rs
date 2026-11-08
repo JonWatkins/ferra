@@ -124,6 +124,8 @@ enum Pending {
     Initialize,
     Shutdown,
     Feature(LspRequest),
+    /// `workspace/executeCommand`: only an error is worth showing.
+    Command,
 }
 
 /// An error a server answered with.
@@ -165,6 +167,10 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
         LspFeature::ResolveCompletion => ("completionItem/resolve", "completionProvider"),
         LspFeature::Format => ("textDocument/formatting", "documentFormattingProvider"),
         LspFeature::Rename => ("textDocument/rename", "renameProvider"),
+        LspFeature::CodeAction | LspFeature::ApplyCodeAction => {
+            ("textDocument/codeAction", "codeActionProvider")
+        }
+        LspFeature::ResolveCodeAction => ("codeAction/resolve", "codeActionProvider"),
     }
 }
 
@@ -186,6 +192,9 @@ pub struct Client {
     settings: Value,
     /// What it said it can do, in its answer to `initialize`.
     capabilities: Value,
+    /// The title of the last command it was asked to run (a code
+    /// action's), for the message when it sends edits back.
+    pub command_title: Option<String>,
 }
 
 impl Client {
@@ -227,6 +236,7 @@ impl Client {
             documents: HashMap::new(),
             settings: serde_json::to_value(&config.settings).unwrap_or_else(|_| json!({})),
             capabilities: Value::Null,
+            command_title: None,
         };
         let root_uri = path_to_uri(root);
         let name = root.file_name().map_or_else(
@@ -253,6 +263,19 @@ impl Client {
                         "implementation": { "linkSupport": true },
                         "references": {},
                         "rename": { "prepareSupport": false },
+                        "codeAction": {
+                            "codeActionLiteralSupport": {
+                                "codeActionKind": { "valueSet": [
+                                    "", "quickfix", "refactor", "refactor.extract",
+                                    "refactor.inline", "refactor.rewrite", "source",
+                                    "source.organizeImports", "source.fixAll",
+                                ]},
+                            },
+                            "isPreferredSupport": true,
+                            "disabledSupport": true,
+                            "dataSupport": true,
+                            "resolveSupport": { "properties": ["edit", "command"] },
+                        },
                         // Snippets go in as their text, with the cursor at
                         // the first tab stop (the CSS and HTML servers
                         // complete nothing without them).
@@ -277,6 +300,9 @@ impl Client {
                         // Edits by file, with the version they're for; no
                         // creating, renaming or deleting files.
                         "workspaceEdit": { "documentChanges": true },
+                        // Servers' commands can ask ferra to make edits.
+                        "applyEdit": true,
+                        "executeCommand": { "dynamicRegistration": false },
                     },
                     "window": { "workDoneProgress": false },
                 },
@@ -353,6 +379,47 @@ impl Client {
     /// Whether the server fills in completion items' details on asking.
     pub fn resolves_completions(&self) -> bool {
         self.capabilities["completionProvider"]["resolveProvider"].as_bool() == Some(true)
+    }
+
+    /// Asks for the code actions for `request`'s range (`start`..`end` as
+    /// LSP positions), with the diagnostics there they might fix.
+    pub fn request_code_actions(
+        &mut self,
+        request: LspRequest,
+        start: Value,
+        end: Value,
+        diagnostics: Vec<Value>,
+    ) {
+        let Some(synced) = self.documents.get(&request.document) else {
+            return;
+        };
+        let params = json!({
+            "textDocument": { "uri": synced.uri },
+            "range": { "start": start, "end": end },
+            "context": { "diagnostics": diagnostics, "triggerKind": 1 },
+        });
+        self.request("textDocument/codeAction", params, Pending::Feature(request));
+    }
+
+    /// Whether the server fills in code actions' edits on asking.
+    pub fn resolves_code_actions(&self) -> bool {
+        self.capabilities["codeActionProvider"]["resolveProvider"].as_bool() == Some(true)
+    }
+
+    /// Asks for the rest of code action `action` (as the server sent it).
+    pub fn resolve_code_action(&mut self, request: LspRequest, action: Value) {
+        self.request("codeAction/resolve", action, Pending::Feature(request));
+    }
+
+    /// Has the server run `command` (a `Command`: its name and arguments),
+    /// for the action titled `title`.
+    pub fn execute_command(&mut self, command: &Value, title: &str) {
+        self.command_title = Some(title.to_string());
+        let params = json!({
+            "command": command["command"],
+            "arguments": command.get("arguments").cloned().unwrap_or(json!([])),
+        });
+        self.request("workspace/executeCommand", params, Pending::Command);
     }
 
     /// Asks for the rest of completion `item` (as the server sent it).
@@ -437,6 +504,10 @@ impl Client {
                 self.notify("exit", Value::Null);
                 Answer::Done
             }
+            Some(Pending::Command) => match message.get("error") {
+                Some(error) => Answer::Failed(error["message"].as_str().unwrap_or("failed").into()),
+                None => Answer::Done,
+            },
             Some(Pending::Feature(request)) => {
                 let result = match message.get("error") {
                     Some(error) => Err(ResponseError {

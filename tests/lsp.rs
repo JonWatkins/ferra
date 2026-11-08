@@ -30,6 +30,10 @@ struct Seen {
     configuration: Value,
     /// The options a formatting request came with.
     format_options: Value,
+    /// The range the last code action request was for, and ferra's
+    /// answer to the server's `workspace/applyEdit`.
+    action_range: Value,
+    applied: Value,
 }
 
 struct FakeServer {
@@ -69,6 +73,10 @@ fn serve(
             seen.lock().unwrap().configuration = message["result"].clone();
             continue;
         }
+        if message["id"] == 100 && message.get("method").is_none() {
+            seen.lock().unwrap().applied = message["result"].clone();
+            continue;
+        }
         let method = message["method"].as_str().unwrap_or_default().to_string();
         seen.lock().unwrap().methods.push(method.clone());
         let params = &message["params"];
@@ -93,6 +101,11 @@ fn serve(
                         "completionProvider": {"triggerCharacters": ["."]},
                         "documentFormattingProvider": features,
                         "renameProvider": features,
+                        "codeActionProvider": if features {
+                            json!({"resolveProvider": true})
+                        } else {
+                            json!(false)
+                        },
                     }}),
                 );
                 // Servers ask things too; this must be answered.
@@ -196,6 +209,55 @@ fn serve(
                         {"label": "resolved", "data": {"id": 7}},
                     ]}),
                 );
+            }
+            "textDocument/codeAction" => {
+                seen.lock().unwrap().action_range = params["range"].clone();
+                let uri = &params["textDocument"]["uri"];
+                // A quick fix for each diagnostic sent back with the request.
+                let mut actions: Vec<Value> = params["context"]["diagnostics"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|d| {
+                        json!({"title": "Replace with good", "kind": "quickfix",
+                               "edit": {"changes": {uri.as_str().unwrap():
+                                   [{"range": d["range"], "newText": "good"}]}}})
+                    })
+                    .collect();
+                let line = params["range"]["start"]["line"].clone();
+                actions.push(json!({"title": "Upper-case the line", "kind": "refactor",
+                                    "data": {"uri": uri, "line": line}}));
+                actions.push(json!({"title": "Add a note", "command": "fake.note",
+                                    "arguments": [uri]}));
+                actions.push(json!({"title": "Can't do this", "disabled": {"reason": "no"}}));
+                reply(&mut output, Value::Array(actions));
+            }
+            "codeAction/resolve" => {
+                let text = seen.lock().unwrap().text.clone();
+                let line = params["data"]["line"].as_u64().unwrap() as usize;
+                let old = text.split('\n').nth(line).unwrap_or("");
+                let mut action = params.clone();
+                action["edit"] = json!({"changes": {params["data"]["uri"].as_str().unwrap(): [{
+                    "range": {"start": {"line": line, "character": 0},
+                              "end": {"line": line, "character": old.len()}},
+                    "newText": old.to_uppercase(),
+                }]}});
+                reply(&mut output, action);
+            }
+            "workspace/executeCommand" => {
+                reply(&mut output, Value::Null);
+                let uri = params["arguments"][0].clone();
+                write_message(
+                    &mut output,
+                    &json!({"jsonrpc": "2.0", "id": 100, "method": "workspace/applyEdit",
+                    "params": {"label": "Note added", "edit": {"changes": {
+                        uri.as_str().unwrap(): [{
+                            "range": {"start": {"line": 0, "character": 0},
+                                      "end": {"line": 0, "character": 0}},
+                            "newText": "// note\n",
+                        }]}}}}),
+                )
+                .unwrap();
             }
             "textDocument/rename" => {
                 let text = seen.lock().unwrap().text.clone();
@@ -982,5 +1044,99 @@ fn rename_says_why_it_cant() {
     assert_eq!(
         app.editor().message().unwrap().text,
         "Rename to what? :rename new_name"
+    );
+}
+
+/// The labels in the open picker.
+fn picker_labels(app: &mut App) -> Vec<String> {
+    let screen = render(app, 80, 14).rows.join("\n");
+    let picker = app.editor().picker().unwrap();
+    let labels: Vec<String> = picker
+        .matches()
+        .iter()
+        .map(|m| picker.item(m).label.clone())
+        .collect();
+    for label in &labels {
+        assert!(screen.contains(label.as_str()), "{label} shown:\n{screen}");
+    }
+    labels
+}
+
+#[test]
+fn space_a_lists_code_actions_and_makes_a_quick_fix() {
+    let (_dir, mut app, _) = with_server("let x = bad;\nfine\n", true);
+    ready(&mut app);
+    until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
+    keys(&mut app, "<Space>a");
+    until(&mut app, |a| a.editor().picker().is_some());
+    assert_eq!(
+        picker_labels(&mut app),
+        ["Replace with good", "Upper-case the line", "Add a note"],
+        "the fix for the diagnostic sent back; the disabled one left out"
+    );
+    keys(&mut app, "<CR>");
+    until(&mut app, |a| text(a).starts_with("let x = good;"));
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "Replace with good: 1 change in 1 file"
+    );
+    keys(&mut app, "u");
+    assert_eq!(text(&app), "let x = bad;\nfine", "one undo");
+}
+
+#[test]
+fn actions_that_need_resolving_or_run_a_command() {
+    let (_dir, mut app, seen) = with_server("fine\nalso fine\n", true);
+    ready(&mut app);
+    keys(&mut app, "j<Space>a");
+    until(&mut app, |a| a.editor().picker().is_some());
+    assert_eq!(
+        picker_labels(&mut app),
+        ["Upper-case the line", "Add a note"]
+    );
+    keys(&mut app, "<CR>");
+    until(&mut app, |a| text(a) == "fine\nALSO FINE");
+
+    // A command: the server sends the edit back to be made.
+    keys(&mut app, "<Space>a");
+    until(&mut app, |a| a.editor().picker().is_some());
+    keys(&mut app, "<C-n><CR>");
+    until(&mut app, |a| text(a).starts_with("// note"));
+    assert_eq!(text(&app), "// note\nfine\nALSO FINE");
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "Note added: 1 change in 1 file"
+    );
+    until(&mut app, |_| !seen.lock().unwrap().applied.is_null());
+    assert_eq!(seen.lock().unwrap().applied, json!({"applied": true}));
+}
+
+#[test]
+fn code_actions_for_a_selection_ask_about_its_range() {
+    let (_dir, mut app, seen) = with_server("one\ntwo\nthree\n", true);
+    ready(&mut app);
+    keys(&mut app, "lvjl<Space>a");
+    until(&mut app, |a| a.editor().picker().is_some());
+    let range = seen.lock().unwrap().action_range.clone();
+    assert_eq!(
+        range,
+        json!({"start": {"line": 0, "character": 1}, "end": {"line": 1, "character": 3}})
+    );
+    assert_eq!(
+        app.editor().mode(),
+        ferra::editor::Mode::Picker,
+        "visual mode ended"
+    );
+}
+
+#[test]
+fn a_server_without_code_actions_says_so() {
+    let (_dir, mut app, _) = with_server("x\n", false);
+    ready(&mut app);
+    keys(&mut app, "<Space>a");
+    app.update_lsp();
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "rust-analyzer doesn't offer code actions"
     );
 }

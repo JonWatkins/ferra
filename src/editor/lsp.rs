@@ -23,6 +23,12 @@ pub enum LspFeature {
     ResolveCompletion,
     Format,
     Rename,
+    /// The fixes and changes the server offers for a range.
+    CodeAction,
+    /// Making the one chosen from the list (see `LspRequest::item`).
+    ApplyCodeAction,
+    /// The rest of a chosen action that came without its edits.
+    ResolveCodeAction,
 }
 
 impl LspFeature {
@@ -38,6 +44,9 @@ impl LspFeature {
             LspFeature::Completion | LspFeature::ResolveCompletion => "completion",
             LspFeature::Format => "formatting",
             LspFeature::Rename => "renaming",
+            LspFeature::CodeAction
+            | LspFeature::ApplyCodeAction
+            | LspFeature::ResolveCodeAction => "code actions",
         }
     }
 
@@ -53,6 +62,9 @@ impl LspFeature {
             LspFeature::Completion | LspFeature::ResolveCompletion => "Completions",
             LspFeature::Format => "Formatting",
             LspFeature::Rename => "Rename",
+            LspFeature::CodeAction
+            | LspFeature::ApplyCodeAction
+            | LspFeature::ResolveCodeAction => "Code actions",
         }
     }
 }
@@ -70,13 +82,16 @@ pub struct LspRequest {
     /// than a completion asked for as you type).
     pub manual: bool,
     /// For completion: the character typed that might start one (`.`),
-    /// and where the word being completed starts.
+    /// and where the word being completed starts. For code actions: where
+    /// their range starts (the cursor, or a selection's start).
     pub trigger: Option<char>,
     pub word_start: Position,
     /// For resolving: which completion item (see `ServerItem::resolve`).
     pub item: Option<(u64, usize)>,
     /// For renaming: the new name.
     pub text: Option<String>,
+    /// For code actions: the end of the range they're for.
+    pub end: Position,
 }
 
 /// A place a server pointed to: a file, and a row and char column in it.
@@ -219,8 +234,65 @@ impl Editor {
             word_start: self.document.cursor(),
             item: None,
             text: None,
+            end: self.document.cursor(),
         });
         Ok(())
+    }
+
+    /// `<Space>a`: asks the language server what it can do here: at the
+    /// cursor, or with the visual selection (which ends).
+    pub fn request_code_actions(&mut self) -> Result<(), String> {
+        let range = self.take_selection();
+        self.request_lsp(LspFeature::CodeAction)?;
+        let span = range.map(|range| match range {
+            crate::core::Range::Chars { start, end } => (start, end),
+            crate::core::Range::Lines { first, last } => (
+                Position::new(first, 0),
+                self.document.buffer().line_end(last),
+            ),
+        });
+        if let (Some((start, end)), Some(request)) = (span, self.lsp_requests.last_mut()) {
+            request.word_start = start;
+            request.end = end;
+        }
+        Ok(())
+    }
+
+    /// Lists a server's code actions (their titles and kinds), to choose
+    /// one; `answer` says which answer they're from.
+    pub fn show_code_actions(&mut self, answer: u64, actions: Vec<(String, String)>) {
+        if actions.is_empty() {
+            self.set_message(Message::info("No code actions here"));
+            return;
+        }
+        let items = actions
+            .into_iter()
+            .enumerate()
+            .map(|(i, (title, kind))| PickerItem {
+                label: title,
+                detail: kind,
+                action: PickerAction::CodeAction(answer, i),
+            })
+            .collect();
+        self.open_picker(Picker::new("Code actions", items).keep_label_start());
+    }
+
+    /// Makes the code action chosen from the list.
+    pub fn apply_code_action(&mut self, answer: u64, index: usize) {
+        let buffer = self.document.buffer();
+        self.lsp_requests.push(LspRequest {
+            feature: LspFeature::ApplyCodeAction,
+            document: self.document.id(),
+            position: self.document.cursor(),
+            buffer_id: buffer.id(),
+            edit_seq: buffer.edit_seq(),
+            manual: true,
+            trigger: None,
+            word_start: self.document.cursor(),
+            item: Some((answer, index)),
+            text: None,
+            end: self.document.cursor(),
+        });
     }
 
     /// `:rename name`: has the language server rename the symbol under

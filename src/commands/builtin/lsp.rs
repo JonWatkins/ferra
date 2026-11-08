@@ -88,6 +88,11 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "code_actions",
+        "List the language server's fixes and changes for the cursor or selection, to make one (<Space>a)",
+        |cx| cx.editor.request_code_actions(),
+    );
+    r.register(
         "rename_prompt",
         "Rename the symbol under the cursor: :rename with its name to edit (<F2>, <Space>n)",
         |cx| {

@@ -1130,7 +1130,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 ## Roadmap: deferred features
 
 Planned: plugin UI, the rest of LSP support (diagnostics, hover, go to
-definition and references, completion, formatting and rename are done), an
+definition and references, completion, formatting, rename and code actions
+are done), an
 agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
@@ -1173,8 +1174,8 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 Started: see [Language servers](#language-servers) for the client,
 diagnostics, hover and going to definitions and references, and [Word
 completion](#word-completion) for completion. Still to come,
-in order: code actions (through `apply_workspace_edit`, as rename), signature
-help, and a picker list of diagnostics.
+in order: signature help, a picker list of diagnostics, and moving
+diagnostics with edits until the server's next list.
 
 ### Agent harness
 
@@ -1326,6 +1327,22 @@ not. The answer is dropped unless the editor is still where it was asked
   through `edit_document`, which makes them one undo step of their own in
   any buffer (`Document::apply_edits`, the same as formatting's). The
   message counts changes and files, and the other files left unsaved.
+- Code actions: `<Space>a` queues a `CodeAction` request for the cursor,
+  or a visual selection's range (in `word_start`..`end`; `position` stays
+  the cursor, so `still_at` works). `Lsp` keeps each document's
+  diagnostics as the server sent them (`raw_diagnostics`) and sends back
+  those on the range's lines, which most quick fixes need. The answer's
+  actions (less those `disabled`) are kept in a `Stash`, like completion
+  items, and listed in a picker whose items are
+  `PickerAction::CodeAction(answer, index)`. Choosing one queues an
+  `ApplyCodeAction`, which `make_code_action` carries out: a bare
+  `Command` is sent to `workspace/executeCommand`; a `CodeAction` has its
+  `edit` made (`apply_workspace_edit`) and then its `command` run; one
+  with neither is resolved first (`codeAction/resolve`, a
+  `ResolveCodeAction` request, made only if the text hasn't changed).
+  Commands often make their changes by sending `workspace/applyEdit`
+  back, which `Lsp` answers by making the edit (with the action's title
+  in the message).
 
 ## Configuration
 
@@ -1386,8 +1403,9 @@ not. The answer is dropped unless the editor is still where it was asked
 
 ## Known gaps / next steps
 
-- Language servers: no code actions, signature help or document symbols
-  yet; rename doesn't check the name first (`prepareRename`), and doesn't
+- Language servers: no signature help or document symbols yet, nor a
+  sign that code actions are available; code actions that create, rename
+  or delete files leave that part out; rename doesn't check the name first (`prepareRename`), and doesn't
   rename files, no range formatting (`=` and `gq` stay ferra's own), and no list of diagnostics in a
   picker. Hover is Markdown made plain (no tables, and lists keep their
   `-`); it can't be focused, searched or copied from, and it isn't shown

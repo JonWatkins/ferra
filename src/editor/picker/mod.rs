@@ -22,6 +22,8 @@ pub enum PickerAction {
     Paste(char),
     /// Go to a place in a file (a definition or reference).
     GoTo(PathBuf, crate::core::Position),
+    /// Make a language server's code action: which answer, which action.
+    CodeAction(u64, usize),
 }
 
 impl PickerItem {

@@ -508,6 +508,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "gr" = "goto_references"
 "<F2>" = "rename_prompt"
 "<Space>n" = "rename_prompt"
+"<Space>a" = "code_actions"
 "ZZ" = "exit"
 "ZQ" = "force_quit"
 
@@ -727,6 +728,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 
 # The picker popup (<Space>b buffers, <Space>f files, <Space>p commands,
 # <Space>r registers). Typing filters.
+"<Space>a" = "code_actions"
 [keys.picker]
 "<Esc>" = "picker_cancel"
 "<C-c>" = "picker_cancel"

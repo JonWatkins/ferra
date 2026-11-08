@@ -87,6 +87,7 @@ impl Lsp {
             word_start: editor.document.cursor(),
             item: None,
             text: None,
+            end: editor.document.cursor(),
         };
         let options = &editor.options;
         let (name, encoding, client_id) = (client.name.clone(), client.encoding, client.id);
@@ -179,6 +180,46 @@ impl Lsp {
                 )));
                 continue;
             }
+            if request.feature == LspFeature::ApplyCodeAction {
+                let action = request.item.and_then(|i| self.actions.item(i)).cloned();
+                let Some(action) = action else {
+                    editor.set_message(Message::info("That list of code actions is too old"));
+                    continue;
+                };
+                let made = make_code_action(editor, client, &action);
+                if !made {
+                    if client.resolves_code_actions() || action.get("data").is_some() {
+                        let request = LspRequest {
+                            feature: LspFeature::ResolveCodeAction,
+                            ..request
+                        };
+                        client.resolve_code_action(request, action);
+                    } else {
+                        editor.set_message(Message::info("That code action does nothing"));
+                    }
+                }
+                continue;
+            }
+            if request.feature == LspFeature::CodeAction {
+                let buffer = document.buffer();
+                let start = convert::to_lsp(buffer, request.word_start, client.encoding);
+                let end = convert::to_lsp(buffer, request.end, client.encoding);
+                let (first, last) = (request.word_start.row as u64, request.end.row as u64);
+                let diagnostics = self
+                    .raw_diagnostics
+                    .get(&request.document)
+                    .into_iter()
+                    .flatten()
+                    .filter(|d| {
+                        let from = d["range"]["start"]["line"].as_u64().unwrap_or(0);
+                        let to = d["range"]["end"]["line"].as_u64().unwrap_or(0);
+                        from <= last && first <= to
+                    })
+                    .cloned()
+                    .collect();
+                client.request_code_actions(request, start, end, diagnostics);
+                continue;
+            }
             if request.feature == LspFeature::ResolveCompletion {
                 let item = request.item.and_then(|i| self.completions.item(i));
                 if let Some(item) = item {
@@ -194,17 +235,29 @@ impl Lsp {
 
 /// Shows the server's answer to `request`, unless the editor has moved on
 /// since (another buffer, an edit, the cursor moved).
+/// What answers are kept in, to act on later.
+pub(super) struct Stashes<'a> {
+    pub completions: &'a mut Stash,
+    pub actions: &'a mut Stash,
+}
+
 pub(super) fn answer(
     editor: &mut Editor,
-    client: &Client,
+    client: &mut Client,
     request: LspRequest,
     result: Result<Value, ResponseError>,
-    stash: &mut Stash,
+    stashes: Stashes,
 ) {
+    let stash = stashes.completions;
     let current = match request.feature {
         LspFeature::Completion => editor.still_completing(&request),
         // The item was taken: its import goes in if it's the same buffer.
         LspFeature::ResolveCompletion => editor.document.id() == request.document,
+        // Chosen from the list: made unless the text changed meanwhile.
+        LspFeature::ResolveCodeAction => {
+            editor.document.id() == request.document
+                && editor.document.buffer().edit_seq() == request.edit_seq
+        }
         _ => editor.still_at(&request),
     };
     if !current {
@@ -257,6 +310,31 @@ pub(super) fn answer(
         editor.make_other_edits(edits);
         return;
     }
+    if request.feature == LspFeature::CodeAction {
+        // Those the server says can't be done here are left out.
+        let actions: Vec<Value> = result
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|a| a.get("disabled").is_none())
+            .cloned()
+            .collect();
+        let titles = actions
+            .iter()
+            .map(|a| {
+                let title = a["title"].as_str().unwrap_or("(untitled)").to_string();
+                let kind = a["kind"].as_str().unwrap_or("").to_string();
+                (title, kind)
+            })
+            .collect();
+        let answer = stashes.actions.keep(actions);
+        editor.show_code_actions(answer, titles);
+        return;
+    }
+    if request.feature == LspFeature::ResolveCodeAction {
+        make_code_action(editor, client, &result);
+        return;
+    }
     if request.feature == LspFeature::Rename {
         let name = request.text.clone().unwrap_or_default();
         let text = apply_workspace_edit(editor, &result, client.encoding).map(|done| match done {
@@ -282,6 +360,38 @@ pub(super) fn answer(
     if let Err(error) = editor.show_locations(request.feature, locations) {
         editor.set_message(Message::info(error));
     }
+}
+
+/// Makes code action `action`: its edits, then its command (which the
+/// server runs, and may send edits back for). Returns false if it has
+/// neither (so it needs resolving).
+fn make_code_action(editor: &mut Editor, client: &mut Client, action: &Value) -> bool {
+    let title = action["title"].as_str().unwrap_or("Done").to_string();
+    // A bare `Command` rather than a `CodeAction`.
+    if action["command"].is_string() {
+        client.execute_command(action, &title);
+        return true;
+    }
+    let edit = action.get("edit").filter(|e| !e.is_null());
+    let command = action.get("command").filter(|c| c.is_object());
+    if edit.is_none() && command.is_none() {
+        return false;
+    }
+    if let Some(edit) = edit {
+        match apply_workspace_edit(editor, edit, client.encoding) {
+            Ok(applied) => {
+                editor.set_message(Message::info(format!("{title}: {}", applied.describe())));
+            }
+            Err(error) => {
+                editor.lsp_failed(error);
+                return true;
+            }
+        }
+    }
+    if let Some(command) = command {
+        client.execute_command(command, &title);
+    }
+    true
 }
 
 /// What applying a workspace edit did.
@@ -733,6 +843,7 @@ mod tests {
             word_start: Position::new(0, 2),
             item: None,
             text: None,
+            end: editor.document.cursor(),
         };
         let range = |from: u64| {
             json!({"start": {"line": 0, "character": from},
