@@ -15,6 +15,7 @@
 //! - [`cli`]: command-line argument parsing.
 //! - [`plugins`]: Lua plugins (commands, hooks and key bindings).
 //! - [`syntax`]: tree-sitter syntax highlighting.
+//! - [`lsp`]: language servers: diagnostics, kept in sync with the buffers.
 //! - [`ui`]: rendering, including the custom editor pane widget.
 //! - [`app`]: wires everything together and owns the event loop.
 
@@ -28,6 +29,7 @@ pub mod editor;
 pub mod events;
 pub mod files;
 pub mod input;
+pub mod lsp;
 pub mod plugins;
 pub mod syntax;
 pub mod ui;

@@ -32,6 +32,7 @@ Dependencies only point downwards. Lower layers never know about higher ones.
 | `files`     | Reading files and atomic writes (temp file + fsync + rename, permissions, symlinks). | No |
 | `config`    | Embedded `default.toml` deep-merged with the user config; options, theme, keymap. | ratatui `Style` (theme) |
 | `cli`       | Command-line argument parsing. | No |
+| `lsp`       | Language server clients: processes, JSON-RPC, document sync, diagnostics. | No |
 | `ui`        | Widgets: our own `EditorView` (gutter, viewport, cursorline), `StatusLine`, `CommandLineView`. | ratatui |
 | `app`       | Owns everything and runs the loop. | ratatui + crossterm |
 
@@ -1077,8 +1078,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 ## Roadmap: deferred features
 
-Planned, not started: plugin UI, LSP support, an agent harness, an embedded
-terminal and Git support. They share three foundations, which should come first.
+Planned: plugin UI, the rest of LSP support (diagnostics are done), an
+agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
 
@@ -1117,10 +1118,8 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 
 ### LSP support
 
-A client per language server, configured in the `[languages]` table
-(`language-server = { command = "rust-analyzer" }`, as Helix does), running
-in the background and reporting through the event channel. In order:
-diagnostics (decorations and a picker list), hover (a float), go to
+Started: see [Language servers](#language-servers) for the client and
+diagnostics. Still to come, in order: a picker list of diagnostics, hover (a float), go to
 definition and references (the jump list is ready for this), completion (a
 float in insert mode), rename, code actions and formatting (as one undo step
 each, through the command registry).
@@ -1174,6 +1173,52 @@ hooks. Large repositories mean doing the work in the background. It all
 sits on the foundations above: decorations for signs and blame, floats for
 previews, the event channel for background results, and pickers for
 status, branches and history.
+
+## Language servers
+
+`lsp/` is a client per server, configured per language in `[languages]`
+(`language-server = { command, args, roots, language-id, settings,
+enabled }`, as Helix does). None are installed for you; a missing one is
+reported once.
+
+- `transport.rs`: JSON-RPC messages with `Content-Length` headers.
+- `convert.rs`: positions and `file://` URIs. Editor columns are chars;
+  LSP columns are UTF-16 units, or bytes if the server takes `utf-8` from
+  `general.positionEncodings` at start-up.
+- `client.rs`: one server. `Client::start` spawns it (through a `Spawner`,
+  which tests replace with a server in the same process over pipes), starts
+  a thread that reads its output into the `Lsp`'s channel, and sends
+  `initialize`. Its answer gives the encoding and sync kind; then come
+  `initialized` and `workspace/didChangeConfiguration` with the settings
+  (pyright waits for that before it checks anything). `change` sends a
+  document's edits since its last version: the one edit from the buffer's
+  edit log, in place, when there's exactly one and the server counts bytes
+  and syncs incrementally; otherwise the whole text. `saved` sends
+  `didSave` when the document's save count (`Document::saves`) has moved,
+  after its changes; rust-analyzer runs `cargo check` then. Documents
+  are found by the URI they were opened as (a new file's path is relative
+  and can't be canonicalized), else by path; a document whose path
+  changed (`:saveas`) is closed and reopened under the new one.
+- `mod.rs`: `Lsp`, owned by `App`. `update`, called before each draw,
+  drains the channel (answers, server requests, `publishDiagnostics`,
+  `showMessage` errors, servers that closed) and then syncs: each buffer
+  with a file and a language that has a server gets a client for its
+  (language, root), started if need be, and is opened or changed there;
+  documents no longer open are closed. Server requests are answered:
+  `workspace/configuration` with each `section` of the settings (`{}`
+  where there's none: the vscode servers ignore `null`),
+  `workspace/workspaceFolders` with the root, anything else with `null`.
+  The event loop polls every 30 ms while a server runs. On quit,
+  `shutdown` then `exit`, waiting up to 300 ms before the processes are
+  killed.
+
+Diagnostics live on the `Editor` by document (`editor/diagnostics.rs`),
+sorted, with positions converted to chars. `EditorView` draws them: an
+underline in `diagnostic.<severity>` (with the underline colour), the line
+number in `ui.diagnostic.<severity>`, and the first message after the
+line's text. They're replaced by the server's next list rather than moved
+with edits, so between an edit and the server's answer they can sit a
+little off.
 
 ## Configuration
 
@@ -1233,6 +1278,15 @@ status, branches and history.
   (`keys(&mut app, "ihello<Esc>dd")`) and render through `TestBackend`.
 
 ## Known gaps / next steps
+
+- Language servers give diagnostics only, so far: no hover, go to
+  definition, references, completion, formatting, rename or code actions,
+  and no list of diagnostics in a picker. Servers' `$/progress` and
+  `window/logMessage` are ignored (so `:lsp` says "running" while
+  rust-analyzer is still indexing), as are dynamic registrations and
+  `workspace/applyEdit`. A server that stops isn't restarted (there's no
+  `:lsp-restart` yet), and changing its config needs a restart of ferra. Diagnostics don't move with edits until
+  the server sends new ones.
 
 - Without the kitty keyboard protocol (tmux, Terminal.app, older xterms),
   Alt keys that *are* bound can't be told apart from a fast Esc then that

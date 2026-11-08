@@ -45,6 +45,9 @@ pub struct Document {
     /// The file's modified time when last read or written, to detect
     /// changes made by other programs.
     disk_stamp: Option<crate::files::FileStamp>,
+    /// How many times it has been saved to its own file (language servers
+    /// are told of each).
+    saves: u64,
     /// The file's modified time (or `None`: deleted) when a change on disk
     /// was last reported, so it's reported once.
     disk_acknowledged: Option<Option<crate::files::FileStamp>>,
@@ -69,6 +72,11 @@ pub struct Document {
 }
 
 impl Document {
+    /// How many times it has been saved to its own file.
+    pub fn saves(&self) -> u64 {
+        self.saves
+    }
+
     pub fn with_text(text: &str) -> Self {
         Self {
             buffer: Buffer::from_text(text),

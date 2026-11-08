@@ -47,6 +47,8 @@ pub struct EditorOptions {
     /// Use the kitty keyboard protocol where the terminal supports it, so
     /// Esc, Alt+key and Ctrl-I/Tab are told apart.
     pub kitty_keyboard: bool,
+    /// Start language servers for open files (see `[languages]`).
+    pub lsp: bool,
     /// Check open files for changes made by other programs every second
     /// (as well as on focus, buffer switches and `:checktime`).
     pub watch_files: bool,
@@ -174,6 +176,8 @@ pub enum StatusElement {
     FileLineEnding,
     /// How the buffer indents: `2 spaces`, `tabs` (see `:indent`).
     Indent,
+    /// How many errors and warnings a language server reports (`E2 W1`).
+    Diagnostics,
     /// Keys typed so far for a command (`2d`).
     PendingKeys,
     /// `recording @a` while recording a macro.
@@ -200,6 +204,7 @@ const STATUS_ELEMENTS: &[(StatusElement, &str)] = &[
     (StatusElement::FileEncoding, "file-encoding"),
     (StatusElement::FileLineEnding, "file-line-ending"),
     (StatusElement::Indent, "indent"),
+    (StatusElement::Diagnostics, "diagnostics"),
     (StatusElement::PendingKeys, "pending-keys"),
     (StatusElement::Recording, "recording"),
     (StatusElement::Separator, "separator"),

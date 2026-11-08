@@ -31,6 +31,34 @@ pub struct FileType {
     /// `auto-indent`, `text-width`), over the `[editor]` ones; a buffer's
     /// own `:setlocal` values still win.
     pub options: toml::Table,
+    /// The language server for this language's files, if any.
+    pub language_server: Option<ServerConfig>,
+}
+
+/// How to run a language server (`language-server` in a `[languages]`
+/// entry).
+#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct ServerConfig {
+    /// The program, found on `PATH` (`rust-analyzer`).
+    pub command: String,
+    pub args: Vec<String>,
+    /// Files whose directory is the project root (`Cargo.toml`): the
+    /// nearest one above the file. Without one, the file's own directory.
+    pub roots: Vec<String>,
+    /// The name the server knows the language by, if not the language's
+    /// (`typescriptreact` for `tsx`).
+    pub language_id: Option<String>,
+    /// The server's settings (`{ json = { validate = { enable = true } } }`),
+    /// sent when it starts and when it asks for a section of them.
+    pub settings: toml::Table,
+    /// `false` turns it off.
+    #[serde(default = "enabled")]
+    pub enabled: bool,
+}
+
+fn enabled() -> bool {
+    true
 }
 
 /// How `gc` comments a line: a prefix, and for block comments a suffix.
@@ -77,6 +105,15 @@ impl Languages {
                     || s == interpreter.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.')
             })
         })
+    }
+
+    /// The language server `language`'s files use, if it has one that's on.
+    pub fn server(&self, language: &str) -> Option<&ServerConfig> {
+        self.0
+            .get(language)?
+            .language_server
+            .as_ref()
+            .filter(|s| s.enabled && !s.command.is_empty())
     }
 
     /// The options `language`'s buffers get (see [`FileType::options`]).

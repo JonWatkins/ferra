@@ -9,7 +9,7 @@ mod options;
 pub mod set;
 mod theme;
 
-pub use languages::{CommentTokens, FileType, Languages};
+pub use languages::{CommentTokens, FileType, Languages, ServerConfig};
 pub use options::{
     AutoWrap, CursorShape, CursorShapes, EditorOptions, FallbackEncoding, FilePickerOptions,
     LineNumbers, SearchCase, SearchOptions, StatusElement, StatuslineLayout, StatuslineMode,

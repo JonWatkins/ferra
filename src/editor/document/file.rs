@@ -220,6 +220,7 @@ impl Document {
             self.saved_encoding = self.format.encoding;
             self.disk_stamp = stamp;
             self.disk_acknowledged = None;
+            self.saves += 1;
         }
         Ok(SaveInfo {
             lines: line_count(contents.is_empty(), self),

@@ -113,7 +113,8 @@ pub fn draw_windows(
             })
             .block(editor.selection_block().filter(|_| active))
             .search(editor.search_highlight())
-            .syntax(highlights);
+            .syntax(highlights)
+            .diagnostics(editor.diagnostics(document.id()));
         frame.render_stateful_widget(view, rect, state);
         windows.note_top(id, state.viewport.top);
         if active {

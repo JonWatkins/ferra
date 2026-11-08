@@ -584,6 +584,7 @@ dependencies = [
  "regex",
  "ropey",
  "serde",
+ "serde_json",
  "tempfile",
  "toml",
  "tree-sitter",

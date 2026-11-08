@@ -208,6 +208,29 @@ impl Active<'_> {
                 LineEnding::Crlf => " CRLF ".to_string(),
             }),
             StatusElement::Indent => Span::raw(format!(" {} ", editor.indent_style())),
+            StatusElement::Diagnostics => {
+                use crate::editor::diagnostics::Severity;
+                let all = editor.diagnostics(document.id());
+                let count = |s: Severity| all.iter().filter(|d| d.severity == s).count();
+                let (errors, warnings) = (count(Severity::Error), count(Severity::Warning));
+                let mut text = String::new();
+                if errors > 0 {
+                    text.push_str(&format!(" E{errors}"));
+                }
+                if warnings > 0 {
+                    text.push_str(&format!(" W{warnings}"));
+                }
+                let scope = if errors > 0 {
+                    "ui.statusline.diagnostic.error"
+                } else {
+                    "ui.statusline.diagnostic.warning"
+                };
+                if text.is_empty() {
+                    Span::raw("")
+                } else {
+                    styled(format!("{text} "), scope)
+                }
+            }
             StatusElement::Plugin(name) => Span::styled(
                 editor
                     .plugin_status(name)

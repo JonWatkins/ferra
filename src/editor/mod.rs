@@ -22,6 +22,7 @@ pub use search::{SearchDone, SearchHit};
 mod block;
 mod comment;
 mod confirm;
+pub mod diagnostics;
 mod selection;
 mod transform;
 pub mod windows;
@@ -173,6 +174,10 @@ pub struct Editor {
     /// A count on the insert command (`3i`, `5o`): how many times to put
     /// in what's typed, and whether each copy is on a line of its own.
     insert_repeat: Option<(usize, bool)>,
+    /// How each language server is doing, for `:lsp` (set by the app).
+    lsp_status: Vec<String>,
+    /// Language servers' diagnostics, by buffer.
+    diagnostics: HashMap<DocumentId, Vec<diagnostics::Diagnostic>>,
     /// What each Lua `editor.status` function last returned, by name, for
     /// `plugin:<name>` status line elements (the app refreshes them before
     /// drawing).
@@ -274,6 +279,16 @@ impl Editor {
         } else if is("clipboard") {
             self.registers.set_clipboard_mode(options.clipboard);
         }
+    }
+
+    /// Records how the language servers are doing, for `:lsp`.
+    pub fn set_lsp_status(&mut self, lines: Vec<String>) {
+        self.lsp_status = lines;
+    }
+
+    /// How the language servers are doing, one line each.
+    pub fn lsp_status(&self) -> &[String] {
+        &self.lsp_status
     }
 
     /// What plugin status function `name` last returned.

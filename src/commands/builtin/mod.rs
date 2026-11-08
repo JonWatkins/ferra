@@ -11,6 +11,7 @@ mod files;
 mod folds;
 mod history;
 mod jumps;
+mod lsp;
 mod macros;
 mod marks;
 mod modes;
@@ -47,6 +48,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     options::register(registry);
     scrolling::register(registry);
     folds::register(registry);
+    lsp::register(registry);
 }
 
 #[cfg(test)]

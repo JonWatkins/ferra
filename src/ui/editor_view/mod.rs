@@ -69,6 +69,8 @@ pub struct EditorView<'a> {
     block: Option<crate::core::Block>,
     search: Option<&'a SearchPattern>,
     syntax: Option<&'a Highlights>,
+    /// A language server's diagnostics for the document, in order.
+    diagnostics: &'a [crate::editor::diagnostics::Diagnostic],
     /// The cursor to draw around; a window's own cursor when it isn't active.
     cursor: Option<TextPosition>,
     /// Only the active window shows the cursor line.
@@ -85,6 +87,7 @@ impl<'a> EditorView<'a> {
             block: None,
             search: None,
             syntax: None,
+            diagnostics: &[],
             cursor: None,
             active: true,
         }
@@ -100,6 +103,15 @@ impl<'a> EditorView<'a> {
     /// Whether this is the active window (inactive ones have no cursor line).
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
+        self
+    }
+
+    /// Underlines `diagnostics` and shows their messages.
+    pub fn diagnostics(
+        mut self,
+        diagnostics: &'a [crate::editor::diagnostics::Diagnostic],
+    ) -> Self {
+        self.diagnostics = diagnostics;
         self
     }
 
@@ -359,11 +371,24 @@ impl EditorView<'_> {
         } else {
             String::new()
         };
+        // The most serious diagnostic on the line colours its number.
+        let on_line = self
+            .diagnostics
+            .iter()
+            .filter(|d| d.start.row <= row && row <= d.end.row)
+            .min_by_key(|d| d.severity);
+        let gutter_style = match on_line {
+            Some(d) => self.theme.get(gutter_scope).patch(
+                self.theme
+                    .get(&format!("ui.diagnostic.{}", d.severity.id())),
+            ),
+            None => self.theme.get(gutter_scope),
+        };
         gutter::render(
             buf,
             Rect::new(gutter_area.x, y, gutter_area.width, 1),
             &label,
-            self.theme.get(gutter_scope),
+            gutter_style,
         );
 
         if indent > 0 && !self.options.wrap_marker.is_empty() {
@@ -418,6 +443,25 @@ impl EditorView<'_> {
                 highlight(from, to, style);
             }
         }
+        for d in self
+            .diagnostics
+            .iter()
+            .filter(|d| d.start.row <= row && row <= d.end.row)
+        {
+            let from = if d.start.row == row { d.start.col } else { 0 };
+            let to = if d.end.row == row {
+                d.end.col
+            } else {
+                line_len
+            };
+            // An empty range still marks the char it's at.
+            let to = to.max(from + 1);
+            highlight(
+                from,
+                to,
+                self.theme.get(&format!("diagnostic.{}", d.severity.id())),
+            );
+        }
         // The selection is drawn last, so it wins over search matches.
         if let Some(block) = self.block {
             if block.rows().contains(&row) {
@@ -430,6 +474,24 @@ impl EditorView<'_> {
             && let Some((from, to)) = selection::selected_cols(range, row, line_len)
         {
             highlight(from, to, self.theme.get("ui.selection"));
+        }
+
+        // The message, after the line's text on its last row.
+        if let Some(d) = on_line.filter(|_| last) {
+            let end = crate::core::columns::display_width(&line_text[..upto], tab_width)
+                .saturating_sub(left);
+            let x = end + 2;
+            if x < width {
+                let message = d.message.lines().next().unwrap_or_default();
+                buf.set_stringn(
+                    text_area.x + x as u16,
+                    y,
+                    format!("● {message}"),
+                    width - x,
+                    self.theme
+                        .get(&format!("ui.diagnostic.{}", d.severity.id())),
+                );
+            }
         }
     }
 }

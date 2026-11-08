@@ -60,6 +60,8 @@ pub struct App {
     background: background::Background,
     /// The last error from each plugin status function, so it's shown once.
     plugin_status_errors: HashMap<String, String>,
+    /// Language servers for the open files.
+    lsp: crate::lsp::Lsp,
 }
 
 impl Default for App {
@@ -98,6 +100,7 @@ impl App {
             paste: None,
             background: background::Background::default(),
             plugin_status_errors: HashMap::new(),
+            lsp: crate::lsp::Lsp::default(),
         };
         let mode = app.editor.options.clipboard;
         let provider = app.editor.options.clipboard_provider;
@@ -242,6 +245,7 @@ impl App {
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         terminal::enable_bracketed_paste()?;
         terminal::enable_focus_reporting()?;
+        self.lsp.enable();
         // A terminal that doesn't answer is used the old way.
         let enhanced_keys = self.editor.options.kitty_keyboard
             && terminal::enable_keyboard_enhancement().unwrap_or(false);
@@ -273,7 +277,10 @@ impl App {
             // for its results.
             let watch = self.editor.options.watch_files.then_some(next_watch);
             let due = [deadline, watch].into_iter().flatten().min();
-            let wait = match (due, self.background.busy()) {
+            // Language servers' messages arrive on their own threads, so
+            // keep checking while any are running.
+            let busy = self.background.busy() || self.lsp.active();
+            let wait = match (due, busy) {
                 (Some(due), busy) => {
                     let left = due.saturating_duration_since(Instant::now());
                     Some(if busy {
@@ -316,6 +323,7 @@ impl App {
             }
             deadline = self.key_deadline();
         }
+        self.lsp.shutdown();
         if enhanced_keys {
             terminal::disable_keyboard_enhancement()?;
         }
@@ -484,7 +492,19 @@ impl App {
         }
     }
 
+    /// The language servers, to replace how they're started (tests).
+    pub fn lsp_mut(&mut self) -> &mut crate::lsp::Lsp {
+        &mut self.lsp
+    }
+
+    /// Handles what language servers sent and sends them the latest
+    /// changes. Called before each draw; public so tests can drive it.
+    pub fn update_lsp(&mut self) {
+        self.lsp.update(&mut self.editor);
+    }
+
     pub fn draw(&mut self, frame: &mut Frame) {
+        self.update_lsp();
         self.refresh_plugin_statuses();
         let pending = self.input.pending_display();
         let count = self.editor.buffer_count();

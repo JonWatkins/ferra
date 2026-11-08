@@ -259,6 +259,7 @@ order before the sorted ones, and `//` is the last search.
 | `<Space>p` | Command palette: every command, with its description |
 | `<Space>r`, `:reg` | Register picker: what each register holds; choosing one pastes it after the cursor |
 | `]b` `[b`, `:bn` `:bp` | Next / previous buffer |
+| `]d` `[d` | Next / previous diagnostic (see [Language servers](#language-servers)) |
 | `:b 2`, `:b name`, `:b #` | Switch by number, part of the name, or to the previous buffer |
 | `:bd` | Close the buffer (`:bd!` discards changes) |
 | `:wa`, `:wqa` | Write all / write all and quit |
@@ -421,6 +422,57 @@ parent, so `function.method` uses `function` unless you set it:
 ```
 
 Turn it off with `syntax-highlighting = false` under `[editor]`.
+
+## Language servers
+
+ferra talks to language servers for errors and warnings as you type. It
+doesn't install them: each language names its server in the `[languages]`
+table, and ferra starts it when you open a file in that language, in the
+project's root (the nearest folder with one of the server's `roots`, such
+as `Cargo.toml`, else the one with `.git`).
+
+| Language | Server | Install |
+|----------|--------|---------|
+| Rust | `rust-analyzer` | `rustup component add rust-analyzer` |
+| Python | `pyright-langserver` | `npm i -g pyright` |
+| JavaScript, TypeScript, TSX | `typescript-language-server` | `npm i -g typescript typescript-language-server` |
+| Go | `gopls` | `go install golang.org/x/tools/gopls@latest` |
+| C, C++ | `clangd` | Xcode tools, or `brew install llvm` |
+| Bash | `bash-language-server` | `npm i -g bash-language-server` |
+| TOML | `taplo` | `cargo install taplo-cli --features lsp` |
+| JSON, HTML, CSS | `vscode-json-language-server`, ... | `npm i -g vscode-langservers-extracted` |
+| YAML | `yaml-language-server` | `npm i -g yaml-language-server` |
+| Markdown | `marksman` | `brew install marksman` |
+
+If a server isn't installed, opening such a file says so once, quietly,
+and everything else works as before. `:lsp` lists the servers: running,
+starting, stopped (and why) or not found.
+
+Problems are underlined, with the line number coloured and the first one's
+message after the line (`● expected i32, found &str`). `]d` and `[d` go to
+the next and previous one and show its message in full; the status line
+counts errors and warnings (`E1 W2`).
+
+Some servers check more when you save: rust-analyzer finds syntax errors
+as you type, but type and borrow errors come from `cargo check`, which it
+runs on `:w`. And it only checks files that are part of a crate (in the
+module tree from `main.rs` or `lib.rs`); for others it says "This file is
+not included in any crates".
+
+```toml
+[languages.python]
+language-server = { command = "pylsp" }          # another server
+
+[languages.json]
+language-server = { command = "vscode-json-language-server", args = ["--stdio"],
+                    settings = { json = { validate = { enable = true } } } }
+
+[languages.yaml]
+language-server = { enabled = false }            # off for one language
+```
+
+`settings` are the server's own settings, as in its documentation. Turn
+them all off with `lsp = false` under `[editor]`.
 
 ## Configuration
 

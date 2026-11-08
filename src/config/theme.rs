@@ -17,6 +17,9 @@ pub enum StyleSpec {
     Full {
         fg: Option<String>,
         bg: Option<String>,
+        /// The colour of an underline (with the `underlined` modifier), for
+        /// terminals that can show one.
+        underline: Option<String>,
         #[serde(default)]
         modifiers: Vec<String>,
     },
@@ -67,13 +70,21 @@ impl TryFrom<HashMap<String, StyleSpec>> for Theme {
 fn parse_style(spec: &StyleSpec) -> Result<Style, String> {
     match spec {
         StyleSpec::Fg(fg) => Ok(Style::new().fg(parse_color(fg)?)),
-        StyleSpec::Full { fg, bg, modifiers } => {
+        StyleSpec::Full {
+            fg,
+            bg,
+            underline,
+            modifiers,
+        } => {
             let mut style = Style::new();
             if let Some(fg) = fg {
                 style = style.fg(parse_color(fg)?);
             }
             if let Some(bg) = bg {
                 style = style.bg(parse_color(bg)?);
+            }
+            if let Some(color) = underline {
+                style = style.underline_color(parse_color(color)?);
             }
             for name in modifiers {
                 style = style.add_modifier(parse_modifier(name)?);
