@@ -25,6 +25,10 @@ text-width = 79
 # comment marker: "off", "comments" (only in comments, for code) or "all"
 # (for prose). Per language: options = { auto-wrap = "all" }.
 auto-wrap = "off"
+# Have the language server format the file before each save (as :format
+# does), waiting up to 2 seconds for it. Per language:
+# [languages.rust] options = { format-on-save = true }.
+format-on-save = false
 # Long lines continue on the next screen rows, breaking between words, and
 # gj/gk move by screen rows. false scrolls sideways instead.
 wrap = true

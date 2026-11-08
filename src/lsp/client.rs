@@ -163,6 +163,7 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
         LspFeature::References => ("textDocument/references", "referencesProvider"),
         LspFeature::Completion => ("textDocument/completion", "completionProvider"),
         LspFeature::ResolveCompletion => ("completionItem/resolve", "completionProvider"),
+        LspFeature::Format => ("textDocument/formatting", "documentFormattingProvider"),
     }
 }
 
@@ -280,11 +281,32 @@ impl Client {
         }
     }
 
-    fn request(&mut self, method: &str, params: Value, kind: Pending) {
+    fn request(&mut self, method: &str, params: Value, kind: Pending) -> i64 {
         let id = self.next_request;
         self.next_request += 1;
         self.pending.insert(id, kind);
         self.send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }));
+        id
+    }
+
+    /// Whether request `id` is still waiting for its answer.
+    pub fn waiting_for(&self, id: i64) -> bool {
+        self.pending.contains_key(&id)
+    }
+
+    /// Asks the server to format `request`'s document, indenting with
+    /// `tab_size` columns, in spaces or tabs. Returns the request's id.
+    pub fn request_format(&mut self, request: LspRequest, tab_size: usize, spaces: bool) -> i64 {
+        let uri = self
+            .documents
+            .get(&request.document)
+            .map(|s| s.uri.clone())
+            .unwrap_or_default();
+        let params = json!({
+            "textDocument": { "uri": uri },
+            "options": { "tabSize": tab_size, "insertSpaces": spaces },
+        });
+        self.request("textDocument/formatting", params, Pending::Feature(request))
     }
 
     fn notify(&mut self, method: &str, params: Value) {

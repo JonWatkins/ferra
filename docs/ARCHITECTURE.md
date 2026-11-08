@@ -1118,7 +1118,7 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 ## Roadmap: deferred features
 
 Planned: plugin UI, the rest of LSP support (diagnostics, hover, go to
-definition and references, and completion are done), an
+definition and references, completion and formatting are done), an
 agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
@@ -1161,8 +1161,8 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 Started: see [Language servers](#language-servers) for the client,
 diagnostics, hover and going to definitions and references, and [Word
 completion](#word-completion) for completion. Still to come,
-in order: formatting, rename and code actions (each one undo step, through
-the command registry), signature help, and a picker list of diagnostics.
+in order: rename and code actions (through `apply_text_edits`, one undo
+step each), signature help, and a picker list of diagnostics.
 
 ### Agent harness
 
@@ -1287,6 +1287,21 @@ not. The answer is dropped unless the editor is still where it was asked
   gone to as a jump (`goto_location`, which opens the file by its path
   relative to the current folder when it's under it); several open a
   picker whose items are `PickerAction::GoTo`.
+- Formatting waits for its answer, unlike the rest: `:wq` has to save the
+  formatted text, so the edits must be made before the save goes on. The
+  editor can't see the `Lsp` (it's in the app), so it holds a `Formatter`
+  (`editor/lsp.rs`) that the app fills with an `LspFormatter`, sharing the
+  `Lsp` through an `Rc<RefCell>` (only ever borrowed by a command or the
+  draw, never both). `Lsp::format` syncs the buffer, sends
+  `textDocument/formatting` with `tab-width` and `expand-tab`, and handles
+  everything servers send until the answer comes or 2 seconds pass. The
+  edits go through `Editor::apply_text_edits`: last first, the cursor
+  moved along by those before it and kept at its place in one that
+  replaces its text; in a command they're one undo step.
+  `format-on-save` is a buffer option (so it can be set per language); a
+  built-in `BeforeSave` hook runs `format(quiet)` before the config's
+  hooks, and a failure doesn't stop the save, only adds to its message
+  (`note_for_save`).
 
 ## Configuration
 
@@ -1347,8 +1362,8 @@ not. The answer is dropped unless the editor is still where it was asked
 
 ## Known gaps / next steps
 
-- Language servers: no formatting, rename, code actions, signature help
-  or document symbols yet, and no list of diagnostics in a
+- Language servers: no rename, code actions, signature help or document
+  symbols yet, no range formatting (`=` and `gq` stay ferra's own), and no list of diagnostics in a
   picker. Hover is Markdown made plain (no tables, and lists keep their
   `-`); it can't be focused, searched or copied from, and it isn't shown
   in insert mode. Servers' `$/progress` and

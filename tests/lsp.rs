@@ -28,6 +28,8 @@ struct Seen {
     /// `workspace/configuration` request.
     settings: Value,
     configuration: Value,
+    /// The options a formatting request came with.
+    format_options: Value,
 }
 
 struct FakeServer {
@@ -89,6 +91,7 @@ fn serve(
                         "hoverProvider": features, "definitionProvider": features,
                         "referencesProvider": features,
                         "completionProvider": {"triggerCharacters": ["."]},
+                        "documentFormattingProvider": features,
                     }}),
                 );
                 // Servers ask things too; this must be answered.
@@ -164,6 +167,14 @@ fn serve(
                     ]}),
                 );
             }
+            "textDocument/formatting" => {
+                let text = seen.lock().unwrap().text.clone();
+                seen.lock().unwrap().format_options = params["options"].clone();
+                if text.contains("slow") {
+                    continue; // Never answers.
+                }
+                reply(&mut output, Value::Array(format_edits(&text)));
+            }
             "completionItem/resolve" => {
                 let mut item = params.clone();
                 item["additionalTextEdits"] = json!([{
@@ -215,6 +226,26 @@ fn apply(text: &str, change: &Value, utf8: bool) -> String {
         change["text"].as_str().unwrap(),
         &text[to..]
     )
+}
+
+/// How the fake server formats: runs of spaces after a line's indentation
+/// become one, and trailing spaces go; an edit for each line that changes.
+fn format_edits(text: &str) -> Vec<Value> {
+    let mut edits = Vec::new();
+    for (line, old) in text.split('\n').enumerate() {
+        let indent = old.len() - old.trim_start().len();
+        let words: Vec<&str> = old.split(' ').filter(|w| !w.is_empty()).collect();
+        let new = format!("{}{}", &old[..indent], words.join(" "));
+        if new != old {
+            let end = old.chars().count();
+            edits.push(json!({
+                "range": {"start": {"line": line, "character": 0},
+                          "end": {"line": line, "character": end}},
+                "newText": new,
+            }));
+        }
+    }
+    edits
 }
 
 /// The word at an LSP position (in bytes) in `text`.
@@ -716,4 +747,74 @@ fn without_auto_complete_ctrl_space_asks() {
     assert!(menu(&app).is_empty());
     keys(&mut app, "<C-Space>");
     until(&mut app, |a| menu(a) == ["bad_word", "badge()"]);
+}
+
+#[test]
+fn format_makes_the_servers_edits_as_one_change() {
+    let (_dir, mut app, seen) = with_server("let  x =   1;  \nfine\n    y  =  2\n", true);
+    ready(&mut app);
+    keys(&mut app, "jj$");
+    keys(&mut app, ":format<CR>");
+    assert_eq!(text(&app), "let x = 1;\nfine\n    y = 2");
+    assert_eq!(common::cursor(&app), (2, 8), "still on the `2`");
+    let options = seen.lock().unwrap().format_options.clone();
+    assert_eq!(options, json!({"tabSize": 4, "insertSpaces": true}));
+    keys(&mut app, "u");
+    assert_eq!(text(&app), "let  x =   1;  \nfine\n    y  =  2", "one undo");
+}
+
+#[test]
+fn format_on_save_formats_what_is_written() {
+    let config = "[languages.rust]\noptions = { format-on-save = true }\n";
+    let (dir, mut app, _) = with_server_in(app_with_config(config), "a  =  1\n", true);
+    ready(&mut app);
+    keys(&mut app, ":w<CR>");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("main.rs")).unwrap(),
+        "a = 1\n"
+    );
+    assert!(!app.editor().document.is_modified());
+    // Other languages don't.
+    let other = dir.path().join("notes.txt");
+    fs::write(&other, "b  =  2\n").unwrap();
+    keys(
+        &mut app,
+        &format!(":e {}<CR>A <Esc>:w<CR>", other.display()),
+    );
+    assert_eq!(fs::read_to_string(&other).unwrap(), "b  =  2 \n");
+}
+
+#[test]
+fn format_says_why_it_cant() {
+    let (_dir, mut app, _) = with_server("a  b\n", false);
+    ready(&mut app);
+    keys(&mut app, ":format<CR>");
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "rust-analyzer doesn't format"
+    );
+    keys(&mut app, ":e notes.txt<CR>:format<CR>");
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "No language server for this buffer (see :lsp)"
+    );
+}
+
+#[test]
+fn a_server_that_doesnt_answer_doesnt_stop_the_save() {
+    let config = "[languages.rust]\noptions = { format-on-save = true }\n";
+    let (dir, mut app, _) = with_server_in(app_with_config(config), "slow  one\n", true);
+    ready(&mut app);
+    let started = std::time::Instant::now();
+    keys(&mut app, ":w<CR>");
+    assert!(started.elapsed() < Duration::from_secs(3), "gives up");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("main.rs")).unwrap(),
+        "slow  one\n"
+    );
+    let message = app.editor().message().unwrap().text.clone();
+    assert!(
+        message.ends_with("written (not formatted: rust-analyzer took too long to format)"),
+        "{message}"
+    );
 }

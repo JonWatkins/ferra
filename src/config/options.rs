@@ -23,6 +23,8 @@ pub struct EditorOptions {
     /// Whether typing past `text-width` breaks the line: never, in
     /// comments, or anywhere.
     pub auto_wrap: AutoWrap,
+    /// Have the language server format the buffer before each save.
+    pub format_on_save: bool,
     /// Long lines continue on the next screen rows (breaking between
     /// words) rather than running off the edge.
     pub wrap: bool,

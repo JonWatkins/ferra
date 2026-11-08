@@ -21,6 +21,7 @@ pub enum LspFeature {
     Completion,
     /// The rest of a completion item that was taken (its import).
     ResolveCompletion,
+    Format,
 }
 
 impl LspFeature {
@@ -34,6 +35,7 @@ impl LspFeature {
             LspFeature::Implementation => "implementation",
             LspFeature::References => "references",
             LspFeature::Completion | LspFeature::ResolveCompletion => "completion",
+            LspFeature::Format => "formatting",
         }
     }
 
@@ -47,6 +49,7 @@ impl LspFeature {
             LspFeature::Implementation => "Implementations",
             LspFeature::References => "References",
             LspFeature::Completion | LspFeature::ResolveCompletion => "Completions",
+            LspFeature::Format => "Formatting",
         }
     }
 }
@@ -93,10 +96,71 @@ pub struct Hover {
     pub total: std::cell::Cell<usize>,
 }
 
+/// Formats a buffer by asking its language server, waiting for the answer
+/// (so `:wq` saves the formatted text). The app gives the editor one.
+pub trait Formatter: std::fmt::Debug {
+    /// Formats the active buffer. With `quiet` (formatting on save), not
+    /// having a server that formats it is fine.
+    fn format(&mut self, editor: &mut Editor, quiet: bool) -> Result<(), String>;
+}
+
 /// The id hover documents have: never one of the editor's buffers.
 pub const HOVER_DOCUMENT: DocumentId = DocumentId(u64::MAX);
 
 impl Editor {
+    /// Lets `:format` and `format-on-save` ask language servers.
+    pub fn set_formatter(&mut self, formatter: Box<dyn Formatter>) {
+        self.formatter = Some(formatter);
+    }
+
+    /// `:format`, or before saving with `format-on-save` (`quiet`): has
+    /// the buffer's language server format it.
+    pub fn format(&mut self, quiet: bool) -> Result<(), String> {
+        if !self.options.lsp {
+            return if quiet {
+                Ok(())
+            } else {
+                Err("Language servers are off (lsp = false)".into())
+            };
+        }
+        let Some(mut formatter) = self.formatter.take() else {
+            return if quiet {
+                Ok(())
+            } else {
+                Err("No language server for this buffer (see :lsp)".into())
+            };
+        };
+        let result = formatter.format(self, quiet);
+        self.formatter = Some(formatter);
+        result
+    }
+
+    /// Replaces each `start..end` with its text (a server's edits: they
+    /// don't overlap, and are all about the text as it is now), keeping the
+    /// cursor on the text it was on: moved along by edits before it, and
+    /// kept at its line and column (as far as it can be) in one that
+    /// replaces the text it was in.
+    pub fn apply_text_edits(&mut self, mut edits: Vec<(Position, Position, String)>) {
+        // Last first, so each edit's place is still where it was.
+        edits.sort_by_key(|e| std::cmp::Reverse(e.0));
+        let mut cursor = self.document.cursor();
+        for (start, end, text) in edits {
+            self.document.delete(start, end);
+            let new_end = self.document.insert(start, &text);
+            if end <= cursor {
+                cursor = moved(cursor, end, new_end);
+            } else if start < cursor {
+                cursor = cursor.min(new_end);
+            }
+        }
+        self.document.set_cursor(cursor);
+        // In insert mode the cursor can be after the last char (after a
+        // word just completed).
+        if self.mode() != Mode::Insert {
+            self.document.clamp_to_last_char();
+        }
+    }
+
     /// Asks the language server for `feature` at the cursor (`K`, `gd`...).
     pub fn request_lsp(&mut self, feature: LspFeature) -> Result<(), String> {
         if !self.options.lsp {
@@ -253,6 +317,17 @@ impl Editor {
     }
 }
 
+/// Where `cursor` (after `end`) is once the text up to `end` is replaced
+/// by text ending at `new_end`.
+fn moved(cursor: Position, end: Position, new_end: Position) -> Position {
+    if end.row == cursor.row {
+        Position::new(new_end.row, new_end.col + (cursor.col - end.col))
+    } else {
+        let rows = new_end.row as isize - end.row as isize;
+        Position::new((cursor.row as isize + rows) as usize, cursor.col)
+    }
+}
+
 /// Whether `a` and `b` are the same file, however they're written.
 pub fn same_file(a: &Path, b: &Path) -> bool {
     let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
@@ -330,6 +405,43 @@ mod tests {
             scratch.request_lsp(LspFeature::Definition).is_err(),
             "no file"
         );
+    }
+
+    #[test]
+    fn the_cursor_moves_with_edits_before_it() {
+        let at = Position::new;
+        // `use a;\n` put in above: one row down.
+        assert_eq!(moved(at(3, 4), at(0, 0), at(1, 0)), at(4, 4));
+        // On its row, before it: along by the difference (`2..5` to `2..3`).
+        assert_eq!(moved(at(0, 10), at(0, 5), at(0, 3)), at(0, 8));
+        // A line joined into the one above (`0,3..1,0` deleted).
+        assert_eq!(moved(at(1, 4), at(1, 0), at(0, 3)), at(0, 7));
+    }
+
+    #[test]
+    fn edits_are_made_last_first_and_the_cursor_stays_on_its_text() {
+        let mut editor = Editor::default();
+        editor
+            .document
+            .insert(Position::new(0, 0), "fn  main(){\nlet x=1;\n}");
+        editor.document.set_cursor(Position::new(1, 6));
+        let at = Position::new;
+        editor.apply_text_edits(vec![
+            (at(0, 2), at(0, 4), " ".into()),
+            (at(0, 10), at(0, 10), " ".into()),
+            (at(1, 0), at(1, 0), "    ".into()),
+            (at(1, 5), at(1, 6), " = ".into()),
+        ]);
+        assert_eq!(
+            editor.document.buffer().text(),
+            "fn main() {\n    let x = 1;\n}"
+        );
+        // Still on the `1`, moved along by the spaces before it.
+        assert_eq!(editor.document.cursor(), at(1, 12));
+        // In text an edit replaced: kept where it was, within the new text.
+        editor.document.set_cursor(at(1, 6));
+        editor.apply_text_edits(vec![(at(1, 4), at(1, 9), "letting".into())]);
+        assert_eq!(editor.document.cursor(), at(1, 6));
     }
 
     #[test]

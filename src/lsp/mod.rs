@@ -28,6 +28,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use serde_json::{Value, json};
 
 use crate::editor::diagnostics::{Diagnostic, Severity};
+use crate::editor::lsp::LspFeature;
 use crate::editor::{DocumentId, Editor, Message};
 use client::{Answer, Client, ClientId, Incoming};
 
@@ -47,6 +48,8 @@ pub struct Lsp {
     /// The last few completion answers' items as the servers sent them, to
     /// send one back to be resolved when it's taken.
     completions: features::Stash,
+    /// The answer to the formatting request being waited for.
+    formatted: Option<Result<Value, client::ResponseError>>,
 }
 
 impl Default for Lsp {
@@ -62,7 +65,31 @@ impl Default for Lsp {
             failed: HashMap::new(),
             enabled: false,
             completions: features::Stash::default(),
+            formatted: None,
         }
+    }
+}
+
+/// The editor's way to `:format`: the app's language servers.
+pub struct LspFormatter(std::rc::Rc<std::cell::RefCell<Lsp>>);
+
+impl LspFormatter {
+    pub fn new(lsp: std::rc::Rc<std::cell::RefCell<Lsp>>) -> Self {
+        Self(lsp)
+    }
+}
+
+impl std::fmt::Debug for LspFormatter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LspFormatter")
+    }
+}
+
+impl crate::editor::lsp::Formatter for LspFormatter {
+    fn format(&mut self, editor: &mut Editor, quiet: bool) -> Result<(), String> {
+        // Only ever called from a command, never while drawing, so the
+        // app isn't using it.
+        self.0.borrow_mut().format(editor, quiet)
     }
 }
 
@@ -143,24 +170,26 @@ impl Lsp {
         while let Ok(incoming) = self.receiver.try_recv() {
             match incoming {
                 Incoming::Message(id, message) => self.handle(id, message, editor),
-                Incoming::Closed(id) => {
-                    let Some(client) = self.clients.iter_mut().find(|c| c.id == id) else {
-                        continue;
-                    };
-                    if !matches!(client.state, State::Stopped(_)) {
-                        editor.set_message(Message::error(format!(
-                            "{} stopped (see :lsp)",
-                            client.name
-                        )));
-                        client.state = State::Stopped("it exited".into());
-                    }
-                    let documents: Vec<DocumentId> =
-                        client.document_uris().map(|(d, _)| d).collect();
-                    for document in documents {
-                        editor.set_diagnostics(document, Vec::new());
-                    }
-                }
+                Incoming::Closed(id) => self.closed(id, editor),
             }
+        }
+    }
+
+    /// Server `id`'s output ended: it's stopped, and its diagnostics go.
+    fn closed(&mut self, id: ClientId, editor: &mut Editor) {
+        let Some(client) = self.clients.iter_mut().find(|c| c.id == id) else {
+            return;
+        };
+        if !matches!(client.state, State::Stopped(_)) {
+            editor.set_message(Message::error(format!(
+                "{} stopped (see :lsp)",
+                client.name
+            )));
+            client.state = State::Stopped("it exited".into());
+        }
+        let documents: Vec<DocumentId> = client.document_uris().map(|(d, _)| d).collect();
+        for document in documents {
+            editor.set_diagnostics(document, Vec::new());
         }
     }
 
@@ -179,6 +208,9 @@ impl Lsp {
                     Answer::Done => {}
                     Answer::Failed(error) => {
                         editor.set_message(Message::error(format!("{}: {error}", client.name)));
+                    }
+                    Answer::Feature(request, result) if request.feature == LspFeature::Format => {
+                        self.formatted = Some(result);
                     }
                     Answer::Feature(request, result) => {
                         features::answer(editor, client, request, result, &mut self.completions);

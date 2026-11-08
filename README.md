@@ -481,6 +481,19 @@ such as rust-analyzer adding `use std::collections::HashMap;`. Set
 or `<C-x><C-o>`. `<C-n>` without the menu up still completes words from
 the buffers, as in Vim.
 
+`:format` (or `:fmt`) has the server format the file, as one change (`u`
+undoes it), keeping the cursor on its text. To format on every save, set
+`format-on-save`, for one language or all:
+
+```toml
+[languages.rust]
+options = { format-on-save = true }   # or format-on-save = true in [editor]
+```
+
+Saving waits up to 2 seconds for the server; if it can't format (none
+running, an error, too slow), the file is saved as it is and the message
+says why.
+
 Some servers check more when you save: rust-analyzer finds syntax errors
 as you type, but type and borrow errors come from `cargo check`, which it
 runs on `:w`. And it only checks files that are part of a crate (in the

@@ -290,49 +290,15 @@ impl Editor {
     }
 
     /// Makes a completion's other edits (an import), keeping the cursor on
-    /// the text it was on. Edits that overlap the cursor are left out.
-    pub fn make_other_edits(&mut self, mut edits: Vec<(Position, Position, String)>) {
-        // Last first, so each edit's place is still where it was; the
-        // cursor moves with the text edited before it.
-        edits.sort_by_key(|e| std::cmp::Reverse(e.0));
-        let mut cursor = self.document.cursor();
-        for (start, end, text) in edits {
-            if end > cursor && start < cursor {
-                continue; // Overlaps the word: not safe to make.
-            }
-            self.document.delete(start, end);
-            let new_end = self.document.insert(start, &text);
-            if end <= cursor {
-                cursor = moved(cursor, end, new_end);
-            }
-        }
-        self.document.set_cursor(cursor);
-    }
-}
-
-/// Where `cursor` (after `end`) is once the text up to `end` is replaced
-/// by text ending at `new_end`.
-fn moved(cursor: Position, end: Position, new_end: Position) -> Position {
-    if end.row == cursor.row {
-        Position::new(new_end.row, new_end.col + (cursor.col - end.col))
-    } else {
-        let rows = new_end.row as isize - end.row as isize;
-        Position::new((cursor.row as isize + rows) as usize, cursor.col)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_cursor_moves_with_edits_before_it() {
-        let at = Position::new;
-        // `use a;\n` put in above: one row down.
-        assert_eq!(moved(at(3, 4), at(0, 0), at(1, 0)), at(4, 4));
-        // On its row, before it: along by the difference (`2..5` to `2..3`).
-        assert_eq!(moved(at(0, 10), at(0, 5), at(0, 3)), at(0, 8));
-        // A line joined into the one above (`0,3..1,0` deleted).
-        assert_eq!(moved(at(1, 4), at(1, 0), at(0, 3)), at(0, 7));
+    /// the text it was on. Edits that overlap the word just put in are left
+    /// out.
+    pub fn make_other_edits(&mut self, edits: Vec<(Position, Position, String)>) {
+        let cursor = self.document.cursor();
+        let (start, _) = self.word_before_cursor();
+        let edits = edits
+            .into_iter()
+            .filter(|(from, to, _)| !(*to > start && *from < cursor))
+            .collect();
+        self.apply_text_edits(edits);
     }
 }

@@ -73,4 +73,24 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.alias("lsp", "lsp_info");
+    r.register(
+        "format",
+        "Have the language server format the buffer",
+        |cx| cx.editor.format(false),
+    );
+    r.alias("fmt", "format");
+    // `format-on-save`: before the hooks from config, so theirs see the
+    // formatted text. Not formatting doesn't stop the save.
+    r.on(
+        crate::events::EventKind::BeforeSave,
+        "format-on-save",
+        |cx, _| {
+            if cx.editor.options.format_on_save
+                && let Err(error) = cx.editor.format(true)
+            {
+                cx.editor.note_for_save(format!("not formatted: {error}"));
+            }
+            Ok(())
+        },
+    );
 }

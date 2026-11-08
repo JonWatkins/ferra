@@ -184,6 +184,10 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
+    /// Added to the next save's message (see `note_for_save`).
+    save_note: Option<String>,
+    /// How `:format` reaches language servers (set by the app).
+    formatter: Option<Box<dyn lsp::Formatter>>,
     /// The buffer and its edit count before the key being handled, to tell
     /// whether it changed the text (for completing as you type).
     text_before_key: (DocumentId, u64, u64),

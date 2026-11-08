@@ -196,10 +196,21 @@ impl Editor {
         }
     }
 
+    /// Something to add to the next save's message (why it wasn't
+    /// formatted).
+    pub fn note_for_save(&mut self, note: String) {
+        self.save_note = Some(note);
+    }
+
     /// Saves the document (see [`Document::save`]) and reports what was written.
     pub fn save(&mut self, target: Option<&Path>, force: bool) -> Result<(), FileError> {
+        let note = self.save_note.take();
         let info = self.document.save(target, force)?;
-        self.set_message(Message::info(describe_save(&info)));
+        let mut text = describe_save(&info);
+        if let Some(note) = note {
+            text.push_str(&format!(" ({note})"));
+        }
+        self.set_message(Message::info(text));
         self.emit(Event::AfterSave { path: info.path });
         Ok(())
     }

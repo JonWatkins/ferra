@@ -42,7 +42,97 @@ impl Stash {
     }
 }
 
+/// How long `:format` (and saving, with `format-on-save`) waits.
+const FORMAT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 impl Lsp {
+    /// Has the active buffer's server format it, waiting for the answer
+    /// (handling anything else servers send meanwhile), and makes its
+    /// edits. With `quiet`, a buffer without a server that formats is fine.
+    pub fn format(&mut self, editor: &mut Editor, quiet: bool) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        // The server needs the text as it is now.
+        self.receive(editor);
+        self.sync(editor);
+        let document = editor.document.id();
+        let Some(client) = self
+            .clients
+            .iter_mut()
+            .find(|c| c.has_document(document) && c.state == State::Ready)
+        else {
+            return if quiet {
+                Ok(())
+            } else {
+                Err("No language server for this buffer (see :lsp)".into())
+            };
+        };
+        if !client.supports(LspFeature::Format) {
+            return if quiet {
+                Ok(())
+            } else {
+                Err(format!("{} doesn't format", client.name))
+            };
+        }
+        let buffer = editor.document.buffer();
+        let request = LspRequest {
+            feature: LspFeature::Format,
+            document,
+            position: editor.document.cursor(),
+            buffer_id: buffer.id(),
+            edit_seq: buffer.edit_seq(),
+            manual: true,
+            trigger: None,
+            word_start: editor.document.cursor(),
+            item: None,
+        };
+        let options = &editor.options;
+        let (name, encoding, client_id) = (client.name.clone(), client.encoding, client.id);
+        let id = client.request_format(request, options.tab_width, options.expand_tab);
+
+        self.formatted = None;
+        let deadline = std::time::Instant::now() + FORMAT_TIMEOUT;
+        while self.formatted.is_none() {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match self.receiver.recv_timeout(left) {
+                Ok(super::Incoming::Message(from, message)) => self.handle(from, message, editor),
+                Ok(super::Incoming::Closed(from)) => self.closed(from, editor),
+                Err(_) => return Err(format!("{name} took too long to format")),
+            }
+            let gone = self
+                .clients
+                .iter()
+                .find(|c| c.id == client_id)
+                .is_none_or(|c| !c.waiting_for(id));
+            if gone && self.formatted.is_none() {
+                return Err(format!("{name} stopped"));
+            }
+        }
+        let edits = match self.formatted.take().expect("loop ends with it") {
+            Ok(edits) => edits,
+            Err(error) => return Err(format!("{name}: {}", error.message)),
+        };
+        // Made only if nothing changed while waiting (it can't, but a
+        // server's edits on the wrong text would garble it).
+        let buffer = editor.document.buffer();
+        if editor.document.id() != document || buffer.edit_seq() != request.edit_seq {
+            return Err("The text changed while formatting".into());
+        }
+        let edits = edits
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|e| {
+                let start = convert::from_lsp(buffer, &e["range"]["start"], encoding);
+                let end = convert::from_lsp(buffer, &e["range"]["end"], encoding);
+                (start, end, e["newText"].as_str().unwrap_or("").to_string())
+            })
+            .collect();
+        editor.apply_text_edits(edits);
+        Ok(())
+    }
+
     /// Sends the editor's requests, each to the server with its document
     /// open (synced just before, so it has the text the request is about).
     pub(super) fn send_requests(&mut self, editor: &mut Editor) {

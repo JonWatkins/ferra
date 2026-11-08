@@ -61,7 +61,8 @@ pub struct App {
     /// The last error from each plugin status function, so it's shown once.
     plugin_status_errors: HashMap<String, String>,
     /// Language servers for the open files.
-    lsp: crate::lsp::Lsp,
+    /// Shared with the editor's formatter, which waits on it mid-command.
+    lsp: std::rc::Rc<std::cell::RefCell<crate::lsp::Lsp>>,
 }
 
 impl Default for App {
@@ -100,8 +101,10 @@ impl App {
             paste: None,
             background: background::Background::default(),
             plugin_status_errors: HashMap::new(),
-            lsp: crate::lsp::Lsp::default(),
+            lsp: Default::default(),
         };
+        let formatter = crate::lsp::LspFormatter::new(std::rc::Rc::clone(&app.lsp));
+        app.editor.set_formatter(Box::new(formatter));
         let mode = app.editor.options.clipboard;
         let provider = app.editor.options.clipboard_provider;
         app.editor
@@ -245,7 +248,7 @@ impl App {
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         terminal::enable_bracketed_paste()?;
         terminal::enable_focus_reporting()?;
-        self.lsp.enable();
+        self.lsp.borrow_mut().enable();
         // A terminal that doesn't answer is used the old way.
         let enhanced_keys = self.editor.options.kitty_keyboard
             && terminal::enable_keyboard_enhancement().unwrap_or(false);
@@ -279,7 +282,7 @@ impl App {
             let due = [deadline, watch].into_iter().flatten().min();
             // Language servers' messages arrive on their own threads, so
             // keep checking while any are running.
-            let busy = self.background.busy() || self.lsp.active();
+            let busy = self.background.busy() || self.lsp.borrow().active();
             let wait = match (due, busy) {
                 (Some(due), busy) => {
                     let left = due.saturating_duration_since(Instant::now());
@@ -323,7 +326,7 @@ impl App {
             }
             deadline = self.key_deadline();
         }
-        self.lsp.shutdown();
+        self.lsp.borrow_mut().shutdown();
         if enhanced_keys {
             terminal::disable_keyboard_enhancement()?;
         }
@@ -495,14 +498,14 @@ impl App {
     }
 
     /// The language servers, to replace how they're started (tests).
-    pub fn lsp_mut(&mut self) -> &mut crate::lsp::Lsp {
-        &mut self.lsp
+    pub fn lsp_mut(&mut self) -> std::cell::RefMut<'_, crate::lsp::Lsp> {
+        self.lsp.borrow_mut()
     }
 
     /// Handles what language servers sent and sends them the latest
     /// changes. Called before each draw; public so tests can drive it.
     pub fn update_lsp(&mut self) {
-        self.lsp.update(&mut self.editor);
+        self.lsp.borrow_mut().update(&mut self.editor);
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
