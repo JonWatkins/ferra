@@ -76,9 +76,22 @@ impl SyntaxEngine {
         trees: &SyntaxTrees,
         rows: Range<usize>,
     ) -> Option<&Highlights> {
+        let name = languages.detect(document.path(), &document.buffer().line(0));
+        self.highlight_as(document, name, languages, trees, rows)
+    }
+
+    /// Like [`highlight`](Self::highlight), in `language` whatever the
+    /// document's name (a hover's Markdown).
+    pub fn highlight_as(
+        &mut self,
+        document: &Document,
+        name: Option<&str>,
+        languages: &Languages,
+        trees: &SyntaxTrees,
+        rows: Range<usize>,
+    ) -> Option<&Highlights> {
         let id = document.id();
         let buffer = document.buffer();
-        let name = languages.detect(document.path(), &buffer.line(0));
         let Some(index) = LANGUAGES.iter().position(|l| Some(l.name) == name) else {
             self.documents.remove(&id);
             return None;
@@ -322,6 +335,24 @@ mod tests {
         for name in ["text.strong", "text.emphasis", "text.literal"] {
             assert!(prose.contains(&name), "{name} in {prose:?}");
         }
+    }
+
+    #[test]
+    fn an_injected_span_wins_over_its_hosts_from_the_same_start() {
+        // The title runs from the `` ` ``, as the code span does; the
+        // code span's delimiter (from the inline grammar) is what shows.
+        let mut engine = SyntaxEngine::default();
+        let doc = document("a.md", "### `area` here\n");
+        let spans = engine.highlights_default(&doc).unwrap().line(0).to_vec();
+        let at = |col: usize| {
+            spans
+                .iter()
+                .find(|s| s.start <= col && col < s.end)
+                .map(Span::name)
+        };
+        assert_eq!(at(4), Some("punctuation.delimiter"), "{spans:?}");
+        assert_eq!(at(9), Some("punctuation.delimiter"));
+        assert_eq!(at(11), Some("text.title"));
     }
 
     #[test]

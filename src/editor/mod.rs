@@ -23,6 +23,7 @@ mod block;
 mod comment;
 mod confirm;
 pub mod diagnostics;
+pub mod lsp;
 mod selection;
 mod transform;
 pub mod windows;
@@ -176,6 +177,12 @@ pub struct Editor {
     insert_repeat: Option<(usize, bool)>,
     /// How each language server is doing, for `:lsp` (set by the app).
     lsp_status: Vec<String>,
+    /// Requests for language servers, waiting for the app to send them.
+    lsp_requests: Vec<lsp::LspRequest>,
+    /// A language server's hover, shown by the cursor.
+    hover: Option<lsp::Hover>,
+    /// Whether the key being handled scrolled the hover (so it stays).
+    hover_used: bool,
     /// Language servers' diagnostics, by buffer.
     diagnostics: HashMap<DocumentId, Vec<diagnostics::Diagnostic>>,
     /// What each Lua `editor.status` function last returned, by name, for

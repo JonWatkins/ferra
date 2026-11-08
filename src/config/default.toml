@@ -489,6 +489,13 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "[b" = "buffer_prev"
 "]d" = "goto_next_diagnostic"
 "[d" = "goto_prev_diagnostic"
+# Language servers: hover, and going to what the cursor's on.
+"K" = "hover"
+"gd" = "goto_definition"
+"gD" = "goto_declaration"
+"gy" = "goto_type_definition"
+"gI" = "goto_implementation"
+"gr" = "goto_references"
 "ZZ" = "exit"
 "ZQ" = "force_quit"
 

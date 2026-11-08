@@ -51,11 +51,15 @@ pub fn from_lsp(buffer: &Buffer, position: &Value, encoding: Encoding) -> Positi
         let last = buffer.line_count() - 1;
         return buffer.line_end(last);
     }
-    let line = buffer.line(row);
+    Position::new(row, col_from_lsp(&buffer.line(row), character, encoding))
+}
+
+/// The char column in `line` of the LSP column `character`.
+pub fn col_from_lsp(line: &str, character: usize, encoding: Encoding) -> usize {
     let mut units = 0;
     let mut col = 0;
     for c in line.chars() {
-        if units >= character {
+        if units >= character || c == '\n' {
             break;
         }
         units += match encoding {
@@ -64,7 +68,7 @@ pub fn from_lsp(buffer: &Buffer, position: &Value, encoding: Encoding) -> Positi
         };
         col += 1;
     }
-    Position::new(row, col)
+    col
 }
 
 /// The `file://` URI for `path` (made absolute).

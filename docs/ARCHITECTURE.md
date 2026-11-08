@@ -1078,7 +1078,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 ## Roadmap: deferred features
 
-Planned: plugin UI, the rest of LSP support (diagnostics are done), an
+Planned: plugin UI, the rest of LSP support (diagnostics, hover and go to
+definition and references are done), an
 agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
 
 ### Foundations
@@ -1118,11 +1119,11 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 
 ### LSP support
 
-Started: see [Language servers](#language-servers) for the client and
-diagnostics. Still to come, in order: a picker list of diagnostics, hover (a float), go to
-definition and references (the jump list is ready for this), completion (a
-float in insert mode), rename, code actions and formatting (as one undo step
-each, through the command registry).
+Started: see [Language servers](#language-servers) for the client,
+diagnostics, hover and going to definitions and references. Still to come,
+in order: completion (a float in insert mode), formatting, rename and code
+actions (each one undo step, through the command registry), and a picker
+list of diagnostics.
 
 ### Agent harness
 
@@ -1220,6 +1221,34 @@ line's text. They're replaced by the server's next list rather than moved
 with edits, so between an edit and the server's answer they can sit a
 little off.
 
+Requests from the editor (`K`, `gd`, `gr`...) keep the layers apart: the
+commands only queue an `LspRequest` (`editor/lsp.rs`: the feature, the
+document, the cursor, and the buffer's id and edit count). `Lsp::update`
+takes them after syncing, so the server has the text they're about, and
+`lsp/features.rs` sends each to the server with that document open, if it
+said it can answer (`hoverProvider`, `definitionProvider`...), or says why
+not. The answer is dropped unless the editor is still where it was asked
+(same buffer, text and cursor, in normal mode), and stale-answer errors
+(`ContentModified`, cancelled) are ignored.
+
+- Hover: the contents (Markdown, a marked string, or a list of them) become
+  one Markdown text in a document of its own (`HOVER_DOCUMENT`, never a
+  buffer). `ui/hover.rs` highlights it as Markdown with `highlight_as`, so
+  code blocks get their language's highlighting through the usual
+  injections, and draws it in a popup by the cursor: fences hidden, as are
+  Markdown's emphasis and code-span markers, headings' `#`s and links'
+  URLs (from the inline grammar's spans), blank runs squeezed, `---` drawn
+  as a rule, long lines wrapped between words. Inside code blocks
+  Markdown's own `text.*` styles are dropped so they don't show through.
+  The popup closes on the next key unless that's `K` again, which scrolls
+  a page (the draw records how many rows there are and fit).
+- Go to: `Location`, `Location[]` and `LocationLink[]` answers become
+  `Location`s with char columns, converted with each line's text (from the
+  buffer if the file is open, else read from disk once per file). One is
+  gone to as a jump (`goto_location`, which opens the file by its path
+  relative to the current folder when it's under it); several open a
+  picker whose items are `PickerAction::GoTo`.
+
 ## Configuration
 
 - `src/config/default.toml` is embedded with `include_str!` and is the single
@@ -1279,9 +1308,11 @@ little off.
 
 ## Known gaps / next steps
 
-- Language servers give diagnostics only, so far: no hover, go to
-  definition, references, completion, formatting, rename or code actions,
-  and no list of diagnostics in a picker. Servers' `$/progress` and
+- Language servers: no completion, formatting, rename, code actions,
+  signature help or document symbols yet, and no list of diagnostics in a
+  picker. Hover is Markdown made plain (no tables, and lists keep their
+  `-`); it can't be focused, searched or copied from, and it isn't shown
+  in insert mode. Servers' `$/progress` and
   `window/logMessage` are ignored (so `:lsp` says "running" while
   rust-analyzer is still indexing), as are dynamic registrations and
   `workspace/applyEdit`. A server that stops isn't restarted (there's no

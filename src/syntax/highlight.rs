@@ -520,15 +520,13 @@ impl Layers<'_, '_> {
     fn paint(mut self) -> Vec<Option<u16>> {
         let start = self.bytes.start;
         let mut paint = vec![None; self.bytes.len()];
-        // A stable sort keeps the query's order within a layer.
-        self.spans
-            .sort_by_key(|p| (p.bytes.start, std::cmp::Reverse(p.depth)));
-        let mut previous: Option<&Painted> = None;
+        // Painted in order, later over earlier: by start, and at the same
+        // start outer layers first, so an injected language's span wins
+        // over its host's even when the host's runs on further (a
+        // Markdown title's over the code span in it). A stable sort keeps
+        // the query's order within a layer.
+        self.spans.sort_by_key(|p| (p.bytes.start, p.depth));
         for span in &self.spans {
-            if previous.is_some_and(|p| p.bytes == span.bytes && p.depth > span.depth) {
-                continue;
-            }
-            previous = Some(span);
             let from = span.bytes.start.max(start);
             let to = span.bytes.end.min(self.bytes.end);
             for byte in from..to {

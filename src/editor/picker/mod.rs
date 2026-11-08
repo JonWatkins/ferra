@@ -20,6 +20,8 @@ pub enum PickerAction {
     OpenFile(PathBuf),
     /// Paste from this register after the cursor.
     Paste(char),
+    /// Go to a place in a file (a definition or reference).
+    GoTo(PathBuf, crate::core::Position),
 }
 
 impl PickerItem {

@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use super::convert::{Encoding, path_to_uri};
 use super::transport::{read_message, write_message};
 use crate::config::ServerConfig;
+use crate::editor::lsp::{LspFeature, LspRequest};
 use crate::editor::{Document, DocumentId};
 
 /// Identifies a client among the running ones.
@@ -122,6 +123,45 @@ struct Synced {
 enum Pending {
     Initialize,
     Shutdown,
+    Feature(LspRequest),
+}
+
+/// An error a server answered with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResponseError {
+    pub code: i64,
+    pub message: String,
+}
+
+impl ResponseError {
+    /// Whether it only means the answer is out of date (the text changed,
+    /// or the request was cancelled), so it's not worth reporting.
+    pub fn is_stale(&self) -> bool {
+        matches!(self.code, -32802..=-32800)
+    }
+}
+
+/// What an answer from the server was for.
+pub enum Answer {
+    /// Nothing more to do.
+    Done,
+    /// `initialize` failed: why.
+    Failed(String),
+    /// The answer to an editor request.
+    Feature(LspRequest, Result<Value, ResponseError>),
+}
+
+/// The method that asks for `feature`, and the capability that says the
+/// server can answer it.
+fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
+    match feature {
+        LspFeature::Hover => ("textDocument/hover", "hoverProvider"),
+        LspFeature::Definition => ("textDocument/definition", "definitionProvider"),
+        LspFeature::Declaration => ("textDocument/declaration", "declarationProvider"),
+        LspFeature::TypeDefinition => ("textDocument/typeDefinition", "typeDefinitionProvider"),
+        LspFeature::Implementation => ("textDocument/implementation", "implementationProvider"),
+        LspFeature::References => ("textDocument/references", "referencesProvider"),
+    }
 }
 
 pub struct Client {
@@ -140,6 +180,8 @@ pub struct Client {
     documents: HashMap<DocumentId, Synced>,
     /// The settings from config, as JSON.
     settings: Value,
+    /// What it said it can do, in its answer to `initialize`.
+    capabilities: Value,
 }
 
 impl Client {
@@ -180,6 +222,7 @@ impl Client {
             sync: Sync::Full,
             documents: HashMap::new(),
             settings: serde_json::to_value(&config.settings).unwrap_or_else(|_| json!({})),
+            capabilities: Value::Null,
         };
         let root_uri = path_to_uri(root);
         let name = root.file_name().map_or_else(
@@ -199,6 +242,12 @@ impl Client {
                     "textDocument": {
                         "synchronization": { "dynamicRegistration": false, "didSave": true },
                         "publishDiagnostics": { "relatedInformation": false },
+                        "hover": { "contentFormat": ["markdown", "plaintext"] },
+                        "definition": { "linkSupport": true },
+                        "declaration": { "linkSupport": true },
+                        "typeDefinition": { "linkSupport": true },
+                        "implementation": { "linkSupport": true },
+                        "references": {},
                     },
                     "workspace": { "workspaceFolders": true, "configuration": true },
                     "window": { "workDoneProgress": false },
@@ -243,16 +292,42 @@ impl Client {
         self.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
     }
 
-    /// Handles the answer to one of our requests. Returns an error for a
-    /// failed `initialize`.
-    pub fn handle_response(&mut self, id: i64, message: &Value) -> Result<(), String> {
+    /// Whether the server said it can answer `feature`.
+    pub fn supports(&self, feature: LspFeature) -> bool {
+        let (_, capability) = feature_method(feature);
+        !matches!(
+            self.capabilities.get(capability),
+            None | Some(Value::Null | Value::Bool(false))
+        )
+    }
+
+    /// Asks for `request`'s feature in the document it's in (which the
+    /// server has open), at LSP position `position`.
+    pub fn request_feature(&mut self, request: LspRequest, position: Value) {
+        let Some(synced) = self.documents.get(&request.document) else {
+            return;
+        };
+        let (method, _) = feature_method(request.feature);
+        let mut params = json!({
+            "textDocument": { "uri": synced.uri },
+            "position": position,
+        });
+        if request.feature == LspFeature::References {
+            params["context"] = json!({ "includeDeclaration": true });
+        }
+        self.request(method, params, Pending::Feature(request));
+    }
+
+    /// Handles the answer to one of our requests.
+    pub fn handle_response(&mut self, id: i64, message: &Value) -> Answer {
         match self.pending.remove(&id) {
             Some(Pending::Initialize) => {
                 if let Some(error) = message.get("error") {
                     let text = error["message"].as_str().unwrap_or("initialize failed");
                     self.state = State::Stopped(text.to_string());
-                    return Err(text.to_string());
+                    return Answer::Failed(text.to_string());
                 }
+                self.capabilities = message["result"]["capabilities"].clone();
                 let capabilities = &message["result"]["capabilities"];
                 self.encoding = Encoding::from_name(capabilities["positionEncoding"].as_str());
                 let change = match &capabilities["textDocumentSync"] {
@@ -274,13 +349,23 @@ impl Client {
                     "workspace/didChangeConfiguration",
                     json!({ "settings": settings }),
                 );
-                Ok(())
+                Answer::Done
             }
             Some(Pending::Shutdown) => {
                 self.notify("exit", Value::Null);
-                Ok(())
+                Answer::Done
             }
-            None => Ok(()),
+            Some(Pending::Feature(request)) => {
+                let result = match message.get("error") {
+                    Some(error) => Err(ResponseError {
+                        code: error["code"].as_i64().unwrap_or(0),
+                        message: error["message"].as_str().unwrap_or("failed").to_string(),
+                    }),
+                    None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+                };
+                Answer::Feature(request, result)
+            }
+            None => Answer::Done,
         }
     }
 

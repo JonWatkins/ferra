@@ -391,6 +391,8 @@ impl App {
         self.input.reset();
         self.editor.note_key_for_completion();
         self.editor.end_completion_unless_used();
+        self.editor.note_key_for_hover();
+        self.editor.end_hover_unless_used();
         match self.editor.mode() {
             Mode::Insert => {
                 // On a line that's only (auto-)indentation so far, a paste
@@ -720,9 +722,11 @@ impl App {
             _ => {}
         }
         self.editor.note_key_for_completion();
+        self.editor.note_key_for_hover();
         let outcomes = self.input.handle(key, self.editor.mode(), &self.keymap);
         self.apply_outcomes(outcomes);
         self.editor.end_completion_unless_used();
+        self.editor.end_hover_unless_used();
     }
 
     fn apply_outcomes(&mut self, outcomes: Vec<Outcome>) {

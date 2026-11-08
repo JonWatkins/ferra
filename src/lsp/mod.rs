@@ -17,6 +17,8 @@ mod client;
 pub mod convert;
 pub mod transport;
 
+mod features;
+
 pub use client::{ProcessSpawner, Spawner, State, Streams};
 
 use std::collections::{HashMap, HashSet};
@@ -27,7 +29,7 @@ use serde_json::{Value, json};
 
 use crate::editor::diagnostics::{Diagnostic, Severity};
 use crate::editor::{DocumentId, Editor, Message};
-use client::{Client, ClientId, Incoming};
+use client::{Answer, Client, ClientId, Incoming};
 
 pub struct Lsp {
     clients: Vec<Client>,
@@ -89,6 +91,7 @@ impl Lsp {
         }
         self.receive(editor);
         self.sync(editor);
+        self.send_requests(editor);
         editor.set_lsp_status(self.status());
     }
 
@@ -165,10 +168,17 @@ impl Lsp {
         match (method, message.get("id")) {
             // An answer to one of our requests.
             (None, Some(request)) => {
-                if let Some(request) = request.as_i64()
-                    && let Err(error) = client.handle_response(request, &message)
-                {
-                    editor.set_message(Message::error(format!("{}: {error}", client.name)));
+                let Some(request) = request.as_i64() else {
+                    return;
+                };
+                match client.handle_response(request, &message) {
+                    Answer::Done => {}
+                    Answer::Failed(error) => {
+                        editor.set_message(Message::error(format!("{}: {error}", client.name)));
+                    }
+                    Answer::Feature(request, result) => {
+                        features::answer(editor, client, request, result);
+                    }
                 }
             }
             // A request from the server: answered, so it doesn't wait.

@@ -35,13 +35,17 @@ struct FakeServer {
     seen: Arc<Mutex<Seen>>,
 }
 
+/// Where the fake server's `gd` on `other` goes: another file.
+const OTHER: &str = "other.rs";
+
 impl Spawner for FakeServer {
-    fn spawn(&self, _: &ServerConfig, _: &Path) -> io::Result<Streams> {
+    fn spawn(&self, _: &ServerConfig, root: &Path) -> io::Result<Streams> {
         let (client_reads, server_writes) = io::pipe()?;
         let (server_reads, client_writes) = io::pipe()?;
         let seen = Arc::clone(&self.seen);
         let utf8 = self.utf8;
-        std::thread::spawn(move || serve(server_reads, server_writes, utf8, &seen));
+        let dir = root.to_path_buf();
+        std::thread::spawn(move || serve(server_reads, server_writes, utf8, &seen, &dir));
         Ok(Streams {
             reader: Box::new(BufReader::new(client_reads)),
             writer: Box::new(client_writes),
@@ -50,7 +54,13 @@ impl Spawner for FakeServer {
     }
 }
 
-fn serve(input: io::PipeReader, mut output: io::PipeWriter, utf8: bool, seen: &Mutex<Seen>) {
+fn serve(
+    input: io::PipeReader,
+    mut output: io::PipeWriter,
+    utf8: bool,
+    seen: &Mutex<Seen>,
+    root: &Path,
+) {
     let mut input = BufReader::new(input);
     while let Ok(Some(message)) = read_message(&mut input) {
         if message["id"] == 99 && message.get("method").is_none() {
@@ -70,9 +80,15 @@ fn serve(input: io::PipeReader, mut output: io::PipeWriter, utf8: bool, seen: &M
         match method.as_str() {
             "initialize" => {
                 let encoding = if utf8 { "utf-8" } else { "utf-16" };
+                // The UTF-16 server only syncs: it can't answer hovers.
+                let features = utf8;
                 reply(
                     &mut output,
-                    json!({"capabilities": {"positionEncoding": encoding, "textDocumentSync": 2}}),
+                    json!({"capabilities": {
+                        "positionEncoding": encoding, "textDocumentSync": 2,
+                        "hoverProvider": features, "definitionProvider": features,
+                        "referencesProvider": features,
+                    }}),
                 );
                 // Servers ask things too; this must be answered.
                 write_message(
@@ -95,6 +111,40 @@ fn serve(input: io::PipeReader, mut output: io::PipeWriter, utf8: bool, seen: &M
             }
             "workspace/didChangeConfiguration" => {
                 seen.lock().unwrap().settings = params["settings"].clone();
+            }
+            "textDocument/hover" => {
+                let word = word_at(&seen.lock().unwrap().text, &params["position"]);
+                let result = (word == "bad").then(|| {
+                    json!({"contents": {
+                        "kind": "markdown",
+                        "value": "```rust\nfn bad()\n```\n\n---\n\nA **bad** word, see `fine`.",
+                    }})
+                });
+                reply(&mut output, result.into());
+            }
+            "textDocument/definition" | "textDocument/references" => {
+                let text = seen.lock().unwrap().text.clone();
+                let uri = &params["textDocument"]["uri"];
+                let word = word_at(&text, &params["position"]);
+                let at = |line: usize, col: usize, uri: &Value| {
+                    let start = json!({"line": line, "character": col});
+                    json!({"uri": uri, "range": {"start": start, "end": start}})
+                };
+                let mut places: Vec<Value> = Vec::new();
+                for (line, line_text) in text.split('\n').enumerate() {
+                    for (col, _) in line_text.match_indices(&word) {
+                        places.push(at(line, col, uri));
+                    }
+                }
+                let result = if word == "other" {
+                    let path = root.join(OTHER).canonicalize().unwrap();
+                    at(1, 2, &json!(ferra::lsp::convert::path_to_uri(&path)))
+                } else if method == "textDocument/definition" {
+                    places.first().cloned().unwrap_or_default()
+                } else {
+                    Value::Array(places)
+                };
+                reply(&mut output, result);
             }
             "shutdown" => reply(&mut output, Value::Null),
             "exit" => return,
@@ -138,6 +188,21 @@ fn apply(text: &str, change: &Value, utf8: bool) -> String {
         change["text"].as_str().unwrap(),
         &text[to..]
     )
+}
+
+/// The word at an LSP position (in bytes) in `text`.
+fn word_at(text: &str, position: &Value) -> String {
+    let line = text
+        .split('\n')
+        .nth(position["line"].as_u64().unwrap() as usize)
+        .unwrap_or("");
+    let at = (position["character"].as_u64().unwrap() as usize).min(line.len());
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let start = line[..at].rfind(|c| !is_word(c)).map_or(0, |i| i + 1);
+    let end = line[at..]
+        .find(|c| !is_word(c))
+        .map_or(line.len(), |i| at + i);
+    line[start..end].to_string()
 }
 
 /// Reports each `bad` in the server's copy as an error.
@@ -408,4 +473,107 @@ fn saving_tells_the_server() {
     let save = methods.iter().position(|m| m == "textDocument/didSave");
     let change = methods.iter().position(|m| m == "textDocument/didChange");
     assert!(change < save, "the change goes first: {methods:?}");
+}
+
+/// Waits until the server is ready for requests.
+fn ready(app: &mut App) {
+    until(app, |a| {
+        a.editor()
+            .lsp_status()
+            .iter()
+            .any(|l| l.contains("running"))
+    });
+    // And until it has the document open.
+    app.update_lsp();
+}
+
+#[test]
+fn k_shows_the_hover_and_any_other_key_closes_it() {
+    let (_dir, mut app, _) = with_server("let bad = 1;\nfine\n", true);
+    ready(&mut app);
+    keys(&mut app, "wK");
+    until(&mut app, |a| a.editor().hover().is_some());
+    let screen = render(&mut app, 60, 12);
+    let rows: Vec<&str> = screen.rows.iter().map(|r| r.trim_end()).collect();
+    let text = rows.join("\n");
+    assert!(text.contains("│ fn bad()"), "no fences:\n{text}");
+    assert!(text.contains("│ ─────"), "the rule:\n{text}");
+    assert!(
+        text.contains("│ A bad word, see fine."),
+        "no Markdown markers:\n{text}"
+    );
+    assert!(!text.contains("```"), "{text}");
+    keys(&mut app, "l");
+    assert!(app.editor().hover().is_none());
+    assert!(
+        !render(&mut app, 60, 12)
+            .rows
+            .join("\n")
+            .contains("A bad word")
+    );
+
+    keys(&mut app, "0K");
+    app.update_lsp();
+    until(&mut app, |a| a.editor().message().is_some());
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "No hover information here"
+    );
+}
+
+#[test]
+fn gd_goes_to_the_definition_and_ctrl_o_comes_back() {
+    let (_dir, mut app, _) = with_server("fn bad() {}\nfine\nbad();\n", true);
+    ready(&mut app);
+    keys(&mut app, "G");
+    keys(&mut app, "gd");
+    until(&mut app, |a| common::cursor(a) == (0, 3));
+    keys(&mut app, "<C-o>");
+    assert_eq!(common::cursor(&app), (2, 0));
+}
+
+#[test]
+fn gd_opens_the_file_the_definition_is_in() {
+    let (dir, mut app, _) = with_server("use other;\n", true);
+    fs::write(dir.path().join(OTHER), "// other\n  pub fn other() {}\n").unwrap();
+    ready(&mut app);
+    keys(&mut app, "wgd");
+    until(&mut app, |a| a.editor().document.name().ends_with(OTHER));
+    assert_eq!(common::cursor(&app), (1, 2));
+    keys(&mut app, "<C-o>");
+    assert!(app.editor().document.name().ends_with("main.rs"));
+}
+
+#[test]
+fn gr_lists_the_references_in_a_picker() {
+    let (_dir, mut app, _) = with_server("fn bad() {}\nbad();\nlet x = bad;\n", true);
+    ready(&mut app);
+    keys(&mut app, "wgr");
+    until(&mut app, |a| a.editor().picker().is_some());
+    let picker = app.editor().picker().unwrap();
+    assert_eq!(picker.title(), "References");
+    assert_eq!(picker.total(), 3);
+    let screen = render(&mut app, 80, 14).rows.join("\n");
+    assert!(screen.contains("main.rs:3:9"), "{screen}");
+    assert!(screen.contains("let x = bad;"), "the line: {screen}");
+    keys(&mut app, "<C-n><C-n><CR>");
+    assert_eq!(common::cursor(&app), (2, 8));
+}
+
+#[test]
+fn servers_that_cant_answer_say_so() {
+    let (_dir, mut app, _) = with_server("bad\n", false);
+    ready(&mut app);
+    keys(&mut app, "K");
+    app.update_lsp();
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "rust-analyzer doesn't offer hover information"
+    );
+    keys(&mut app, ":e notes.txt<CR>gd");
+    app.update_lsp();
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "No language server for this buffer (see :lsp)"
+    );
 }

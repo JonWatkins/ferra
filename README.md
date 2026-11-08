@@ -260,6 +260,9 @@ order before the sorted ones, and `//` is the last search.
 | `<Space>r`, `:reg` | Register picker: what each register holds; choosing one pastes it after the cursor |
 | `]b` `[b`, `:bn` `:bp` | Next / previous buffer |
 | `]d` `[d` | Next / previous diagnostic (see [Language servers](#language-servers)) |
+| `K` | Hover: what the language server says about the symbol under the cursor (`K` again scrolls) |
+| `gd` `gD` `gy` | Go to the definition, declaration, or type's definition |
+| `gr` `gI` | References, implementations: gone to if there's one, else listed in a picker |
 | `:b 2`, `:b name`, `:b #` | Switch by number, part of the name, or to the previous buffer |
 | `:bd` | Close the buffer (`:bd!` discards changes) |
 | `:wa`, `:wqa` | Write all / write all and quit |
@@ -425,7 +428,8 @@ Turn it off with `syntax-highlighting = false` under `[editor]`.
 
 ## Language servers
 
-ferra talks to language servers for errors and warnings as you type. It
+ferra talks to language servers for errors and warnings as you type, and
+to show and go to what the cursor is on. It
 doesn't install them: each language names its server in the `[languages]`
 table, and ferra starts it when you open a file in that language, in the
 project's root (the nearest folder with one of the server's `roots`, such
@@ -452,6 +456,15 @@ Problems are underlined, with the line number coloured and the first one's
 message after the line (`● expected i32, found &str`). `]d` and `[d` go to
 the next and previous one and show its message in full; the status line
 counts errors and warnings (`E1 W2`).
+
+`K` shows what the server knows about the symbol under the cursor (its
+signature and documentation) in a popup, with code highlighted in its
+language; `K` again scrolls a long one, and any other key closes it.
+`gd` goes to the definition, `gD` the declaration and `gy` the definition
+of its type; `gr` lists the references and `gI` the implementations (of a
+trait or interface). A single place is gone to straight away, opening its
+file if need be; several are listed in a picker, with each line's text.
+Each go-to is a jump, so `<C-o>` comes back.
 
 Some servers check more when you save: rust-analyzer finds syntax errors
 as you type, but type and borrow errors come from `cargo check`, which it

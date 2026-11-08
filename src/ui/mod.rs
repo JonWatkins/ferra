@@ -14,6 +14,7 @@
 mod command_line;
 mod completion_menu;
 pub mod editor_view;
+mod hover;
 mod picker;
 mod splash;
 mod statusline;
@@ -45,7 +46,7 @@ pub fn draw(
     theme: &Theme,
     views: &mut Views,
     pending: &str,
-    syntax: Option<&mut SyntaxEngine>,
+    mut syntax: Option<&mut SyntaxEngine>,
     splash: &[SplashEntry],
 ) {
     let area = frame.area();
@@ -65,10 +66,26 @@ pub fn draw(
                 pending,
                 bottom_row: status,
             };
-            windows::draw_windows(frame, editor, theme, main, views, syntax, Some(per_window))
+            windows::draw_windows(
+                frame,
+                editor,
+                theme,
+                main,
+                views,
+                syntax.as_deref_mut(),
+                Some(per_window),
+            )
         }
         StatuslineMode::Global => {
-            let cursor = windows::draw_windows(frame, editor, theme, main, views, syntax, None);
+            let cursor = windows::draw_windows(
+                frame,
+                editor,
+                theme,
+                main,
+                views,
+                syntax.as_deref_mut(),
+                None,
+            );
             frame.render_widget(StatusLine::new(editor, theme, pending), status);
             cursor
         }
@@ -85,6 +102,25 @@ pub fn draw(
         let menu = CompletionMenu::new(completion, theme);
         let area = menu.area(cursor, main);
         frame.render_widget(menu, area);
+    }
+
+    // A language server's hover floats by the cursor.
+    if editor.mode() == Mode::Normal
+        && let (Some(hover), Some(cursor)) = (editor.hover(), window_cursor)
+    {
+        let rows = 0..hover.document.buffer().line_count();
+        let highlights = syntax.and_then(|engine| {
+            engine.highlight_as(
+                &hover.document,
+                Some("markdown"),
+                &editor.languages,
+                &editor.syntax_trees,
+                rows,
+            )
+        });
+        let view = hover::HoverView::new(hover, highlights, theme);
+        let area = view.area(cursor, main);
+        frame.render_widget(view, area);
     }
 
     // The picker popup floats over the editor pane.

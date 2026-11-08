@@ -146,7 +146,7 @@ impl Editor {
     }
 
     /// The open buffer for `path`, if any.
-    pub(super) fn find_open_path(&self, path: &Path) -> Option<DocumentId> {
+    pub fn find_open_path(&self, path: &Path) -> Option<DocumentId> {
         let wanted = canonical(path);
         std::iter::once(&self.document)
             .chain(&self.background)
