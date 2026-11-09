@@ -25,6 +25,12 @@ pub struct GitState {
     pub scroll: std::cell::Cell<usize>,
     /// The file `x` asked to discard, waiting for a yes.
     discarding: Option<FileStatus>,
+    /// The branch `d` asked to delete (and whether forcing), waiting.
+    deleting: Option<(String, bool)>,
+    /// How far the current branch is ahead of and behind its upstream.
+    ahead_behind: Option<(usize, usize)>,
+    /// A fetch, pull or push running in the background.
+    job: Option<(git::RemoteOp, std::sync::mpsc::Receiver<git::RemoteUpdate>)>,
 }
 
 /// A row of the Source Control view.
@@ -39,7 +45,10 @@ pub enum GitRow {
 }
 
 /// The Source Control view's keys (bound in the sidebar while it's shown).
-pub const GIT_VIEW_KEYS: [(&str, &str); 7] = [
+pub const GIT_VIEW_KEYS: [(&str, &str); 10] = [
+    ("f", "git_fetch"),
+    ("p", "git_pull"),
+    ("P", "git_push"),
     ("s", "git_stage"),
     ("u", "git_unstage"),
     ("x", "git_discard"),
@@ -95,6 +104,11 @@ impl Editor {
         // still there; else the same row, as near as there is.
         let before = self.git_selected_file();
         self.git.status = dir.and_then(|d| git::status(&d));
+        self.git.ahead_behind = self
+            .git
+            .status
+            .as_ref()
+            .and_then(|s| git::ahead_behind(&s.root));
         let rows = self.git_rows();
         let same = before.and_then(|(file, staged)| {
             rows.iter().position(|row| {
@@ -476,6 +490,222 @@ impl Editor {
 
     pub fn git_branch(&self) -> Option<&str> {
         self.git.branch.as_deref().filter(|_| self.options.git)
+    }
+
+    /// How far the branch is ahead of and behind its upstream.
+    pub fn git_ahead_behind(&self) -> Option<(usize, usize)> {
+        self.git.ahead_behind.filter(|_| self.options.git)
+    }
+
+    /// `f` `p` `P`: fetches, pulls or pushes in the background.
+    pub fn git_remote(&mut self, op: git::RemoteOp) -> Result<(), String> {
+        if let Some((running, _)) = &self.git.job {
+            return Err(format!("Still {}…", running.doing().to_lowercase()));
+        }
+        let root = self.git_root()?;
+        let branch = git::branches(&root)
+            .into_iter()
+            .find(|b| b.current)
+            .map(|b| (b.name, !b.upstream.is_empty()));
+        if op == git::RemoteOp::Push && branch.is_none() {
+            return Err("Not on a branch to push".into());
+        }
+        let receiver = git::start_remote(&root, op, branch);
+        self.git.job = Some((op, receiver));
+        self.set_message(Message::info(format!("{}…", op.doing())));
+        Ok(())
+    }
+
+    /// Whether a fetch, pull or push is running (so its news is waited for).
+    pub fn git_job_running(&self) -> bool {
+        self.git.job.is_some()
+    }
+
+    /// Takes a running job's news: its progress as the message, and at
+    /// the end what happened, everything read again (a pull changes files).
+    /// Returns whether there's anything new to draw.
+    pub fn pump_git_job(&mut self) -> bool {
+        let Some((op, receiver)) = &self.git.job else {
+            return false;
+        };
+        let op = *op;
+        let mut progress = None;
+        let mut done = None;
+        loop {
+            match receiver.try_recv() {
+                Ok(git::RemoteUpdate::Progress(text)) => progress = Some(text),
+                Ok(git::RemoteUpdate::Done(result)) => {
+                    done = Some(result);
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    done = Some(Err("git stopped".into()));
+                    break;
+                }
+            }
+        }
+        if let Some(result) = done {
+            self.git.job = None;
+            match result {
+                Ok(_) => self.set_message(Message::info(op.done())),
+                Err(error) => {
+                    self.set_message(Message::error(format!("{} failed: {error}", op.doing())))
+                }
+            }
+            if op == git::RemoteOp::Pull {
+                self.check_disk_changes();
+            }
+            self.git_refresh_all();
+            return true;
+        }
+        if let Some(text) = progress {
+            self.set_message(Message::info(format!("{}: {text}", op.doing())));
+            return true;
+        }
+        false
+    }
+
+    /// Switches branch, refusing while buffers have unsaved changes (they'd
+    /// be left showing the old branch's files); open files then show the
+    /// new branch's.
+    pub fn git_switch_branch(&mut self, name: &str) -> Result<(), String> {
+        let root = self.git_root()?;
+        if self.git_branch() == Some(name) {
+            return Err(format!("Already on {name}"));
+        }
+        let unsaved = self.buffers().iter().filter(|b| b.modified).count();
+        if unsaved > 0 {
+            return Err(format!(
+                "Save or undo the unsaved changes first ({unsaved} buffer{} with them)",
+                if unsaved == 1 { "" } else { "s" }
+            ));
+        }
+        git::switch(&root, name)?;
+        self.check_disk_changes();
+        self.git_refresh_all();
+        self.set_message(Message::info(format!("Switched to {name}")));
+        Ok(())
+    }
+
+    /// `:git_branch`: a picker of the branches, to switch to one.
+    pub fn git_branch_picker(&mut self) -> Result<(), String> {
+        let root = self.git_root()?;
+        let items = git::branches(&root)
+            .into_iter()
+            .map(|b| super::picker::PickerItem {
+                detail: match (b.current, b.track.is_empty()) {
+                    (true, _) => "current".into(),
+                    (false, false) => b.track.clone(),
+                    (false, true) => b.upstream.clone(),
+                },
+                action: super::picker::PickerAction::RunWith(
+                    "git_switch".into(),
+                    vec![b.name.clone()],
+                ),
+                label: b.name,
+            })
+            .collect();
+        self.open_picker(super::picker::Picker::new("Branches", items));
+        Ok(())
+    }
+
+    /// `n`: asks for a new branch's name (made where HEAD is).
+    pub fn git_ask_new_branch(&mut self) -> Result<(), String> {
+        self.git_root()?;
+        let from = self.git_branch().unwrap_or("HEAD").to_string();
+        let mut input = super::input_box::InputBox::new(
+            &format!("New branch from {from}"),
+            "",
+            "git_new_branch",
+        );
+        input.placeholder = "Name".into();
+        self.open_input_box(input);
+        Ok(())
+    }
+
+    /// Makes branch `name` and switches to it.
+    pub fn git_new_branch(&mut self, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("A branch needs a name".into());
+        }
+        let root = self.git_root()?;
+        let result = git::create_branch(&root, name);
+        self.git_after_action(result)?;
+        self.set_message(Message::info(format!("Made and switched to {name}")));
+        Ok(())
+    }
+
+    /// `d` (`D`: even if unmerged): asks before deleting the branch
+    /// selected in the git view.
+    pub fn git_ask_delete_branch(&mut self, force: bool) -> Result<(), String> {
+        let gui = self.git_gui().ok_or("The git view isn't open")?;
+        if gui.panel != super::git_gui::GitPanel::Branches {
+            return Err("Choose a branch (in [2] Branches) to delete".into());
+        }
+        let branch = gui
+            .branches
+            .get(gui.branch)
+            .ok_or("No branch selected")?
+            .clone();
+        if branch.current {
+            return Err(format!(
+                "{} is checked out: switch to another branch first",
+                branch.name
+            ));
+        }
+        let what = if force {
+            format!(
+                "Delete {}, even if it isn't merged? Its commits may be lost.",
+                branch.name
+            )
+        } else {
+            format!("Delete branch {}?", branch.name)
+        };
+        self.git.deleting = Some((branch.name, force));
+        let span = |text: &str, style: Option<&str>| super::popup::PopupSpan {
+            text: text.to_string(),
+            style: style.map(str::to_string),
+        };
+        self.open_popup(super::popup::Popup {
+            name: "git-delete-branch".into(),
+            title: "Delete branch".into(),
+            lines: vec![
+                vec![span(&what, None)],
+                vec![],
+                vec![
+                    span("y", Some("ui.popup.title")),
+                    span(" delete   ", None),
+                    span("n", Some("ui.popup.title")),
+                    span(" keep", None),
+                ],
+            ],
+            keys: vec![
+                ("y".into(), "git_delete_branch_confirmed".into()),
+                ("n".into(), "popup_close".into()),
+            ],
+            focus: true,
+            ..super::popup::Popup::default()
+        });
+        Ok(())
+    }
+
+    /// `y` in that popup: deletes it.
+    pub fn git_delete_branch_confirmed(&mut self) -> Result<(), String> {
+        self.close_popup();
+        let (name, force) = self.git.deleting.take().ok_or("Nothing to delete")?;
+        let root = self.git_root()?;
+        let result = git::delete_branch(&root, &name, force).map_err(|e| {
+            if e.contains("not fully merged") {
+                format!("{name} isn't merged: D deletes it anyway")
+            } else {
+                e
+            }
+        });
+        self.git_after_action(result)?;
+        self.set_message(Message::info(format!("Deleted {name}")));
+        Ok(())
     }
 
     /// `]c` / `[c`: to the `count`th next (or previous) change.

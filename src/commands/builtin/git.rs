@@ -151,10 +151,7 @@ pub fn register(r: &mut CommandRegistry) {
     r.register(
         "git_gui_enter",
         "Git view: into the diff, to stage hunks",
-        |cx| {
-            cx.editor.git_gui_enter();
-            Ok(())
-        },
+        |cx| cx.editor.git_gui_enter(),
     );
     r.register(
         "git_gui_stage",
@@ -165,6 +162,68 @@ pub fn register(r: &mut CommandRegistry) {
         "git_gui_unstage",
         "Git view: unstage the file, or the hunk in its diff",
         |cx| cx.editor.git_gui_stage(false),
+    );
+    use crate::git::RemoteOp;
+    let remotes: [(&str, &str, RemoteOp); 3] = [
+        (
+            "git_fetch",
+            "Fetch from the remotes, in the background (f)",
+            RemoteOp::Fetch,
+        ),
+        (
+            "git_pull",
+            "Pull into the current branch, in the background (p)",
+            RemoteOp::Pull,
+        ),
+        (
+            "git_push",
+            "Push the current branch, in the background (P)",
+            RemoteOp::Push,
+        ),
+    ];
+    for (name, description, op) in remotes {
+        r.register(name, description, move |cx| cx.editor.git_remote(op));
+    }
+    r.register("git_branch", "Switch branch, from a list of them", |cx| {
+        cx.editor.git_branch_picker()
+    });
+    r.register(
+        "git_switch",
+        "Switch to the branch named (:git_switch name)",
+        |cx| {
+            let name = cx
+                .args
+                .first()
+                .ok_or("Which branch? (:git_switch name)")?
+                .clone();
+            cx.editor.git_switch_branch(&name)
+        },
+    );
+    r.register(
+        "git_new_branch",
+        "Make a branch where you are and switch to it (n in the git view asks for its name)",
+        |cx| match cx.args.first() {
+            Some(name) => {
+                let name = name.clone();
+                cx.editor.git_new_branch(&name)
+            }
+            None => cx.editor.git_ask_new_branch(),
+        },
+    );
+    r.register(
+        "git_delete_branch",
+        "Git view: delete the selected branch, after asking (d)",
+        |cx| cx.editor.git_ask_delete_branch(false),
+    );
+    r.register(
+        "git_force_delete_branch",
+        "Git view: delete the selected branch even if it isn't merged, after asking (D)",
+        |cx| cx.editor.git_ask_delete_branch(true),
+    );
+    r.register(
+        "git_delete_branch_confirmed",
+        "Delete the branch asked about (y in the question)",
+        |cx| cx.editor.git_delete_branch_confirmed(),
     );
     r.register(
         "git_refresh",

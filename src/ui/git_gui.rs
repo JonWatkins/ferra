@@ -351,7 +351,10 @@ impl<'a> GitGuiView<'a> {
             (GitPanel::Diff, DiffOf::File { staged: true, .. }) => {
                 " j/k hunks  u unstage the hunk  ⌃d/⌃u scroll  Esc back  q close"
             }
-            _ => " j/k move  ⌃d/⌃u scroll the diff  1 2 3 4 panels  c commit  q close",
+            (GitPanel::Branches, _) => {
+                " ⏎ switch  n new  d delete  f fetch  p pull  P push  Tab panels  q close"
+            }
+            _ => " j/k move  ⌃d/⌃u scroll the diff  f fetch  p pull  P push  c commit  q close",
         }
     }
 }

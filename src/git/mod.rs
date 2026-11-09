@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use similar::{Algorithm, DiffOp, capture_diff_slices_deadline};
@@ -229,6 +230,197 @@ pub fn branches(root: &Path) -> Vec<Branch> {
         .collect();
     list.sort_by_key(|b| !b.current);
     list
+}
+
+/// Switches to branch `name`.
+pub fn switch(root: &Path, name: &str) -> Result<(), String> {
+    run(root, &["switch", "--quiet", name]).map(drop)
+}
+
+/// Makes branch `name` where HEAD is, and switches to it.
+pub fn create_branch(root: &Path, name: &str) -> Result<(), String> {
+    run(root, &["switch", "--quiet", "-c", name]).map(drop)
+}
+
+/// Deletes branch `name` (`force`: even if it isn't merged).
+pub fn delete_branch(root: &Path, name: &str, force: bool) -> Result<(), String> {
+    run(
+        root,
+        &["branch", if force { "-D" } else { "-d" }, "--", name],
+    )
+    .map(drop)
+}
+
+/// How many commits the current branch is ahead of and behind its
+/// upstream, if it has one.
+pub fn ahead_behind(root: &Path) -> Option<(usize, usize)> {
+    let bytes = git(
+        root,
+        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+    )?;
+    let text = String::from_utf8_lossy(&bytes);
+    let mut counts = text.split_whitespace().map(|n| n.parse().ok());
+    Some((counts.next()??, counts.next()??))
+}
+
+/// The repository's remotes (`origin`...).
+pub fn remotes(root: &Path) -> Vec<String> {
+    git(root, &["remote"])
+        .map(|b| {
+            String::from_utf8_lossy(&b)
+                .lines()
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Fetching, pulling or pushing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteOp {
+    Fetch,
+    Pull,
+    Push,
+}
+
+impl RemoteOp {
+    /// `Fetching`, for progress.
+    pub fn doing(self) -> &'static str {
+        match self {
+            RemoteOp::Fetch => "Fetching",
+            RemoteOp::Pull => "Pulling",
+            RemoteOp::Push => "Pushing",
+        }
+    }
+
+    pub fn done(self) -> &'static str {
+        match self {
+            RemoteOp::Fetch => "Fetched",
+            RemoteOp::Pull => "Pulled",
+            RemoteOp::Push => "Pushed",
+        }
+    }
+}
+
+/// What a remote job reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteUpdate {
+    /// A line of git's progress (`Writing objects:  45% (9/20)`).
+    Progress(String),
+    /// It finished: what it said, or what went wrong.
+    Done(Result<String, String>),
+}
+
+/// Fetching, pulling or pushing on a thread, its progress and end sent
+/// through the channel returned. Nothing waits for a password: git that
+/// would need one typed fails instead (`GIT_TERMINAL_PROMPT=0`), and a
+/// merge that would want a message takes git's default.
+pub fn start_remote(
+    root: &Path,
+    op: RemoteOp,
+    branch: Option<(String, bool)>,
+) -> std::sync::mpsc::Receiver<RemoteUpdate> {
+    use std::io::Read as _;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let mut args: Vec<String> = match op {
+        RemoteOp::Fetch => vec!["fetch".into(), "--all".into(), "--prune".into()],
+        RemoteOp::Pull => vec!["pull".into(), "--no-edit".into()],
+        RemoteOp::Push => vec!["push".into()],
+    };
+    args.push("--progress".into());
+    // The first push of a branch sets where it goes, as `-u` does.
+    if let (RemoteOp::Push, Some((name, false))) = (op, &branch) {
+        let remote = remotes(root).into_iter().next();
+        match remote {
+            Some(remote) => args.extend(["--set-upstream".into(), remote, name.clone()]),
+            None => {
+                let _ = sender.send(RemoteUpdate::Done(Err(
+                    "No remote to push to (git remote add ...)".into(),
+                )));
+                return receiver;
+            }
+        }
+    }
+    // ssh would ask for a passphrase or a new host's key on the terminal
+    // ferra's drawing on: in batch mode it fails instead, unless you've
+    // chosen your own ssh command.
+    let own_ssh = std::env::var_os("GIT_SSH_COMMAND").is_some()
+        || std::env::var_os("GIT_SSH").is_some()
+        || git(root, &["config", "--get", "core.sshCommand"]).is_some();
+    let root = root.to_path_buf();
+    thread::spawn(move || {
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(&root)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_EDITOR", "true");
+        if !own_ssh {
+            command.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+        }
+        let child = command.spawn();
+        let mut child = match child {
+            Ok(child) => child,
+            Err(e) => {
+                let _ = sender.send(RemoteUpdate::Done(Err(format!("git: {e}"))));
+                return;
+            }
+        };
+        // Progress comes on stderr, a line at a time, redrawn with `\r`.
+        let mut said = String::new();
+        if let Some(mut stderr) = child.stderr.take() {
+            let mut buf = [0u8; 4096];
+            let mut line = String::new();
+            while let Ok(n) = stderr.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                for c in String::from_utf8_lossy(&buf[..n]).chars() {
+                    if c == '\r' || c == '\n' {
+                        let text = line.trim().to_string();
+                        if !text.is_empty() {
+                            let _ = sender.send(RemoteUpdate::Progress(text.clone()));
+                            if c == '\n' {
+                                said.push_str(&text);
+                                said.push('\n');
+                            }
+                        }
+                        line.clear();
+                    } else {
+                        line.push(c);
+                    }
+                }
+            }
+        }
+        let mut out = String::new();
+        if let Some(mut stdout) = child.stdout.take() {
+            let _ = stdout.read_to_string(&mut out);
+        }
+        let status = child.wait();
+        let ok = status.as_ref().is_ok_and(|s| s.success());
+        let result = if ok {
+            Ok(out.trim().to_string())
+        } else {
+            let error = said
+                .lines()
+                .rev()
+                .map(|l| {
+                    l.trim_start_matches("error: ")
+                        .trim_start_matches("fatal: ")
+                        .trim()
+                })
+                .find(|l| !l.is_empty() && !l.starts_with("hint:"))
+                .unwrap_or("git failed")
+                .to_string();
+            Err(error)
+        };
+        let _ = sender.send(RemoteUpdate::Done(result));
+    });
+    receiver
 }
 
 /// A commit, as the log shows it.
@@ -628,6 +820,88 @@ mod tests {
     }
 
     use super::tests_support::repo;
+
+    /// Waits for a remote job to finish.
+    fn finish(receiver: std::sync::mpsc::Receiver<RemoteUpdate>) -> Result<String, String> {
+        loop {
+            match receiver.recv_timeout(Duration::from_secs(20)) {
+                Ok(RemoteUpdate::Done(result)) => return result,
+                Ok(RemoteUpdate::Progress(_)) => {}
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+    }
+
+    #[test]
+    fn branches_and_a_remote() {
+        let Some(dir) = repo() else {
+            return;
+        };
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        create_branch(&root, "feature").unwrap();
+        assert_eq!(branch(&root).as_deref(), Some("feature"));
+        switch(&root, "main").unwrap();
+        assert_eq!(
+            branches(&root)
+                .iter()
+                .map(|b| b.name.as_str())
+                .collect::<Vec<_>>(),
+            ["main", "feature"]
+        );
+        delete_branch(&root, "feature", false).unwrap();
+        assert_eq!(branches(&root).len(), 1);
+        assert!(switch(&root, "nope").is_err());
+        assert_eq!(ahead_behind(&root), None, "no upstream");
+
+        // A bare repository as the remote.
+        let remote = tempfile::tempdir().unwrap();
+        let bare = remote.path().join("origin.git");
+        assert!(
+            Command::new("git")
+                .args(["init", "-q", "--bare", "-b", "main"])
+                .arg(&bare)
+                .status()
+                .unwrap()
+                .success()
+        );
+        run(&root, &["remote", "add", "origin", bare.to_str().unwrap()]).unwrap();
+        assert_eq!(remotes(&root), ["origin"]);
+        finish(start_remote(
+            &root,
+            RemoteOp::Push,
+            Some(("main".into(), false)),
+        ))
+        .unwrap();
+        assert_eq!(ahead_behind(&root), Some((0, 0)), "tracking now");
+
+        std::fs::write(root.join("file.txt"), "pushed\n").unwrap();
+        stage(&root, &["file.txt"]).unwrap();
+        commit(&root, "second").unwrap();
+        assert_eq!(ahead_behind(&root), Some((1, 0)));
+        finish(start_remote(
+            &root,
+            RemoteOp::Push,
+            Some(("main".into(), true)),
+        ))
+        .unwrap();
+        assert_eq!(ahead_behind(&root), Some((0, 0)));
+        finish(start_remote(&root, RemoteOp::Fetch, None)).unwrap();
+        finish(start_remote(&root, RemoteOp::Pull, None)).unwrap();
+
+        // A push that can't go reports why.
+        run(
+            &root,
+            &["remote", "set-url", "origin", "/nowhere/at/all.git"],
+        )
+        .unwrap();
+        let error = finish(start_remote(
+            &root,
+            RemoteOp::Push,
+            Some(("main".into(), true)),
+        ))
+        .unwrap_err();
+        assert!(!error.is_empty());
+    }
 
     #[test]
     fn branches_log_diffs_and_staging_one_hunk() {

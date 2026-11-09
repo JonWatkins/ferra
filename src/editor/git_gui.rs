@@ -290,15 +290,28 @@ impl Editor {
         }
     }
 
-    /// `<CR>` / `l`: into the diff (to pick hunks), from a list.
-    pub fn git_gui_enter(&mut self) {
+    /// `<CR>` / `l`: into the diff (to pick hunks), from a list; on a
+    /// branch, switches to it.
+    pub fn git_gui_enter(&mut self) -> Result<(), String> {
         let Some(gui) = self.git_gui.as_ref() else {
-            return;
+            return Ok(());
         };
-        if gui.panel == GitPanel::Diff {
-            return;
+        match gui.panel {
+            GitPanel::Diff => Ok(()),
+            GitPanel::Branches => {
+                let name = gui
+                    .branches
+                    .get(gui.branch)
+                    .ok_or("No branch selected")?
+                    .name
+                    .clone();
+                self.git_switch_branch(&name)
+            }
+            _ => {
+                self.git_gui_focus(GitPanel::Diff);
+                Ok(())
+            }
         }
-        self.git_gui_focus(GitPanel::Diff);
     }
 
     /// `<Esc>`: out of the diff, or else closes the view.
@@ -315,6 +328,8 @@ impl Editor {
     pub fn git_gui_stage(&mut self, stage: bool) -> Result<(), String> {
         let gui = self.git_gui.as_ref().ok_or("The git view isn't open")?;
         match (gui.panel, &gui.diff_of) {
+            // Space on a branch switches to it, as in lazygit.
+            (GitPanel::Branches, _) if stage => self.git_gui_enter(),
             (GitPanel::Files, _) => {
                 let staged_row = matches!(
                     self.git_rows().get(self.git_selected()),
@@ -390,7 +405,7 @@ mod tests {
         assert_eq!(gui.diff.hunks.len(), 2);
         assert_eq!(gui.commits.len(), 2);
 
-        editor.git_gui_enter();
+        editor.git_gui_enter().unwrap();
         editor.git_gui_move(1);
         assert_eq!(editor.git_gui().unwrap().hunk, 1);
         editor.git_gui_stage(true).unwrap();

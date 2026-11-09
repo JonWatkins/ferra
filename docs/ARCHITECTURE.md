@@ -376,6 +376,18 @@ the git view (they remember the mode they came from). `ui::draw` draws the
 view over everything but the command line and maps its panels and lists
 for the mouse (`GitGuiMap`).
 
+Branches are `git switch` (`-c` for a new one) and `git branch -d`/`-D`;
+`ahead_behind` is `rev-list --left-right --count HEAD...@{upstream}`,
+read with the status. Fetch, pull and push (`git::start_remote`) run on a
+thread that reads git's `--progress` lines (redrawn with `\r`) from stderr
+and sends them, then the result, through a channel; the editor keeps the
+receiver (`GitState::job`, one at a time) and the event loop pumps it
+while it runs, as it does the terminal panel's shell. They run with
+`GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true` and (unless you've set your own
+ssh command) `ssh -o BatchMode=yes`, so nothing can stop to ask on the
+terminal ferra is drawing on. A branch's first push adds
+`--set-upstream <first remote> <branch>`.
+
 ## Syntax highlighting
 
 `syntax/` wraps tree-sitter:
@@ -1458,9 +1470,9 @@ than files: Git's changed files will be another view in it.
 
 Started: changes in the gutter, `]c`/`[c`, the branch, the file tree's
 marks, Source Control in the sidebar, and the full-screen git view with
-diffs and staging hunks (see [Git](#git)). Next: branches (switch,
-create, delete, ahead and behind) and push, pull and fetch in the
-background with progress; then amending, stash, blame and history.
+diffs and staging hunks, branches, and fetch, pull and push in the
+background (see [Git](#git)). Next: amending, stashes, blame, a file's
+history, merge conflicts, and staging single lines.
 
 The everyday Git features, without leaving the editor:
 
@@ -1732,8 +1744,9 @@ not. The answer is dropped unless the editor is still where it was asked
 ## Known gaps / next steps
 
 - Git: the gutter compares with what's staged only (not `HEAD`); no
-  staging single lines (only hunks), amending, stashes, blame, or working
-  with branches and remotes yet; the git view's diffs aren't syntax
+  staging single lines (only hunks), amending, stashes, blame, rebasing,
+  merging, or resolving conflicts yet; one fetch, pull or push at a time,
+  with no way to cancel one, and none that needs a password typed; the git view's diffs aren't syntax
   coloured, and huge commits are read whole; the file
   tree's marks are for the repository the current file is in; no marks with `line-numbers =
   "none"` (there's no gutter); a file's staged text is read again only on

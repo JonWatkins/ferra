@@ -235,6 +235,17 @@ impl Active<'_> {
                 let mut text = String::new();
                 if let Some(branch) = editor.git_branch() {
                     text.push_str(&format!(" ⎇ {branch}"));
+                    match editor.git_ahead_behind() {
+                        Some((ahead, behind)) if ahead + behind > 0 => {
+                            if ahead > 0 {
+                                text.push_str(&format!(" ↑{ahead}"));
+                            }
+                            if behind > 0 {
+                                text.push_str(&format!(" ↓{behind}"));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 if let Some(counts) = editor.git_counts() {
                     for (n, sign) in [

@@ -290,3 +290,105 @@ fn the_git_view_stages_a_hunk_commits_and_shows_commits() {
     assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
     assert!(app.editor().git_gui().is_none());
 }
+
+/// Waits for a background fetch, pull or push to finish.
+fn wait_for_job(app: &mut ferra::App) {
+    let start = std::time::Instant::now();
+    while app.editor().git_job_running() && start.elapsed() < std::time::Duration::from_secs(20) {
+        app.editor_mut().pump_git_job();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(!app.editor().git_job_running(), "the job finished");
+}
+
+fn message(app: &ferra::App) -> String {
+    app.editor()
+        .message()
+        .map(|m| m.text.clone())
+        .unwrap_or_default()
+}
+
+#[test]
+fn branches_and_pushing_from_the_git_view() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let remote = tempfile::tempdir().unwrap();
+    let bare = remote.path().join("origin.git");
+    assert!(git(
+        remote.path(),
+        &["init", "-q", "--bare", "-b", "main", bare.to_str().unwrap()]
+    ));
+    assert!(git(
+        dir.path(),
+        &["remote", "add", "origin", bare.to_str().unwrap()]
+    ));
+
+    let path = dir.path().join("code.txt");
+    let mut app = app();
+    keys(&mut app, &format!(":e {}<CR><Space>g", path.display()));
+
+    // The first push sets the upstream.
+    keys(&mut app, "P");
+    wait_for_job(&mut app);
+    assert_eq!(message(&app), "Pushed");
+    let local = |args: &[&str]| git(dir.path(), args);
+    assert!(local(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "local"
+    ]));
+    keys(&mut app, "R");
+    keys(&mut app, "q");
+    let shown = render(&mut app, 80, 8).rows.join("\n");
+    assert!(shown.contains("⎇ main ↑1"), "{shown}");
+    keys(&mut app, "<Space>gP");
+    wait_for_job(&mut app);
+    keys(&mut app, "q");
+    assert!(!render(&mut app, 80, 8).rows.join("\n").contains('↑'));
+
+    // A new branch, back to main, and deleting it.
+    keys(&mut app, "<Space>g2nfeature<CR>");
+    assert_eq!(app.editor().git_branch(), Some("feature"));
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Git);
+    keys(&mut app, "2");
+    let gui = app.editor().git_gui().unwrap();
+    assert_eq!(gui.branches[0].name, "feature", "the current one first");
+    keys(&mut app, "j<CR>");
+    assert_eq!(app.editor().git_branch(), Some("main"));
+    keys(&mut app, "2");
+    let index = app
+        .editor()
+        .git_gui()
+        .unwrap()
+        .branches
+        .iter()
+        .position(|b| b.name == "feature")
+        .unwrap();
+    for _ in 0..index {
+        keys(&mut app, "j");
+    }
+    keys(&mut app, "dy");
+    assert_eq!(message(&app), "Deleted feature");
+    assert_eq!(app.editor().git_gui().unwrap().branches.len(), 1);
+    keys(&mut app, "q");
+
+    // Not with unsaved changes.
+    assert!(local(&["branch", "other"]));
+    keys(&mut app, "ccchanged<Esc>:git_switch other<CR>");
+    assert!(
+        message(&app).starts_with("Save or undo the unsaved changes first"),
+        "{}",
+        message(&app)
+    );
+    keys(&mut app, "u:git_branch<CR>");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Picker);
+    keys(&mut app, "other<CR>");
+    assert_eq!(app.editor().git_branch(), Some("other"));
+}

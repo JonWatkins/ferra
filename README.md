@@ -492,7 +492,21 @@ or staged changes, a commit, or a branch's log.
 | `c` | Commit what's staged (asks for the message) |
 | `<C-d>` `<C-u>`, `J` `K`, the wheel | Scroll the diff |
 | `R` | Read everything again |
+| `f` / `p` / `P` | Fetch / pull / push, in the background |
+| `<CR>`, `<Space>` (on a branch) | Switch to it |
+| `n` | Make a branch where you are, and switch to it (asks for the name) |
+| `d` / `D` | Delete the selected branch (asks first) / even if it isn't merged |
 | `q` | Close |
+
+Fetching, pulling and pushing run in the background with git's progress
+as the message (`Pushing: Writing objects: 45%`); the first push of a
+branch sets its upstream, as `git push -u` does. They use your credential
+helpers and ssh agent, and fail with a message rather than wait for a
+password to be typed. The sidebar's Git tab takes `f`, `p` and `P` too,
+`:git_branch` picks a branch to switch to from anywhere, and the status
+line shows how far ahead and behind its upstream the branch is (`⎇ main
+↑2 ↓1`). Switching is refused while buffers have unsaved changes; after
+it (and a pull), open files show what's now on disk.
 
 `git = false` turns all of this off. ferra runs the `git` command, so it
 needs git installed; commits run your hooks, and their errors show as
