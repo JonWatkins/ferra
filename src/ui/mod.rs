@@ -38,7 +38,7 @@ pub use find::{FindKeys, FindView, key_label};
 pub use input_box::{InputBoxView, InputKeys};
 pub use picker::PickerView;
 pub use popup::PopupView;
-pub use sidebar::{PluginViewWidget, SidebarTabs, SidebarView};
+pub use sidebar::{GitViewWidget, PluginViewWidget, SidebarTabs, SidebarView};
 pub use splash::{LOGO, Splash, SplashEntry};
 pub use statusline::StatusLine;
 pub use terminal::{TerminalKeys, TerminalView};
@@ -164,21 +164,30 @@ pub fn draw(
                 side
             };
             let plugin_view = editor.plugin_view();
+            let git_view = editor.git_view_shown();
             map.sidebar = Some(SidebarMap {
                 area: side,
                 tabs: (titles.len() > 1).then(|| (side.y, sidebar::tab_spans(&titles, side.x))),
-                list: sidebar::list_rows(content),
+                list: if git_view {
+                    GitViewWidget::list(content)
+                } else {
+                    sidebar::list_rows(content)
+                },
                 edge: separator,
             });
             match plugin_view {
                 Some(view) => {
                     frame.render_widget(PluginViewWidget::new(view, focused, theme), content);
                 }
+                None if git_view => {
+                    frame.render_widget(GitViewWidget::new(editor, focused, theme), content);
+                }
                 None => {
                     let view = SidebarView::new(explorer, theme)
                         .focused(focused)
                         .current(editor.document.path())
-                        .modified(editor.modified_paths());
+                        .modified(editor.modified_paths())
+                        .git(editor.git_tree_marks());
                     frame.render_widget(view, content);
                 }
             }

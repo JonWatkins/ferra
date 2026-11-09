@@ -40,6 +40,9 @@ pub struct EditorOptions {
     pub scroll_off: usize,
     /// Columns the sidebar's file tree takes (at most half the screen).
     pub sidebar_width: u16,
+    /// Show git changes in the gutter (against what's staged) and the
+    /// branch in the status line.
+    pub git: bool,
     /// Use the mouse: click, drag to select, scroll (the terminal's own
     /// selecting then needs Shift, or Option in some macOS terminals).
     pub mouse: bool,
@@ -201,6 +204,8 @@ pub enum StatusElement {
     PendingKeys,
     /// `recording @a` while recording a macro.
     Recording,
+    /// The git branch, and the file's changed lines (` main +3 ~1 -2`).
+    Git,
     /// A `│` between elements.
     Separator,
     /// A space.
@@ -224,6 +229,7 @@ const STATUS_ELEMENTS: &[(StatusElement, &str)] = &[
     (StatusElement::FileLineEnding, "file-line-ending"),
     (StatusElement::Indent, "indent"),
     (StatusElement::Diagnostics, "diagnostics"),
+    (StatusElement::Git, "git"),
     (StatusElement::LspProgress, "lsp-progress"),
     (StatusElement::PendingKeys, "pending-keys"),
     (StatusElement::Recording, "recording"),

@@ -28,6 +28,7 @@ pub mod core;
 pub mod editor;
 pub mod events;
 pub mod files;
+pub mod git;
 pub mod input;
 pub mod lsp;
 pub mod plugins;

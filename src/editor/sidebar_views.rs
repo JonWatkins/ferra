@@ -69,6 +69,8 @@ impl PluginView {
 #[derive(Debug, Clone, Copy)]
 pub enum SidebarShows<'a> {
     Files,
+    /// Source Control (git), built in when `git` is on.
+    Git,
     Plugin(&'a PluginView),
 }
 
@@ -85,33 +87,44 @@ impl Editor {
         }
     }
 
-    /// The views' names: `files`, then the plugins'.
+    /// How many views are built in: the files, and Source Control when
+    /// `git` is on. Plugins' views come after them.
+    fn builtin_views(&self) -> usize {
+        if self.options.git { 2 } else { 1 }
+    }
+
+    /// The views' names: `files`, `git`, then the plugins'.
     pub fn sidebar_view_names(&self) -> Vec<&str> {
-        std::iter::once("files")
+        ["files", "git"]
+            .into_iter()
+            .take(self.builtin_views())
             .chain(self.sidebar_views.iter().map(|v| v.spec.name.as_str()))
             .collect()
     }
 
     /// The views' titles, for the tabs, and which is shown.
     pub fn sidebar_tabs(&self) -> (Vec<&str>, usize) {
-        let titles = std::iter::once("Files")
+        let titles = ["Files", "Git"]
+            .into_iter()
+            .take(self.builtin_views())
             .chain(self.sidebar_views.iter().map(|v| v.spec.title.as_str()))
             .collect();
         (titles, self.sidebar_view)
     }
 
     pub fn sidebar_shows(&self) -> SidebarShows<'_> {
-        match self.sidebar_view.checked_sub(1) {
-            Some(i) => self
+        match self.sidebar_view {
+            0 => SidebarShows::Files,
+            1 if self.options.git => SidebarShows::Git,
+            n => self
                 .sidebar_views
-                .get(i)
+                .get(n - self.builtin_views())
                 .map_or(SidebarShows::Files, SidebarShows::Plugin),
-            None => SidebarShows::Files,
         }
     }
 
     fn plugin_view_mut(&mut self) -> Option<&mut PluginView> {
-        let i = self.sidebar_view.checked_sub(1)?;
+        let i = self.sidebar_view.checked_sub(self.builtin_views())?;
         self.sidebar_views.get_mut(i)
     }
 
@@ -119,22 +132,31 @@ impl Editor {
     pub fn plugin_view(&self) -> Option<&PluginView> {
         match self.sidebar_shows() {
             SidebarShows::Plugin(view) => Some(view),
-            SidebarShows::Files => None,
+            _ => None,
         }
     }
 
-    /// Shows view `index` (0: the files), marking a plugin's to be made.
+    /// Whether the sidebar shows Source Control.
+    pub fn git_view_shown(&self) -> bool {
+        matches!(self.sidebar_shows(), SidebarShows::Git)
+    }
+
+    /// Shows view `index` (0: the files), marking a plugin's to be made
+    /// (and reading git's status for Source Control).
     fn show_view(&mut self, index: usize) {
         self.sidebar_view = index;
         if let Some(view) = self.plugin_view_mut() {
             view.stale = true;
+        }
+        if self.git_view_shown() {
+            self.git_refresh_status();
         }
         self.view_keys_changed = true;
     }
 
     /// `<Tab>` / `<S-Tab>` in the sidebar: the next or previous view.
     pub fn sidebar_cycle_view(&mut self, delta: isize) {
-        let count = 1 + self.sidebar_views.len() as isize;
+        let count = (self.builtin_views() + self.sidebar_views.len()) as isize;
         let next = (self.sidebar_view as isize + delta).rem_euclid(count);
         self.show_view(next as usize);
     }
@@ -224,9 +246,17 @@ impl Editor {
         std::mem::take(&mut self.view_keys_changed)
     }
 
-    /// The keys of the plugin view shown, while the sidebar has focus.
-    pub fn plugin_view_keys(&self) -> &[(String, String)] {
-        self.plugin_view().map_or(&[], |v| v.spec.keys.as_slice())
+    /// The keys of the view shown (a plugin's, or Source Control's), bound
+    /// while the sidebar has focus.
+    pub fn plugin_view_keys(&self) -> Vec<(String, String)> {
+        if self.git_view_shown() {
+            return super::git::GIT_VIEW_KEYS
+                .iter()
+                .map(|(k, c)| (k.to_string(), c.to_string()))
+                .collect();
+        }
+        self.plugin_view()
+            .map_or_else(Vec::new, |v| v.spec.keys.clone())
     }
 }
 
@@ -259,7 +289,10 @@ mod tests {
     fn views_are_switched_made_and_moved_about() {
         let mut editor = Editor::default();
         editor.add_sidebar_views(vec![spec("todos"), spec("outline")]);
-        assert_eq!(editor.sidebar_view_names(), ["files", "todos", "outline"]);
+        assert_eq!(
+            editor.sidebar_view_names(),
+            ["files", "git", "todos", "outline"]
+        );
         assert_eq!(editor.plugin_view_to_make(), None, "the sidebar's closed");
 
         editor.open_sidebar_view("todos").unwrap();
@@ -300,7 +333,7 @@ mod tests {
             editor
                 .open_sidebar_view("nope")
                 .unwrap_err()
-                .contains("files, todos, outline")
+                .contains("files, git, todos, outline")
         );
     }
 }

@@ -143,6 +143,13 @@ impl App {
     }
 
     fn sidebar_line_exists(&self, row: usize) -> bool {
+        if self.editor.git_view_shown() {
+            let index = self.editor.git_scroll() + row;
+            return matches!(
+                self.editor.git_rows().get(index),
+                Some(crate::editor::GitRow::File { .. })
+            );
+        }
         match self.editor.plugin_view() {
             Some(view) => view.scroll.get() + row < view.lines.len(),
             None => self
@@ -268,7 +275,7 @@ impl App {
                 }
             }
             Hit::SidebarLine(row) => {
-                if let Err(error) = self.editor.sidebar_click(row) {
+                if let Err(error) = self.editor.sidebar_click_times(row, clicks) {
                     self.editor.set_message(Message::error(error));
                 }
                 self.editor.finish_command();

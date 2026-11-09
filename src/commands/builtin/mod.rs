@@ -10,6 +10,7 @@ mod ex_commands;
 mod files;
 mod find;
 mod folds;
+mod git;
 mod history;
 mod input_box;
 mod jumps;
@@ -59,6 +60,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     terminal::register(registry);
     popup::register(registry);
     input_box::register(registry);
+    git::register(registry);
 }
 
 #[cfg(test)]

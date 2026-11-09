@@ -231,6 +231,28 @@ impl Active<'_> {
                     styled(format!("{text} "), scope)
                 }
             }
+            StatusElement::Git => {
+                let mut text = String::new();
+                if let Some(branch) = editor.git_branch() {
+                    text.push_str(&format!(" ⎇ {branch}"));
+                }
+                if let Some(counts) = editor.git_counts() {
+                    for (n, sign) in [
+                        (counts.added, '+'),
+                        (counts.changed, '~'),
+                        (counts.removed, '-'),
+                    ] {
+                        if n > 0 {
+                            text.push_str(&format!(" {sign}{n}"));
+                        }
+                    }
+                }
+                if text.is_empty() {
+                    Span::raw("")
+                } else {
+                    styled(format!("{text} "), "ui.statusline.git")
+                }
+            }
             StatusElement::LspProgress => match editor.lsp_progress() {
                 Some(progress) => styled(format!(" {progress} "), "ui.statusline.lsp"),
                 None => Span::raw(""),

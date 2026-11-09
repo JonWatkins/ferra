@@ -27,6 +27,8 @@ mod confirm;
 pub mod diagnostics;
 pub mod explorer;
 pub mod find;
+mod git;
+pub use git::GitRow;
 pub mod input_box;
 pub mod lsp;
 pub mod popup;
@@ -217,6 +219,8 @@ pub struct Editor {
     popup_keys_changed: bool,
     /// A plugin's input box.
     input_box: Option<input_box::InputBox>,
+    /// Git: open files' staged text and changes, and the branch.
+    git: git::GitState,
     /// The uses of the symbol under the cursor (a language server's).
     references: Option<lsp::References>,
     /// Servers' diagnostics for files that aren't open, by path.
@@ -555,6 +559,10 @@ impl Editor {
         }
         if mode != Mode::Input {
             self.input_box = None;
+        }
+        // Back from the terminal panel, where git may have run.
+        if previous == Mode::Terminal && mode != Mode::Terminal {
+            self.git_refresh_all();
         }
         self.enforce_cursor_rules();
     }

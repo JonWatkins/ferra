@@ -11,6 +11,7 @@
 //! The selected row is highlighted while the sidebar has focus; the current
 //! file's row is marked always, and unsaved files have a `●`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use ratatui::{
@@ -32,6 +33,20 @@ pub struct SidebarView<'a> {
     focused: bool,
     current: Option<PathBuf>,
     modified: Vec<PathBuf>,
+    /// Git's letters for changed files, and `•` for folders with changes.
+    git: HashMap<PathBuf, char>,
+}
+
+/// The theme scope for a git status letter.
+pub fn git_scope(letter: char) -> &'static str {
+    match letter {
+        'M' | 'T' => "ui.sidebar.git.modified",
+        'A' | 'U' | '?' => "ui.sidebar.git.added",
+        'D' => "ui.sidebar.git.deleted",
+        'R' | 'C' => "ui.sidebar.git.renamed",
+        '!' => "ui.sidebar.git.conflict",
+        _ => "ui.sidebar.git.folder",
+    }
 }
 
 /// Columns before a row's name: a space, two per level, then the folder
@@ -48,7 +63,14 @@ impl<'a> SidebarView<'a> {
             focused: false,
             current: None,
             modified: Vec::new(),
+            git: HashMap::new(),
         }
+    }
+
+    /// Git's marks (`Editor::git_tree_marks`).
+    pub fn git(mut self, marks: HashMap<PathBuf, char>) -> Self {
+        self.git = marks;
+        self
     }
 
     /// Whether the sidebar has focus (the selection is shown).
@@ -147,6 +169,10 @@ impl Widget for SidebarView<'_> {
             } else {
                 theme.get("ui.sidebar.file")
             };
+            let git = self.git.get(&row.path).copied();
+            if let Some(letter) = git {
+                style = style.patch(theme.get(git_scope(letter)));
+            }
             if is_current {
                 style = style.patch(theme.get("ui.sidebar.current"));
             }
@@ -160,8 +186,10 @@ impl Widget for SidebarView<'_> {
                 (true, false) => "▸ ",
                 (false, _) => "  ",
             };
-            // Room for the name, keeping two columns for the unsaved mark.
-            let reserved = if modified { 2 } else { 0 };
+            // Room for the name, keeping two columns each for the unsaved
+            // mark and git's letter.
+            let letter = git.filter(|_| !row.is_dir);
+            let reserved = 2 * (usize::from(modified) + usize::from(letter.is_some()));
             let room = width.saturating_sub(name_column(row.depth) + reserved);
             let start = format!("{indent}{marker}");
             let x = buf
@@ -170,9 +198,15 @@ impl Widget for SidebarView<'_> {
             if room > 0 {
                 buf.set_stringn(x, y, truncate_end(&row.name, room), room, style);
             }
-            // In the last-but-one column, if the name gets any room.
+            // In the last-but-one column (git's letter, then the unsaved
+            // mark before it), if the name gets any room.
+            let mut mark_x = list.x + list.width;
+            if let Some(letter) = letter.filter(|_| room > 0) {
+                mark_x -= 2;
+                buf.set_string(mark_x, y, letter.to_string(), theme.get(git_scope(letter)));
+            }
             if modified && room > 0 {
-                let mark_x = list.x + list.width - 2;
+                mark_x -= 2;
                 buf.set_string(mark_x, y, "●", theme.get("ui.sidebar.modified"));
             }
         }
@@ -337,6 +371,170 @@ impl Widget for PluginViewWidget<'_> {
     }
 }
 
+/// The Source Control view: what's staged, what's changed, and the keys.
+///
+/// ```text
+///  SOURCE CONTROL      ⎇ main
+///  STAGED (1)
+///    M main.rs  src
+///  CHANGES (2)
+///    M app.rs  src/app
+///    U notes.md
+///
+///  s stage  u unstage  x discard  c commit
+/// ```
+pub struct GitViewWidget<'a> {
+    editor: &'a crate::editor::Editor,
+    focused: bool,
+    theme: &'a Theme,
+}
+
+impl<'a> GitViewWidget<'a> {
+    pub fn new(editor: &'a crate::editor::Editor, focused: bool, theme: &'a Theme) -> Self {
+        Self {
+            editor,
+            focused,
+            theme,
+        }
+    }
+
+    /// The rows of its list (the keys' hint row left out).
+    pub fn list(area: Rect) -> Rect {
+        let list = list_area(area);
+        let hint = if list.height > 5 { 2 } else { 0 };
+        Rect::new(list.x, list.y, list.width, list.height - hint)
+    }
+}
+
+impl Widget for GitViewWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use crate::editor::GitRow;
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let theme = self.theme;
+        let base = theme.get("ui.sidebar");
+        buf.set_style(area, base);
+        let width = area.width as usize;
+        buf.set_string(
+            area.x,
+            area.y,
+            truncate_end(" SOURCE CONTROL", width),
+            theme.get("ui.sidebar.title"),
+        );
+        if let Some(branch) = self.editor.git_branch() {
+            let text = format!("⎇ {branch} ");
+            let w = text.width();
+            if 16 + w < width {
+                buf.set_string(
+                    area.right() - w as u16,
+                    area.y,
+                    text,
+                    theme.get("ui.sidebar.git.branch"),
+                );
+            }
+        }
+        let list = Self::list(area);
+        if list.height == 0 {
+            return;
+        }
+        let empty = |buf: &mut Buffer, text: &str| {
+            buf.set_string(
+                list.x,
+                list.y,
+                truncate_end(text, width),
+                theme.get("ui.sidebar.empty"),
+            );
+        };
+        if self.editor.git_status().is_none() {
+            empty(buf, " Not in a git repository");
+            return;
+        }
+        let rows = self.editor.git_rows();
+        if rows.is_empty() {
+            empty(buf, " No changes");
+        }
+        let first = self.editor.git_first_shown(list.height as usize);
+        for (offset, (index, row)) in rows
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(list.height as usize)
+            .enumerate()
+        {
+            let y = list.y + offset as u16;
+            let line_style = if self.focused && index == self.editor.git_selected() {
+                let selected = base.patch(theme.get("ui.sidebar.selected"));
+                buf.set_style(Rect::new(list.x, y, list.width, 1), selected);
+                selected
+            } else {
+                base
+            };
+            match row {
+                GitRow::Header(text) => {
+                    let text = truncate_end(&format!(" {}", text.to_uppercase()), width);
+                    buf.set_string(
+                        list.x,
+                        y,
+                        text,
+                        line_style.patch(theme.get("ui.sidebar.git.header")),
+                    );
+                }
+                GitRow::File { file, staged } => {
+                    let letter = if *staged { file.staged } else { file.unstaged }.unwrap_or(' ');
+                    let x = buf
+                        .set_stringn(
+                            list.x + 2,
+                            y,
+                            letter.to_string(),
+                            width.saturating_sub(2),
+                            line_style.patch(theme.get(git_scope(letter))),
+                        )
+                        .0;
+                    let (dir, name) = match file.path.rsplit_once('/') {
+                        Some((dir, name)) => (dir, name),
+                        None => ("", file.path.as_str()),
+                    };
+                    let room = width.saturating_sub(5);
+                    let x = buf
+                        .set_stringn(
+                            x + 1,
+                            y,
+                            truncate_end(name, room),
+                            room,
+                            line_style.patch(theme.get("ui.sidebar.file")),
+                        )
+                        .0;
+                    let used = (x - list.x) as usize;
+                    if !dir.is_empty() && used + 3 < width {
+                        let room = width - used - 2;
+                        buf.set_stringn(
+                            x + 2,
+                            y,
+                            truncate_end(dir, room),
+                            room,
+                            line_style.patch(theme.get("ui.sidebar.marker")),
+                        );
+                    }
+                }
+            }
+        }
+        // The keys, at the bottom, over two lines (so they fit at the
+        // sidebar's usual width).
+        let list_full = list_area(area);
+        if list_full.height > 5 {
+            let style = theme.get("ui.sidebar.empty");
+            for (i, hint) in [" s stage  u unstage", " x discard  c commit"]
+                .iter()
+                .enumerate()
+            {
+                let y = list_full.bottom() - 2 + i as u16;
+                buf.set_string(list.x, y, truncate_end(hint, width), style);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -444,14 +642,46 @@ mod tests {
         );
 
         let (titles, shown) = editor.sidebar_tabs();
-        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 1));
-        SidebarTabs::new(&titles, shown, true, &theme).render(Rect::new(0, 0, 20, 1), &mut buf);
-        let tabs: String = (0..20).map(|x| buf[(x, 0)].symbol()).collect();
-        assert_eq!(tabs.trim_end(), "  Files   Todos");
+        let mut buf = Buffer::empty(Rect::new(0, 0, 30, 1));
+        SidebarTabs::new(&titles, shown, true, &theme).render(Rect::new(0, 0, 30, 1), &mut buf);
+        let tabs: String = (0..30).map(|x| buf[(x, 0)].symbol()).collect();
+        assert_eq!(tabs.trim_end(), "  Files   Git   Todos");
         assert_eq!(
-            buf[(10, 0)].fg,
+            buf[(16, 0)].fg,
             theme.get("ui.sidebar.tab.active").fg.unwrap()
         );
+    }
+
+    #[test]
+    fn git_letters_and_colours_in_the_tree() {
+        let dir = project();
+        let root = std::fs::canonicalize(dir.path().join("demo")).unwrap();
+        let mut tree = Explorer::new(&root);
+        tree.reveal(&root.join("src/main.rs"));
+        let theme = crate::config::Config::default().theme;
+        let marks = HashMap::from([
+            (root.join("src/main.rs"), 'M'),
+            (root.join("src"), '•'),
+            (root.join("a-rather-long-file-name.txt"), 'U'),
+        ]);
+        let view = SidebarView::new(&tree, &theme).git(marks);
+        let (rows, buf) = render(view, 20, 4);
+        assert_eq!(rows[2], "     main.rs      M ");
+        assert_eq!(
+            buf[(18, 2)].fg,
+            theme.get("ui.sidebar.git.modified").fg.unwrap()
+        );
+        assert_eq!(
+            buf[(5, 2)].fg,
+            theme.get("ui.sidebar.git.modified").fg.unwrap(),
+            "the name too"
+        );
+        assert_eq!(
+            buf[(3, 1)].fg,
+            theme.get("ui.sidebar.git.folder").fg.unwrap(),
+            "src has changes"
+        );
+        assert!(rows[3].ends_with("U "), "{rows:?}");
     }
 
     #[test]

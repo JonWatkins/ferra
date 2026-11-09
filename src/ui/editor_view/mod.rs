@@ -123,6 +123,8 @@ pub struct EditorView<'a> {
     block: Option<crate::core::Block>,
     search: Option<&'a SearchPattern>,
     current_match: Option<Match>,
+    /// Git changes, for marks in the gutter.
+    git: &'a [crate::git::Hunk],
     /// The other uses of the symbol under the cursor (a language server's).
     references: &'a [(crate::core::Position, crate::core::Position)],
     syntax: Option<&'a Highlights>,
@@ -144,6 +146,7 @@ impl<'a> EditorView<'a> {
             block: None,
             search: None,
             current_match: None,
+            git: &[],
             references: &[],
             syntax: None,
             diagnostics: &[],
@@ -176,6 +179,12 @@ impl<'a> EditorView<'a> {
 
     pub fn syntax(mut self, syntax: Option<&'a Highlights>) -> Self {
         self.syntax = syntax;
+        self
+    }
+
+    /// Marks git's changes in the gutter.
+    pub fn git_changes(mut self, hunks: &'a [crate::git::Hunk]) -> Self {
+        self.git = hunks;
         self
     }
 
@@ -370,6 +379,38 @@ impl StatefulWidget for EditorView<'_> {
     }
 }
 
+/// The gutter mark for `row` (`first`: its first screen row): a bar beside
+/// added and changed lines, and a low bar on the line above removed ones
+/// (a high one on the first line, for lines removed from the top).
+fn git_mark(
+    hunks: &[crate::git::Hunk],
+    row: usize,
+    first: bool,
+) -> Option<(&'static str, &'static str)> {
+    use crate::git::ChangeKind;
+    // Hunks are in order: the last starting at or before the row after.
+    let end = hunks.partition_point(|h| h.start <= row + 1);
+    hunks[..end]
+        .iter()
+        .rev()
+        .take(2)
+        .find_map(|hunk| match hunk.kind {
+            ChangeKind::Added if (hunk.start..hunk.end).contains(&row) => {
+                Some(("▎", "ui.gutter.added"))
+            }
+            ChangeKind::Changed if (hunk.start..hunk.end).contains(&row) => {
+                Some(("▎", "ui.gutter.changed"))
+            }
+            ChangeKind::Removed if first && hunk.start == 0 && row == 0 => {
+                Some(("▔", "ui.gutter.removed"))
+            }
+            ChangeKind::Removed if first && hunk.start == row + 1 => {
+                Some(("▁", "ui.gutter.removed"))
+            }
+            _ => None,
+        })
+}
+
 /// One screen row's part of a buffer line: chars `start..end` of `line`,
 /// drawn from display column `left`.
 struct RowPart<'l> {
@@ -487,6 +528,15 @@ impl EditorView<'_> {
             &label,
             gutter_style,
         );
+        // A git change's mark, in the padding after the number.
+        if gutter_area.width >= 2
+            && let Some((mark, scope)) = git_mark(self.git, row, first)
+        {
+            let x = gutter_area.right() - 1;
+            buf[(x, y)]
+                .set_symbol(mark)
+                .set_style(row_style.patch(self.theme.get(scope)));
+        }
 
         if indent > 0 && !self.options.wrap_marker.is_empty() {
             let marker = &self.options.wrap_marker;
@@ -664,6 +714,28 @@ mod tests {
             Some((2, 4)),
             "below the text: the end of the last line"
         );
+    }
+
+    #[test]
+    fn git_changes_are_marked_in_the_gutter() {
+        let doc = Document::with_text("a\nadded\nchanged\nb\nc");
+        let hunks = crate::git::line_changes("a\nCHANGED\nb\nremoved\nc\n", &doc.buffer().text());
+        let options = options(LineNumbers::Absolute);
+        let area = Rect::new(0, 0, 20, 6);
+        let mut buf = Buffer::empty(area);
+        let theme = theme();
+        EditorView::new(&doc, &options, &theme)
+            .git_changes(&hunks)
+            .render(area, &mut buf, &mut ViewState::default());
+        let mark = |y: u16| buf[(4, y)].symbol().to_string();
+        assert_eq!(row_text(&buf, 1).trim_end(), "   2▎added");
+        assert_eq!(
+            [mark(0), mark(1), mark(2), mark(3), mark(4)],
+            [" ", "▎", "▎", "▁", " "],
+            "{hunks:?}"
+        );
+        assert_eq!(buf[(4, 1)].fg, theme.get("ui.gutter.changed").fg.unwrap());
+        assert_eq!(buf[(4, 3)].fg, theme.get("ui.gutter.removed").fg.unwrap());
     }
 
     fn row_text(buf: &Buffer, y: u16) -> String {

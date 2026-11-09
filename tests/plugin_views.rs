@@ -52,7 +52,7 @@ fn a_plugin_view_is_a_tab_in_the_sidebar_with_its_own_keys() {
     keys(&mut app, ":sidebar_view letters<CR>");
     assert_eq!(app.editor().mode(), Mode::Sidebar);
     let shown = sidebar(&mut app);
-    assert!(shown.contains("Files   Letters"), "{shown}");
+    assert!(shown.contains("Files   Git   Letters"), "{shown}");
     assert!(shown.contains(" LETTERS"), "{shown}");
     assert!(shown.contains(" alpha"), "{shown}");
     assert!(shown.contains("made 1 for 1 lines"), "{shown}");

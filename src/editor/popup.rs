@@ -66,6 +66,9 @@ pub struct Popup {
     pub keys: Vec<(String, String)>,
     /// A command to run when it's closed with `q` or `<Esc>`.
     pub on_close: Option<String>,
+    /// Where focus goes back to when it closes: the sidebar, if it was
+    /// opened from there, else normal mode.
+    pub(crate) back_to: Option<Mode>,
     pub(crate) selected: usize,
     /// The first line shown (the view keeps the selection in sight).
     pub scroll: Cell<usize>,
@@ -128,8 +131,14 @@ impl Editor {
     }
 
     /// Opens `popup` (replacing any other), with focus if it takes it.
-    pub fn open_popup(&mut self, popup: Popup) {
+    pub fn open_popup(&mut self, mut popup: Popup) {
         let focus = popup.focus;
+        popup.back_to = match self.mode() {
+            Mode::Sidebar => Some(Mode::Sidebar),
+            // From another popup, back where that one would go.
+            Mode::Popup => self.popup.as_ref().and_then(|p| p.back_to),
+            _ => None,
+        };
         self.popup = Some(popup);
         self.popup_keys_changed = true;
         if focus {
@@ -143,7 +152,7 @@ impl Editor {
     pub fn close_popup(&mut self) -> Option<String> {
         let popup = self.popup.take()?;
         if self.mode() == Mode::Popup {
-            self.set_mode(Mode::Normal);
+            self.set_mode(popup.back_to.unwrap_or(Mode::Normal));
         }
         popup.on_close
     }

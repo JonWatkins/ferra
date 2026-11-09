@@ -321,6 +321,43 @@ after drawing. Its key hints come from the keymap like the find box's;
 `Keymap::hint_keys` ranks keys that need the kitty protocol (`<C-`>`,
 `<C-CR>`) after ones every terminal sends.
 
+## Git
+
+`git/` reads by running `git` (`git show :./file` for a file's staged text,
+`symbolic-ref` for the branch), so it behaves exactly as git does with
+nothing to link, and diffs in-process with `similar` (Myers, with a 50 ms
+deadline) so the gutter keeps up with typing. `line_changes` turns the diff
+into hunks of added, changed and removed lines in the buffer's rows (a
+removal next to an insertion is one change, as in VS Code).
+
+`editor/git.rs` keeps each open file's staged text and hunks, and the
+branch. The staged text is read when a file opens or is saved (the app
+passes events to `git_saw`), when the terminal regains focus, and when
+leaving the terminal panel (git may have run in either); the hunks are
+diffed again before drawing for buffers whose edit count changed. The
+editor pane draws a hunk's mark in the gutter's padding after the line
+number (`git_mark`), `]c`/`[c` jump between hunks, and the status line's
+`git` element shows the branch and counts.
+
+`git::status` reads `git status --porcelain=v1 -z -uall` into a
+`RepoStatus` (each file's staged and unstaged letter, untracked as `U`,
+conflicts as `!`); `stage`, `unstage` (`restore --staged`, or `rm --cached`
+before the first commit), `discard` (`restore`, or `clean` for an untracked
+file) and `commit` run git and return its own error message. The editor
+reads the status with the staged text (on open, save, focus and leaving
+the terminal panel) and when Source Control is shown, and after every
+action. `git_tree_marks` gives the file tree each changed file's letter by
+path, and `•` for the folders above it.
+
+Source Control is a built-in sidebar view between the files and plugins'
+views (`SidebarShows::Git`, the `Git` tab). Its rows (`GitRow`: headers and
+files, staged first) come from the status; its keys (`GIT_VIEW_KEYS`) are
+bound in `Mode::Sidebar` the way a plugin view's are, and the sidebar's
+moving, `R` and clicks act on it. Discarding asks in a built-in popup
+(whose `y` runs `git_discard_confirmed`), and committing in an input box
+(whose submit runs `git_commit_message`). A popup opened from the sidebar
+goes back to it when it closes.
+
 ## Syntax highlighting
 
 `syntax/` wraps tree-sitter:
@@ -1401,6 +1438,12 @@ than files: Git's changed files will be another view in it.
 
 ### Git support
 
+Started: changes in the gutter, `]c`/`[c`, the branch, the file tree's
+marks and Source Control in the sidebar (see [Git](#git)). Next: a
+full-screen git view in the style of lazygit (files, branches and commits
+panels with a diff preview, and staging hunks), then branches and
+push/pull/fetch in the background.
+
 The everyday Git features, without leaving the editor:
 
 - **Change signs in the gutter**: added, changed and removed lines compared
@@ -1669,6 +1712,14 @@ not. The answer is dropped unless the editor is still where it was asked
   (`keys(&mut app, "ihello<Esc>dd")`) and render through `TestBackend`.
 
 ## Known gaps / next steps
+
+- Git: changes are against what's staged only (not `HEAD`), with no way
+  yet to stage, reset or preview a hunk, see a diff, amend, or work with
+  branches and remotes (coming with the full-screen git view); the file
+  tree's marks are for the repository the current file is in; no marks with `line-numbers =
+  "none"` (there's no gutter); a file's staged text is read again only on
+  open, save, focus and leaving the terminal panel; submodules and files
+  git can't show as text are skipped.
 
 - Mouse: no right-click menu; dragging past a window's edge doesn't
   scroll it; no mouse in the terminal panel's programs (the wheel scrolls

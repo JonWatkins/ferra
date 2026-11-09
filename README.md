@@ -403,6 +403,61 @@ key closes the panel; `:terminal-close` ends it any time. `terminal-height`
 ``<C-`>`` needs a terminal with the kitty keyboard protocol (Ghostty,
 kitty, WezTerm, iTerm2); elsewhere use `<C-\><C-n>`.
 
+## Git
+
+In a git repository, the gutter marks what's changed since you last
+staged (`git add`), as VS Code's does: a green bar beside added lines, a
+blue one beside changed lines, and a red mark where lines were removed.
+They follow your edits as you type.
+
+```text
+   1▎fn main() {          (changed)
+   2▁    let a = 1;       (lines removed below)
+   3     let b = 2;
+   4▎    let c = 3;       (added)
+```
+
+| Keys / command | Action |
+|----------------|--------|
+| `]c` `[c` | Next / previous change (with a count, that many on) |
+| `:git_refresh` | Read what's staged again (also done on save, when the terminal regains focus, and on leaving the terminal panel) |
+
+The status line shows the branch and the file's changed lines (`⎇ main
++1 ~1 -1`); it's the `git` element of `statusline-layout`.
+
+### In the sidebar
+
+The file tree colours changed files and shows git's letter beside them (`M`
+modified, `A` added, `U` untracked, `!` a conflict), and tints folders with
+changes inside. The sidebar's **Git** tab (`<Tab>` in the sidebar, or
+`:git_view`) is Source Control, as in VS Code:
+
+```text
+  Files   Git
+ SOURCE CONTROL        ⎇ main
+ STAGED (1)
+  M lib.rs  src
+ CHANGES (1)
+  U notes.md
+
+ s stage  u unstage
+ x discard  c commit
+```
+
+| Keys (in the Git tab) | Action |
+|-----------------------|--------|
+| `j` `k`, click | Select a file |
+| `<CR>`, double click | Open it |
+| `s` / `u` | Stage / unstage it |
+| `S` / `U` | Stage / unstage everything |
+| `x` | Throw away its unstaged changes (asks first; an untracked file is deleted) |
+| `c` | Commit what's staged: asks for the message |
+| `R` | Read git's status again |
+
+`git = false` turns all of this off. ferra runs the `git` command, so it
+needs git installed; commits run your hooks, and their errors show as
+messages.
+
 ## Windows
 
 | Keys / command | Action |

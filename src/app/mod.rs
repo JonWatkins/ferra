@@ -446,6 +446,8 @@ impl App {
     /// open files meanwhile. Public so tests can trigger it.
     pub fn handle_focus_gained(&mut self) {
         self.editor.check_disk_changes();
+        // Git may have run meanwhile (a commit, `git add`).
+        self.editor.git_refresh_all();
         self.dispatch_events();
     }
 
@@ -612,6 +614,7 @@ impl App {
         self.update_lsp();
         self.refresh_plugin_statuses();
         self.make_plugin_view();
+        self.editor.update_git_changes();
         let pending = self.input.pending_display();
         let count = self.editor.buffer_count();
         if self.syntax.cached_count() > count || self.editor.syntax_trees.count() > count {
@@ -725,7 +728,7 @@ impl App {
         let view_keys = self.editor.plugin_view_keys();
         self.popup_keymap = (!popup_keys.is_empty() || !view_keys.is_empty()).then(|| {
             let mut keymap = self.keymap.clone();
-            for (mode, keys) in [(Mode::Popup, popup_keys), (Mode::Sidebar, view_keys)] {
+            for (mode, keys) in [(Mode::Popup, popup_keys), (Mode::Sidebar, &view_keys)] {
                 for (notation, command) in keys {
                     // Checked when the plugin made them.
                     if let Ok(keys) = crate::input::parse_keys(notation) {
@@ -876,6 +879,7 @@ impl App {
             }
             for event in events {
                 self.editor.plugin_views_saw(event.kind());
+                self.editor.git_saw(&event);
                 if let Err(error) = self.commands.fire(&event, &mut self.editor) {
                     self.editor.set_message(Message::error(error));
                 }

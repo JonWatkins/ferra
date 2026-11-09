@@ -303,18 +303,30 @@ impl Editor {
     }
 
     pub fn sidebar_move(&mut self, delta: isize) {
+        if self.git_view_shown() {
+            self.git_select_file(delta);
+            return;
+        }
         if !self.plugin_view_move(delta) {
             self.explorer_mut().move_by(delta);
         }
     }
 
     pub fn sidebar_first(&mut self) {
+        if self.git_view_shown() {
+            self.git_select_file(isize::MIN / 2);
+            return;
+        }
         if !self.plugin_view_move(isize::MIN / 2) {
             self.explorer_mut().select_first();
         }
     }
 
     pub fn sidebar_last(&mut self) {
+        if self.git_view_shown() {
+            self.git_select_file(isize::MAX / 2);
+            return;
+        }
         if !self.plugin_view_move(isize::MAX / 2) {
             self.explorer_mut().select_last();
         }
@@ -323,6 +335,9 @@ impl Editor {
     /// Enter: opens or closes the selected folder, or opens the file (and
     /// goes to it).
     pub fn sidebar_choose(&mut self) -> Result<(), String> {
+        if self.git_view_shown() {
+            return self.git_open_selected();
+        }
         if self.plugin_view().is_some() {
             return Ok(());
         }
@@ -332,6 +347,9 @@ impl Editor {
 
     /// `l` / `→`: opens the folder (or goes into it), or opens the file.
     pub fn sidebar_expand(&mut self) -> Result<(), String> {
+        if self.git_view_shown() {
+            return Ok(());
+        }
         if self.plugin_view().is_some() {
             return Ok(());
         }
@@ -358,7 +376,21 @@ impl Editor {
     /// the sidebar focus and selects that line; in the file tree, opens the
     /// file or opens or closes the folder, as in VS Code.
     pub fn sidebar_click(&mut self, row: usize) -> Result<(), String> {
+        self.sidebar_click_times(row, 1)
+    }
+
+    /// A click (`clicks` 2 for a double click) on the sidebar's list. In
+    /// Source Control a click selects the file and a double click opens it.
+    pub fn sidebar_click_times(&mut self, row: usize, clicks: u8) -> Result<(), String> {
         self.set_mode(Mode::Sidebar);
+        if self.git_view_shown() {
+            let index = self.git.scroll.get() + row;
+            self.git_select_row(index);
+            if clicks >= 2 && self.git_selected() == index {
+                return self.git_open_selected();
+            }
+            return Ok(());
+        }
         if self.plugin_view().is_some() {
             self.select_plugin_view_line_on_screen(row);
             return Ok(());
@@ -374,13 +406,13 @@ impl Editor {
 
     /// `h` / `←`: closes the folder, or goes to the one it's in.
     pub fn sidebar_collapse(&mut self) {
-        if self.plugin_view().is_none() {
+        if self.plugin_view().is_none() && !self.git_view_shown() {
             self.explorer_mut().collapse();
         }
     }
 
     pub fn sidebar_collapse_all(&mut self) {
-        if self.plugin_view().is_none() {
+        if self.plugin_view().is_none() && !self.git_view_shown() {
             self.explorer_mut().collapse_all();
         }
     }
@@ -404,6 +436,11 @@ impl Editor {
 
     /// `R`: lists the files again.
     pub fn sidebar_refresh(&mut self) {
+        if self.git_view_shown() {
+            self.git_refresh_all();
+            self.set_message(Message::info("Git status read again"));
+            return;
+        }
         if self.plugin_view().is_some() {
             self.refresh_plugin_view(None);
             return;
