@@ -25,6 +25,7 @@ mod block;
 mod comment;
 mod confirm;
 pub mod diagnostics;
+pub mod explorer;
 pub mod lsp;
 mod selection;
 mod transform;
@@ -191,6 +192,9 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
+    /// The file tree, once the sidebar's been opened, and whether it's open.
+    explorer: Option<explorer::Explorer>,
+    sidebar_open: bool,
     /// The uses of the symbol under the cursor (a language server's).
     references: Option<lsp::References>,
     /// Servers' diagnostics for files that aren't open, by path.
@@ -598,7 +602,7 @@ impl Editor {
                     picker.push(c);
                 }
             }
-            Mode::Normal | Mode::OperatorPending | Mode::Visual => {}
+            Mode::Normal | Mode::OperatorPending | Mode::Visual | Mode::Sidebar => {}
         }
     }
 

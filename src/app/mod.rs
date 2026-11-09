@@ -443,6 +443,8 @@ impl App {
                 doc.set_cursor(end.with_col(end.col.saturating_sub(1)));
                 self.editor.finish_command();
             }
+            // Nothing to paste into.
+            Mode::Sidebar => {}
         }
     }
 

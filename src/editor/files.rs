@@ -217,6 +217,7 @@ impl Editor {
             text.push_str(&format!(" ({note})"));
         }
         self.set_message(Message::info(text));
+        self.sidebar_saw_save(&info.path);
         self.emit(Event::AfterSave { path: info.path });
         Ok(())
     }

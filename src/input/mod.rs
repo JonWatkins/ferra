@@ -288,6 +288,7 @@ mod tests {
             &parse_keys("w").unwrap(),
             "move_word_forward",
         );
+        map.bind(Mode::Sidebar, &parse_keys("j").unwrap(), "sidebar_down");
         map
     }
 
@@ -464,6 +465,15 @@ mod tests {
         assert_eq!(
             last(&mut h, Mode::OperatorPending, "3w"),
             execute("move_word_forward", Some(3))
+        );
+    }
+
+    #[test]
+    fn counts_work_in_the_sidebar() {
+        let mut h = InputHandler::default();
+        assert_eq!(
+            last(&mut h, Mode::Sidebar, "3j"),
+            execute("sidebar_down", Some(3))
         );
     }
 

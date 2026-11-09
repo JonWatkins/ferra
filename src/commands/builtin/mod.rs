@@ -21,6 +21,7 @@ mod options;
 mod picker;
 mod scrolling;
 mod search;
+mod sidebar;
 mod text_objects;
 mod visual;
 mod windows;
@@ -49,6 +50,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     scrolling::register(registry);
     folds::register(registry);
     lsp::register(registry);
+    sidebar::register(registry);
 }
 
 #[cfg(test)]

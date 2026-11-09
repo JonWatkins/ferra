@@ -230,6 +230,33 @@ query and keeps the highlighted item. Updates for a job whose picker has
 gone are dropped, and closing the picker sets a flag the walker checks, so
 it stops.
 
+## The sidebar
+
+`editor/explorer.rs` holds the file tree: the root (the starting folder,
+canonicalised), the set of open folders, each folder's listing (from
+`files::list_dir`, cached until `refresh`) and the rows, rebuilt depth
+first from the open folders whenever one opens or closes, keeping the
+selected path selected. `reveal` opens the folders down to a file (how
+`<Space>e` starts at the current file), and a save calls `saw_file`, which
+lists the file's folder again if the file is new to it.
+
+The tree has focus in `Mode::Sidebar`, with its own `[keys.sidebar]` table
+(counts work, as in normal mode); the `sidebar_*` commands
+(`commands/builtin/sidebar.rs`) drive it. Opening a file goes back to
+normal mode and through `Editor::open`, named relative to the current
+folder as the file picker names them. The `Explorer` is made the first time
+it's needed and kept when the sidebar closes, so its open folders are still
+open next time.
+
+`ui/sidebar.rs` draws it. `ui::draw` takes the sidebar's columns (plus a
+`│`) from the left before the windows are laid out, so splits, resizing and
+per-window status lines work within what's left. With per-window status
+lines the sidebar runs down to the command line; with the global one, the
+status line keeps the full width under it. Popups (the picker) are still
+centred on the whole screen. The view scrolls (a `Cell` in the explorer) to
+keep the selected row in sight, and the terminal cursor sits on that row's
+name while the sidebar has focus.
+
 ## Syntax highlighting
 
 `syntax/` wraps tree-sitter:
@@ -1207,6 +1234,14 @@ sends keys to the shell, and a key (like Neovim's `<C-\><C-n>`) goes back
 to normal mode, where the scrollback is an ordinary read-only buffer to
 search and yank from.
 
+### Interface
+
+A VS Code-like layout, so the editor can be driven without many commands:
+the sidebar's file tree (done; see [The sidebar](#the-sidebar)), then
+find and replace in the interface, a terminal panel at the bottom, plugin
+windows and popups, and the mouse. The sidebar is meant to hold more
+than files: Git's changed files will be another view in it.
+
 ### Git support
 
 The everyday Git features, without leaving the editor:
@@ -1477,6 +1512,13 @@ not. The answer is dropped unless the editor is still where it was asked
   (`keys(&mut app, "ihello<Esc>dd")`) and render through `TestBackend`.
 
 ## Known gaps / next steps
+
+- Sidebar: no creating, renaming, moving or deleting files from it; no
+  mouse; it shows the current file only when `<Space>e` reveals it (it
+  doesn't follow buffer switches); files deleted or made by other programs
+  show up on `R`; no colours for Git status or diagnostics; no filtering
+  by typing (`<Space>f` does that); the root is always the starting
+  folder.
 
 - Language servers: no sign that code actions are available; the project
   symbol picker shows what the server found, which ferra then filters by

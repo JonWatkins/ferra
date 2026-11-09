@@ -282,6 +282,37 @@ cursor, scroll position and undo history. `:e path` opens another buffer
 without closing the current one, and `:q` refuses while *any* buffer has
 unsaved changes.
 
+## The sidebar
+
+`<Space>e` opens the file tree on the left, with the current file selected,
+and moves to it; `<Space>e` (or `<Esc>`) goes back to the editor, leaving
+it open. `:explorer` (or `:Explore`) opens and closes it, as does `q` in it.
+
+```text
+ FERRA                        │   1 fn main() {
+ ▾ src                        │   2     println!("hi");
+   ▸ ui                       │   3 }
+     main.rs                ● │
+   Cargo.toml                 │
+```
+
+| Keys (in the tree) | Action |
+|--------------------|--------|
+| `j` `k`, arrows | Down / up (with a count: `3j`) |
+| `gg` `G` | First / last row |
+| `<CR>` | Open or close the folder, or open the file |
+| `l`, `→` | Open the folder (or go into an open one), or open the file |
+| `h`, `←` | Close the folder, or go to the folder it's in |
+| `zM` | Close every folder |
+| `R` | List the files again (a saved new file shows up by itself) |
+| `:` `<Space>f` `<Space>b` `<Space>p` | As in normal mode |
+
+It lists the folder ferra started in, folders first, leaving out what
+`.gitignore` ignores and `.git` (dotfiles like `.github` are shown). The
+current file is highlighted and files with unsaved changes have a `●`.
+`sidebar-width` (30 columns, at most half the screen) sets its width; the
+colours are the `ui.sidebar.*` theme scopes.
+
 ## Windows
 
 | Keys / command | Action |

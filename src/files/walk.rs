@@ -99,11 +99,67 @@ pub fn walk_files(
     truncated
 }
 
+/// One entry of a directory listing (for the file tree).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirEntry {
+    pub path: PathBuf,
+    pub name: String,
+    pub is_dir: bool,
+}
+
+/// What's in `dir` (not its subdirectories), folders first, then by name
+/// (ignoring case), leaving out what `.gitignore` and the like ignore and
+/// `.git` itself, as the file picker does; dotfiles are kept (`.github`,
+/// `.env`), as in VS Code.
+pub fn list_dir(dir: &Path) -> Vec<DirEntry> {
+    let walker = WalkBuilder::new(dir)
+        .max_depth(Some(1))
+        .hidden(false)
+        .require_git(false)
+        .filter_entry(|entry| entry.file_name() != ".git")
+        .build();
+    let mut entries: Vec<DirEntry> = walker
+        .flatten()
+        .filter(|entry| entry.depth() == 1)
+        .map(|entry| DirEntry {
+            path: entry.path().to_path_buf(),
+            name: entry.file_name().to_string_lossy().into_owned(),
+            is_dir: entry.file_type().is_some_and(|t| t.is_dir()),
+        })
+        .collect();
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    entries
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
 
     use super::*;
+
+    #[test]
+    fn listing_a_folder_puts_folders_first_and_leaves_out_what_git_ignores() {
+        let dir = project();
+        let names: Vec<(String, bool)> = list_dir(dir.path())
+            .into_iter()
+            .map(|e| (e.name, e.is_dir))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("src".to_string(), true),
+                (".gitignore".to_string(), false),
+                (".hidden".to_string(), false),
+                ("README.md".to_string(), false),
+            ],
+            "no .git or ignored target/; dotfiles kept"
+        );
+    }
 
     /// A temp project: `src/main.rs`, `README.md`, `.hidden`, a git-ignored
     /// `target/out.bin` and a `.git/HEAD`.

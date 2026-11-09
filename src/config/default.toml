@@ -43,6 +43,9 @@ cursorline = true
 statusline = "windows"
 # Minimum lines kept visible above/below the cursor when scrolling.
 scroll-off = 5
+# Columns the sidebar's file tree (<Space>e, :explorer) takes, left of the
+# windows. It never takes more than half the screen.
+sidebar-width = 30
 # Colour code with tree-sitter (the languages in [languages] below).
 syntax-highlighting = true
 # Ask the terminal for the kitty keyboard protocol where it has it (kitty,
@@ -120,6 +123,7 @@ normal = "block"
 insert = "bar"
 command = "bar"
 picker = "bar"
+sidebar = "block"
 # While an operator (d, c, y) waits for a motion.
 operator = "underline"
 visual = "block"
@@ -289,6 +293,16 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "text.uri" = { fg = "#7dcfff", modifiers = ["underlined"] }
 "text.reference" = "#7dcfff"
 "ui.window.separator" = "#3b4048"
+# The sidebar's file tree (<Space>e).
+"ui.sidebar" = { fg = "#a9b1d6", bg = "#1a1c22" }
+"ui.sidebar.title" = { fg = "#7aa2f7", modifiers = ["bold"] }
+"ui.sidebar.marker" = "#6b7280"
+"ui.sidebar.folder" = "#c0caf5"
+"ui.sidebar.file" = "#a9b1d6"
+"ui.sidebar.current" = { fg = "#7dcfff", modifiers = ["bold"] }
+"ui.sidebar.selected" = { bg = "#33467c" }
+"ui.sidebar.modified" = "#e0af68"
+"ui.sidebar.empty" = { fg = "#6b7280", modifiers = ["italic"] }
 # The splash screen shown when starting without a file.
 "ui.splash.logo" = { fg = "#7aa2f7", modifiers = ["bold"] }
 "ui.splash.version" = "#565f89"
@@ -325,6 +339,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.statusline.operator" = { fg = "#16181d", bg = "#7aa2f7", modifiers = ["bold"] }
 "ui.statusline.visual" = { fg = "#16181d", bg = "#bb9af7", modifiers = ["bold"] }
 "ui.statusline.picker" = { fg = "#16181d", bg = "#7dcfff", modifiers = ["bold"] }
+"ui.statusline.sidebar" = { fg = "#16181d", bg = "#9ece6a", modifiers = ["bold"] }
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
 "ui.statusline.lsp" = { fg = "#6b7280", bg = "#1f2229" }
 "ui.statusline.recording" = { fg = "#f7768e", bg = "#1f2229", modifiers = ["bold"] }
@@ -470,6 +485,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "gv" = "reselect_visual"
 "<Space>b" = "buffer_picker"
 "<Space>p" = "command_palette"
+"<Space>e" = "sidebar_focus"
 "<Space>f" = "file_picker"
 "<Space>r" = "register_picker"
 "<C-w>s" = "split_horizontal"
@@ -741,6 +757,29 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>a" = "code_actions"
 "<Tab>" = "operator_indent"
 "<S-Tab>" = "operator_outdent"
+
+# The sidebar's file tree (<Space>e), while it has focus.
+[keys.sidebar]
+"j" = "sidebar_down"
+"k" = "sidebar_up"
+"<Down>" = "sidebar_down"
+"<Up>" = "sidebar_up"
+"gg" = "sidebar_first"
+"G" = "sidebar_last"
+"<CR>" = "sidebar_choose"
+"l" = "sidebar_expand"
+"<Right>" = "sidebar_expand"
+"h" = "sidebar_collapse"
+"<Left>" = "sidebar_collapse"
+"zM" = "sidebar_collapse_all"
+"R" = "sidebar_refresh"
+"q" = "sidebar_toggle"
+"<Esc>" = "sidebar_focus"
+"<Space>e" = "sidebar_focus"
+":" = "command_mode"
+"<Space>f" = "file_picker"
+"<Space>b" = "buffer_picker"
+"<Space>p" = "command_palette"
 
 # The picker popup (<Space>b buffers, <Space>f files, <Space>p commands,
 # <Space>r registers). Typing filters.

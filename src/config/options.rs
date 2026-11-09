@@ -38,6 +38,8 @@ pub struct EditorOptions {
     /// What the active window's status line shows, and where.
     pub statusline_layout: StatuslineLayout,
     pub scroll_off: usize,
+    /// Columns the sidebar's file tree takes (at most half the screen).
+    pub sidebar_width: u16,
     pub syntax_highlighting: bool,
     /// Milliseconds to wait for the rest of a key sequence that's also a
     /// prefix of a longer one (`jk` in insert mode). 0 waits forever.
@@ -301,6 +303,7 @@ pub struct CursorShapes {
     pub operator: CursorShape,
     pub visual: CursorShape,
     pub picker: CursorShape,
+    pub sidebar: CursorShape,
     /// Replace mode (`R`).
     pub replace: CursorShape,
 }
@@ -314,6 +317,7 @@ impl CursorShapes {
             Mode::OperatorPending => self.operator,
             Mode::Visual => self.visual,
             Mode::Picker => self.picker,
+            Mode::Sidebar => self.sidebar,
         }
     }
 }
@@ -331,6 +335,7 @@ mod tests {
             operator: CursorShape::Block,
             visual: CursorShape::Block,
             picker: CursorShape::Bar,
+            sidebar: CursorShape::Block,
             replace: CursorShape::Underline,
         };
         assert_eq!(shapes.for_mode(Mode::Insert), CursorShape::Bar);

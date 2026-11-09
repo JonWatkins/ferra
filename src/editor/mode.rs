@@ -19,16 +19,19 @@ pub enum Mode {
     Visual,
     /// A picker popup (buffers, commands) has focus.
     Picker,
+    /// The sidebar (the file tree) has focus.
+    Sidebar,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 6] = [
+    pub const ALL: [Mode; 7] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
         Mode::OperatorPending,
         Mode::Visual,
         Mode::Picker,
+        Mode::Sidebar,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -40,6 +43,7 @@ impl Mode {
             Mode::OperatorPending => "operator",
             Mode::Visual => "visual",
             Mode::Picker => "picker",
+            Mode::Sidebar => "sidebar",
         }
     }
 
@@ -50,7 +54,10 @@ impl Mode {
 
     /// Whether a numeric count prefix (`3j`, `d2w`) can be typed.
     pub const fn accepts_count(self) -> bool {
-        matches!(self, Mode::Normal | Mode::OperatorPending | Mode::Visual)
+        matches!(
+            self,
+            Mode::Normal | Mode::OperatorPending | Mode::Visual | Mode::Sidebar
+        )
     }
 
     /// Whether a `"x` register prefix can be typed.
