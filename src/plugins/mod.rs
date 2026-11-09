@@ -21,6 +21,7 @@
 
 mod api;
 mod popup;
+mod prompts;
 
 use std::cell::RefCell;
 use std::path::Path;

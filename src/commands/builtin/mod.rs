@@ -11,6 +11,7 @@ mod files;
 mod find;
 mod folds;
 mod history;
+mod input_box;
 mod jumps;
 mod lsp;
 mod macros;
@@ -57,6 +58,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     find::register(registry);
     terminal::register(registry);
     popup::register(registry);
+    input_box::register(registry);
 }
 
 #[cfg(test)]

@@ -1238,6 +1238,19 @@ places it centred, by the cursor or at the top right of the active window,
 scrolls it to keep the selection in view, and shows where it's at in the
 bottom border.
 
+### Asking the user from plugins
+
+`ctx:pick` and `ctx:input` (`plugins/prompts.rs`) follow popups: the table
+is checked as it's read, and the answer goes to a command by name. A pick
+is an ordinary `Picker` whose items carry `PickerAction::RunWith(command,
+[value])`, so filtering, drawing and keys are the built-in picker's. An
+input is an `InputBox` (`editor/input_box.rs`: a title, a `TextField` from
+the find box, a placeholder, and the commands to run), with focus in
+`Mode::Input` and its own `[keys.input]`; leaving that mode any way closes
+it. `input_submit` takes the box and runs `on_submit` with the text as its
+argument. `ui/input_box.rs` draws it at the top centre of the windows, its
+key hints from the keymap like the find box's.
+
 ### Plugin sidebar views
 
 `editor.view(name, spec)` records a `ViewSpec` (title, keys, the events that
@@ -1265,8 +1278,9 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 1. **A wider API**, driven by real plugins: selections, registers, search,
    buffers, options, and creating pickers from Lua.
 2. **Plugin UI**: started with popups (see [Plugin popups](#plugin-popups));
-   and views in the sidebar (see [Plugin sidebar views](#plugin-sidebar-views));
-   still to come are pickers from Lua, input boxes, and decorations (see "Plugin windows and decorations" below).
+   views in the sidebar (see [Plugin sidebar views](#plugin-sidebar-views)),
+   and asking the user (pickers and input boxes, see [Asking the user from
+   plugins](#asking-the-user-from-plugins)); still to come are decorations (see "Plugin windows and decorations" below).
 3. **Registering at runtime.** Registrations made inside a callback (rather
    than while loading) are collected but not yet installed.
 4. **Isolation.** If sandboxing untrusted plugins becomes a goal, a WASM
@@ -1620,8 +1634,8 @@ not. The answer is dropped unless the editor is still where it was asked
 
 ## Known gaps / next steps
 
-- Plugin popups: one at a time; no input field in them (a plugin can't ask
-  for text yet); keys run commands, not Lua functions; no mouse; a plugin
+- Plugin popups: one at a time; an input box is a single line (no
+  multi-line input, no validating as you type, no history); keys run commands, not Lua functions; no mouse; a plugin
   can't add a view to the bottom panel yet. Sidebar views are flat lists
   (no tree, folding or icons), made whole each time (no partial updates).
 

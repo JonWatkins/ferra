@@ -472,7 +472,7 @@ impl App {
                 doc.insert_str(text);
                 self.editor.note_typed(text);
             }
-            Mode::Command | Mode::Picker | Mode::Find => {
+            Mode::Command | Mode::Picker | Mode::Find | Mode::Input => {
                 let first_line = text.lines().next().unwrap_or_default();
                 first_line
                     .chars()
@@ -591,6 +591,19 @@ impl App {
         } else {
             ui::FindKeys::default()
         };
+        let input_keys = if self.editor.input_box().is_some() {
+            let label = |command| {
+                self.keymap
+                    .hint_keys(Mode::Input, command)
+                    .map(|keys| ui::key_label(&keys, cfg!(target_os = "macos")))
+            };
+            ui::InputKeys {
+                submit: label("input_submit"),
+                cancel: label("input_cancel"),
+            }
+        } else {
+            ui::InputKeys::default()
+        };
         let terminal_keys = if self.editor.terminal_panel().is_some() {
             let label = |mode, command| {
                 self.keymap
@@ -619,6 +632,7 @@ impl App {
                 splash,
                 find: find_keys,
                 terminal: terminal_keys,
+                input: input_keys,
             },
         );
     }

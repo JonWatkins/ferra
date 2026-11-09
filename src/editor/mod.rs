@@ -27,6 +27,7 @@ mod confirm;
 pub mod diagnostics;
 pub mod explorer;
 pub mod find;
+pub mod input_box;
 pub mod lsp;
 pub mod popup;
 mod selection;
@@ -214,6 +215,8 @@ pub struct Editor {
     /// A plugin's popup, and whether a new one brought keys to bind.
     popup: Option<popup::Popup>,
     popup_keys_changed: bool,
+    /// A plugin's input box.
+    input_box: Option<input_box::InputBox>,
     /// The uses of the symbol under the cursor (a language server's).
     references: Option<lsp::References>,
     /// Servers' diagnostics for files that aren't open, by path.
@@ -550,6 +553,9 @@ impl Editor {
         if mode != Mode::Picker {
             self.picker = None;
         }
+        if mode != Mode::Input {
+            self.input_box = None;
+        }
         self.enforce_cursor_rules();
     }
 
@@ -622,6 +628,7 @@ impl Editor {
                 }
             }
             Mode::Find => self.find_edit(|field| field.push(c)),
+            Mode::Input => self.input_box_edit(|field| field.push(c)),
             Mode::Normal
             | Mode::OperatorPending
             | Mode::Visual

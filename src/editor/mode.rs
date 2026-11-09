@@ -27,10 +27,12 @@ pub enum Mode {
     Terminal,
     /// A plugin's popup has focus.
     Popup,
+    /// A plugin's input box (`ctx:input`) has focus.
+    Input,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 10] = [
+    pub const ALL: [Mode; 11] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
@@ -41,6 +43,7 @@ impl Mode {
         Mode::Find,
         Mode::Terminal,
         Mode::Popup,
+        Mode::Input,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -56,6 +59,7 @@ impl Mode {
             Mode::Find => "find",
             Mode::Terminal => "terminal",
             Mode::Popup => "popup",
+            Mode::Input => "input",
         }
     }
 
@@ -63,7 +67,7 @@ impl Mode {
     pub const fn accepts_text(self) -> bool {
         matches!(
             self,
-            Mode::Insert | Mode::Command | Mode::Picker | Mode::Find
+            Mode::Insert | Mode::Command | Mode::Picker | Mode::Find | Mode::Input
         )
     }
 
@@ -106,6 +110,7 @@ mod tests {
     fn text_and_count_acceptance() {
         assert!(Mode::Insert.accepts_text() && Mode::Command.accepts_text());
         assert!(!Mode::Normal.accepts_text() && !Mode::OperatorPending.accepts_text());
+        assert!(Mode::Find.accepts_text() && Mode::Input.accepts_text());
         assert!(Mode::Normal.accepts_count() && Mode::OperatorPending.accepts_count());
         assert!(Mode::Visual.accepts_count() && Mode::Visual.accepts_register());
         assert!(!Mode::Insert.accepts_count());

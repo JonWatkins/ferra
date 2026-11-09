@@ -131,6 +131,7 @@ sidebar = "block"
 find = "bar"
 terminal = "block"
 popup = "block"
+input = "bar"
 # While an operator (d, c, y) waits for a motion.
 operator = "underline"
 visual = "block"
@@ -337,6 +338,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.find.count" = "#a0a6b0"
 "ui.find.none" = "#f7768e"
 "ui.find.hint" = "#565f89"
+# A plugin's input box's placeholder (shown while it's empty).
+"ui.input.placeholder" = { fg = "#565f89", modifiers = ["italic"] }
 # The splash screen shown when starting without a file.
 "ui.splash.logo" = { fg = "#7aa2f7", modifiers = ["bold"] }
 "ui.splash.version" = "#565f89"
@@ -377,6 +380,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.statusline.find" = { fg = "#16181d", bg = "#ff9e64", modifiers = ["bold"] }
 "ui.statusline.terminal" = { fg = "#16181d", bg = "#bb9af7", modifiers = ["bold"] }
 "ui.statusline.popup" = { fg = "#16181d", bg = "#7dcfff", modifiers = ["bold"] }
+"ui.statusline.input" = { fg = "#16181d", bg = "#e0af68", modifiers = ["bold"] }
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
 "ui.statusline.lsp" = { fg = "#6b7280", bg = "#1f2229" }
 "ui.statusline.recording" = { fg = "#f7768e", bg = "#1f2229", modifiers = ["bold"] }
@@ -845,6 +849,23 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Esc>" = "popup_close"
 "<C-c>" = "popup_close"
 ":" = "command_mode"
+
+# A plugin's input box (ctx:input), while it has focus. Typing edits it.
+[keys.input]
+"<CR>" = "input_submit"
+"<Esc>" = "input_cancel"
+"<C-c>" = "input_cancel"
+"<BS>" = "input_backspace"
+"<Del>" = "input_delete"
+"<C-w>" = "input_delete_word"
+"<A-BS>" = "input_delete_word"
+"<C-u>" = "input_delete_to_start"
+"<Left>" = "input_left"
+"<Right>" = "input_right"
+"<Home>" = "input_home"
+"<C-a>" = "input_home"
+"<End>" = "input_end"
+"<C-e>" = "input_end"
 
 # The terminal panel (<Space>t), while it has focus. Every other key goes
 # to the shell.

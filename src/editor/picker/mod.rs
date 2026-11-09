@@ -24,6 +24,9 @@ pub enum PickerAction {
     GoTo(PathBuf, crate::core::Position),
     /// Make a language server's code action: which answer, which action.
     CodeAction(u64, usize),
+    /// Run a command with arguments (a plugin's `ctx:pick`, with the
+    /// item's value).
+    RunWith(String, Vec<String>),
 }
 
 impl PickerItem {

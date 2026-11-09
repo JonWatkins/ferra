@@ -165,6 +165,10 @@ pub fn register(r: &mut CommandRegistry) {
             Some(PickerAction::RunCommand(name)) => {
                 cx.registry.execute(&name, cx.editor, Invocation::default())
             }
+            Some(PickerAction::RunWith(name, args)) => {
+                cx.registry
+                    .execute(&name, cx.editor, Invocation::with_args(&args))
+            }
             Some(PickerAction::Paste(register)) => {
                 let invocation = Invocation {
                     register: Some(register),

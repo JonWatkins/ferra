@@ -156,3 +156,19 @@ fn todos_has_a_sidebar_view_that_follows_edits() {
     assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
     assert_eq!(cursor(&app), (3, 0), "at the FIXME");
 }
+
+#[test]
+fn snippets_picks_a_snippet_and_asks_what_to_wrap_a_word_in() {
+    let mut app = common::app_with_config("[editor]\nauto-indent = false");
+    let source = fs::read_to_string("examples/plugins/snippets.lua").unwrap();
+    app.load_plugin("snippets.lua", &source)
+        .expect("snippets.lua loads");
+    keys(&mut app, "<Space>itod<CR>");
+    assert_eq!(text(&app), "// TODO: ");
+
+    keys(&mut app, "ccsome word here<Esc>bb");
+    keys(&mut app, "<Space>w**<CR>");
+    assert_eq!(text(&app), "some **word** here");
+    keys(&mut app, "0<Space>w<Esc>");
+    assert_eq!(text(&app), "some **word** here", "cancelled");
+}

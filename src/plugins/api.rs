@@ -24,6 +24,8 @@
 //! | `ctx:popup_close()` | Close it (without its `on_close`) |
 //! | `ctx:popup_selected()` | The selected line of a list popup, or `nil` |
 //! | `ctx:popup_name()` | The open popup's `name`, or `nil` |
+//! | `ctx:pick{title, items, on_choose}` | The fuzzy picker with the plugin's items; `on_choose` runs with the item's value (see `plugins/prompts.rs`) |
+//! | `ctx:input{title, value, placeholder, on_submit, on_cancel}` | A box asking for a line of text; `on_submit` runs with it |
 //! | `ctx:view_selected()` | The selected line of the plugin view in the sidebar, or `nil` |
 //! | `ctx:view_name()` | The sidebar view shown (`"files"` or a plugin's), or `nil` if it's closed |
 //! | `ctx:view_refresh([name])` | Make a view's lines again (the one shown, by default) |
@@ -281,6 +283,31 @@ pub fn call_returning<R: mlua::FromLuaMulti>(
             "popup_name",
             scope.create_function(|_, _: Value| {
                 Ok(cell.borrow().editor.popup().map(|p| p.name.clone()))
+            })?,
+        )?;
+
+        // Asking the user (`plugins/prompts.rs`).
+        ctx.set(
+            "pick",
+            scope.create_function(|_, (_, spec): (Value, Table)| {
+                let mut guard = cell.borrow_mut();
+                let cx = &mut **guard;
+                let picker =
+                    super::prompts::picker(&spec, cx.registry).map_err(mlua::Error::runtime)?;
+                cx.editor.close_popup();
+                cx.editor.open_picker(picker);
+                Ok(())
+            })?,
+        )?;
+        ctx.set(
+            "input",
+            scope.create_function(|_, (_, spec): (Value, Table)| {
+                let mut guard = cell.borrow_mut();
+                let cx = &mut **guard;
+                let input =
+                    super::prompts::input_box(&spec, cx.registry).map_err(mlua::Error::runtime)?;
+                cx.editor.open_input_box(input);
+                Ok(())
             })?,
         )?;
 

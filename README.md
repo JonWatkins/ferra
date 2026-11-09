@@ -794,6 +794,7 @@ a `ctx`:
 | `option(name)`, `set_option(name, value [, "local"])` | Read an option (`"tab-width"`, `"search.case"`), or set it everywhere or for this window or buffer, checked as config is |
 | `popup{...}`, `popup_update{...}`, `popup_close()`, `popup_selected()`, `popup_name()` | Show a popup (below) and work with it |
 | `view_selected()`, `view_name()`, `view_refresh([name])` | The sidebar view shown, and making one again (below) |
+| `pick{...}`, `input{...}` | Ask the user: a picker of the plugin's items, or a line of text (below) |
 
 Plus `ctx.count` and `ctx.args`. Hooks also get an `event` table (`kind`,
 and `path` or `from`/`to` where relevant). Raising a Lua `error` cancels the
@@ -839,6 +840,40 @@ by half a page, `gg`/`G` to the ends, `q`/`<Esc>` close it, `:` for
 commands. `ctx:popup_update{ lines = ..., title = ..., footer = ...,
 selected = n }` changes it in place. A mistake in the table (an unknown
 command in `keys`, a bad key) is the plugin's error, shown as a message.
+
+### Asking the user
+
+`ctx:pick{...}` opens the picker with the plugin's items, filtered as you
+type; `ctx:input{...}` opens a box at the top of the window for a line of
+text, its starting text selected so typing replaces it. Either runs a
+plugin command with the answer as `ctx.args[1]`:
+
+```lua
+editor.command("colour", function(ctx)
+  ctx:pick({
+    title = "Colour",
+    items = { "red", { label = "Green", detail = "#00ff00", value = "green" } },
+    on_choose = "set_colour",          -- gets the item's value (or label)
+  })
+end)
+
+editor.command("rename_thing", function(ctx)
+  ctx:input({
+    title = "New name",
+    value = "old",                     -- to start with
+    placeholder = "a name",            -- shown while it's empty
+    on_submit = "rename_to",           -- gets the text
+    on_cancel = "rename_cancelled",    -- optional, on <Esc>
+  })
+end)
+```
+
+In the box, `<CR>` submits, `<Esc>` cancels, and the usual keys edit
+(`<Left>` `<Right>`, `<Home>` `<End>`, `<BS>` `<Del>`, `<C-w>`, `<C-u>`);
+they're `[keys.input]`.
+[`examples/plugins/snippets.lua`](examples/plugins/snippets.lua) picks a
+snippet to insert (`<Space>i`) and asks what to wrap a word in
+(`<Space>w`).
 
 ### Sidebar views
 
