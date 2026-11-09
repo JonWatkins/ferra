@@ -12,7 +12,8 @@
 //! ```
 //!
 //! With `statusline = "global"` the one status line spans the screen,
-//! under the sidebar too.
+//! under the sidebar too. The terminal panel (`TerminalView`, `<Space>t`)
+//! takes the bottom of the windows' side, under their status lines.
 
 mod command_line;
 mod completion_menu;
@@ -24,17 +25,19 @@ mod sidebar;
 mod signature;
 mod splash;
 mod statusline;
+mod terminal;
 mod text;
 mod windows;
 
 pub use command_line::CommandLineView;
 pub use completion_menu::CompletionMenu;
 pub use editor_view::{EditorView, ViewState};
-pub use find::{FindKeys, FindView};
+pub use find::{FindKeys, FindView, key_label};
 pub use picker::PickerView;
 pub use sidebar::SidebarView;
 pub use splash::{LOGO, Splash, SplashEntry};
 pub use statusline::StatusLine;
+pub use terminal::{TerminalKeys, TerminalView};
 pub use windows::Views;
 
 use ratatui::{
@@ -54,6 +57,8 @@ pub struct KeyHints {
     pub splash: Vec<SplashEntry>,
     /// The find box's (only while it's open).
     pub find: FindKeys,
+    /// The terminal panel's (only while it's open).
+    pub terminal: TerminalKeys,
 }
 
 /// Draws the whole screen and positions the terminal cursor.
@@ -115,6 +120,39 @@ pub fn draw(
             (main, status, cursor)
         }
         _ => (main, status, None),
+    };
+
+    // The terminal panel takes the bottom of what's left: a title row and
+    // the shell's rows, under the windows (and their status lines).
+    let mut terminal_cursor = None;
+    let (main, status) = match editor.terminal_panel() {
+        Some(terminal) => {
+            let per_window = editor.options.statusline == StatuslineMode::Windows;
+            let region = main.height + u16::from(per_window);
+            // Room for a few rows of windows (and their status line).
+            let room = region.saturating_sub(6);
+            if room >= 2 {
+                let height = (editor.options.terminal_height.max(2) + 1).min(room);
+                let panel = Rect::new(main.x, main.y + region - height, main.width, height);
+                let windows_bottom = panel.y - u16::from(per_window);
+                let main = Rect::new(main.x, main.y, main.width, windows_bottom - main.y);
+                let status = if per_window {
+                    Rect::new(status.x, windows_bottom, status.width, 1)
+                } else {
+                    status
+                };
+                let focused = editor.mode() == Mode::Terminal;
+                let view = TerminalView::new(terminal, focused, &keys.terminal, theme);
+                frame.render_widget(view, panel);
+                if focused {
+                    terminal_cursor = TerminalView::cursor_position(terminal, panel);
+                }
+                (main, status)
+            } else {
+                (main, status)
+            }
+        }
+        None => (main, status),
     };
 
     let drawn = match editor.options.statusline {
@@ -216,6 +254,7 @@ pub fn draw(
         (Mode::Command, _) => Some(CommandLineView::cursor_position(editor, command)),
         (Mode::Sidebar, _) => sidebar_cursor,
         (Mode::Find, _) => find_cursor,
+        (Mode::Terminal, _) => terminal_cursor,
         _ => window_cursor,
     };
     if let Some(position) = cursor {

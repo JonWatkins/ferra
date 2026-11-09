@@ -111,6 +111,7 @@ impl Keymap {
 
     /// The keys to show for `command` in `mode` in the interface's hints:
     /// one without Alt (which macOS terminals don't send by default), then
+    /// one that doesn't need the kitty keyboard protocol (`<C-`>`), then
     /// the shortest, then with the fewest modifiers (`<Up>` over `<C-p>`).
     pub fn hint_keys(&self, mode: Mode, command: &str) -> Option<Vec<KeyPress>> {
         fn walk(
@@ -132,12 +133,13 @@ impl Keymap {
         walk(self.modes.get(&mode)?, command, &mut Vec::new(), &mut found);
         found.into_iter().min_by_key(|keys| {
             let alt = keys.iter().any(|k| k.modifiers.alt);
+            let enhanced = keys.iter().any(|k| k.needs_enhanced_keyboard());
             let modifiers: usize = keys
                 .iter()
                 .map(|k| usize::from(k.modifiers.ctrl) + usize::from(k.modifiers.shift))
                 .sum();
             let text: String = keys.iter().map(ToString::to_string).collect();
-            (alt, keys.len(), modifiers, text)
+            (alt, enhanced, keys.len(), modifiers, text)
         })
     }
 
@@ -314,6 +316,15 @@ mod tests {
             "if that's all there is"
         );
         assert_eq!(shown("nothing"), None);
+    }
+
+    #[test]
+    fn hint_keys_prefer_keys_every_terminal_sends() {
+        let mut map = Keymap::default();
+        map.bind(Mode::Normal, &parse_keys("<C-`>").unwrap(), "panel");
+        map.bind(Mode::Normal, &parse_keys("<Space>t").unwrap(), "panel");
+        let keys = map.hint_keys(Mode::Normal, "panel").unwrap();
+        assert_eq!(keys.len(), 2, "works without the kitty protocol");
     }
 
     #[test]

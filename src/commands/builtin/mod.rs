@@ -23,6 +23,7 @@ mod picker;
 mod scrolling;
 mod search;
 mod sidebar;
+mod terminal;
 mod text_objects;
 mod visual;
 mod windows;
@@ -53,6 +54,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     lsp::register(registry);
     sidebar::register(registry);
     find::register(registry);
+    terminal::register(registry);
 }
 
 #[cfg(test)]

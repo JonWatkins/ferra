@@ -354,6 +354,25 @@ current file is highlighted and files with unsaved changes have a `●`.
 `sidebar-width` (30 columns, at most half the screen) sets its width; the
 colours are the `ui.sidebar.*` theme scopes.
 
+## The terminal panel
+
+`<Space>t` (or `:terminal`) opens a shell in a panel under the windows, as
+in VS Code, and moves to it; the shell starts the first time. While it has
+focus, every key goes to the shell, except:
+
+| Keys (in the panel) | Action |
+|---------------------|--------|
+| `<C-\><C-n>` | Back to the editor, leaving the panel open (`<Space>t` goes back to it) |
+| ``<C-`>`` | Hide the panel; the shell keeps running, and `<Space>t` shows it again |
+| `<S-PageUp>` `<S-PageDown>` | Scroll back through what's gone off the top (typing goes back to the bottom) |
+
+The title row shows the shell's title and these keys. Colours, full-screen
+programs (`htop`, `vim`, `less`) and pastes work. When the shell exits, a
+key closes the panel; `:terminal-close` ends it any time. `terminal-height`
+(12 rows) sets its height, and `shell` the shell (`$SHELL` by default).
+``<C-`>`` needs a terminal with the kitty keyboard protocol (Ghostty,
+kitty, WezTerm, iTerm2); elsewhere use `<C-\><C-n>`.
+
 ## Windows
 
 | Keys / command | Action |

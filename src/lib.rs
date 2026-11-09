@@ -32,6 +32,7 @@ pub mod input;
 pub mod lsp;
 pub mod plugins;
 pub mod syntax;
+pub mod terminal;
 pub mod ui;
 
 pub use app::App;

@@ -23,10 +23,12 @@ pub enum Mode {
     Sidebar,
     /// The find box (`<Space>/`) has focus.
     Find,
+    /// The terminal panel (`<Space>t`) has focus: keys go to the shell.
+    Terminal,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 8] = [
+    pub const ALL: [Mode; 9] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
@@ -35,6 +37,7 @@ impl Mode {
         Mode::Picker,
         Mode::Sidebar,
         Mode::Find,
+        Mode::Terminal,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -48,6 +51,7 @@ impl Mode {
             Mode::Picker => "picker",
             Mode::Sidebar => "sidebar",
             Mode::Find => "find",
+            Mode::Terminal => "terminal",
         }
     }
 

@@ -46,6 +46,10 @@ scroll-off = 5
 # Columns the sidebar's file tree (<Space>e, :explorer) takes, left of the
 # windows. It never takes more than half the screen.
 sidebar-width = 30
+# Rows the terminal panel (<Space>t, :terminal) takes, under the windows.
+terminal-height = 12
+# The terminal panel's shell. "" runs $SHELL (or /bin/sh).
+shell = ""
 # Colour code with tree-sitter (the languages in [languages] below).
 syntax-highlighting = true
 # Ask the terminal for the kitty keyboard protocol where it has it (kitty,
@@ -125,6 +129,7 @@ command = "bar"
 picker = "bar"
 sidebar = "block"
 find = "bar"
+terminal = "block"
 # While an operator (d, c, y) waits for a motion.
 operator = "underline"
 visual = "block"
@@ -306,6 +311,12 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.sidebar.selected" = { bg = "#33467c" }
 "ui.sidebar.modified" = "#e0af68"
 "ui.sidebar.empty" = { fg = "#6b7280", modifiers = ["italic"] }
+# The terminal panel (<Space>t): its title row, and its background.
+"ui.terminal" = { bg = "#16181d" }
+"ui.terminal.title" = { fg = "#a0a6b0", bg = "#1f2229" }
+"ui.terminal.title.focused" = { fg = "#7aa2f7", bg = "#1f2229", modifiers = ["bold"] }
+"ui.terminal.hint" = { fg = "#565f89", bg = "#1f2229" }
+"ui.terminal.exited" = { fg = "#e0af68", bg = "#1f2229" }
 # The find box (<Space>/, <Space>h).
 "ui.find" = { fg = "#d4d7dd", bg = "#1f2229" }
 "ui.find.border" = "#4b5263"
@@ -358,6 +369,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.statusline.picker" = { fg = "#16181d", bg = "#7dcfff", modifiers = ["bold"] }
 "ui.statusline.sidebar" = { fg = "#16181d", bg = "#9ece6a", modifiers = ["bold"] }
 "ui.statusline.find" = { fg = "#16181d", bg = "#ff9e64", modifiers = ["bold"] }
+"ui.statusline.terminal" = { fg = "#16181d", bg = "#bb9af7", modifiers = ["bold"] }
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
 "ui.statusline.lsp" = { fg = "#6b7280", bg = "#1f2229" }
 "ui.statusline.recording" = { fg = "#f7768e", bg = "#1f2229", modifiers = ["bold"] }
@@ -506,6 +518,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>e" = "sidebar_focus"
 "<Space>/" = "find_open"
 "<Space>h" = "find_replace_open"
+"<Space>t" = "terminal_toggle"
+"<C-`>" = "terminal_toggle"
 "<Space>f" = "file_picker"
 "<Space>r" = "register_picker"
 "<C-w>s" = "split_horizontal"
@@ -802,6 +816,14 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>f" = "file_picker"
 "<Space>b" = "buffer_picker"
 "<Space>p" = "command_palette"
+
+# The terminal panel (<Space>t), while it has focus. Every other key goes
+# to the shell.
+[keys.terminal]
+"<C-\\><C-n>" = "terminal_leave"
+"<C-`>" = "terminal_toggle"
+"<S-PageUp>" = "terminal_scroll_up"
+"<S-PageDown>" = "terminal_scroll_down"
 
 # The find box (<Space>/ find, <Space>h find and replace), while it has
 # focus. Typing edits the field with focus. The toggles have Ctrl keys

@@ -257,6 +257,34 @@ centred on the whole screen. The view scrolls (a `Cell` in the explorer) to
 keep the selected row in sight, and the terminal cursor sits on that row's
 name while the sidebar has focus.
 
+## The terminal panel
+
+`terminal/` runs a shell in a pseudo-terminal (`portable-pty`). A thread
+reads its output into a channel; `Terminal::pump`, called by the event
+loop (which polls while a shell runs, as it does for language servers),
+feeds it to a `vt100` parser, whose screen the panel draws. The parser's
+callbacks answer the queries programs wait on (`ESC [ 6 n`, the device
+attributes) and take the window title. Keys go back as the bytes a
+terminal sends (`terminal::key_bytes`: control characters, xterm's
+modifier parameters, application cursor mode); pastes are bracketed when
+the program asked.
+
+The editor owns the `Terminal` (`editor/terminal_panel.rs`) and whether the
+panel's open; hiding it keeps the shell. `Mode::Terminal` has focus there.
+In it the input layer returns `Outcome::PassThrough` with the keys of any
+sequence that isn't bound in `[keys.terminal]` (including a bound prefix
+that goes no further, or times out), so only those bindings are kept from
+the shell. Without the kitty protocol crossterm reads Ctrl+\ ] ^ _ as
+Ctrl+4 to 7; `KeyPress::from_event` maps them back.
+
+`ui/terminal.rs` draws the title row and the screen cell by cell (indexed
+colours stay the user's palette). `ui::draw` takes the panel's rows from
+the bottom of the windows' side, under their status lines. The panel notes
+the size it was drawn at, and the app resizes the pty and parser to it
+after drawing. Its key hints come from the keymap like the find box's;
+`Keymap::hint_keys` ranks keys that need the kitty protocol (`<C-`>`,
+`<C-CR>`) after ones every terminal sends.
+
 ## Syntax highlighting
 
 `syntax/` wraps tree-sitter:
@@ -1262,19 +1290,18 @@ could be swapped in.
 
 ### Embedded terminal
 
-A shell in a window: a pseudo-terminal (`portable-pty`) feeding a terminal
-emulator (`vt100` or `alacritty_terminal`) whose screen is drawn into the
-window, with output arriving through the event channel. A terminal mode
-sends keys to the shell, and a key (like Neovim's `<C-\><C-n>`) goes back
-to normal mode, where the scrollback is an ordinary read-only buffer to
-search and yank from.
+Started: the terminal panel (see [The terminal panel](#the-terminal-panel)).
+Still to come: Neovim's terminal-normal mode, where the scrollback is an
+ordinary read-only buffer to search and yank from, more than one shell,
+and a terminal in a window rather than the panel.
 
 ### Interface
 
 A VS Code-like layout, so the editor can be driven without many commands:
 the sidebar's file tree and the find box (done; see [The
-sidebar](#the-sidebar) and [The find box](#the-find-box)), then a terminal
-panel at the bottom, plugin windows and popups, and the mouse. The sidebar is meant to hold more
+sidebar](#the-sidebar), [The find box](#the-find-box) and [The terminal
+panel](#the-terminal-panel)), then plugin windows and popups, and the
+mouse. The sidebar is meant to hold more
 than files: Git's changed files will be another view in it.
 
 ### Git support
@@ -1547,6 +1574,12 @@ not. The answer is dropped unless the editor is still where it was asked
   (`keys(&mut app, "ihello<Esc>dd")`) and render through `TestBackend`.
 
 ## Known gaps / next steps
+
+- Terminal panel: one shell (no tabs or splits); no mouse (scrolling,
+  selecting) and no copying from it with the editor's keys (Neovim's
+  terminal-normal mode); its scrollback can't be searched; the panel can't
+  be resized by dragging (only `terminal-height`); programs' cursor shapes
+  and the bell are ignored; on Windows it's untested.
 
 - Find box: one file only (no search across the project, VS Code's
   `Ctrl+Shift+F`, yet); no history of what was found; no "in selection"

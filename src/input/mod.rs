@@ -30,6 +30,9 @@ pub enum Outcome {
     InsertChar(char),
     /// Waiting for more keys to complete a sequence, count or register.
     Pending,
+    /// Keys for the terminal panel's shell, as typed (unbound in terminal
+    /// mode, or a bound prefix that went no further).
+    PassThrough(Vec<KeyPress>),
     /// The key did nothing.
     Unbound,
 }
@@ -134,6 +137,9 @@ impl InputHandler {
             Lookup::NoMatch => {
                 let keys = std::mem::take(&mut self.pending);
                 self.reset();
+                if mode == Mode::Terminal {
+                    return vec![Outcome::PassThrough(keys)];
+                }
                 if !mode.accepts_text() {
                     // Like Vim, an invalid normal-mode sequence is discarded.
                     return vec![Outcome::Unbound];
@@ -178,6 +184,11 @@ impl InputHandler {
             self.last_sequence = self.typed_display();
             self.reset();
             return vec![outcome];
+        }
+        if mode == Mode::Terminal {
+            let keys = std::mem::take(&mut self.pending);
+            self.reset();
+            return vec![Outcome::PassThrough(keys)];
         }
         if !mode.accepts_text() {
             return Vec::new();
@@ -465,6 +476,43 @@ mod tests {
         assert_eq!(
             last(&mut h, Mode::OperatorPending, "3w"),
             execute("move_word_forward", Some(3))
+        );
+    }
+
+    #[test]
+    fn unbound_keys_pass_through_to_the_terminal() {
+        let mut h = InputHandler::default();
+        let mut map = keymap();
+        map.bind(Mode::Terminal, &parse_keys("<C-\\><C-n>").unwrap(), "leave");
+        let feed_map = |h: &mut InputHandler, keys: &str| -> Vec<Outcome> {
+            parse_keys(keys)
+                .unwrap()
+                .into_iter()
+                .flat_map(|k| h.handle(k, Mode::Terminal, &map))
+                .collect()
+        };
+        let keys = |n: &str| parse_keys(n).unwrap();
+        assert_eq!(
+            feed_map(&mut h, "3j"),
+            [
+                Outcome::PassThrough(keys("3")),
+                Outcome::PassThrough(keys("j"))
+            ],
+            "no counts"
+        );
+        assert_eq!(
+            feed_map(&mut h, "<C-\\><C-n>"),
+            [Outcome::Pending, execute("leave", None)]
+        );
+        assert_eq!(
+            feed_map(&mut h, "<C-\\>x"),
+            [Outcome::Pending, Outcome::PassThrough(keys("<C-\\>x"))],
+            "a prefix that goes no further"
+        );
+        feed_map(&mut h, "<C-\\>");
+        assert_eq!(
+            h.timeout(Mode::Terminal, &map),
+            [Outcome::PassThrough(keys("<C-\\>"))]
         );
     }
 

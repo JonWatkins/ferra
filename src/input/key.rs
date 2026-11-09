@@ -163,6 +163,14 @@ impl KeyPress {
             alt: event.modifiers.contains(KeyModifiers::ALT),
             shift: event.modifiers.contains(KeyModifiers::SHIFT),
         };
+        // Without the kitty protocol, crossterm reads the bytes Ctrl+\ ] ^ _
+        // send (0x1c-0x1f) as Ctrl+4 to Ctrl+7 (which share them).
+        let code = match code {
+            KeyCode::Char(c @ '4'..='7') if modifiers.ctrl => {
+                KeyCode::Char(['\\', ']', '^', '_'][(c as u8 - b'4') as usize])
+            }
+            code => code,
+        };
         Some(Self::new(code, modifiers))
     }
 }
@@ -253,6 +261,24 @@ fn parse_bracketed(inner: &str) -> Result<KeyPress, String> {
     };
 
     Ok(KeyPress::new(code, modifiers))
+}
+
+impl KeyPress {
+    /// Whether terminals only send this key apart from others with the
+    /// kitty keyboard protocol (`<C-`>` is otherwise `<C-Space>`, `<C-CR>`
+    /// is `<CR>`).
+    pub fn needs_enhanced_keyboard(&self) -> bool {
+        let m = self.modifiers;
+        match self.code {
+            KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace | KeyCode::Esc => {
+                m.ctrl || (m.shift && self.code != KeyCode::Tab)
+            }
+            KeyCode::Char(c) if m.ctrl => {
+                !(c.is_ascii_alphabetic() || matches!(c, '@' | '[' | '\\' | ']' | '^' | '_' | ' '))
+            }
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for KeyPress {
@@ -385,6 +411,14 @@ mod tests {
         let event = ct::KeyEvent::new(ct::KeyCode::Char('q'), KeyModifiers::CONTROL);
         assert_eq!(KeyPress::from_event(event), Some(KeyPress::ctrl('q')));
 
+        let legacy = ct::KeyEvent::new(ct::KeyCode::Char('4'), KeyModifiers::CONTROL);
+        assert_eq!(
+            KeyPress::from_event(legacy)
+                .map(|k| k.to_string())
+                .as_deref(),
+            Some("<C-\\>"),
+            "the byte Ctrl+\\ sends"
+        );
         let mut release = ct::KeyEvent::new(ct::KeyCode::Char('a'), KeyModifiers::NONE);
         release.kind = KeyEventKind::Release;
         assert_eq!(KeyPress::from_event(release), None);

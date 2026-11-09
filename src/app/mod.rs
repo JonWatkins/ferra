@@ -264,6 +264,8 @@ impl App {
         while !self.should_quit() {
             if redraw {
                 terminal.draw(|frame| self.draw(frame))?;
+                // The shell's terminal takes the size its panel was drawn at.
+                self.editor.apply_terminal_size();
                 redraw = false;
             }
 
@@ -289,7 +291,9 @@ impl App {
             let due = [deadline, watch].into_iter().flatten().min();
             // Language servers' messages arrive on their own threads, so
             // keep checking while any are running.
-            let busy = self.background.busy() || self.lsp.borrow().active();
+            let busy = self.background.busy()
+                || self.lsp.borrow().active()
+                || self.editor.terminal_running();
             let wait = match (due, busy) {
                 (Some(due), busy) => {
                     let left = due.saturating_duration_since(Instant::now());
@@ -307,6 +311,7 @@ impl App {
                 None => true,
             };
             redraw |= self.handle_background();
+            redraw |= self.editor.pump_terminal();
             if !input_ready {
                 redraw |= self.update_lsp();
                 if deadline.is_some_and(|due| Instant::now() >= due) {
@@ -443,6 +448,7 @@ impl App {
                 doc.set_cursor(end.with_col(end.col.saturating_sub(1)));
                 self.editor.finish_command();
             }
+            Mode::Terminal => self.editor.terminal_paste(text),
             // Nothing to paste into.
             Mode::Sidebar => {}
         }
@@ -545,6 +551,20 @@ impl App {
         } else {
             ui::FindKeys::default()
         };
+        let terminal_keys = if self.editor.terminal_panel().is_some() {
+            let label = |mode, command| {
+                self.keymap
+                    .hint_keys(mode, command)
+                    .map(|keys| ui::key_label(&keys, cfg!(target_os = "macos")))
+            };
+            ui::TerminalKeys {
+                leave: label(Mode::Terminal, "terminal_leave"),
+                hide: label(Mode::Terminal, "terminal_toggle"),
+                focus: label(Mode::Normal, "terminal_toggle"),
+            }
+        } else {
+            ui::TerminalKeys::default()
+        };
         ui::draw(
             frame,
             &self.editor,
@@ -558,6 +578,7 @@ impl App {
             &ui::KeyHints {
                 splash,
                 find: find_keys,
+                terminal: terminal_keys,
             },
         );
     }
@@ -684,7 +705,12 @@ impl App {
         // is, as an operator's motion (`d/foo<CR>`).
         let at_colon_prompt =
             self.editor.mode() == Mode::Command && !self.editor.command_line.prompt().is_search();
-        if at_colon_prompt || matches!(self.editor.mode(), Mode::Picker | Mode::Find) {
+        if at_colon_prompt
+            || matches!(
+                self.editor.mode(),
+                Mode::Picker | Mode::Find | Mode::Terminal
+            )
+        {
             self.changes.note_command_line();
         }
         if self.is_idle() {
@@ -785,6 +811,7 @@ impl App {
                     self.execute(&command, invocation);
                 }
                 Outcome::InsertChar(c) => self.editor.insert_text_char(c),
+                Outcome::PassThrough(keys) => self.editor.terminal_keys(&keys),
                 // Like Vim, an invalid key after an operator cancels it.
                 Outcome::Unbound if self.editor.mode() == Mode::OperatorPending => {
                     self.editor.set_mode(Mode::Normal);

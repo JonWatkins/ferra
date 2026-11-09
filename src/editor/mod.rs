@@ -29,6 +29,7 @@ pub mod explorer;
 pub mod find;
 pub mod lsp;
 mod selection;
+mod terminal_panel;
 pub mod text_field;
 mod transform;
 pub mod windows;
@@ -199,6 +200,10 @@ pub struct Editor {
     sidebar_open: bool,
     /// The find box's fields and toggles (kept while it's closed).
     find: find::FindState,
+    /// The terminal panel's shell (kept while the panel's hidden), and
+    /// whether the panel's open.
+    terminal: Option<crate::terminal::Terminal>,
+    terminal_open: bool,
     /// The uses of the symbol under the cursor (a language server's).
     references: Option<lsp::References>,
     /// Servers' diagnostics for files that aren't open, by path.
@@ -607,7 +612,11 @@ impl Editor {
                 }
             }
             Mode::Find => self.find_edit(|field| field.push(c)),
-            Mode::Normal | Mode::OperatorPending | Mode::Visual | Mode::Sidebar => {}
+            Mode::Normal
+            | Mode::OperatorPending
+            | Mode::Visual
+            | Mode::Sidebar
+            | Mode::Terminal => {}
         }
     }
 

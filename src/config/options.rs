@@ -40,6 +40,10 @@ pub struct EditorOptions {
     pub scroll_off: usize,
     /// Columns the sidebar's file tree takes (at most half the screen).
     pub sidebar_width: u16,
+    /// Rows the terminal panel takes (at most most of the screen).
+    pub terminal_height: u16,
+    /// The terminal panel's shell ("": `$SHELL`, else `/bin/sh`).
+    pub shell: String,
     pub syntax_highlighting: bool,
     /// Milliseconds to wait for the rest of a key sequence that's also a
     /// prefix of a longer one (`jk` in insert mode). 0 waits forever.
@@ -305,6 +309,7 @@ pub struct CursorShapes {
     pub picker: CursorShape,
     pub sidebar: CursorShape,
     pub find: CursorShape,
+    pub terminal: CursorShape,
     /// Replace mode (`R`).
     pub replace: CursorShape,
 }
@@ -320,6 +325,7 @@ impl CursorShapes {
             Mode::Picker => self.picker,
             Mode::Sidebar => self.sidebar,
             Mode::Find => self.find,
+            Mode::Terminal => self.terminal,
         }
     }
 }
@@ -339,6 +345,7 @@ mod tests {
             picker: CursorShape::Bar,
             sidebar: CursorShape::Block,
             find: CursorShape::Bar,
+            terminal: CursorShape::Block,
             replace: CursorShape::Underline,
         };
         assert_eq!(shapes.for_mode(Mode::Insert), CursorShape::Bar);
