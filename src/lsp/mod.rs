@@ -65,6 +65,10 @@ pub struct Lsp {
     )>,
     /// The answer to the formatting request being waited for.
     formatted: Option<Result<Value, client::ResponseError>>,
+    /// Inlay hints: the buffer and text (edit count) last asked about, and
+    /// the text last seen, since when (asked once it's been still a moment).
+    hints_asked: Option<(DocumentId, u64)>,
+    hints_seen: Option<(DocumentId, u64, std::time::Instant)>,
 }
 
 impl Default for Lsp {
@@ -84,6 +88,8 @@ impl Default for Lsp {
             raw_diagnostics: HashMap::new(),
             formatted: None,
             resting: None,
+            hints_asked: None,
+            hints_seen: None,
         }
     }
 }
@@ -147,6 +153,7 @@ impl Lsp {
             .is_some_and(|which| self.restart(editor, &which));
         self.sync(editor);
         self.ask_about_resting_cursor(editor);
+        self.ask_for_inlay_hints(editor);
         let asked = self.send_requests(editor);
         let status = self.status();
         // The first server busy with something, for the status line.
@@ -164,6 +171,43 @@ impl Lsp {
         }
         editor.set_lsp_progress(progress);
         changed
+    }
+
+    /// Asks for the buffer's inlay hints (with `inlay-hints`) once its text
+    /// has been still for a moment and a ready server has it, again after
+    /// each change. In between, the hints shown move with the edits.
+    fn ask_for_inlay_hints(&mut self, editor: &mut Editor) {
+        const STILL: std::time::Duration = std::time::Duration::from_millis(300);
+        if !editor.options.inlay_hints {
+            // Asked afresh when they're turned on again.
+            self.hints_asked = None;
+            return;
+        }
+        if editor.document.path().is_none() {
+            return;
+        }
+        let here = (editor.document.id(), editor.document.buffer().edit_seq());
+        if self.hints_asked == Some(here) {
+            return;
+        }
+        match self.hints_seen {
+            Some((doc, seq, since)) if (doc, seq) == here => {
+                let ready = self.clients.iter().any(|c| {
+                    c.has_document(here.0)
+                        && c.state == State::Ready
+                        && c.supports(LspFeature::InlayHint)
+                });
+                if since.elapsed() >= STILL
+                    && ready
+                    && editor.request_lsp(LspFeature::InlayHint).is_ok()
+                    && let Some(request) = editor.lsp_requests_mut().last_mut()
+                {
+                    request.manual = false;
+                    self.hints_asked = Some(here);
+                }
+            }
+            _ => self.hints_seen = Some((here.0, here.1, std::time::Instant::now())),
+        }
     }
 
     /// Once the cursor has rested in normal mode for a moment, asks for the
@@ -355,6 +399,12 @@ impl Lsp {
                             .map(|item| client.settings_section(item["section"].as_str()))
                             .collect(),
                     ),
+                    // Its hints changed (it's finished indexing, say): ask
+                    // again.
+                    "workspace/inlayHint/refresh" => {
+                        self.hints_asked = None;
+                        Value::Null
+                    }
                     "workspace/workspaceFolders" => json!([{
                         "uri": convert::path_to_uri(&client.root),
                         "name": client.root.display().to_string(),

@@ -66,6 +66,9 @@ pub struct EditorOptions {
     /// Show the language server's completions as you type in insert mode
     /// (otherwise only on `<C-Space>` or `<C-x><C-o>`).
     pub auto_complete: bool,
+    /// Show the language server's inlay hints: types and parameter names
+    /// in the text, in grey.
+    pub inlay_hints: bool,
     /// Highlight the other uses of the symbol under the cursor (from the
     /// language server), once the cursor rests on it.
     pub highlight_references: bool,

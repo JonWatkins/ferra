@@ -185,7 +185,16 @@ fn move_screen_rows(editor: &mut Editor, count: usize, down: bool) {
     let doc = &editor.document;
     let buffer = doc.buffer();
     let Position { row, col } = doc.cursor();
-    let line = buffer.line(row);
+    // Lines as they're drawn, with any virtual text (inlay hints) in them,
+    // and columns mapped to and from them.
+    let drawn = |row: usize| -> (String, Option<crate::editor::DisplayLine>) {
+        match doc.display_line(row) {
+            Some(display) => (display.text.clone(), Some(display)),
+            None => (buffer.line(row).into_owned(), None),
+        }
+    };
+    let (line, display) = drawn(row);
+    let col = display.as_ref().map_or(col, |d| d.to_display(col));
     let starts = layout.row_starts(&line);
     // A closed fold is one row.
     let part = if doc.closed_fold_at(row).is_some() {
@@ -220,8 +229,9 @@ fn move_screen_rows(editor: &mut Editor, count: usize, down: bool) {
             break;
         }
     }
-    let line = buffer.line(row);
+    let (line, display) = drawn(row);
     let starts = layout.row_starts(&line);
+    let part = part.min(starts.len() - 1);
     let left = display_col(&line, starts[part], tab);
     let offset = layout.offset(&line, part);
     let mut col = char_col_at(&line, left + screen_col.saturating_sub(offset), tab);
@@ -229,6 +239,7 @@ fn move_screen_rows(editor: &mut Editor, count: usize, down: bool) {
     if let Some(&next) = starts.get(part + 1) {
         col = col.min(next.saturating_sub(1));
     }
+    let col = display.as_ref().map_or(col, |d| d.to_real(col));
     editor.document.set_cursor(Position::new(row, col));
     // Normal mode can't sit past the last char; settle that now, so the
     // position recorded is where the cursor ends up.

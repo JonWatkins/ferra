@@ -134,3 +134,34 @@ fn continued_rows_start_at_the_lines_indentation() {
         "both off: all 25 cells"
     );
 }
+
+#[test]
+fn virtual_text_takes_room_in_wrapped_lines_and_gj_steps_over_it() {
+    // A line that fits, with hints that push it onto more rows.
+    let mut app = with_text("let value = compute(1, 2);<CR>next");
+    let hint = |col, text: &str| ferra::editor::VirtualText {
+        at: ferra::core::Position::new(0, col),
+        text: text.into(),
+        style: "ui.virtual.inlay-hint".into(),
+        source: "inlay".into(),
+    };
+    app.editor_mut().document.set_virtual_text(
+        "inlay",
+        vec![hint(9, ": Result<u32, Error>"), hint(20, "first: ")],
+    );
+    let rows = text_rows(&mut app, 6);
+    assert!(rows[0].starts_with("let value: Result<u32,"), "{rows:?}");
+    assert!(
+        rows[1].contains("compute(first:"),
+        "wrapped, hints and all: {rows:?}"
+    );
+    assert!(rows[2].contains("1, 2);"), "{rows:?}");
+    assert!(rows[3].starts_with("next"), "{rows:?}");
+    // gj steps through the line's rows, then on to the next line.
+    keys(&mut app, "gg0gjgj");
+    assert_eq!(cursor(&app).0, 0, "the third row of the same line");
+    keys(&mut app, "gj");
+    assert_eq!(cursor(&app).0, 1);
+    keys(&mut app, "gkgkgk");
+    assert_eq!(cursor(&app), (0, 0));
+}

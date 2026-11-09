@@ -110,6 +110,7 @@ fn serve(
                         "renameProvider": features,
                         "documentSymbolProvider": features,
                         "documentHighlightProvider": features,
+                        "inlayHintProvider": features,
                         "workspaceSymbolProvider": features,
                         "signatureHelpProvider": {"triggerCharacters": ["("],
                                                   "retriggerCharacters": [","]},
@@ -350,6 +351,20 @@ fn serve(
                     }], "activeSignature": 0, "activeParameter": commas})
                 });
                 reply(&mut output, result.into());
+            }
+            // `: i32` after each `let name`.
+            "textDocument/inlayHint" => {
+                let text = seen.lock().unwrap().text.clone();
+                let mut hints = Vec::new();
+                for (line, line_text) in text.split('\n').enumerate() {
+                    if let Some(rest) = line_text.strip_prefix("let ") {
+                        let name: String =
+                            rest.chars().take_while(|c| c.is_alphanumeric()).collect();
+                        let at = json!({"line": line, "character": 4 + name.len()});
+                        hints.push(json!({"position": at, "label": ": i32", "kind": 1}));
+                    }
+                }
+                reply(&mut output, Value::Array(hints));
             }
             "textDocument/documentHighlight" => {
                 let text = seen.lock().unwrap().text.clone();
@@ -1703,4 +1718,57 @@ fn highlight_references_can_be_turned_off() {
             .methods
             .contains(&"textDocument/documentHighlight".into())
     );
+}
+
+fn hints(app: &App) -> Vec<(usize, usize, String)> {
+    app.editor()
+        .document
+        .virtual_text()
+        .iter()
+        .map(|v| (v.at.row, v.at.col, v.text.clone()))
+        .collect()
+}
+
+#[test]
+fn inlay_hints_show_in_the_text_and_follow_edits() {
+    let (_dir, mut app, seen) = with_server("let x = 1;\nlet yy = 2;\n", true);
+    ready(&mut app);
+    until(&mut app, |a| hints(a).len() == 2);
+    assert_eq!(hints(&app)[0], (0, 5, ": i32".into()));
+    let screen = render(&mut app, 40, 6);
+    assert!(
+        screen.rows[0].contains("let x: i32 = 1;"),
+        "{:?}",
+        screen.rows
+    );
+    assert!(
+        screen.rows[1].contains("let yy: i32 = 2;"),
+        "{:?}",
+        screen.rows
+    );
+
+    // An edit moves them along at once, and they're asked for again.
+    let asked = |seen: &Mutex<Seen>| {
+        seen.lock()
+            .unwrap()
+            .methods
+            .iter()
+            .filter(|m| *m == "textDocument/inlayHint")
+            .count()
+    };
+    let before = asked(&seen);
+    keys(&mut app, "O// note<Esc>");
+    assert_eq!(
+        hints(&app)[0],
+        (1, 5, ": i32".into()),
+        "moved down with its line"
+    );
+    until(&mut app, |_| asked(&seen) > before);
+
+    // Turned off, they go; on again, they're back.
+    keys(&mut app, ":inlay_hints<CR>");
+    let screen = render(&mut app, 40, 6);
+    assert!(screen.rows[1].contains("let x = 1;"), "{:?}", screen.rows);
+    keys(&mut app, ":inlay_hints<CR>");
+    until(&mut app, |a| hints(a).len() == 2);
 }

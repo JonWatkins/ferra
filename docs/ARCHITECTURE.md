@@ -230,6 +230,34 @@ query and keeps the highlighted item. Updates for a job whose picker has
 gone are dropped, and closing the picker sets a flag the walker checks, so
 it stops.
 
+## Virtual text
+
+A `Document` keeps `VirtualText`: text drawn before a char that isn't in
+the file, with a theme scope and a source (`"inlay"`) so a source's pieces
+are replaced together. It's moved along with edits as diagnostics are
+(`virtual_text_after_insert`/`_delete`); typing where a piece sits pushes
+it along, and deleting around it drops it.
+
+`Document::display_line(row)` gives a line with its virtual text put in
+(`None` for the many lines with none, which keep the old path), and maps
+its columns: `to_display(col)` is where char `col` is drawn (after the
+virtual text before it), `caret_at(col)` the gap before that virtual text
+(where an insert-mode cursor goes, and where a range ending at `col`
+ends), and `to_real` maps back. Everything that lays lines out uses the
+display line: `TextLayout::rows_in` and `follow_cursor` (so scrolling
+counts the extra rows), the editor pane (wrapping, the cursor, the
+virtual text's colours over everything), `ViewState::position_at` for
+clicks, and `gj`/`gk`. Everything that comes in buffer columns (syntax
+spans, selections, search matches, diagnostics, references) is mapped as
+it's drawn; search runs on the real text, so hints never match.
+
+Inlay hints (`LspFeature::InlayHint`) are asked for the whole buffer once
+its text has been still for 300 ms and a ready server has it
+(`Lsp::ask_for_inlay_hints`), again after each change and when the server
+sends `workspace/inlayHint/refresh` (rust-analyzer does once it's
+indexed). An answer for text that's changed since is dropped. Labels made
+of parts are joined, and `paddingLeft`/`paddingRight` become spaces.
+
 ## The mouse
 
 `ui::draw` returns a `ScreenMap` of where things went: each window's text
@@ -1415,7 +1443,10 @@ agent harness, an embedded terminal and Git support. They share three foundation
 3. **Decorations.** Highlights over ranges, virtual text (end of line or
    inline), gutter signs and status line segments, all kept in place as
    text is edited (the same bookkeeping as marks and `track_rows`), drawn by
-   the editor pane after syntax highlighting.
+   the editor pane after syntax highlighting. Started: inline virtual text
+   (see [Virtual text](#virtual-text)), with inlay hints its first use;
+   git's gutter marks are drawn by the pane. Still to come: plugins'
+   decorations, and blame at the end of a line.
 
 ### Plugin windows and decorations
 
@@ -1436,9 +1467,8 @@ Built on the foundations, exposed to Lua in the style of Neovim's
 
 Started: see [Language servers](#language-servers) for the client,
 diagnostics, hover and going to definitions and references, and [Word
-completion](#word-completion) for completion. Still to come,
-in order: inlay hints, which need inline virtual text in the layout (see
-Decorations above).
+completion](#word-completion) for completion. Inlay hints are done too
+(see [Virtual text](#virtual-text)); that's every feature planned.
 
 ### Agent harness
 
@@ -1742,6 +1772,12 @@ not. The answer is dropped unless the editor is still where it was asked
   (`keys(&mut app, "ihello<Esc>dd")`) and render through `TestBackend`.
 
 ## Known gaps / next steps
+
+- Virtual text: only before chars in a line (no end-of-line text yet, nor
+  lines of their own); inlay hints are asked for the whole buffer (fine
+  for most files, slow for huge ones), can't be clicked or hovered for
+  more, and aren't resolved (`inlayHint/resolve`); visual block selections
+  count columns without them.
 
 - Git: the gutter compares with what's staged only (not `HEAD`); no
   staging single lines (only hunks), amending, stashes, blame, rebasing,

@@ -43,7 +43,7 @@ pub mod windows;
 pub use buffers::BufferInfo;
 pub use command_line::{CommandLine, Completion, CompletionContext, Prompt};
 pub use completion::WordCompletion;
-pub use document::{DiskState, Document, DocumentId, OpenInfo, SaveInfo};
+pub use document::{DiskState, DisplayLine, Document, DocumentId, OpenInfo, SaveInfo, VirtualText};
 pub use files::UNSAVED_CHANGES;
 pub use jumps::{Jump, JumpList};
 pub use message::{Message, Severity};

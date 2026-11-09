@@ -178,6 +178,7 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
             "textDocument/documentHighlight",
             "documentHighlightProvider",
         ),
+        LspFeature::InlayHint => ("textDocument/inlayHint", "inlayHintProvider"),
     }
 }
 
@@ -276,6 +277,7 @@ impl Client {
                         "rename": { "prepareSupport": false },
                         "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
                         "documentHighlight": {},
+                        "inlayHint": { "dynamicRegistration": false },
                         "signatureHelp": {
                             "signatureInformation": {
                                 "documentationFormat": ["markdown", "plaintext"],
@@ -318,6 +320,9 @@ impl Client {
                     "workspace": {
                         "workspaceFolders": true,
                         "configuration": true,
+                        // `workspace/inlayHint/refresh`: ask again (once a
+                        // server's indexed the project, say).
+                        "inlayHint": { "refreshSupport": true },
                         // Edits by file, with the version they're for; no
                         // creating, renaming or deleting files.
                         "workspaceEdit": { "documentChanges": true },
@@ -422,6 +427,18 @@ impl Client {
             "context": { "diagnostics": diagnostics, "triggerKind": 1 },
         });
         self.request("textDocument/codeAction", params, Pending::Feature(request));
+    }
+
+    /// Asks for the inlay hints in `start..end` of the request's document.
+    pub fn request_inlay_hints(&mut self, request: LspRequest, start: Value, end: Value) {
+        let Some(synced) = self.documents.get(&request.document) else {
+            return;
+        };
+        let params = json!({
+            "textDocument": { "uri": synced.uri },
+            "range": { "start": start, "end": end },
+        });
+        self.request("textDocument/inlayHint", params, Pending::Feature(request));
     }
 
     /// Whether the server fills in code actions' edits on asking.

@@ -73,10 +73,16 @@ impl ViewState {
             .or_else(|| self.rows.iter().rev().find(|r| r.y < y))
             .or(self.rows.first())?;
         let below = y > drawn.y;
-        let line = document.buffer().line(drawn.row);
+        // Rows are drawn from the line with its virtual text, if any.
+        let display = document.display_line(drawn.row);
+        let real = |col: usize| display.as_ref().map_or(col, |d| d.to_real(col));
         if below {
-            return Some(TextPosition::new(drawn.row, drawn.end));
+            return Some(TextPosition::new(drawn.row, real(drawn.end)));
         }
+        let line = match &display {
+            Some(d) => std::borrow::Cow::Borrowed(d.text.as_str()),
+            None => document.buffer().line(drawn.row),
+        };
         let into = (x.saturating_sub(self.text_x) as usize).saturating_sub(drawn.indent);
         let col = crate::core::columns::char_col_at(&line, drawn.left + into, tab_width);
         let last_col = if drawn.last {
@@ -86,7 +92,7 @@ impl ViewState {
         };
         Some(TextPosition::new(
             drawn.row,
-            col.clamp(drawn.start, last_col),
+            real(col.clamp(drawn.start, last_col)),
         ))
     }
 
@@ -125,6 +131,9 @@ pub struct EditorView<'a> {
     current_match: Option<Match>,
     /// Git changes, for marks in the gutter.
     git: &'a [crate::git::Hunk],
+    /// The cursor's a caret between chars (insert mode): beside virtual
+    /// text it goes before it, where typing goes.
+    caret: bool,
     /// The other uses of the symbol under the cursor (a language server's).
     references: &'a [(crate::core::Position, crate::core::Position)],
     syntax: Option<&'a Highlights>,
@@ -147,6 +156,7 @@ impl<'a> EditorView<'a> {
             search: None,
             current_match: None,
             git: &[],
+            caret: false,
             references: &[],
             syntax: None,
             diagnostics: &[],
@@ -179,6 +189,12 @@ impl<'a> EditorView<'a> {
 
     pub fn syntax(mut self, syntax: Option<&'a Highlights>) -> Self {
         self.syntax = syntax;
+        self
+    }
+
+    /// Whether the cursor's a caret between chars (insert mode).
+    pub fn caret(mut self, caret: bool) -> Self {
+        self.caret = caret;
         self
     }
 
@@ -254,7 +270,12 @@ impl StatefulWidget for EditorView<'_> {
                 self.options.scroll_off,
             );
         } else {
-            let cursor_col = line::display_col(&text.line(cursor.row), cursor.col, tab_width);
+            let cursor_col = match self.document.display_line(cursor.row) {
+                Some(display) => {
+                    line::display_col(&display.text, display.to_display(cursor.col), tab_width)
+                }
+                None => line::display_col(&text.line(cursor.row), cursor.col, tab_width),
+            };
             let target = ScrollTarget {
                 row: cursor.row,
                 col: cursor_col,
@@ -279,8 +300,16 @@ impl StatefulWidget for EditorView<'_> {
         let mut y = 0;
         let mut row = top;
         while y < height && row < text.line_count() {
-            let line_text = &*text.line(row);
-            let line_len = text.line_len(row);
+            let real_line = text.line(row);
+            // With virtual text, the line as it's drawn (its columns mapped).
+            let display = self.document.display_line(row);
+            let line_text: &str = display.as_ref().map_or(&*real_line, |d| d.text.as_str());
+            let line_len = line_text.chars().count();
+            let cursor_col = match &display {
+                Some(d) if self.caret => d.caret_at(cursor.col),
+                Some(d) => d.to_display(cursor.col),
+                None => cursor.col,
+            };
             // A closed fold shows as its first line, on one row.
             let fold = self
                 .document
@@ -308,6 +337,8 @@ impl StatefulWidget for EditorView<'_> {
                     RowPart {
                         row,
                         line: line_text,
+                        real_line: &real_line,
+                        display: display.as_ref(),
                         start,
                         end,
                         first: part == 0,
@@ -352,7 +383,7 @@ impl StatefulWidget for EditorView<'_> {
                     last: last_part,
                 });
                 let cursor_here = row == cursor.row
-                    && (crate::core::wrap::row_of(&starts, cursor.col) == part || !wrap);
+                    && (crate::core::wrap::row_of(&starts, cursor_col) == part || !wrap);
                 if cursor_here && !text_area.is_empty() {
                     let seg_left = if wrap {
                         line::display_col(line_text, start, tab_width)
@@ -366,7 +397,7 @@ impl StatefulWidget for EditorView<'_> {
                     } else {
                         0
                     };
-                    let x = line::display_col(line_text, cursor.col, tab_width) - seg_left + indent;
+                    let x = line::display_col(line_text, cursor_col, tab_width) - seg_left + indent;
                     state.cursor = Some(Position::new(
                         text_area.x + x.min(width.saturating_sub(1)) as u16,
                         screen_y,
@@ -416,6 +447,10 @@ fn git_mark(
 struct RowPart<'l> {
     row: usize,
     line: &'l str,
+    /// The line as it is in the buffer, and how its columns map to
+    /// `line` (which has its virtual text, if it has any).
+    real_line: &'l str,
+    display: Option<&'l crate::editor::DisplayLine>,
     start: usize,
     end: usize,
     /// The line's first row (where its number goes).
@@ -473,6 +508,8 @@ impl EditorView<'_> {
         let RowPart {
             row,
             line: line_text,
+            real_line,
+            display,
             start,
             end,
             first,
@@ -558,12 +595,12 @@ impl EditorView<'_> {
         let visible = line::visible_slice(&line_text[..upto], left, width, tab_width);
         buf.set_stringn(text_area.x, y, visible, width, text_style);
 
-        let line_len = line_text.chars().count();
-        let mut highlight = |from: usize, to: usize, style: Style| {
-            // Char columns to display cells, within this part of the line; a
-            // column past the last char (a selected line break) is drawn as
-            // one extra cell on the line's last row.
-            let to_end = to > line_len && last;
+        // Highlights come in the buffer's columns.
+        let line_len = real_line.chars().count();
+        let mut paint = |from: usize, to: usize, to_end: bool, style: Style| {
+            // Columns of the drawn line to display cells, within this part
+            // of the line; a column past the last char (a selected line
+            // break) is drawn as one extra cell on the line's last row.
             let from = from.max(start);
             let to = to.min(end);
             if from >= to && !to_end {
@@ -576,6 +613,20 @@ impl EditorView<'_> {
             if begin < finish {
                 let cells = Rect::new(text_area.x + begin as u16, y, (finish - begin) as u16, 1);
                 buf.set_style(cells, style);
+            }
+        };
+        let mut highlight = |from: usize, to: usize, style: Style| {
+            let to_end = to > line_len && last;
+            match display {
+                // A range starts at its first char, after any virtual text
+                // before it, and ends before any virtual text at its end.
+                Some(d) => paint(
+                    d.to_display(from),
+                    d.caret_at(to.min(line_len)),
+                    to_end,
+                    style,
+                ),
+                None => paint(from, to, to_end, style),
             }
         };
 
@@ -596,7 +647,7 @@ impl EditorView<'_> {
         }
         if let Some(pattern) = self.search {
             let style = self.theme.get("ui.search.match");
-            for (from, to) in pattern.matches_in_line(line_text) {
+            for (from, to) in pattern.matches_in_line(real_line) {
                 highlight(from, to, style);
             }
         }
@@ -629,7 +680,7 @@ impl EditorView<'_> {
         // The selection is drawn last, so it wins over search matches.
         if let Some(block) = self.block {
             if block.rows().contains(&row) {
-                let (from, to) = block.chars_in(line_text, tab_width);
+                let (from, to) = block.chars_in(real_line, tab_width);
                 if from < to {
                     highlight(from, to, self.theme.get("ui.selection"));
                 }
@@ -638,6 +689,13 @@ impl EditorView<'_> {
             && let Some((from, to)) = selection::selected_cols(range, row, line_len)
         {
             highlight(from, to, self.theme.get("ui.selection"));
+        }
+
+        // Virtual text, in its own colours, over whatever was under it.
+        if let Some(display) = display {
+            for (from, to, scope) in &display.virtual_spans {
+                paint(*from, *to, false, self.theme.get(scope));
+            }
         }
 
         // The message, after the line's text on its last row.
@@ -714,6 +772,66 @@ mod tests {
             Some((2, 4)),
             "below the text: the end of the last line"
         );
+    }
+
+    #[test]
+    fn virtual_text_is_drawn_in_the_line_and_the_cursor_and_clicks_map_around_it() {
+        use crate::editor::VirtualText;
+        let mut doc = Document::with_text("let x = f(1);");
+        let hint = |col, text: &str| VirtualText {
+            at: TextPos::new(0, col),
+            text: text.into(),
+            style: "ui.virtual.inlay-hint".into(),
+            source: "inlay".into(),
+        };
+        doc.set_virtual_text("inlay", vec![hint(5, ": i32"), hint(10, "n: ")]);
+        doc.set_cursor(TextPos::new(0, 10));
+        let options = options(LineNumbers::None);
+        let theme = theme();
+        let area = Rect::new(0, 0, 30, 2);
+        let search =
+            crate::core::search::SearchPattern::new("1", crate::core::search::CaseMode::Smart)
+                .unwrap();
+        let mut buf = Buffer::empty(area);
+        let mut state = ViewState::default();
+        EditorView::new(&doc, &options, &theme)
+            .search(Some(&search))
+            .render(area, &mut buf, &mut state);
+        assert_eq!(row_text(&buf, 0).trim_end(), "let x: i32 = f(n: 1);");
+        let hint_fg = theme.get("ui.virtual.inlay-hint").fg.unwrap();
+        assert_eq!(buf[(5, 0)].fg, hint_fg, "the hint's colour");
+        assert_eq!(buf[(15, 0)].fg, hint_fg);
+        assert_eq!(
+            buf[(18, 0)].bg,
+            theme.get("ui.search.match").bg.unwrap(),
+            "the 1, after the hint"
+        );
+        assert_eq!(state.cursor, Some(Position::new(18, 0)), "on the 1");
+        assert_eq!(
+            state.position_at(&doc, 7, 0, 4).map(|p| p.col),
+            Some(5),
+            "in the hint: the char after it"
+        );
+        assert_eq!(state.position_at(&doc, 18, 0, 4).map(|p| p.col), Some(10));
+
+        // In insert mode the caret's before the hint, where typing goes.
+        let mut buf = Buffer::empty(area);
+        let mut state = ViewState::default();
+        EditorView::new(&doc, &options, &theme)
+            .caret(true)
+            .render(area, &mut buf, &mut state);
+        assert_eq!(state.cursor, Some(Position::new(15, 0)));
+
+        // Wrapping counts the hints' width.
+        let wrapping = EditorOptions {
+            wrap: true,
+            ..options.clone()
+        };
+        let narrow = Rect::new(0, 0, 14, 3);
+        let mut buf = Buffer::empty(narrow);
+        let mut state = ViewState::default();
+        EditorView::new(&doc, &wrapping, &theme).render(narrow, &mut buf, &mut state);
+        assert_eq!(state.rows.len(), 2, "{:?}", state.rows);
     }
 
     #[test]

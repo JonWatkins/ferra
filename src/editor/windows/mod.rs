@@ -319,7 +319,17 @@ impl TextLayout {
         let buffer = document.buffer();
         let folded = document.closed_fold_at(cursor.row).is_some();
         let row_in_line = if self.wrap && !folded {
-            crate::core::wrap::row_of(&self.row_starts(&buffer.line(cursor.row)), cursor.col)
+            // With virtual text, the line as it's drawn.
+            match document.display_line(cursor.row) {
+                Some(display) => crate::core::wrap::row_of(
+                    &self.row_starts(&display.text),
+                    display.to_display(cursor.col),
+                ),
+                None => crate::core::wrap::row_of(
+                    &self.row_starts(&buffer.line(cursor.row)),
+                    cursor.col,
+                ),
+            }
         } else {
             0
         };
@@ -340,7 +350,11 @@ impl TextLayout {
     pub fn rows_in(&self, document: &Document, row: usize) -> usize {
         match document.closed_fold_at(row) {
             Some((first, _)) => usize::from(first == row),
-            None => self.rows(&document.buffer().line(row)),
+            None if !self.wrap => 1,
+            None => match document.display_line(row) {
+                Some(display) => self.rows(&display.text),
+                None => self.rows(&document.buffer().line(row)),
+            },
         }
     }
 

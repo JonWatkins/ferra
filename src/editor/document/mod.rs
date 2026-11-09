@@ -1,6 +1,9 @@
 mod file;
 mod folds;
 mod marks;
+mod virtual_text;
+
+pub use virtual_text::{DisplayLine, VirtualText};
 
 pub use file::{DiskState, OpenInfo, SaveInfo};
 
@@ -66,6 +69,9 @@ pub struct Document {
     /// A language server's diagnostics, moved along as the text is edited
     /// until it sends new ones.
     diagnostics: Vec<crate::editor::diagnostics::Diagnostic>,
+    /// Text drawn in lines that isn't in the file (inlay hints), moved
+    /// along as the text is edited.
+    virtual_text: Vec<VirtualText>,
     /// How the file was indented when read (see [`crate::core::indent`]).
     detected_indent: Option<IndentUnit>,
     /// The indentation chosen with `:indent`, over any detected one.
@@ -359,6 +365,7 @@ impl Document {
     /// on the same word), its end doesn't (typing after a word doesn't
     /// stretch its underline).
     fn diagnostics_after_insert(&mut self, at: Position, end: Position) {
+        self.virtual_text_after_insert(at, end);
         let shift = |p: Position| {
             if p.row == at.row {
                 Position::new(end.row, end.col + (p.col - at.col))
@@ -380,6 +387,7 @@ impl Document {
     /// `start..end` was deleted: what's after it moves back, and what was
     /// in it goes to `start`.
     fn diagnostics_after_delete(&mut self, start: Position, end: Position) {
+        self.virtual_text_after_delete(start, end);
         let shift = |p: Position| {
             if p <= start {
                 p

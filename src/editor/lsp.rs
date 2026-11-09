@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::VirtualText;
 use super::picker::{Picker, PickerAction, PickerItem};
 use super::{Document, DocumentId, Editor, Message, Mode};
 use crate::core::Position;
@@ -36,6 +37,8 @@ pub enum LspFeature {
     DocumentHighlight,
     /// The project's symbols matching a query (`text`).
     WorkspaceSymbols,
+    /// Types and parameter names to show in the text, for the buffer.
+    InlayHint,
 }
 
 impl LspFeature {
@@ -57,6 +60,7 @@ impl LspFeature {
             LspFeature::SignatureHelp => "signature help",
             LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols => "symbols",
             LspFeature::DocumentHighlight => "highlights",
+            LspFeature::InlayHint => "inlay hints",
         }
     }
 
@@ -79,6 +83,7 @@ impl LspFeature {
             LspFeature::DocumentSymbols => "Symbols",
             LspFeature::WorkspaceSymbols => "Project symbols",
             LspFeature::DocumentHighlight => "Highlights",
+            LspFeature::InlayHint => "Inlay hints",
         }
     }
 }
@@ -298,6 +303,27 @@ impl Editor {
             end: self.document.cursor(),
         });
         Ok(())
+    }
+
+    /// A server's inlay hints for the buffer `request` was about, if its
+    /// text hasn't changed since (else new ones are on their way).
+    pub fn set_inlay_hints(&mut self, request: &LspRequest, hints: Vec<VirtualText>) {
+        let Some(document) = self.document_by_id_mut(request.document) else {
+            return;
+        };
+        if document.buffer().edit_seq() == request.edit_seq {
+            document.set_virtual_text("inlay", hints);
+        }
+    }
+
+    /// `inlay-hints = false` (or `:inlay_hints`): takes them away.
+    pub fn clear_inlay_hints(&mut self) {
+        let ids: Vec<DocumentId> = self.buffers().iter().map(|b| b.id).collect();
+        for id in ids {
+            if let Some(document) = self.document_by_id_mut(id) {
+                document.clear_virtual_text("inlay");
+            }
+        }
     }
 
     /// `<Space>a`: asks the language server what it can do here: at the

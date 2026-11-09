@@ -617,6 +617,9 @@ impl App {
         self.refresh_plugin_statuses();
         self.make_plugin_view();
         self.editor.update_git_changes();
+        if !self.editor.options.inlay_hints {
+            self.editor.clear_inlay_hints();
+        }
         let pending = self.input.pending_display();
         let count = self.editor.buffer_count();
         if self.syntax.cached_count() > count || self.editor.syntax_trees.count() > count {

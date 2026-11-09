@@ -238,6 +238,16 @@ impl Lsp {
                 client.request_code_actions(request, start, end, diagnostics);
                 continue;
             }
+            if request.feature == LspFeature::InlayHint {
+                // The whole buffer.
+                let buffer = document.buffer();
+                let last = buffer.line_count() - 1;
+                let start =
+                    convert::to_lsp(buffer, crate::core::Position::new(0, 0), client.encoding);
+                let end = convert::to_lsp(buffer, buffer.line_end(last), client.encoding);
+                client.request_inlay_hints(request, start, end);
+                continue;
+            }
             if request.feature == LspFeature::ResolveCompletion {
                 let item = request.item.and_then(|i| self.completions.item(i));
                 if let Some(item) = item {
@@ -272,6 +282,8 @@ pub(super) fn answer(
         LspFeature::Completion => editor.still_completing(&request),
         // Shown if the picker's still open with that query (checked there).
         LspFeature::WorkspaceSymbols => true,
+        // Kept for its buffer while the text is as it was (checked there).
+        LspFeature::InlayHint => true,
         // Shown while the text is as it was (wherever the cursor is now:
         // it's drawn only while on one of them).
         LspFeature::DocumentHighlight => {
@@ -337,6 +349,14 @@ pub(super) fn answer(
             })
             .collect();
         editor.make_other_edits(edits);
+        return;
+    }
+    if request.feature == LspFeature::InlayHint {
+        let Some(document) = editor.document_by_id(request.document) else {
+            return;
+        };
+        let hints = inlay_hints(document.buffer(), &result, client.encoding);
+        editor.set_inlay_hints(&request, hints);
         return;
     }
     if request.feature == LspFeature::DocumentHighlight {
@@ -1260,5 +1280,75 @@ mod tests {
             "repeats dropped"
         );
         assert!(locations(&editor, &Value::Null, Encoding::Utf8).is_empty());
+    }
+}
+
+/// A server's inlay hints as virtual text: each label (a string, or parts
+/// with `value`s), with a space either side if it asks for padding.
+pub(super) fn inlay_hints(
+    buffer: &crate::core::Buffer,
+    result: &Value,
+    encoding: convert::Encoding,
+) -> Vec<crate::editor::VirtualText> {
+    result
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|hint| {
+            let label = match &hint["label"] {
+                Value::String(text) => text.clone(),
+                Value::Array(parts) => parts.iter().filter_map(|p| p["value"].as_str()).collect(),
+                _ => return None,
+            };
+            if label.is_empty() {
+                return None;
+            }
+            let pad = |side: &str| {
+                if hint[side].as_bool() == Some(true) {
+                    " "
+                } else {
+                    ""
+                }
+            };
+            let text = format!(
+                "{}{}{}",
+                pad("paddingLeft"),
+                label.trim_end_matches('\n'),
+                pad("paddingRight")
+            );
+            Some(crate::editor::VirtualText {
+                at: convert::from_lsp(buffer, &hint["position"], encoding),
+                text,
+                // 1 is a type; 2 a parameter's name.
+                style: match hint["kind"].as_u64() {
+                    Some(2) => "ui.virtual.inlay-hint.parameter".into(),
+                    Some(1) => "ui.virtual.inlay-hint.type".into(),
+                    _ => "ui.virtual.inlay-hint".into(),
+                },
+                source: "inlay".into(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod inlay_tests {
+    use serde_json::json;
+
+    #[test]
+    fn inlay_hints_become_virtual_text() {
+        let buffer = crate::core::Buffer::from_text("let x = f(1);");
+        let result = json!([
+            { "position": { "line": 0, "character": 5 }, "label": ": i32", "kind": 1 },
+            { "position": { "line": 0, "character": 10 }, "label": [{ "value": "n" }, { "value": ":" }],
+              "kind": 2, "paddingRight": true },
+            { "position": { "line": 0, "character": 1 }, "label": "" },
+        ]);
+        let hints = super::inlay_hints(&buffer, &result, super::convert::Encoding::Utf16);
+        assert_eq!(hints.len(), 2, "empty labels left out");
+        assert_eq!((hints[0].at.col, hints[0].text.as_str()), (5, ": i32"));
+        assert_eq!(hints[0].style, "ui.virtual.inlay-hint.type");
+        assert_eq!((hints[1].at.col, hints[1].text.as_str()), (10, "n: "));
+        assert_eq!(hints[1].style, "ui.virtual.inlay-hint.parameter");
     }
 }

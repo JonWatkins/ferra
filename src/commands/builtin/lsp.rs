@@ -7,6 +7,25 @@ use crate::editor::lsp::LspFeature;
 
 pub fn register(r: &mut CommandRegistry) {
     r.register(
+        "inlay_hints",
+        "Show or hide the language server's inlay hints (types, parameter names)",
+        |cx| {
+            let on = !cx.editor.options.inlay_hints;
+            cx.editor
+                .set_option("inlay-hints", toml::Value::Boolean(on), false)?;
+            if !on {
+                cx.editor.clear_inlay_hints();
+            }
+            cx.editor.set_message(crate::editor::Message::info(if on {
+                "Inlay hints on"
+            } else {
+                "Inlay hints off"
+            }));
+            Ok(())
+        },
+    );
+
+    r.register(
         "hover",
         "Show what the language server says about the symbol under the cursor; again to scroll (K)",
         |cx| {

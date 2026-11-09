@@ -97,6 +97,10 @@ auto-complete = true
 # Resting the cursor on a symbol in normal mode highlights its other uses
 # in view, from the language server.
 highlight-references = true
+# Show the language server's inlay hints in the text, in grey: variables'
+# types, parameters' names (rust-analyzer, TypeScript...). :inlay_hints
+# turns them on and off.
+inlay-hints = true
 # Check open files for changes made by other programs (a formatter, git, a
 # tool editing alongside you) every second while you're idle in normal mode,
 # not only when the terminal regains focus. Unmodified buffers reload (u
@@ -313,6 +317,10 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "text.uri" = { fg = "#7dcfff", modifiers = ["underlined"] }
 "text.reference" = "#7dcfff"
 "ui.window.separator" = "#3b4048"
+# Virtual text: a language server's inlay hints (types, parameter names).
+"ui.virtual.inlay-hint" = { fg = "#6b7280", modifiers = ["italic"] }
+"ui.virtual.inlay-hint.type" = { fg = "#6b7280", modifiers = ["italic"] }
+"ui.virtual.inlay-hint.parameter" = { fg = "#6b7280", modifiers = ["italic"] }
 # Git changes in the gutter (against what's staged).
 "ui.gutter.added" = "#9ece6a"
 "ui.gutter.changed" = "#7aa2f7"
