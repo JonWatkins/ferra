@@ -1238,6 +1238,26 @@ places it centred, by the cursor or at the top right of the active window,
 scrolls it to keep the selection in view, and shows where it's at in the
 bottom border.
 
+### Plugin sidebar views
+
+`editor.view(name, spec)` records a `ViewSpec` (title, keys, the events that
+refresh it) and keeps the `lines` function in the plugin host
+(`PluginHost::view_lines`). After installing, the app hands new specs to
+the editor (`editor/sidebar_views.rs`), which keeps each view's lines, its
+selection and scroll, and a *stale* flag. The editor can't call Lua, so it
+only marks views stale: when shown, on `R`, after the events in `refresh`
+(the app passes every event to `plugin_views_saw` as it fires hooks), on
+`ctx:view_refresh`, and when the current buffer isn't the one its lines
+were made for. Before drawing, `App::make_plugin_view` calls the function
+of the view shown if it's stale, so a view nobody can see costs nothing.
+
+The sidebar's commands act on whichever view is shown (`sidebar_move` moves
+a plugin view's selection, `R` remakes it, the tree's own commands do
+nothing there). A view's keys are bound like a popup's: when the view
+shown changes, the app rebuilds its keymap copy with them in
+`Mode::Sidebar`. `ui/sidebar.rs` draws the tabs (`SidebarTabs`) when
+there's more than the file tree, and the view (`PluginViewWidget`).
+
 ## Plugin roadmap
 
 Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
@@ -1245,8 +1265,8 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 1. **A wider API**, driven by real plugins: selections, registers, search,
    buffers, options, and creating pickers from Lua.
 2. **Plugin UI**: started with popups (see [Plugin popups](#plugin-popups));
-   still to come are views in the sidebar, pickers from Lua, input boxes,
-   and decorations (see "Plugin windows and decorations" below).
+   and views in the sidebar (see [Plugin sidebar views](#plugin-sidebar-views));
+   still to come are pickers from Lua, input boxes, and decorations (see "Plugin windows and decorations" below).
 3. **Registering at runtime.** Registrations made inside a callback (rather
    than while loading) are collected but not yet installed.
 4. **Isolation.** If sandboxing untrusted plugins becomes a goal, a WASM
@@ -1602,7 +1622,8 @@ not. The answer is dropped unless the editor is still where it was asked
 
 - Plugin popups: one at a time; no input field in them (a plugin can't ask
   for text yet); keys run commands, not Lua functions; no mouse; a plugin
-  can't add a view to the sidebar or the panel yet.
+  can't add a view to the bottom panel yet. Sidebar views are flat lists
+  (no tree, folding or icons), made whole each time (no partial updates).
 
 - Terminal panel: one shell (no tabs or splits); no mouse (scrolling,
   selecting) and no copying from it with the editor's keys (Neovim's

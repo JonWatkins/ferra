@@ -30,6 +30,8 @@ use mlua::{Function, Lua, RegistryKey, Value};
 
 use crate::commands::CommandRegistry;
 use crate::editor::Mode;
+use crate::editor::popup::PopupLine;
+use crate::editor::sidebar_views::ViewSpec;
 use crate::events::EventKind;
 use crate::input::{Keymap, parse_keys};
 
@@ -40,6 +42,8 @@ struct Registrations {
     hooks: Vec<(EventKind, String, RegistryKey)>,
     maps: Vec<(String, String, String)>,
     statuses: Vec<(String, RegistryKey)>,
+    /// Sidebar views: what they are, and their `lines` functions.
+    views: Vec<(ViewSpec, RegistryKey)>,
 }
 
 pub struct PluginHost {
@@ -49,6 +53,10 @@ pub struct PluginHost {
     current: Rc<RefCell<String>>,
     /// Status line functions (`editor.status`), by name.
     statuses: RefCell<std::collections::HashMap<String, RegistryKey>>,
+    /// Sidebar views' `lines` functions, by name.
+    views: RefCell<std::collections::HashMap<String, RegistryKey>>,
+    /// Views installed since the app last took them (for the editor).
+    new_views: RefCell<Vec<ViewSpec>>,
 }
 
 impl PluginHost {
@@ -58,6 +66,8 @@ impl PluginHost {
             pending: Rc::default(),
             current: Rc::default(),
             statuses: RefCell::default(),
+            views: RefCell::default(),
+            new_views: RefCell::default(),
         };
         host.install_globals().map_err(|e| api::describe(&e))?;
         Ok(host)
@@ -127,6 +137,29 @@ impl PluginHost {
             });
         }
         self.statuses.borrow_mut().extend(pending.statuses);
+        for (spec, key) in pending.views {
+            let mut ok = true;
+            for (keys, command) in &spec.keys {
+                if let Err(e) = parse_keys(keys) {
+                    errors.push(format!(
+                        "editor.view {}: invalid keys '{keys}': {e}",
+                        spec.name
+                    ));
+                    ok = false;
+                }
+                if !registry.contains(command) {
+                    errors.push(format!(
+                        "editor.view {}: unknown command '{command}'",
+                        spec.name
+                    ));
+                    ok = false;
+                }
+            }
+            if ok {
+                self.views.borrow_mut().insert(spec.name.clone(), key);
+                self.new_views.borrow_mut().push(spec);
+            }
+        }
         for (mode, keys, command) in pending.maps {
             let Some(mode_value) = Mode::ALL.iter().find(|m| m.id() == mode) else {
                 errors.push(format!("editor.map: unknown mode '{mode}'"));
@@ -156,6 +189,25 @@ impl PluginHost {
             .ok_or_else(|| format!("No status function {name}"))?;
         let text: Option<String> = api::call_returning(&self.lua, key, cx, None)?;
         Ok(text.unwrap_or_default())
+    }
+
+    /// Views installed since last asked, for the editor's sidebar.
+    pub fn take_new_views(&self) -> Vec<ViewSpec> {
+        std::mem::take(&mut *self.new_views.borrow_mut())
+    }
+
+    /// Calls sidebar view `name`'s `lines` function.
+    pub fn view_lines(
+        &self,
+        name: &str,
+        cx: &mut crate::commands::Context,
+    ) -> Result<Vec<PopupLine>, String> {
+        let views = self.views.borrow();
+        let key = views
+            .get(name)
+            .ok_or_else(|| format!("No sidebar view {name}"))?;
+        let value: Value = api::call_returning(&self.lua, key, cx, None)?;
+        popup::lines(&value).map_err(|e| e.replace("popup.lines", "lines"))
     }
 
     /// The global `editor` table plugins register through.
@@ -216,6 +268,50 @@ impl PluginHost {
             lua.create_function(move |lua, (name, function): (String, Function)| {
                 let key = lua.create_registry_value(function)?;
                 pending.borrow_mut().statuses.push((name, key));
+                Ok(())
+            })?,
+        )?;
+
+        // editor.view(name, { title, lines = fn, keys, refresh })
+        let pending = self.pending.clone();
+        editor.set(
+            "view",
+            lua.create_function(move |lua, (name, spec): (String, mlua::Table)| {
+                let usage =
+                    |what: &str| mlua::Error::runtime(format!("editor.view {name}: {what}"));
+                let lines: Function = spec
+                    .get::<Option<Function>>("lines")?
+                    .ok_or_else(|| usage("needs a lines function"))?;
+                let title = spec
+                    .get::<Option<String>>("title")?
+                    .unwrap_or_else(|| name.clone());
+                let mut keys = Vec::new();
+                if let Some(map) = spec.get::<Option<mlua::Table>>("keys")? {
+                    for pair in map.pairs::<String, String>() {
+                        keys.push(pair.map_err(|_| usage("keys are key = \"command\" pairs"))?);
+                    }
+                }
+                keys.sort();
+                let mut refresh = Vec::new();
+                if let Some(events) = spec.get::<Option<Vec<String>>>("refresh")? {
+                    for event in events {
+                        let kind: EventKind = toml::Value::String(event.clone())
+                            .try_into()
+                            .map_err(|_| usage(&format!("unknown event '{event}'")))?;
+                        refresh.push(kind);
+                    }
+                }
+                if name == "files" {
+                    return Err(usage("\"files\" is the file tree's name"));
+                }
+                let key = lua.create_registry_value(lines)?;
+                let spec = ViewSpec {
+                    name: name.clone(),
+                    title,
+                    keys,
+                    refresh,
+                };
+                pending.borrow_mut().views.push((spec, key));
                 Ok(())
             })?,
         )?;

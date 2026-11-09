@@ -24,6 +24,9 @@
 //! | `ctx:popup_close()` | Close it (without its `on_close`) |
 //! | `ctx:popup_selected()` | The selected line of a list popup, or `nil` |
 //! | `ctx:popup_name()` | The open popup's `name`, or `nil` |
+//! | `ctx:view_selected()` | The selected line of the plugin view in the sidebar, or `nil` |
+//! | `ctx:view_name()` | The sidebar view shown (`"files"` or a plugin's), or `nil` if it's closed |
+//! | `ctx:view_refresh([name])` | Make a view's lines again (the one shown, by default) |
 //!
 //! Fields: `ctx.count` (number or `nil`) and `ctx.args` (a list of strings).
 //! Edits go through the document like built-in commands, so they're undoable
@@ -278,6 +281,40 @@ pub fn call_returning<R: mlua::FromLuaMulti>(
             "popup_name",
             scope.create_function(|_, _: Value| {
                 Ok(cell.borrow().editor.popup().map(|p| p.name.clone()))
+            })?,
+        )?;
+
+        // Sidebar views.
+        ctx.set(
+            "view_selected",
+            scope.create_function(|_, _: Value| {
+                Ok(cell
+                    .borrow()
+                    .editor
+                    .plugin_view()
+                    .and_then(|v| v.selected())
+                    .map(|i| i + 1))
+            })?,
+        )?;
+        ctx.set(
+            "view_name",
+            scope.create_function(|_, _: Value| {
+                let guard = cell.borrow();
+                Ok(guard.editor.sidebar().map(|_| {
+                    guard
+                        .editor
+                        .plugin_view()
+                        .map_or("files".to_string(), |v| v.spec.name.clone())
+                }))
+            })?,
+        )?;
+        ctx.set(
+            "view_refresh",
+            scope.create_function(|_, (_, name): (Value, Option<String>)| {
+                cell.borrow_mut()
+                    .editor
+                    .refresh_plugin_view(name.as_deref());
+                Ok(())
             })?,
         )?;
 

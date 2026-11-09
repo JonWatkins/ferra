@@ -30,6 +30,7 @@ pub mod find;
 pub mod lsp;
 pub mod popup;
 mod selection;
+pub mod sidebar_views;
 mod terminal_panel;
 pub mod text_field;
 mod transform;
@@ -199,6 +200,11 @@ pub struct Editor {
     /// The file tree, once the sidebar's been opened, and whether it's open.
     explorer: Option<explorer::Explorer>,
     sidebar_open: bool,
+    /// Plugins' sidebar views, which one's shown (0: the files), and
+    /// whether the shown one's keys need binding.
+    sidebar_views: Vec<sidebar_views::PluginView>,
+    sidebar_view: usize,
+    view_keys_changed: bool,
     /// The find box's fields and toggles (kept while it's closed).
     find: find::FindState,
     /// The terminal panel's shell (kept while the panel's hidden), and

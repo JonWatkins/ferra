@@ -312,6 +312,11 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.sidebar.selected" = { bg = "#33467c" }
 "ui.sidebar.modified" = "#e0af68"
 "ui.sidebar.empty" = { fg = "#6b7280", modifiers = ["italic"] }
+# The tabs at the top of the sidebar, when plugins add views.
+"ui.sidebar.tabs" = { bg = "#1f2229" }
+"ui.sidebar.tab" = { fg = "#6b7280", bg = "#1f2229" }
+"ui.sidebar.tab.shown" = { fg = "#a9b1d6", bg = "#1a1c22" }
+"ui.sidebar.tab.active" = { fg = "#7aa2f7", bg = "#1a1c22", modifiers = ["bold"] }
 # The terminal panel (<Space>t): its title row, and its background.
 "ui.terminal" = { bg = "#16181d" }
 "ui.terminal.title" = { fg = "#a0a6b0", bg = "#1f2229" }
@@ -811,6 +816,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Left>" = "sidebar_collapse"
 "zM" = "sidebar_collapse_all"
 "R" = "sidebar_refresh"
+"<Tab>" = "sidebar_next_view"
+"<S-Tab>" = "sidebar_prev_view"
 "q" = "sidebar_toggle"
 "<Esc>" = "sidebar_focus"
 "<Space>e" = "sidebar_focus"

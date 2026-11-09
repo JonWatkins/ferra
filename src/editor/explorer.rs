@@ -298,26 +298,38 @@ impl Editor {
     }
 
     pub fn sidebar_move(&mut self, delta: isize) {
-        self.explorer_mut().move_by(delta);
+        if !self.plugin_view_move(delta) {
+            self.explorer_mut().move_by(delta);
+        }
     }
 
     pub fn sidebar_first(&mut self) {
-        self.explorer_mut().select_first();
+        if !self.plugin_view_move(isize::MIN / 2) {
+            self.explorer_mut().select_first();
+        }
     }
 
     pub fn sidebar_last(&mut self) {
-        self.explorer_mut().select_last();
+        if !self.plugin_view_move(isize::MAX / 2) {
+            self.explorer_mut().select_last();
+        }
     }
 
     /// Enter: opens or closes the selected folder, or opens the file (and
     /// goes to it).
     pub fn sidebar_choose(&mut self) -> Result<(), String> {
+        if self.plugin_view().is_some() {
+            return Ok(());
+        }
         let action = self.explorer_mut().choose();
         self.sidebar_act(action)
     }
 
     /// `l` / `→`: opens the folder (or goes into it), or opens the file.
     pub fn sidebar_expand(&mut self) -> Result<(), String> {
+        if self.plugin_view().is_some() {
+            return Ok(());
+        }
         let action = self.explorer_mut().expand();
         self.sidebar_act(action)
     }
@@ -339,11 +351,15 @@ impl Editor {
 
     /// `h` / `←`: closes the folder, or goes to the one it's in.
     pub fn sidebar_collapse(&mut self) {
-        self.explorer_mut().collapse();
+        if self.plugin_view().is_none() {
+            self.explorer_mut().collapse();
+        }
     }
 
     pub fn sidebar_collapse_all(&mut self) {
-        self.explorer_mut().collapse_all();
+        if self.plugin_view().is_none() {
+            self.explorer_mut().collapse_all();
+        }
     }
 
     /// The files open with unsaved changes (marked in the tree).
@@ -365,6 +381,10 @@ impl Editor {
 
     /// `R`: lists the files again.
     pub fn sidebar_refresh(&mut self) {
+        if self.plugin_view().is_some() {
+            self.refresh_plugin_view(None);
+            return;
+        }
         self.explorer_mut().refresh();
         self.set_message(Message::info("Files listed again"));
     }

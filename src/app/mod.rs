@@ -42,7 +42,8 @@ pub struct App {
     editor: Editor,
     commands: CommandRegistry,
     keymap: Keymap,
-    /// The keymap with the open popup's own keys, while it has some.
+    /// The keymap with the open popup's and the shown sidebar view's own
+    /// keys, while they have some.
     popup_keymap: Option<Keymap>,
     theme: Theme,
     input: InputHandler,
@@ -210,10 +211,44 @@ impl App {
     }
 
     fn install_plugins(&mut self) -> Vec<String> {
-        match &self.plugins {
-            Some(host) => host.install(&mut self.commands, &mut self.keymap),
-            None => Vec::new(),
-        }
+        let Some(host) = &self.plugins else {
+            return Vec::new();
+        };
+        let errors = host.install(&mut self.commands, &mut self.keymap);
+        self.editor.add_sidebar_views(host.take_new_views());
+        errors
+    }
+
+    /// Before drawing: calls the `lines` function of the plugin view the
+    /// sidebar shows, if it needs making. An error shows as its one line
+    /// (and as a message).
+    fn make_plugin_view(&mut self) {
+        let (Some(plugins), Some(name)) = (&self.plugins, self.editor.plugin_view_to_make()) else {
+            return;
+        };
+        let mut cx = crate::commands::Context {
+            editor: &mut self.editor,
+            registry: &self.commands,
+            count: None,
+            register: None,
+            args: &[],
+            bang: false,
+            char_arg: None,
+            range: None,
+            arg_text: "",
+        };
+        let lines = match plugins.view_lines(&name, &mut cx) {
+            Ok(lines) => lines,
+            Err(error) => {
+                let error = format!("sidebar view {name}: {error}");
+                self.editor.set_message(Message::error(error.clone()));
+                vec![vec![crate::editor::popup::PopupSpan {
+                    text: error,
+                    style: Some("ui.message.error".into()),
+                }]]
+            }
+        };
+        self.editor.set_plugin_view_lines(&name, lines);
     }
 
     /// Opens files at startup, one buffer each, showing the first.
@@ -536,6 +571,7 @@ impl App {
     pub fn draw(&mut self, frame: &mut Frame) {
         self.update_lsp();
         self.refresh_plugin_statuses();
+        self.make_plugin_view();
         let pending = self.input.pending_display();
         let count = self.editor.buffer_count();
         if self.syntax.cached_count() > count || self.editor.syntax_trees.count() > count {
@@ -610,36 +646,41 @@ impl App {
         .collect()
     }
 
-    /// The keymap for the current mode: with a popup's own keys while it
-    /// has focus.
+    /// The keymap for the current mode: with a popup's or a sidebar
+    /// view's own keys while it has focus.
     fn mode_keymap(&self) -> &Keymap {
         match (&self.popup_keymap, self.editor.mode()) {
-            (Some(popup), Mode::Popup) => popup,
+            (Some(overlay), Mode::Popup | Mode::Sidebar) => overlay,
             _ => &self.keymap,
         }
     }
 
-    /// After a key: a popup it opened gets its keys bound (in a copy of
-    /// the keymap); a popup without focus from before goes.
+    /// After a key: a popup it opened, or a sidebar view it showed, gets its
+    /// keys bound (in a copy of the keymap); a popup without focus from
+    /// before goes.
     fn after_popup_key(&mut self) {
-        if !self.editor.take_popup_keys_changed() {
+        let popup_opened = self.editor.take_popup_keys_changed();
+        let view_changed = self.editor.take_view_keys_changed();
+        if !popup_opened {
             self.editor.end_popup_unless_new(true);
+        }
+        if !popup_opened && !view_changed {
             return;
         }
-        self.popup_keymap = self
-            .editor
-            .popup()
-            .filter(|p| !p.keys.is_empty())
-            .map(|popup| {
-                let mut keymap = self.keymap.clone();
-                for (notation, command) in &popup.keys {
-                    // Checked when the plugin opened it.
+        let popup_keys = self.editor.popup().map_or(&[][..], |p| p.keys.as_slice());
+        let view_keys = self.editor.plugin_view_keys();
+        self.popup_keymap = (!popup_keys.is_empty() || !view_keys.is_empty()).then(|| {
+            let mut keymap = self.keymap.clone();
+            for (mode, keys) in [(Mode::Popup, popup_keys), (Mode::Sidebar, view_keys)] {
+                for (notation, command) in keys {
+                    // Checked when the plugin made them.
                     if let Ok(keys) = crate::input::parse_keys(notation) {
-                        keymap.bind(Mode::Popup, &keys, command.clone());
+                        keymap.bind(mode, &keys, command.clone());
                     }
                 }
-                keymap
-            });
+            }
+            keymap
+        });
     }
 
     /// When the key timeout should end the sequence being typed, if any.
@@ -671,7 +712,7 @@ impl App {
         self.tracked(&[], |app| {
             let mode = app.editor.mode();
             let keymap = match (&app.popup_keymap, mode) {
-                (Some(popup), Mode::Popup) => popup,
+                (Some(overlay), Mode::Popup | Mode::Sidebar) => overlay,
                 _ => &app.keymap,
             };
             let outcomes = app.input.timeout(mode, keymap);
@@ -780,6 +821,7 @@ impl App {
                 return;
             }
             for event in events {
+                self.editor.plugin_views_saw(event.kind());
                 if let Err(error) = self.commands.fire(&event, &mut self.editor) {
                     self.editor.set_message(Message::error(error));
                 }
@@ -824,7 +866,7 @@ impl App {
         let mode = self.editor.mode();
         // A popup's own keys are in a copy of the keymap made for it.
         let keymap = match (&self.popup_keymap, mode) {
-            (Some(popup), Mode::Popup) => popup,
+            (Some(overlay), Mode::Popup | Mode::Sidebar) => overlay,
             _ => &self.keymap,
         };
         let outcomes = self.input.handle(key, mode, keymap);

@@ -22,6 +22,7 @@ use ratatui::{
 use super::text::truncate_end;
 use crate::config::Theme;
 use crate::editor::explorer::Explorer;
+use crate::editor::sidebar_views::PluginView;
 
 pub struct SidebarView<'a> {
     explorer: &'a Explorer,
@@ -176,6 +177,145 @@ impl Widget for SidebarView<'_> {
     }
 }
 
+/// The row of tabs at the top of the sidebar, when plugins add views:
+/// the one shown highlighted.
+pub struct SidebarTabs<'a> {
+    titles: &'a [&'a str],
+    shown: usize,
+    focused: bool,
+    theme: &'a Theme,
+}
+
+impl<'a> SidebarTabs<'a> {
+    pub fn new(titles: &'a [&'a str], shown: usize, focused: bool, theme: &'a Theme) -> Self {
+        Self {
+            titles,
+            shown,
+            focused,
+            theme,
+        }
+    }
+}
+
+impl Widget for SidebarTabs<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let theme = self.theme;
+        buf.set_style(
+            Rect::new(area.x, area.y, area.width, 1),
+            theme.get("ui.sidebar.tabs"),
+        );
+        let mut x = area.x + 1;
+        for (i, title) in self.titles.iter().enumerate() {
+            let style = match (i == self.shown, self.focused) {
+                (true, true) => theme.get("ui.sidebar.tab.active"),
+                (true, false) => theme.get("ui.sidebar.tab.shown"),
+                _ => theme.get("ui.sidebar.tab"),
+            };
+            let label = format!(" {title} ");
+            if x >= area.right() {
+                break;
+            }
+            let room = (area.right() - x) as usize;
+            x = buf.set_stringn(x, area.y, &label, room, style).0 + 1;
+        }
+    }
+}
+
+/// A plugin's view: its title, then its lines, the selected one
+/// highlighted while the sidebar has focus.
+pub struct PluginViewWidget<'a> {
+    view: &'a PluginView,
+    focused: bool,
+    theme: &'a Theme,
+}
+
+impl<'a> PluginViewWidget<'a> {
+    pub fn new(view: &'a PluginView, focused: bool, theme: &'a Theme) -> Self {
+        Self {
+            view,
+            focused,
+            theme,
+        }
+    }
+
+    /// Where the terminal cursor goes while the sidebar has focus: the
+    /// start of the selected line.
+    pub fn cursor_position(view: &PluginView, area: Rect) -> Option<Position> {
+        let list = list_area(area);
+        let row = view.selected()?.checked_sub(view.scroll.get())?;
+        (row < list.height as usize && list.width > 1)
+            .then(|| Position::new(list.x + 1, list.y + row as u16))
+    }
+}
+
+impl Widget for PluginViewWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let theme = self.theme;
+        let base = theme.get("ui.sidebar");
+        buf.set_style(area, base);
+        let title = truncate_end(
+            &format!(" {}", self.view.spec.title.to_uppercase()),
+            area.width as usize,
+        );
+        buf.set_string(area.x, area.y, title, theme.get("ui.sidebar.title"));
+
+        let list = list_area(area);
+        if list.height == 0 {
+            return;
+        }
+        if self.view.lines.is_empty() {
+            buf.set_string(
+                list.x,
+                list.y,
+                truncate_end(" (nothing here)", list.width as usize),
+                theme.get("ui.sidebar.empty"),
+            );
+            return;
+        }
+        let first = self.view.first_shown(list.height as usize);
+        let width = list.width.saturating_sub(1) as usize;
+        for (row, (index, line)) in self
+            .view
+            .lines
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(list.height as usize)
+            .enumerate()
+        {
+            let y = list.y + row as u16;
+            let line_style = if self.focused && self.view.selected() == Some(index) {
+                let selected = base.patch(theme.get("ui.sidebar.selected"));
+                buf.set_style(Rect::new(list.x, y, list.width, 1), selected);
+                selected
+            } else {
+                base
+            };
+            let mut x = list.x + 1;
+            let mut room = width;
+            for span in line {
+                if room == 0 {
+                    break;
+                }
+                let style = match &span.style {
+                    Some(scope) => line_style.patch(theme.get(scope)),
+                    None => line_style,
+                };
+                let text = truncate_end(&span.text, room);
+                let next = buf.set_stringn(x, y, &text, room, style).0;
+                room = room.saturating_sub((next - x) as usize);
+                x = next;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -241,6 +381,56 @@ mod tests {
 
         let position = SidebarView::cursor_position(&tree, Rect::new(0, 0, 20, 4));
         assert_eq!(position, Some(Position::new(5, 2)), "at the name");
+    }
+
+    #[test]
+    fn plugin_views_draw_their_title_lines_and_tabs() {
+        use crate::editor::popup::PopupSpan;
+        use crate::editor::sidebar_views::ViewSpec;
+        let mut editor = crate::editor::Editor::default();
+        editor.add_sidebar_views(vec![ViewSpec {
+            name: "todos".into(),
+            title: "Todos".into(),
+            ..ViewSpec::default()
+        }]);
+        editor.open_sidebar_view("todos").unwrap();
+        let line = |text: &str, style: Option<&str>| {
+            vec![PopupSpan {
+                text: text.into(),
+                style: style.map(String::from),
+            }]
+        };
+        editor.set_plugin_view_lines(
+            "todos",
+            vec![line("first", None), line("second", Some("keyword"))],
+        );
+        editor.sidebar_move(1);
+        let theme = crate::config::Config::default().theme;
+        let view = editor.plugin_view().unwrap();
+
+        let area = Rect::new(0, 0, 20, 4);
+        let mut buf = Buffer::empty(area);
+        PluginViewWidget::new(view, true, &theme).render(area, &mut buf);
+        let row = |y: u16| -> String { (0..20).map(|x| buf[(x, y)].symbol()).collect() };
+        assert_eq!(row(0).trim_end(), " TODOS");
+        assert_eq!(row(1).trim_end(), " first", "level with the title");
+        assert_eq!(row(2).trim_end(), " second");
+        assert_eq!(buf[(0, 2)].bg, theme.get("ui.sidebar.selected").bg.unwrap());
+        assert_eq!(buf[(2, 2)].fg, theme.get("keyword").fg.unwrap());
+        assert_eq!(
+            PluginViewWidget::cursor_position(view, area),
+            Some(Position::new(1, 2))
+        );
+
+        let (titles, shown) = editor.sidebar_tabs();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 20, 1));
+        SidebarTabs::new(&titles, shown, true, &theme).render(Rect::new(0, 0, 20, 1), &mut buf);
+        let tabs: String = (0..20).map(|x| buf[(x, 0)].symbol()).collect();
+        assert_eq!(tabs.trim_end(), "  Files   Todos");
+        assert_eq!(
+            buf[(10, 0)].fg,
+            theme.get("ui.sidebar.tab.active").fg.unwrap()
+        );
     }
 
     #[test]

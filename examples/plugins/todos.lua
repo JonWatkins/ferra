@@ -2,6 +2,7 @@
 --
 -- <Space>T lists the TODO, FIXME and XXX comments in the current file in
 -- a popup. Move with j/k, <CR> jumps to the one selected, q closes it.
+-- It also adds a "TODOs" view to the sidebar (at the bottom of this file).
 --
 -- Install it by copying (or symlinking) this file into
 -- ~/.config/ferra/plugins/.
@@ -73,3 +74,28 @@ editor.command("todos_go", "Go to the TODO selected in the popup", function(ctx)
 end)
 
 editor.map("normal", "<Space>T", "todos")
+
+-- The same list as a view in the sidebar (<Tab> in the sidebar to reach
+-- it, or :sidebar_view todos), kept up to date as the file changes.
+local view_rows = {}
+
+editor.view("todos", {
+  title = "TODOs",
+  lines = function(ctx)
+    local rows, lines = find_todos(ctx)
+    view_rows = rows
+    return lines
+  end,
+  keys = { ["<CR>"] = "todos_view_go" },
+  refresh = { "buffer-changed" },
+})
+
+editor.command("todos_view_go", "Go to the TODO selected in the sidebar", function(ctx)
+  local row = view_rows[ctx:view_selected() or 0]
+  if row then
+    -- Back to the editor (the sidebar stays open), at the TODO.
+    ctx:run("sidebar_focus")
+    ctx:set_cursor(row, 1)
+    ctx:run("goto_first_non_blank")
+  end
+end)

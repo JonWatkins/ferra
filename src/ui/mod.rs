@@ -36,7 +36,7 @@ pub use editor_view::{EditorView, ViewState};
 pub use find::{FindKeys, FindView, key_label};
 pub use picker::PickerView;
 pub use popup::PopupView;
-pub use sidebar::SidebarView;
+pub use sidebar::{PluginViewWidget, SidebarTabs, SidebarView};
 pub use splash::{LOGO, Splash, SplashEntry};
 pub use statusline::StatusLine;
 pub use terminal::{TerminalKeys, TerminalView};
@@ -105,11 +105,32 @@ pub fn draw(
                 status
             };
             let focused = editor.mode() == Mode::Sidebar;
-            let view = SidebarView::new(explorer, theme)
-                .focused(focused)
-                .current(editor.document.path())
-                .modified(editor.modified_paths());
-            frame.render_widget(view, side);
+            // With plugins' views, a row of tabs first.
+            let (titles, shown) = editor.sidebar_tabs();
+            let content = if titles.len() > 1 {
+                frame.render_widget(SidebarTabs::new(&titles, shown, focused, theme), side);
+                Rect::new(
+                    side.x,
+                    side.y + 1,
+                    side.width,
+                    side.height.saturating_sub(1),
+                )
+            } else {
+                side
+            };
+            let plugin_view = editor.plugin_view();
+            match plugin_view {
+                Some(view) => {
+                    frame.render_widget(PluginViewWidget::new(view, focused, theme), content);
+                }
+                None => {
+                    let view = SidebarView::new(explorer, theme)
+                        .focused(focused)
+                        .current(editor.document.path())
+                        .modified(editor.modified_paths());
+                    frame.render_widget(view, content);
+                }
+            }
             let separator_style = theme.get("ui.window.separator");
             for y in separator.y..separator.bottom() {
                 frame.buffer_mut()[(separator.x, y)]
@@ -117,7 +138,10 @@ pub fn draw(
                     .set_style(separator_style);
             }
             let cursor = focused
-                .then(|| SidebarView::cursor_position(explorer, side))
+                .then(|| match plugin_view {
+                    Some(view) => PluginViewWidget::cursor_position(view, content),
+                    None => SidebarView::cursor_position(explorer, content),
+                })
                 .flatten();
             (main, status, cursor)
         }

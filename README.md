@@ -346,6 +346,7 @@ it open. `:explorer` (or `:Explore`) opens and closes it, as does `q` in it.
 | `h`, `←` | Close the folder, or go to the folder it's in |
 | `zM` | Close every folder |
 | `R` | List the files again (a saved new file shows up by itself) |
+| `<Tab>` `<S-Tab>` | The next / previous view, when plugins add some (see [Lua plugins](#lua-plugins)) |
 | `:` `<Space>f` `<Space>b` `<Space>p` | As in normal mode |
 
 It lists the folder ferra started in, folders first, leaving out what
@@ -792,6 +793,7 @@ a `ctx`:
 | `run(name, ...)` | Run any command, with arguments |
 | `option(name)`, `set_option(name, value [, "local"])` | Read an option (`"tab-width"`, `"search.case"`), or set it everywhere or for this window or buffer, checked as config is |
 | `popup{...}`, `popup_update{...}`, `popup_close()`, `popup_selected()`, `popup_name()` | Show a popup (below) and work with it |
+| `view_selected()`, `view_name()`, `view_refresh([name])` | The sidebar view shown, and making one again (below) |
 
 Plus `ctx.count` and `ctx.args`. Hooks also get an `event` table (`kind`,
 and `path` or `from`/`to` where relevant). Raising a Lua `error` cancels the
@@ -838,8 +840,33 @@ commands. `ctx:popup_update{ lines = ..., title = ..., footer = ...,
 selected = n }` changes it in place. A mistake in the table (an unknown
 command in `keys`, a bad key) is the plugin's error, shown as a message.
 
+### Sidebar views
+
+`editor.view(name, {...})` adds a view to the sidebar, beside the file
+tree: a row of tabs appears at its top, and `<Tab>`/`<S-Tab>` in the
+sidebar switch views (`:sidebar_view name` opens one directly).
+
+```lua
+editor.view("todos", {
+  title = "TODOs",
+  -- Makes its lines (strings or spans, as in popups).
+  lines = function(ctx)
+    return { "first", { { "second", "keyword" } } }
+  end,
+  keys = { ["<CR>"] = "todos_view_go" },   -- its own keys, run commands
+  refresh = { "buffer-changed" },          -- events that make it again
+})
+```
+
+`j`/`k`, `gg`/`G` move the selection; its commands read it with
+`ctx:view_selected()` (and `ctx:view_name()`). The `lines` function runs
+when the view is shown, on `R`, when you switch buffers, after the events
+in `refresh`, and when a command calls `ctx:view_refresh()`; never on
+every redraw. An error in it shows in the view and as a message.
+
 [`examples/plugins/todos.lua`](examples/plugins/todos.lua) lists the file's
-TODO, FIXME and XXX comments in a popup (`<Space>T`), `<CR>` to go to one.
+TODO, FIXME and XXX comments in a popup (`<Space>T`), `<CR>` to go to one,
+and as a sidebar view that follows your edits.
 
 [`examples/plugins/toolkit.lua`](examples/plugins/toolkit.lua) is a
 complete example (`:todo`, `:duplicate_line`, `:sort_paragraph`,

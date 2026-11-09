@@ -64,8 +64,28 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "sidebar_next_view",
+        "The sidebar's next view (the files, then plugins')",
+        |cx| {
+            cx.editor.sidebar_cycle_view(1);
+            Ok(())
+        },
+    );
+    r.register("sidebar_prev_view", "The sidebar's previous view", |cx| {
+        cx.editor.sidebar_cycle_view(-1);
+        Ok(())
+    });
+    r.register(
+        "sidebar_view",
+        "Open the sidebar at a view (:sidebar_view files, or a plugin's)",
+        |cx| {
+            let name = cx.args.first().map_or("files", String::as_str).to_string();
+            cx.editor.open_sidebar_view(&name)
+        },
+    );
+    r.register(
         "sidebar_refresh",
-        "List the file tree's files again",
+        "List the file tree's files again (or make a plugin's view again)",
         |cx| {
             cx.editor.sidebar_refresh();
             Ok(())

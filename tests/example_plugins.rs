@@ -132,3 +132,27 @@ fn todos_lists_the_files_todos_in_a_popup_and_goes_to_one() {
     keys(&mut app, "ggdG<Space>T");
     assert_eq!(message(&app), "No TODOs in this file");
 }
+
+#[test]
+fn todos_has_a_sidebar_view_that_follows_edits() {
+    let mut app = common::app_with_config("[editor]\nauto-indent = false");
+    let source = fs::read_to_string("examples/plugins/todos.lua").unwrap();
+    app.load_plugin("todos.lua", &source)
+        .expect("todos.lua loads");
+    keys(&mut app, "ia\n// TODO: one\nb<Esc>");
+    keys(&mut app, ":sidebar_view todos<CR>");
+    let shown = common::render(&mut app, 70, 10).rows.join("\n");
+    assert!(shown.contains("TODO  one"), "{shown}");
+
+    keys(&mut app, "<Space>e");
+    keys(&mut app, "Go// FIXME: two<Esc>");
+    let shown = common::render(&mut app, 70, 10).rows.join("\n");
+    assert!(
+        shown.contains("FIXME  two"),
+        "made again after the edit: {shown}"
+    );
+
+    keys(&mut app, "<Space>ej<CR>");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
+    assert_eq!(cursor(&app), (3, 0), "at the FIXME");
+}
