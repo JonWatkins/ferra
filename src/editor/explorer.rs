@@ -131,6 +131,11 @@ impl Explorer {
         self.selected = 0;
     }
 
+    /// Selects row `index` (clamped to the rows there are).
+    pub fn select(&mut self, index: usize) {
+        self.selected = index.min(self.rows.len().saturating_sub(1));
+    }
+
     pub fn select_last(&mut self) {
         self.selected = self.rows.len().saturating_sub(1);
     }
@@ -347,6 +352,24 @@ impl Editor {
             self.open(&shown).map_err(|e| e.to_string())?;
         }
         Ok(())
+    }
+
+    /// A click on the sidebar's list, `row` rows down from its top: gives
+    /// the sidebar focus and selects that line; in the file tree, opens the
+    /// file or opens or closes the folder, as in VS Code.
+    pub fn sidebar_click(&mut self, row: usize) -> Result<(), String> {
+        self.set_mode(Mode::Sidebar);
+        if self.plugin_view().is_some() {
+            self.select_plugin_view_line_on_screen(row);
+            return Ok(());
+        }
+        let explorer = self.explorer_mut();
+        let index = explorer.scroll.get() + row;
+        if index >= explorer.rows().len() {
+            return Ok(());
+        }
+        explorer.select(index);
+        self.sidebar_choose()
     }
 
     /// `h` / `←`: closes the folder, or goes to the one it's in.

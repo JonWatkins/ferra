@@ -323,6 +323,35 @@ cursor, scroll position and undo history. `:e path` opens another buffer
 without closing the current one, and `:q` refuses while *any* buffer has
 unsaved changes.
 
+## The mouse
+
+With `mouse = true` (the default):
+
+- **Click** in the text to move the cursor there (and to that window, if
+  it's another one); in insert mode you stay in insert mode. **Double
+  click** selects the word, **triple click** the line, and **dragging**
+  selects (visual mode, so `d`, `y`, `c`... act on it).
+- **The wheel** scrolls what's under the pointer: a window, the sidebar,
+  the terminal panel's history, the picker or a popup.
+- In the **sidebar**, a click on a file opens it, on a folder opens or
+  closes it, and on a tab shows that view. A click on the **terminal
+  panel** goes to it.
+- In the **picker** and plugins' list popups, a click chooses. In the
+  **find box**, a click flips a toggle or puts the cursor in a field. A
+  click outside one of these closes it (from the find box, the click then
+  goes on into the text).
+- **Drag** the sidebar's edge, the terminal panel's title row, or the line
+  between two windows to resize them.
+
+In terminals that let programs set the mouse pointer (kitty, Ghostty,
+WezTerm, foot, and iTerm2 from 3.7), it's a hand over things to click, a
+text bar over text, and arrows over edges to drag. iTerm2 3.6 and earlier
+keep their own pointer while a program uses the mouse.
+
+While the terminal app reports the mouse, its own text selection needs
+Shift held while dragging (Option in iTerm2 and Terminal.app); `:set
+nomouse` (or `mouse = false`) hands the mouse back to the terminal.
+
 ## The sidebar
 
 `<Space>e` opens the file tree on the left, with the current file selected,

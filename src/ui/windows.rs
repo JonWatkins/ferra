@@ -36,6 +36,10 @@ pub struct Drawn {
     pub cursor: Option<Position>,
     /// The active window's area (its text, not its status line).
     pub active: Option<Rect>,
+    /// Every window's area, for the mouse.
+    pub windows: Vec<(WindowId, Rect)>,
+    /// The lines between windows (and whether each is vertical).
+    pub separators: Vec<(Rect, bool)>,
 }
 
 /// Draws every window into `area`.
@@ -54,6 +58,15 @@ pub fn draw_windows(
     windows.note_area(area_cells);
     let (placed, separators) = windows.layout().arrange(area_cells);
 
+    let separator_areas: Vec<(Rect, bool)> = separators
+        .iter()
+        .map(|s| {
+            (
+                Rect::new(s.area.x, s.area.y, s.area.width, s.area.height),
+                s.vertical,
+            )
+        })
+        .collect();
     let separator_style = theme.get("ui.window.separator");
     let screen = frame.area();
     if let Some(status) = &status {
@@ -88,6 +101,7 @@ pub fn draw_windows(
 
     let mut cursor = None;
     let mut active_area = None;
+    let mut areas = Vec::new();
     for (id, window_area) in placed {
         let Some((document, window_cursor)) = editor.window_view(id) else {
             continue;
@@ -99,6 +113,7 @@ pub fn draw_windows(
             window_area.width,
             window_area.height,
         );
+        areas.push((id, rect));
         // Each window draws with its own options (`:setlocal wrap`...).
         let options = editor.options_for(id, document.id());
         let state = views.entry((id, document.id())).or_default();
@@ -155,5 +170,7 @@ pub fn draw_windows(
     Drawn {
         cursor,
         active: active_area,
+        windows: areas,
+        separators: separator_areas,
     }
 }

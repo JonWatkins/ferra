@@ -326,6 +326,15 @@ impl Editor {
         }
     }
 
+    /// A click in a field: focus there, with the cursor at char `col`.
+    pub fn find_click_field(&mut self, field: FindField, col: usize) {
+        if field == FindField::Replace {
+            self.find.replacing = true;
+        }
+        self.find.focus = field;
+        self.find.field().set_cursor(col);
+    }
+
     /// `<Tab>`: between the find and replace fields (showing the replace
     /// field).
     pub fn find_switch_field(&mut self) {

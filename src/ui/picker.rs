@@ -46,6 +46,21 @@ impl<'a> PickerView<'a> {
         )
     }
 
+    /// The list's rows in `area`, and the index of the match on the first.
+    pub fn list(picker: &Picker, area: Rect) -> (Rect, usize) {
+        let inner = Block::bordered().inner(area);
+        let list = Rect::new(
+            inner.x,
+            inner.y + 2,
+            inner.width,
+            inner.height.saturating_sub(2),
+        );
+        let first = picker
+            .selected()
+            .saturating_sub((list.height as usize).saturating_sub(1));
+        (list, first)
+    }
+
     /// Where the terminal cursor goes: after the typed filter.
     pub fn cursor_position(picker: &Picker, area: Rect) -> Position {
         let inner = Block::bordered().inner(area);

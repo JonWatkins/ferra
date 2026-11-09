@@ -95,6 +95,13 @@ impl Editor {
         }
     }
 
+    /// The mouse wheel over the panel: `rows` back (or forward if negative).
+    pub fn terminal_scroll_rows(&mut self, rows: isize) {
+        if let Some(terminal) = self.terminal.as_mut() {
+            terminal.scroll(rows);
+        }
+    }
+
     /// Takes the shell's output. Returns whether there's anything new to
     /// draw. A shell that exits while the panel is hidden closes it.
     pub fn pump_terminal(&mut self) -> bool {

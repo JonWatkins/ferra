@@ -43,6 +43,11 @@ cursorline = true
 statusline = "windows"
 # Minimum lines kept visible above/below the cursor when scrolling.
 scroll-off = 5
+# Use the mouse: click to move the cursor or focus a window, the sidebar or
+# the terminal panel; drag to select; scroll with the wheel. To select text
+# with the terminal's own selection instead, hold Shift while dragging
+# (Option in iTerm2 and Terminal.app), or set this to false.
+mouse = true
 # Columns the sidebar's file tree (<Space>e, :explorer) takes, left of the
 # windows. It never takes more than half the screen.
 sidebar-width = 30

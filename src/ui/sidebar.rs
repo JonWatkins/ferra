@@ -19,6 +19,8 @@ use ratatui::{
     widgets::Widget,
 };
 
+use unicode_width::UnicodeWidthStr;
+
 use super::text::truncate_end;
 use crate::config::Theme;
 use crate::editor::explorer::Explorer;
@@ -184,6 +186,25 @@ pub struct SidebarTabs<'a> {
     shown: usize,
     focused: bool,
     theme: &'a Theme,
+}
+
+/// Where each tab is drawn in a row starting at `x`: its columns.
+pub fn tab_spans(titles: &[&str], x: u16) -> Vec<(u16, u16)> {
+    let mut x = x + 1;
+    titles
+        .iter()
+        .map(|title| {
+            let width = title.width() as u16 + 2;
+            let span = (x, x + width);
+            x += width + 1;
+            span
+        })
+        .collect()
+}
+
+/// The rows of a sidebar view's list (under its title row).
+pub fn list_rows(area: Rect) -> Rect {
+    list_area(area)
 }
 
 impl<'a> SidebarTabs<'a> {

@@ -40,6 +40,9 @@ pub struct EditorOptions {
     pub scroll_off: usize,
     /// Columns the sidebar's file tree takes (at most half the screen).
     pub sidebar_width: u16,
+    /// Use the mouse: click, drag to select, scroll (the terminal's own
+    /// selecting then needs Shift, or Option in some macOS terminals).
+    pub mouse: bool,
     /// Rows the terminal panel takes (at most most of the screen).
     pub terminal_height: u16,
     /// The terminal panel's shell ("": `$SHELL`, else `/bin/sh`).

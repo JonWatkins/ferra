@@ -318,40 +318,8 @@ impl<'a> FindView<'a> {
         let theme = self.theme;
         let state = self.state;
         let on = [state.match_case, state.whole_word, state.regex];
-        let keys = [&self.keys.case, &self.keys.word, &self.keys.regex];
-        let name_of = |names: Names, long: &'static str, short: &'static str| match names {
-            Names::Long => Some(long),
-            Names::Short => Some(short),
-            Names::None => None,
-        };
-        // The most that fits, keeping the keys longest: long names and
-        // keys, short names and keys, long names, short names, the chips.
-        let fits = |names: Names, show_keys: bool| {
-            let width: usize = TOGGLES
-                .iter()
-                .zip(keys)
-                .map(|((chip, long, short), key)| {
-                    chip.width()
-                        + 2
-                        + name_of(names, long, short).map_or(0, |n| 1 + n.width())
-                        + key
-                            .as_ref()
-                            .filter(|_| show_keys)
-                            .map_or(0, |k| 1 + k.width())
-                        + 3
-                })
-                .sum();
-            x as usize + width <= right as usize + 3
-        };
-        let (names, show_keys) = [
-            (Names::Long, true),
-            (Names::Short, true),
-            (Names::Long, false),
-            (Names::Short, false),
-        ]
-        .into_iter()
-        .find(|&(names, show_keys)| fits(names, show_keys))
-        .unwrap_or((Names::None, false));
+        let keys = toggle_keys(self.keys);
+        let (names, show_keys) = toggle_fit(self.keys, x, right);
         let mut x = x;
         for (((chip, long, short), on), key) in TOGGLES.into_iter().zip(on).zip(keys) {
             let chip_style = if on {
@@ -379,6 +347,104 @@ impl<'a> FindView<'a> {
             x += 3;
         }
     }
+
+    /// Where the box's parts are, for the mouse: the fields, and each
+    /// toggle (chip, name and key) with which it is (0 case, 1 word, 2
+    /// regex).
+    pub fn hits(state: &FindState, keys: &FindKeys, area: Rect) -> FindHits {
+        let parts = Parts::new(state, area);
+        let inner = parts.inner;
+        let field = |y| Rect::new(parts.field_x, y, parts.field_width, 1);
+        let x0 = inner.x + 1;
+        let right = inner.right();
+        let (names, show_keys) = toggle_fit(keys, x0, right);
+        let mut x = x0;
+        let mut toggles = Vec::new();
+        for (i, ((chip, long, short), key)) in
+            TOGGLES.into_iter().zip(toggle_keys(keys)).enumerate()
+        {
+            let width = chip.width() as u16
+                + 2
+                + name_of(names, long, short).map_or(0, |n| 1 + n.width() as u16)
+                + key
+                    .as_ref()
+                    .filter(|_| show_keys)
+                    .map_or(0, |k| 1 + k.width() as u16);
+            if x >= right || parts.toggles_y >= inner.bottom() {
+                break;
+            }
+            toggles.push((Rect::new(x, parts.toggles_y, width.min(right - x), 1), i));
+            x += width + 3;
+        }
+        FindHits {
+            area,
+            find: field(inner.y),
+            replace: (state.replacing && parts.replace_y < inner.bottom())
+                .then(|| field(parts.replace_y)),
+            toggles,
+        }
+    }
+
+    /// The field's column under `x` (for a click in it).
+    pub fn field_col(field: &TextField, field_area: Rect, x: u16) -> usize {
+        let width = field_area.width.saturating_sub(2).max(1);
+        let col = field_scroll(field, width) + x.saturating_sub(field_area.x + 1) as usize;
+        col.min(field.text().chars().count())
+    }
+}
+
+/// Where the find box's parts were drawn.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FindHits {
+    pub area: Rect,
+    pub find: Rect,
+    pub replace: Option<Rect>,
+    pub toggles: Vec<(Rect, usize)>,
+}
+
+fn name_of(names: Names, long: &'static str, short: &'static str) -> Option<&'static str> {
+    match names {
+        Names::Long => Some(long),
+        Names::Short => Some(short),
+        Names::None => None,
+    }
+}
+
+fn toggle_keys(keys: &FindKeys) -> [&Option<String>; 3] {
+    [&keys.case, &keys.word, &keys.regex]
+}
+
+/// How much of the toggles fits between `x` and `right`, keeping the keys
+/// longest: long names and keys, short names and keys, long names, short
+/// names, the chips.
+fn toggle_fit(keys: &FindKeys, x: u16, right: u16) -> (Names, bool) {
+    let keys = toggle_keys(keys);
+    let fits = |names: Names, show_keys: bool| {
+        let width: usize = TOGGLES
+            .iter()
+            .zip(keys)
+            .map(|((chip, long, short), key)| {
+                chip.width()
+                    + 2
+                    + name_of(names, long, short).map_or(0, |n| 1 + n.width())
+                    + key
+                        .as_ref()
+                        .filter(|_| show_keys)
+                        .map_or(0, |k| 1 + k.width())
+                    + 3
+            })
+            .sum();
+        x as usize + width <= right as usize + 3
+    };
+    [
+        (Names::Long, true),
+        (Names::Short, true),
+        (Names::Long, false),
+        (Names::Short, false),
+    ]
+    .into_iter()
+    .find(|&(names, show_keys)| fits(names, show_keys))
+    .unwrap_or((Names::None, false))
 }
 
 impl Widget for FindView<'_> {

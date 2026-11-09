@@ -33,9 +33,63 @@ pub struct ViewState {
     pub viewport: Viewport,
     /// Where the terminal cursor should be drawn, set during rendering.
     pub cursor: Option<Position>,
+    /// What each screen row showed when last drawn, for the mouse.
+    pub rows: Vec<DrawnRow>,
+    /// Where the text starts, after the gutter.
+    pub text_x: u16,
+}
+
+/// One screen row as drawn: which part of which buffer line.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DrawnRow {
+    pub y: u16,
+    pub row: usize,
+    /// Chars `start..end` of the line.
+    pub start: usize,
+    pub end: usize,
+    /// The display column drawn first (a wrapped part's start, or the
+    /// sideways scroll), and how far in it's drawn (after a wrap marker).
+    pub left: usize,
+    pub indent: usize,
+    /// The line's last part (a click past its end goes to the end).
+    pub last: bool,
 }
 
 impl ViewState {
+    /// The buffer position shown at screen cell `(x, y)` when last drawn:
+    /// in the gutter, the start of that row; past the end of a line, its
+    /// end; below the text, the last line. `None` before it's drawn.
+    pub fn position_at(
+        &self,
+        document: &Document,
+        x: u16,
+        y: u16,
+        tab_width: usize,
+    ) -> Option<TextPosition> {
+        let drawn = self
+            .rows
+            .iter()
+            .find(|r| r.y == y)
+            .or_else(|| self.rows.iter().rev().find(|r| r.y < y))
+            .or(self.rows.first())?;
+        let below = y > drawn.y;
+        let line = document.buffer().line(drawn.row);
+        if below {
+            return Some(TextPosition::new(drawn.row, drawn.end));
+        }
+        let into = (x.saturating_sub(self.text_x) as usize).saturating_sub(drawn.indent);
+        let col = crate::core::columns::char_col_at(&line, drawn.left + into, tab_width);
+        let last_col = if drawn.last {
+            drawn.end
+        } else {
+            drawn.end.saturating_sub(1).max(drawn.start)
+        };
+        Some(TextPosition::new(
+            drawn.row,
+            col.clamp(drawn.start, last_col),
+        ))
+    }
+
     /// The rows the pane will show when it's next drawn `height` rows tall
     /// with the cursor at `cursor`: where it is, scrolled as drawing will
     /// scroll it.
@@ -164,6 +218,7 @@ impl StatefulWidget for EditorView<'_> {
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut ViewState) {
         state.cursor = None;
+        state.rows.clear();
         if area.is_empty() {
             return;
         }
@@ -201,6 +256,7 @@ impl StatefulWidget for EditorView<'_> {
                 .scroll_to(target, width, height, self.options.scroll_off);
         }
         let Viewport { top, left } = state.viewport;
+        state.text_x = text_area.x;
 
         let text_style = self.theme.get("ui.text");
         let syntax_styles: Vec<Style> = match self.syntax {
@@ -267,6 +323,25 @@ impl StatefulWidget for EditorView<'_> {
                 if let Some((first, last)) = fold {
                     self.draw_fold_note(buf, text_area, screen_y, line_text, last - first, left);
                 }
+                state.rows.push(DrawnRow {
+                    y: screen_y,
+                    row,
+                    start,
+                    end,
+                    left: if wrap {
+                        line::display_col(line_text, start, tab_width)
+                    } else if layout.wrap {
+                        0
+                    } else {
+                        left
+                    },
+                    indent: if wrap {
+                        layout.offset(line_text, part)
+                    } else {
+                        0
+                    },
+                    last: last_part,
+                });
                 let cursor_here = row == cursor.row
                     && (crate::core::wrap::row_of(&starts, cursor.col) == part || !wrap);
                 if cursor_here && !text_area.is_empty() {
@@ -547,6 +622,48 @@ mod tests {
         let mut state = ViewState::default();
         EditorView::new(doc, options, &Theme::default()).render(area, &mut buf, &mut state);
         (buf, state)
+    }
+
+    #[test]
+    fn maps_screen_cells_back_to_the_text() {
+        let doc = Document::with_text("one two three four\n\tx\nlast");
+        let options = EditorOptions {
+            wrap: true,
+            ..options(LineNumbers::Absolute)
+        };
+        let (_, state) = render(&doc, &options, 16, 8);
+        let t = state.text_x;
+        let at = |x, y| state.position_at(&doc, x, y, 4).map(|p| (p.row, p.col));
+        assert_eq!(at(t, 0), Some((0, 0)));
+        assert_eq!(at(t + 4, 0), Some((0, 4)), "the t of two");
+        assert_eq!(at(0, 0), Some((0, 0)), "the gutter is the row's start");
+        let first = state.rows[0];
+        let second = state.rows[1];
+        assert_eq!(
+            (second.row, second.start),
+            (0, first.end),
+            "wrapped: {:?}",
+            state.rows
+        );
+        assert_eq!(
+            at(15, 0),
+            Some((0, first.end - 1)),
+            "past a wrapped part's end, its last char"
+        );
+        assert_eq!(
+            at(t + second.indent as u16, 1),
+            Some((0, second.start)),
+            "after the wrap marker"
+        );
+        let tab_row = state.rows.iter().find(|r| r.row == 1).unwrap().y;
+        assert_eq!(at(t + 2, tab_row), Some((1, 0)), "inside the tab");
+        assert_eq!(at(t + 4, tab_row), Some((1, 1)), "after it");
+        assert_eq!(at(15, tab_row), Some((1, 2)), "past the end");
+        assert_eq!(
+            at(t + 2, 7),
+            Some((2, 4)),
+            "below the text: the end of the last line"
+        );
     }
 
     fn row_text(buf: &Buffer, y: u16) -> String {

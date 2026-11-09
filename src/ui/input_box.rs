@@ -37,7 +37,7 @@ pub struct InputBoxView<'a> {
 
 /// The field's area inside the box: a column in from each side of the
 /// border, so the field has room around it.
-fn field_area(area: Rect) -> Rect {
+pub fn field_area(area: Rect) -> Rect {
     let inner = Block::bordered().inner(area);
     Rect::new(
         inner.x + 1,
@@ -67,6 +67,13 @@ impl<'a> InputBoxView<'a> {
         let x = screen.x + screen.width.saturating_sub(width) / 2;
         let y = screen.y + 1.min(screen.height.saturating_sub(3));
         Rect::new(x, y, width, 3).intersection(screen)
+    }
+
+    /// The field's column under `x` (for a click in it).
+    pub fn field_col(input: &InputBox, area: Rect, x: u16) -> usize {
+        let field = field_area(area);
+        let col = scroll(input, field.width) + x.saturating_sub(field.x + 1) as usize;
+        col.min(input.field.text().chars().count())
     }
 
     pub fn cursor_position(input: &InputBox, area: Rect) -> Position {

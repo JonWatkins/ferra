@@ -230,6 +230,42 @@ query and keeps the highlighted item. Updates for a job whose picker has
 gone are dropped, and closing the picker sets a flag the walker checks, so
 it stops.
 
+## The mouse
+
+`ui::draw` returns a `ScreenMap` of where things went: each window's text
+area and the lines between windows, the sidebar (its tabs, list rows and
+edge), the terminal panel, and whichever box is open (the picker's and a
+popup's list rows with the index of the first item shown, the find box's
+fields and toggles from `FindView::hits`, an input box's field). The app
+keeps the last one, and `app/mouse.rs` works out what an event is over from
+it. Text positions come from the window's `ViewState`, which records each
+screen row as it's drawn (`DrawnRow`: the buffer row, the chars on it, the
+display column it starts at and the wrap indent), so
+`ViewState::position_at` maps a cell back through wrapping, folds, tabs,
+wide chars and sideways scrolling without laying anything out again.
+
+A click goes first to a box with focus (`click_in_box`): the picker
+chooses or closes, a list popup runs its `<CR>` command, the find box flips
+toggles and moves between fields (a click outside it closes it and goes on
+to the text), an input box places its cursor or cancels. Otherwise an edge
+starts a resize drag (`Drag::Sidebar` sets `sidebar-width`, `Drag::Panel`
+`terminal-height`, `Drag::Split` resizes the window before the line through
+`resize_window`), and anything else is a click on a window, the sidebar or
+the panel. A window click focuses it and sets the cursor; double and triple
+clicks (same cell, within 400 ms) run `visual_mode` + `inner_word` or
+`visual_line_mode`; a drag from it starts visual mode and moves the cursor,
+kept inside the window.
+
+As the pointer moves, `App::pointer_for` names its shape (CSS names:
+`pointer`, `text`, `ew-resize`, `ns-resize`, `default`); the event loop
+sends it with OSC 22 when it changes, and pointer moves don't redraw.
+iTerm2 only knows X11 names (`hand2`, `xterm`, `sb_h_double_arrow`), so
+when `TERM_PROGRAM` or `LC_TERMINAL` says it's iTerm2,
+`terminal::x11_pointer` translates; it honours them only from 3.7.0 (before
+that, it ignores them while mouse reporting is on). Mouse
+reporting is turned on and off with the `mouse` option, each time round
+the event loop.
+
 ## The sidebar
 
 `editor/explorer.rs` holds the file tree: the root (the starting folder,
@@ -1358,9 +1394,9 @@ and a terminal in a window rather than the panel.
 
 A VS Code-like layout, so the editor can be driven without many commands:
 the sidebar's file tree and the find box (done; see [The
-sidebar](#the-sidebar), [The find box](#the-find-box) and [The terminal
-panel](#the-terminal-panel)), then plugin windows and popups, and the
-mouse. The sidebar is meant to hold more
+sidebar](#the-sidebar), [The find box](#the-find-box), [The terminal
+panel](#the-terminal-panel), plugin popups and views, and [The
+mouse](#the-mouse)). The sidebar is meant to hold more
 than files: Git's changed files will be another view in it.
 
 ### Git support
@@ -1634,6 +1670,10 @@ not. The answer is dropped unless the editor is still where it was asked
 
 ## Known gaps / next steps
 
+- Mouse: no right-click menu; dragging past a window's edge doesn't
+  scroll it; no mouse in the terminal panel's programs (the wheel scrolls
+  its history); the pointer shape needs a terminal with OSC 22 (iTerm2 from
+3.7).
 - Plugin popups: one at a time; an input box is a single line (no
   multi-line input, no validating as you type, no history); keys run commands, not Lua functions; no mouse; a plugin
   can't add a view to the bottom panel yet. Sidebar views are flat lists

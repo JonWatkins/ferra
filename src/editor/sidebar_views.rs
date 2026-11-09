@@ -169,6 +169,16 @@ impl Editor {
         }
     }
 
+    /// Selects the line `row` rows down the plugin view's list, as drawn.
+    pub(super) fn select_plugin_view_line_on_screen(&mut self, row: usize) {
+        if let Some(view) = self.plugin_view_mut() {
+            let index = view.scroll.get() + row;
+            if index < view.lines.len() {
+                view.selected = index;
+            }
+        }
+    }
+
     /// `R`, or `ctx:view_refresh()`: makes the view `name` (or the one shown)
     /// again.
     pub fn refresh_plugin_view(&mut self, name: Option<&str>) {

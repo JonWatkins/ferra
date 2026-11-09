@@ -3,6 +3,7 @@
 
 mod background;
 mod macros;
+mod mouse;
 mod normal;
 mod repeat;
 mod terminal;
@@ -32,6 +33,11 @@ const MAX_KEYS_PER_FRAME: usize = 256;
 
 /// How often the event loop checks for background results while a job is
 /// running (it blocks on input when nothing is).
+/// The pointer moving with no button held (which only changes its shape).
+fn is_pointer_move(event: &Event) -> bool {
+    matches!(event, Event::Mouse(m) if m.kind == event::MouseEventKind::Moved)
+}
+
 const BACKGROUND_POLL: Duration = Duration::from_millis(30);
 
 /// How often open files are checked for changes made by other programs,
@@ -42,6 +48,15 @@ pub struct App {
     editor: Editor,
     commands: CommandRegistry,
     keymap: Keymap,
+    /// Where things were last drawn, for the mouse.
+    screen_map: ui::ScreenMap,
+    /// What a drag that's going on is doing.
+    dragging: Option<mouse::Drag>,
+    /// The last click: when, where, and how many in a row (for double and
+    /// triple clicks).
+    last_click: Option<(Instant, ratatui::layout::Position, u8)>,
+    /// The mouse pointer's shape wanted over what's under it (a CSS name).
+    pointer: &'static str,
     /// The keymap with the open popup's and the shown sidebar view's own
     /// keys, while they have some.
     popup_keymap: Option<Keymap>,
@@ -94,6 +109,10 @@ impl App {
             commands,
             keymap: config.keys,
             popup_keymap: None,
+            screen_map: ui::ScreenMap::default(),
+            dragging: None,
+            last_click: None,
+            pointer: "default",
             theme: config.theme,
             input: InputHandler::default(),
             views: Views::default(),
@@ -291,6 +310,9 @@ impl App {
         let enhanced_keys = self.editor.options.kitty_keyboard
             && terminal::enable_keyboard_enhancement().unwrap_or(false);
         let mut shape = None;
+        // Mouse reporting follows the `mouse` option (`:set mouse` too).
+        let mut mouse = false;
+        let mut pointer = "default";
         // When a half-typed key sequence gives up waiting.
         let mut deadline: Option<Instant> = None;
         // When open files are next checked for outside changes.
@@ -320,6 +342,14 @@ impl App {
             if shape != Some(wanted) {
                 terminal::set_cursor_shape(wanted)?;
                 shape = Some(wanted);
+            }
+            if mouse != self.editor.options.mouse {
+                mouse = self.editor.options.mouse;
+                terminal::set_mouse_capture(mouse)?;
+            }
+            if mouse && pointer != self.pointer {
+                pointer = self.pointer;
+                terminal::set_pointer_shape(pointer)?;
             }
 
             // Wait for input, for a half-typed key sequence to time out, for
@@ -364,18 +394,21 @@ impl App {
                 }
                 continue;
             }
-            redraw = true;
-
             // Handle every key that's already waiting before drawing again,
             // so a burst of input (fast typing, key repeat, a paste) costs
-            // one redraw and one re-highlight rather than one per key.
-            self.handle_event(event::read()?);
+            // one redraw and one re-highlight rather than one per key. The
+            // pointer moving only changes its shape: no redraw for that.
+            let event = event::read()?;
+            redraw = !is_pointer_move(&event);
+            self.handle_event(event);
             let mut handled = 1;
             while handled < MAX_KEYS_PER_FRAME
                 && !self.should_quit()
                 && event::poll(Duration::ZERO)?
             {
-                self.handle_event(event::read()?);
+                let event = event::read()?;
+                redraw |= !is_pointer_move(&event);
+                self.handle_event(event);
                 handled += 1;
             }
             deadline = self.key_deadline();
@@ -383,6 +416,12 @@ impl App {
         self.lsp.borrow_mut().shutdown();
         if enhanced_keys {
             terminal::disable_keyboard_enhancement()?;
+        }
+        if mouse {
+            terminal::set_mouse_capture(false)?;
+        }
+        if pointer != "default" {
+            terminal::set_pointer_shape("default")?;
         }
         terminal::disable_focus_reporting()?;
         terminal::disable_bracketed_paste()?;
@@ -398,6 +437,7 @@ impl App {
             }
             Event::Paste(text) => self.handle_paste(&text),
             Event::FocusGained => self.handle_focus_gained(),
+            Event::Mouse(event) => self.handle_mouse(event),
             _ => {}
         }
     }
@@ -618,7 +658,7 @@ impl App {
         } else {
             ui::TerminalKeys::default()
         };
-        ui::draw(
+        self.screen_map = ui::draw(
             frame,
             &self.editor,
             &self.theme,

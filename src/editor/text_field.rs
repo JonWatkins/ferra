@@ -120,6 +120,12 @@ impl TextField {
         self.cursor = 0;
     }
 
+    /// Puts the cursor at char `col` (a click), unselecting.
+    pub fn set_cursor(&mut self, col: usize) {
+        self.selected = false;
+        self.cursor = col.min(self.len());
+    }
+
     pub fn left(&mut self) {
         if !std::mem::take(&mut self.selected) {
             self.cursor = self.cursor.saturating_sub(1);

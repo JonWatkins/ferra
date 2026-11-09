@@ -226,6 +226,13 @@ impl Picker {
         popped
     }
 
+    /// Selects match `index` (a click), if there is one.
+    pub fn select(&mut self, index: usize) {
+        if index < self.matches.len() {
+            self.selected = index;
+        }
+    }
+
     /// Moves the selection by `delta` rows, wrapping around.
     pub fn move_selection(&mut self, delta: isize) {
         let len = self.matches.len();

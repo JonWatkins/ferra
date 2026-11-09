@@ -18,7 +18,7 @@
 mod command_line;
 mod completion_menu;
 pub mod editor_view;
-mod find;
+pub mod find;
 mod hover;
 mod input_box;
 mod picker;
@@ -67,7 +67,47 @@ pub struct KeyHints {
     pub input: InputKeys,
 }
 
-/// Draws the whole screen and positions the terminal cursor.
+/// Where things were drawn, for the mouse.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScreenMap {
+    /// Each window's text area (status line not included).
+    pub windows: Vec<(crate::editor::WindowId, Rect)>,
+    pub sidebar: Option<SidebarMap>,
+    /// The terminal panel, title row included.
+    pub terminal: Option<Rect>,
+    /// The lines between windows, and whether each is vertical.
+    pub separators: Vec<(Rect, bool)>,
+    /// A plugin's popup, the picker: where, and their lines.
+    pub popup: Option<ListMap>,
+    pub picker: Option<ListMap>,
+    pub find: Option<find::FindHits>,
+    /// An input box, and its field.
+    pub input: Option<(Rect, Rect)>,
+}
+
+/// A box with a list: its area, the list's rows, and the index of the item
+/// on the first.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ListMap {
+    pub area: Rect,
+    pub list: Rect,
+    pub first: usize,
+}
+
+/// Where the sidebar's parts were drawn.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SidebarMap {
+    pub area: Rect,
+    /// The tabs' row and each tab's columns, when there are tabs.
+    pub tabs: Option<(u16, Vec<(u16, u16)>)>,
+    /// The rows of the list.
+    pub list: Rect,
+    /// The line between it and the windows (dragged to resize it).
+    pub edge: Rect,
+}
+
+/// Draws the whole screen and positions the terminal cursor. Returns where
+/// things went, for the mouse.
 pub fn draw(
     frame: &mut Frame,
     editor: &Editor,
@@ -76,7 +116,8 @@ pub fn draw(
     pending: &str,
     mut syntax: Option<&mut SyntaxEngine>,
     keys: &KeyHints,
-) {
+) -> ScreenMap {
+    let mut map = ScreenMap::default();
     let splash = keys.splash.as_slice();
     let find_keys = &keys.find;
     let area = frame.area();
@@ -94,7 +135,7 @@ pub fn draw(
     // The sidebar takes the left of the screen, down to the command line
     // with per-window status lines (they're the windows'), or down to the
     // one status line, which keeps the full width.
-    let (main, status, sidebar_cursor) = match editor.sidebar() {
+    let (main, status) = match editor.sidebar() {
         Some(explorer) if main.width >= 20 => {
             let per_window = editor.options.statusline == StatuslineMode::Windows;
             let width = editor.options.sidebar_width.clamp(10, main.width / 2);
@@ -123,6 +164,12 @@ pub fn draw(
                 side
             };
             let plugin_view = editor.plugin_view();
+            map.sidebar = Some(SidebarMap {
+                area: side,
+                tabs: (titles.len() > 1).then(|| (side.y, sidebar::tab_spans(&titles, side.x))),
+                list: sidebar::list_rows(content),
+                edge: separator,
+            });
             match plugin_view {
                 Some(view) => {
                     frame.render_widget(PluginViewWidget::new(view, focused, theme), content);
@@ -141,15 +188,9 @@ pub fn draw(
                     .set_symbol("│")
                     .set_style(separator_style);
             }
-            let cursor = focused
-                .then(|| match plugin_view {
-                    Some(view) => PluginViewWidget::cursor_position(view, content),
-                    None => SidebarView::cursor_position(explorer, content),
-                })
-                .flatten();
-            (main, status, cursor)
+            (main, status)
         }
-        _ => (main, status, None),
+        _ => (main, status),
     };
 
     // The terminal panel takes the bottom of what's left: a title row and
@@ -172,6 +213,7 @@ pub fn draw(
                     status
                 };
                 let focused = editor.mode() == Mode::Terminal;
+                map.terminal = Some(panel);
                 let view = TerminalView::new(terminal, focused, &keys.terminal, theme);
                 frame.render_widget(view, panel);
                 if focused {
@@ -216,6 +258,8 @@ pub fn draw(
         }
     };
     let window_cursor = drawn.cursor;
+    map.windows = drawn.windows.clone();
+    map.separators = drawn.separators.clone();
     frame.render_widget(CommandLineView::new(editor, theme), command);
     if editor.splash_visible() && !splash.is_empty() {
         frame.render_widget(Splash::new(splash, theme), main);
@@ -266,6 +310,7 @@ pub fn draw(
         let view = FindView::new(editor.find_state(), editor.find_count(), find_keys, theme);
         let area = FindView::area(editor.find_state(), window);
         find_cursor = FindView::cursor_position(editor.find_state(), area);
+        map.find = Some(FindView::hits(editor.find_state(), find_keys, area));
         frame.render_widget(view, area);
     }
 
@@ -273,6 +318,13 @@ pub fn draw(
     if let Some(popup) = editor.popup() {
         let area = PopupView::area(popup, main, window_cursor, drawn.active);
         frame.render_widget(PopupView::new(popup, theme), area);
+        let inner = ratatui::widgets::Block::bordered().inner(area);
+        map.popup = Some(ListMap {
+            area,
+            list: inner,
+            // Set as it drew.
+            first: popup.scroll.get(),
+        });
     }
 
     // A plugin's input box, at the top centre of the windows.
@@ -280,6 +332,7 @@ pub fn draw(
     if let Some(input) = editor.input_box() {
         let area = InputBoxView::area(main);
         input_cursor = Some(InputBoxView::cursor_position(input, area));
+        map.input = Some((area, input_box::field_area(area)));
         frame.render_widget(InputBoxView::new(input, &keys.input, theme), area);
     }
 
@@ -288,6 +341,12 @@ pub fn draw(
     if let Some(picker) = popup {
         let popup_area = PickerView::area(screen_main);
         frame.render_widget(PickerView::new(picker, theme), popup_area);
+        let (list, first) = PickerView::list(picker, popup_area);
+        map.picker = Some(ListMap {
+            area: popup_area,
+            list,
+            first,
+        });
     }
 
     let cursor = match (editor.mode(), popup) {
@@ -296,7 +355,8 @@ pub fn draw(
             PickerView::area(screen_main),
         )),
         (Mode::Command, _) => Some(CommandLineView::cursor_position(editor, command)),
-        (Mode::Sidebar, _) => sidebar_cursor,
+        // The selected row's highlight shows where it is (as in VS Code).
+        (Mode::Sidebar, _) => None,
         (Mode::Find, _) => find_cursor,
         (Mode::Terminal, _) => terminal_cursor,
         // The selection shows where it is.
@@ -307,4 +367,5 @@ pub fn draw(
     if let Some(position) = cursor {
         frame.set_cursor_position(position);
     }
+    map
 }
