@@ -47,6 +47,9 @@ scroll-off = 5
 # (against what's staged, as VS Code does), ]c and [c to jump between them,
 # and the branch in the status line ("git" in statusline-layout).
 git = true
+# Show who last changed the cursor's line, and when, after it in grey, once
+# the cursor rests there in normal mode (:git_blame turns it on and off).
+git-blame = true
 # Use the mouse: click to move the cursor or focus a window, the sidebar or
 # the terminal panel; drag to select; scroll with the wheel. To select text
 # with the terminal's own selection instead, hold Shift while dragging
@@ -321,6 +324,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.virtual.inlay-hint" = { fg = "#6b7280", modifiers = ["italic"] }
 "ui.virtual.inlay-hint.type" = { fg = "#6b7280", modifiers = ["italic"] }
 "ui.virtual.inlay-hint.parameter" = { fg = "#6b7280", modifiers = ["italic"] }
+# Git blame for the cursor's line, after it.
+"ui.virtual.blame" = { fg = "#565f89", modifiers = ["italic"] }
 # Git changes in the gutter (against what's staged).
 "ui.gutter.added" = "#9ece6a"
 "ui.gutter.changed" = "#7aa2f7"

@@ -423,6 +423,113 @@ pub fn start_remote(
     receiver
 }
 
+/// Who last changed a line, and in which commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Blame {
+    pub author: String,
+    /// Seconds since 1970 (`author-time`).
+    pub time: i64,
+    pub summary: String,
+    /// A line changed since the last commit (git says "Not Committed Yet").
+    pub uncommitted: bool,
+}
+
+impl Blame {
+    /// `Jon, 3 days ago • Parse the command line`, or `You • not committed
+    /// yet`.
+    pub fn describe(&self, now: i64) -> String {
+        if self.uncommitted {
+            return "You • not committed yet".into();
+        }
+        format!(
+            "{}, {} • {}",
+            self.author,
+            time_ago(now - self.time),
+            self.summary
+        )
+    }
+}
+
+/// `5 minutes ago`, `3 days ago`, `2 years ago`.
+pub fn time_ago(seconds: i64) -> String {
+    let units = [
+        (60 * 60 * 24 * 365, "year"),
+        (60 * 60 * 24 * 30, "month"),
+        (60 * 60 * 24 * 7, "week"),
+        (60 * 60 * 24, "day"),
+        (60 * 60, "hour"),
+        (60, "minute"),
+    ];
+    for (size, name) in units {
+        let n = seconds / size;
+        if n >= 1 {
+            let plural = if n == 1 { "" } else { "s" };
+            return format!("{n} {name}{plural} ago");
+        }
+    }
+    "just now".into()
+}
+
+/// Who last changed line `row` (0-based) of the file at `path`, given the
+/// buffer's text (`contents`, so unsaved edits count: their lines are
+/// uncommitted). `None` outside a repository or for an untracked file.
+pub fn blame_line(path: &Path, row: usize, contents: &str) -> Option<Blame> {
+    use std::io::Write as _;
+    let dir = dir_of(path)?;
+    let name = path.file_name()?.to_str()?.to_string();
+    let line = format!("{},{}", row + 1, row + 1);
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(&dir)
+        .args([
+            "blame",
+            "--porcelain",
+            "-L",
+            &line,
+            "--contents",
+            "-",
+            "--",
+            &name,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .spawn()
+        .ok()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // Written on its own thread, so a big file can't fill the pipe
+        // while git's output waits to be read.
+        let contents = contents.to_string();
+        thread::spawn(move || {
+            let _ = stdin.write_all(contents.as_bytes());
+        });
+    }
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut lines = text.lines();
+    let hash = lines.next()?.split_whitespace().next()?.to_string();
+    let mut blame = Blame {
+        author: String::new(),
+        time: 0,
+        summary: String::new(),
+        uncommitted: hash.chars().all(|c| c == '0'),
+    };
+    for line in lines {
+        if let Some(author) = line.strip_prefix("author ") {
+            blame.author = author.to_string();
+        } else if let Some(time) = line.strip_prefix("author-time ") {
+            blame.time = time.parse().unwrap_or(0);
+        } else if let Some(summary) = line.strip_prefix("summary ") {
+            blame.summary = summary.to_string();
+        }
+    }
+    Some(blame)
+}
+
 /// A commit, as the log shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Commit {
@@ -820,6 +927,47 @@ mod tests {
     }
 
     use super::tests_support::repo;
+
+    #[test]
+    fn blames_a_line_counting_unsaved_edits() {
+        let Some(dir) = repo() else {
+            return;
+        };
+        let path = dir.path().join("file.txt");
+        let blame = blame_line(&path, 1, "one\ntwo\n").unwrap();
+        assert!(!blame.uncommitted);
+        assert_eq!(
+            (blame.author.as_str(), blame.summary.as_str()),
+            ("t", "first")
+        );
+        assert!(
+            blame
+                .describe(blame.time + 3 * 86400)
+                .starts_with("t, 3 days ago • first")
+        );
+        // A line added in the buffer, not saved: not committed.
+        let blame = blame_line(&path, 1, "one\nnew\ntwo\n").unwrap();
+        assert!(blame.uncommitted);
+        assert_eq!(blame.describe(0), "You • not committed yet");
+        assert!(
+            !blame_line(&path, 2, "one\nnew\ntwo\n").unwrap().uncommitted,
+            "two moved down"
+        );
+        std::fs::write(dir.path().join("new.txt"), "x\n").unwrap();
+        assert_eq!(
+            blame_line(&dir.path().join("new.txt"), 0, "x\n"),
+            None,
+            "untracked"
+        );
+    }
+
+    #[test]
+    fn times_ago() {
+        assert_eq!(time_ago(30), "just now");
+        assert_eq!(time_ago(60), "1 minute ago");
+        assert_eq!(time_ago(7200), "2 hours ago");
+        assert_eq!(time_ago(86400 * 400), "1 year ago");
+    }
 
     /// Waits for a remote job to finish.
     fn finish(receiver: std::sync::mpsc::Receiver<RemoteUpdate>) -> Result<String, String> {

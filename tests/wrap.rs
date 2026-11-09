@@ -144,6 +144,7 @@ fn virtual_text_takes_room_in_wrapped_lines_and_gj_steps_over_it() {
         text: text.into(),
         style: "ui.virtual.inlay-hint".into(),
         source: "inlay".into(),
+        end_of_line: false,
     };
     app.editor_mut().document.set_virtual_text(
         "inlay",

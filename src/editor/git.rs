@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use super::{DocumentId, Editor, Message, Mode};
+use super::{DocumentId, Editor, Message, Mode, VirtualText};
 use crate::events::Event;
 use crate::git::{self, ChangeCounts, FileStatus, Hunk, RepoStatus};
 
@@ -31,7 +31,20 @@ pub struct GitState {
     ahead_behind: Option<(usize, usize)>,
     /// A fetch, pull or push running in the background.
     job: Option<(git::RemoteOp, std::sync::mpsc::Receiver<git::RemoteUpdate>)>,
+    /// Blame for the cursor's line: the line (buffer, row, edit count) last
+    /// seen and since when, the one asked about, the blame running for it,
+    /// and the one it's shown for.
+    blame_seen: Option<(BlameAt, std::time::Instant)>,
+    blame_asked: Option<BlameAt>,
+    blame_job: Option<(BlameAt, std::sync::mpsc::Receiver<Option<git::Blame>>)>,
+    blame_shown: Option<BlameAt>,
 }
+
+/// A line of a buffer, as its text was: (buffer, row, edit count).
+type BlameAt = (DocumentId, usize, u64);
+
+/// How long the cursor rests on a line before it's blamed.
+const BLAME_REST: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// A row of the Source Control view.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -495,6 +508,97 @@ impl Editor {
     /// How far the branch is ahead of and behind its upstream.
     pub fn git_ahead_behind(&self) -> Option<(usize, usize)> {
         self.git.ahead_behind.filter(|_| self.options.git)
+    }
+
+    /// Each time round the event loop: blames the cursor's line once it's
+    /// rested there a moment in normal mode (in the background), and shows
+    /// it after the line; takes it away when the cursor moves on, the text
+    /// changes, or another mode starts. Returns whether there's anything
+    /// new to draw.
+    pub fn git_blame_tick(&mut self) -> bool {
+        let here = (
+            self.document.id(),
+            self.document.cursor().row,
+            self.document.buffer().edit_seq(),
+        );
+        let wanted = self.options.git
+            && self.options.git_blame
+            && self.mode() == Mode::Normal
+            && self.document.path().is_some();
+        let mut changed = false;
+        // Shown for somewhere else: it goes.
+        if let Some(shown) = self.git.blame_shown
+            && (!wanted || shown != here)
+        {
+            if let Some(document) = self.document_by_id_mut(shown.0) {
+                document.clear_virtual_text("blame");
+            }
+            self.git.blame_shown = None;
+            changed = true;
+        }
+        if !wanted {
+            self.git.blame_seen = None;
+            self.git.blame_asked = None;
+            self.git.blame_job = None;
+            return changed;
+        }
+        // Its answer, if it's still for here.
+        if let Some((at, receiver)) = &self.git.blame_job
+            && let Ok(blame) = receiver.try_recv()
+        {
+            let at = *at;
+            self.git.blame_job = None;
+            if let Some(blame) = blame.filter(|_| at == here) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs() as i64);
+                self.document.set_virtual_text(
+                    "blame",
+                    vec![VirtualText {
+                        at: crate::core::Position::new(here.1, 0),
+                        text: blame.describe(now),
+                        style: "ui.virtual.blame".into(),
+                        source: "blame".into(),
+                        end_of_line: true,
+                    }],
+                );
+                self.git.blame_shown = Some(here);
+                changed = true;
+            }
+        }
+        if self.git.blame_asked == Some(here) || self.git.blame_job.is_some() {
+            return changed;
+        }
+        match self.git.blame_seen {
+            Some((at, since)) if at == here => {
+                if since.elapsed() >= BLAME_REST {
+                    let path = self
+                        .document
+                        .path()
+                        .map(|p| p.to_path_buf())
+                        .expect("checked");
+                    let text = self.document.buffer().text();
+                    let (sender, receiver) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = sender.send(git::blame_line(&path, here.1, &text));
+                    });
+                    self.git.blame_job = Some((here, receiver));
+                    self.git.blame_asked = Some(here);
+                }
+            }
+            _ => self.git.blame_seen = Some((here, std::time::Instant::now())),
+        }
+        changed
+    }
+
+    /// Whether blame is waiting on time or on git (so the event loop keeps
+    /// checking, rather than sleeping until a key).
+    pub fn git_blame_waiting(&self) -> bool {
+        self.git.blame_job.is_some()
+            || self
+                .git
+                .blame_seen
+                .is_some_and(|(at, _)| self.git.blame_asked != Some(at))
     }
 
     /// `f` `p` `P`: fetches, pulls or pushes in the background.

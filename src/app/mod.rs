@@ -362,7 +362,8 @@ impl App {
             let busy = self.background.busy()
                 || self.lsp.borrow().active()
                 || self.editor.terminal_running()
-                || self.editor.git_job_running();
+                || self.editor.git_job_running()
+                || self.editor.git_blame_waiting();
             let wait = match (due, busy) {
                 (Some(due), busy) => {
                     let left = due.saturating_duration_since(Instant::now());
@@ -382,6 +383,7 @@ impl App {
             redraw |= self.handle_background();
             redraw |= self.editor.pump_terminal();
             redraw |= self.editor.pump_git_job();
+            redraw |= self.editor.git_blame_tick();
             if !input_ready {
                 redraw |= self.update_lsp();
                 if deadline.is_some_and(|due| Instant::now() >= due) {

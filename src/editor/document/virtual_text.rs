@@ -20,6 +20,10 @@ pub struct VirtualText {
     pub style: String,
     /// What put it there (`"inlay"`), so it can be replaced as a whole.
     pub source: String,
+    /// Drawn after the line's text (git blame) rather than before the char
+    /// at `at`: it takes no room in the line, so it's cut off rather than
+    /// wrapped, and the cursor never meets it.
+    pub end_of_line: bool,
 }
 
 /// A line with its virtual text put in.
@@ -89,6 +93,7 @@ impl Document {
         let pieces: Vec<&VirtualText> = self.virtual_text[first..]
             .iter()
             .take_while(|v| v.at.row == row)
+            .filter(|v| !v.end_of_line)
             .collect();
         if pieces.is_empty() {
             return None;
@@ -123,6 +128,15 @@ impl Document {
             before,
             virtual_spans,
         })
+    }
+
+    /// The text to draw after line `row`'s own.
+    pub fn end_of_line_text(&self, row: usize) -> impl Iterator<Item = &VirtualText> {
+        let first = self.virtual_text.partition_point(|v| v.at.row < row);
+        self.virtual_text[first..]
+            .iter()
+            .take_while(move |v| v.at.row == row)
+            .filter(|v| v.end_of_line)
     }
 
     /// After `at..end` was inserted: virtual text after it moves on.
@@ -164,6 +178,7 @@ mod tests {
             text: text.into(),
             style: "ui.virtual.inlay-hint".into(),
             source: "inlay".into(),
+            end_of_line: false,
         }
     }
 

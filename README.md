@@ -425,6 +425,17 @@ They follow your edits as you type.
 The status line shows the branch and the file's changed lines (`⎇ main
 +1 ~1 -1`); it's the `git` element of `statusline-layout`.
 
+Resting the cursor on a line in normal mode shows who last changed it,
+after it in grey, as VS Code's GitLens does:
+
+```text
+   12     let files = parse(args);  Jon Watkins, 3 days ago • Parse the command line
+```
+
+It counts your unsaved edits (a line you've added says `You • not
+committed yet`), runs in the background, and goes while you type.
+`:git_blame` (or `git-blame = false`) turns it off.
+
 ### In the sidebar
 
 The file tree colours changed files and shows git's letter beside them (`M`

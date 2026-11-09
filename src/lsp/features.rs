@@ -1326,6 +1326,7 @@ pub(super) fn inlay_hints(
                     _ => "ui.virtual.inlay-hint".into(),
                 },
                 source: "inlay".into(),
+                end_of_line: false,
             })
         })
         .collect()

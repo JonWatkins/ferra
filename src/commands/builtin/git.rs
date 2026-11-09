@@ -226,6 +226,21 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.git_delete_branch_confirmed(),
     );
     r.register(
+        "git_blame",
+        "Show or hide who last changed the cursor's line, after it",
+        |cx| {
+            let on = !cx.editor.options.git_blame;
+            cx.editor
+                .set_option("git-blame", toml::Value::Boolean(on), false)?;
+            cx.editor.set_message(crate::editor::Message::info(if on {
+                "Line blame on"
+            } else {
+                "Line blame off"
+            }));
+            Ok(())
+        },
+    );
+    r.register(
         "git_refresh",
         "Read what git has staged again, for the gutter and status line",
         |cx| {

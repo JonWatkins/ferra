@@ -43,6 +43,8 @@ pub struct EditorOptions {
     /// Show git changes in the gutter (against what's staged) and the
     /// branch in the status line.
     pub git: bool,
+    /// Show who last changed the cursor's line, after it (with `git`).
+    pub git_blame: bool,
     /// Use the mouse: click, drag to select, scroll (the terminal's own
     /// selecting then needs Shift, or Option in some macOS terminals).
     pub mouse: bool,

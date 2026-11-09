@@ -392,3 +392,56 @@ fn branches_and_pushing_from_the_git_view() {
     keys(&mut app, "other<CR>");
     assert_eq!(app.editor().git_branch(), Some("other"));
 }
+
+/// Runs the blame's ticks (as the event loop does) until `done`, or 5s.
+fn blame_until(app: &mut ferra::App, done: impl Fn(&ferra::App) -> bool) {
+    let start = std::time::Instant::now();
+    while !done(app) && start.elapsed() < std::time::Duration::from_secs(5) {
+        app.editor_mut().git_blame_tick();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+fn blame_shown(app: &ferra::App) -> Option<(usize, String)> {
+    app.editor()
+        .document
+        .virtual_text()
+        .iter()
+        .find(|v| v.source == "blame")
+        .map(|v| (v.at.row, v.text.clone()))
+}
+
+#[test]
+fn the_cursors_line_is_blamed_after_it() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let mut app = app();
+    keys(
+        &mut app,
+        &format!(":e {}<CR>j", dir.path().join("code.txt").display()),
+    );
+    blame_until(&mut app, |a| blame_shown(a).is_some());
+    let (row, text) = blame_shown(&app).expect("blamed");
+    assert_eq!(row, 1);
+    assert!(text.starts_with("t, ") && text.ends_with(" • x"), "{text}");
+    let screen = render(&mut app, 80, 6);
+    assert!(screen.rows[1].contains("two  t, "), "{:?}", screen.rows);
+
+    // A line added and not saved isn't committed.
+    keys(&mut app, "onew line<Esc>");
+    blame_until(&mut app, |a| blame_shown(a).is_some_and(|(r, _)| r == 2));
+    assert_eq!(blame_shown(&app).unwrap().1, "You • not committed yet");
+
+    // Insert mode hides it; so does turning it off.
+    keys(&mut app, "A");
+    app.editor_mut().git_blame_tick();
+    assert_eq!(blame_shown(&app), None);
+    keys(&mut app, "<Esc>:git_blame<CR>");
+    // Past the time it'd have been asked for.
+    for _ in 0..30 {
+        app.editor_mut().git_blame_tick();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(blame_shown(&app), None);
+}

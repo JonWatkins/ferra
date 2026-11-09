@@ -698,22 +698,41 @@ impl EditorView<'_> {
             }
         }
 
-        // The message, after the line's text on its last row.
-        if let Some(d) = on_line.filter(|_| last) {
-            let end = crate::core::columns::display_width(&line_text[..upto], tab_width)
-                .saturating_sub(left);
-            let x = end + 2;
-            if x < width {
-                let message = d.message.lines().next().unwrap_or_default();
-                buf.set_stringn(
-                    text_area.x + x as u16,
-                    y,
-                    format!("● {message}"),
-                    width - x,
-                    self.theme
-                        .get(&format!("ui.diagnostic.{}", d.severity.id())),
-                );
+        if !last {
+            return;
+        }
+        // After the line's text on its last row: a diagnostic's message,
+        // then any end-of-line virtual text (git blame), as far as fits.
+        let mut x = crate::core::columns::display_width(&line_text[..upto], tab_width)
+            .saturating_sub(left)
+            + 2;
+        if let Some(d) = on_line
+            && x < width
+        {
+            let message = d.message.lines().next().unwrap_or_default();
+            let text = format!("● {message}");
+            buf.set_stringn(
+                text_area.x + x as u16,
+                y,
+                &text,
+                width - x,
+                self.theme
+                    .get(&format!("ui.diagnostic.{}", d.severity.id())),
+            );
+            x += unicode_width::UnicodeWidthStr::width(text.as_str()) + 3;
+        }
+        for piece in self.document.end_of_line_text(row) {
+            if x >= width {
+                break;
             }
+            buf.set_stringn(
+                text_area.x + x as u16,
+                y,
+                &piece.text,
+                width - x,
+                row_style.patch(self.theme.get(&piece.style)),
+            );
+            x += unicode_width::UnicodeWidthStr::width(piece.text.as_str()) + 3;
         }
     }
 }
@@ -783,6 +802,7 @@ mod tests {
             text: text.into(),
             style: "ui.virtual.inlay-hint".into(),
             source: "inlay".into(),
+            end_of_line: false,
         };
         doc.set_virtual_text("inlay", vec![hint(5, ": i32"), hint(10, "n: ")]);
         doc.set_cursor(TextPos::new(0, 10));
@@ -832,6 +852,36 @@ mod tests {
         let mut state = ViewState::default();
         EditorView::new(&doc, &wrapping, &theme).render(narrow, &mut buf, &mut state);
         assert_eq!(state.rows.len(), 2, "{:?}", state.rows);
+    }
+
+    #[test]
+    fn end_of_line_text_goes_after_the_line_and_is_cut_off_at_the_edge() {
+        use crate::editor::VirtualText;
+        let mut doc = Document::with_text("short\nother");
+        doc.set_virtual_text(
+            "blame",
+            vec![VirtualText {
+                at: TextPos::new(0, 0),
+                text: "Jon, 3 days ago • A long commit summary".into(),
+                style: "ui.virtual.blame".into(),
+                source: "blame".into(),
+                end_of_line: true,
+            }],
+        );
+        let options = options(LineNumbers::None);
+        let theme = theme();
+        let area = Rect::new(0, 0, 30, 2);
+        let mut buf = Buffer::empty(area);
+        let mut state = ViewState::default();
+        EditorView::new(&doc, &options, &theme).render(area, &mut buf, &mut state);
+        assert_eq!(row_text(&buf, 0), "short  Jon, 3 days ago • A lon");
+        assert_eq!(buf[(7, 0)].fg, theme.get("ui.virtual.blame").fg.unwrap());
+        assert_eq!(row_text(&buf, 1).trim_end(), "other");
+        assert_eq!(
+            state.position_at(&doc, 20, 0, 4).map(|p| p.col),
+            Some(5),
+            "clicks past it: the end"
+        );
     }
 
     #[test]

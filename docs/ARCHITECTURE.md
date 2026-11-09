@@ -251,6 +251,11 @@ clicks, and `gj`/`gk`. Everything that comes in buffer columns (syntax
 spans, selections, search matches, diagnostics, references) is mapped as
 it's drawn; search runs on the real text, so hints never match.
 
+Virtual text marked `end_of_line` (git blame) is left out of the display
+line and drawn after the line's own text on its last row, after any
+diagnostic message, cut off at the window's edge: it takes no room, so
+nothing else changes.
+
 Inlay hints (`LspFeature::InlayHint`) are asked for the whole buffer once
 its text has been still for 300 ms and a ready server has it
 (`Lsp::ask_for_inlay_hints`), again after each change and when the server
@@ -385,6 +390,15 @@ moving, `R` and clicks act on it. Discarding asks in a built-in popup
 (whose `y` runs `git_discard_confirmed`), and committing in an input box
 (whose submit runs `git_commit_message`). A popup opened from the sidebar
 goes back to it when it closes.
+
+Line blame (`Editor::git_blame_tick`, each time round the event loop)
+waits for the cursor to rest 400 ms on a line in normal mode, then runs
+`git blame --porcelain -L n,n --contents -` on a thread with the buffer's
+text on stdin, so unsaved edits count (their lines come back as git's
+all-zeros "not committed" commit). The answer is shown only if the cursor's
+still on that line and the text hasn't changed, as end-of-line virtual
+text from the source `"blame"`, and taken away when either changes or
+another mode starts. While it waits, the event loop keeps polling.
 
 The git view (`editor/git_gui.rs`, `ui/git_gui.rs`) is `Mode::Git` with
 `[keys.git]`: a `GitGui` with the focused panel, the branches
@@ -1444,9 +1458,9 @@ agent harness, an embedded terminal and Git support. They share three foundation
    inline), gutter signs and status line segments, all kept in place as
    text is edited (the same bookkeeping as marks and `track_rows`), drawn by
    the editor pane after syntax highlighting. Started: inline virtual text
-   (see [Virtual text](#virtual-text)), with inlay hints its first use;
-   git's gutter marks are drawn by the pane. Still to come: plugins'
-   decorations, and blame at the end of a line.
+   and at the end of a line (see [Virtual text](#virtual-text)), used by
+   inlay hints and line blame; git's gutter marks are drawn by the pane.
+   Still to come: plugins' decorations.
 
 ### Plugin windows and decorations
 
@@ -1773,8 +1787,9 @@ not. The answer is dropped unless the editor is still where it was asked
 
 ## Known gaps / next steps
 
-- Virtual text: only before chars in a line (no end-of-line text yet, nor
-  lines of their own); inlay hints are asked for the whole buffer (fine
+- Virtual text: inline and at the end of a line, but not lines of their
+  own; line blame is for the cursor's line only (no whole-file blame
+  view); inlay hints are asked for the whole buffer (fine
   for most files, slow for huge ones), can't be clicked or hovered for
   more, and aren't resolved (`inlayHint/resolve`); visual block selections
   count columns without them.
