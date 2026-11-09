@@ -17,6 +17,9 @@ pub struct InputBox {
     pub on_submit: String,
     /// A command run when it's cancelled, if any.
     pub on_cancel: Option<String>,
+    /// Where focus goes back to: the sidebar or the git view, if it was
+    /// asked from there, else normal mode.
+    back_to: Option<Mode>,
 }
 
 impl InputBox {
@@ -38,7 +41,12 @@ impl Editor {
     }
 
     /// Opens `input`, with focus.
-    pub fn open_input_box(&mut self, input: InputBox) {
+    pub fn open_input_box(&mut self, mut input: InputBox) {
+        input.back_to = match self.mode() {
+            mode @ (Mode::Sidebar | Mode::Git) => Some(mode),
+            Mode::Popup => self.popup.as_ref().and_then(|p| p.back_to),
+            _ => None,
+        };
         // A popup or picker it was asked from gives way.
         self.popup = None;
         self.input_box = Some(input);
@@ -56,7 +64,7 @@ impl Editor {
     pub fn take_input_box(&mut self) -> Option<InputBox> {
         let input = self.input_box.take()?;
         if self.mode() == Mode::Input {
-            self.set_mode(Mode::Normal);
+            self.set_mode(input.back_to.unwrap_or(Mode::Normal));
         }
         Some(input)
     }

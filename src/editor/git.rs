@@ -91,9 +91,17 @@ impl Editor {
             .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
             .filter(|d| git::repo_root(d).is_some())
             .or_else(|| std::env::current_dir().ok());
+        // The selected file stays selected (in the same section) if it's
+        // still there; else the same row, as near as there is.
+        let before = self.git_selected_file();
         self.git.status = dir.and_then(|d| git::status(&d));
-        let rows = self.git_rows().len();
-        self.git.selected = self.git.selected.min(rows.saturating_sub(1));
+        let rows = self.git_rows();
+        let same = before.and_then(|(file, staged)| {
+            rows.iter().position(|row| {
+                matches!(row, GitRow::File { file: f, staged: s } if f.path == file.path && *s == staged)
+            })
+        });
+        self.git.selected = same.unwrap_or(self.git.selected.min(rows.len().saturating_sub(1)));
         self.git_select_file(0);
     }
 
@@ -272,6 +280,12 @@ impl Editor {
     /// `x`: asks (in a popup) before throwing away the selected file's
     /// unstaged changes.
     pub fn git_ask_discard(&mut self) -> Result<(), String> {
+        if self
+            .git_gui()
+            .is_some_and(|g| g.panel != super::git_gui::GitPanel::Files)
+        {
+            return Err("Choose a file (in [1] Files) to discard".into());
+        }
         let (file, staged) = self.git_selected_file().ok_or("No file selected")?;
         if staged || file.unstaged.is_none() {
             return Err(format!("{} has no unstaged changes to discard", file.path));
@@ -364,9 +378,6 @@ impl Editor {
         self.git_after_action(Ok(()))?;
         let first = message.lines().next().unwrap_or("");
         self.set_message(Message::info(format!("Committed {id}: {first}")));
-        if self.sidebar().is_some() {
-            self.set_mode(Mode::Sidebar);
-        }
         Ok(())
     }
 
@@ -397,6 +408,7 @@ impl Editor {
             self.git.branch = std::env::current_dir().ok().and_then(|d| git::branch(&d));
         }
         self.git_refresh_status();
+        self.git_gui_reload();
     }
 
     /// After an event: an opened or saved file's staged text, again.

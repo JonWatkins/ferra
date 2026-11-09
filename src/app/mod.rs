@@ -529,7 +529,7 @@ impl App {
                 self.editor.finish_command();
             }
             Mode::Terminal => self.editor.terminal_paste(text),
-            Mode::Popup => {}
+            Mode::Popup | Mode::Git => {}
             // Nothing to paste into.
             Mode::Sidebar => {}
         }
@@ -851,7 +851,7 @@ impl App {
         if at_colon_prompt
             || matches!(
                 self.editor.mode(),
-                Mode::Picker | Mode::Find | Mode::Terminal
+                Mode::Picker | Mode::Find | Mode::Terminal | Mode::Popup | Mode::Input | Mode::Git
             )
         {
             self.changes.note_command_line();

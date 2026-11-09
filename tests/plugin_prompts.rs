@@ -44,6 +44,8 @@ fn an_input_box_asks_for_text_and_runs_the_plugins_command() {
     // Typing replaces what it started with.
     keys(&mut app, "Ada<BS>a<Left><Left>x<CR>");
     assert_eq!(text(&app), "hello Axda");
+    keys(&mut app, ".");
+    assert_eq!(text(&app), "hello Axda", "typing in the box isn't for `.`");
     assert_eq!(app.editor().mode(), Mode::Normal);
     assert!(app.editor().input_box().is_none());
 }

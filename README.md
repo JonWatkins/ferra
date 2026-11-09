@@ -454,6 +454,46 @@ changes inside. The sidebar's **Git** tab (`<Tab>` in the sidebar, or
 | `c` | Commit what's staged: asks for the message |
 | `R` | Read git's status again |
 
+### The git view
+
+`<Space>g` (or `:git`) opens a full-screen git view, in the style of
+lazygit, over the editor; `q` closes it.
+
+```text
+╭ [1] Files ───────────╮╭ [4] long.txt (unstaged) ─────────────╮
+│ STAGED (1)           ││ @@ -1,6 +1,6 @@                       │
+│  M long.txt          ││  line 2                               │
+│ CHANGES (1)          ││ -line 3                               │
+│  M long.txt          ││ +LINE 3                               │
+╰──────────────────────╯│  line 4                               │
+╭ [2] Branches (2) ────╮│                                       │
+│ * main               ││                                       │
+│   feature            ││                                       │
+╰──────────────────────╯│                                       │
+╭ [3] Commits ─────────╮│                                       │
+│ f165f72 thirty lines ││                                       │
+╰──────────────────────╯╰───────────────────────────────────────╯
+ j/k hunks  s stage the hunk  ⌃d/⌃u scroll  Esc back  q close
+```
+
+The right-hand panel shows the diff of what's selected: a file's unstaged
+or staged changes, a commit, or a branch's log.
+
+| Keys (in the git view) | Action |
+|------------------------|--------|
+| `1` `2` `3` `4`, `<Tab>` `<S-Tab>`, click | Go to a panel |
+| `j` `k`, click | Move (between hunks, in a file's diff) |
+| `<CR>`, `l` | Into the file's diff, to pick hunks |
+| `<Esc>`, `h` | Back out of the diff (or close the view) |
+| `s`, `<Space>` | Stage the file (or unstage a staged one), or the hunk |
+| `u` | Unstage the file, or the hunk |
+| `a` / `A` | Stage / unstage everything |
+| `x` | Discard the file's unstaged changes (asks first) |
+| `c` | Commit what's staged (asks for the message) |
+| `<C-d>` `<C-u>`, `J` `K`, the wheel | Scroll the diff |
+| `R` | Read everything again |
+| `q` | Close |
+
 `git = false` turns all of this off. ferra runs the `git` command, so it
 needs git installed; commits run your hooks, and their errors show as
 messages.

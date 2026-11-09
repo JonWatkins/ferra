@@ -250,7 +250,7 @@ impl Active<'_> {
                 if text.is_empty() {
                     Span::raw("")
                 } else {
-                    styled(format!("{text} "), "ui.statusline.git")
+                    styled(format!("{text} "), "ui.statusline.branch")
                 }
             }
             StatusElement::LspProgress => match editor.lsp_progress() {

@@ -134,7 +134,7 @@ impl Editor {
     pub fn open_popup(&mut self, mut popup: Popup) {
         let focus = popup.focus;
         popup.back_to = match self.mode() {
-            Mode::Sidebar => Some(Mode::Sidebar),
+            mode @ (Mode::Sidebar | Mode::Git) => Some(mode),
             // From another popup, back where that one would go.
             Mode::Popup => self.popup.as_ref().and_then(|p| p.back_to),
             _ => None,

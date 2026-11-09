@@ -29,10 +29,12 @@ pub enum Mode {
     Popup,
     /// A plugin's input box (`ctx:input`) has focus.
     Input,
+    /// The full-screen git view (`<Space>g`) has focus.
+    Git,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 11] = [
+    pub const ALL: [Mode; 12] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
@@ -44,6 +46,7 @@ impl Mode {
         Mode::Terminal,
         Mode::Popup,
         Mode::Input,
+        Mode::Git,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -60,6 +63,7 @@ impl Mode {
             Mode::Terminal => "terminal",
             Mode::Popup => "popup",
             Mode::Input => "input",
+            Mode::Git => "git",
         }
     }
 

@@ -321,6 +321,7 @@ pub struct CursorShapes {
     pub terminal: CursorShape,
     pub popup: CursorShape,
     pub input: CursorShape,
+    pub git: CursorShape,
     /// Replace mode (`R`).
     pub replace: CursorShape,
 }
@@ -339,6 +340,7 @@ impl CursorShapes {
             Mode::Terminal => self.terminal,
             Mode::Popup => self.popup,
             Mode::Input => self.input,
+            Mode::Git => self.git,
         }
     }
 }
@@ -361,6 +363,7 @@ mod tests {
             terminal: CursorShape::Block,
             popup: CursorShape::Block,
             input: CursorShape::Bar,
+            git: CursorShape::Block,
             replace: CursorShape::Underline,
         };
         assert_eq!(shapes.for_mode(Mode::Insert), CursorShape::Bar);

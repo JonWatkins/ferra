@@ -28,6 +28,7 @@ pub mod diagnostics;
 pub mod explorer;
 pub mod find;
 mod git;
+pub mod git_gui;
 pub use git::GitRow;
 pub mod input_box;
 pub mod lsp;
@@ -221,6 +222,8 @@ pub struct Editor {
     input_box: Option<input_box::InputBox>,
     /// Git: open files' staged text and changes, and the branch.
     git: git::GitState,
+    /// The full-screen git view, while it's open.
+    git_gui: Option<git_gui::GitGui>,
     /// The uses of the symbol under the cursor (a language server's).
     references: Option<lsp::References>,
     /// Servers' diagnostics for files that aren't open, by path.
@@ -642,7 +645,8 @@ impl Editor {
             | Mode::Visual
             | Mode::Sidebar
             | Mode::Terminal
-            | Mode::Popup => {}
+            | Mode::Popup
+            | Mode::Git => {}
         }
     }
 

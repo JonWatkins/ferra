@@ -142,8 +142,8 @@ fn source_control_lists_stages_commits_and_discards() {
     assert!(shown.contains("M code.txt"), "{shown}");
     assert!(shown.contains("U notes.md"), "{shown}");
 
-    // The first file's selected: stage it, then commit.
-    keys(&mut app, "s");
+    // The first file (code.txt): stage it, then commit.
+    keys(&mut app, "ggs");
     let shown = sidebar_text(&mut app);
     assert!(
         shown.contains("STAGED (1)") && shown.contains("CHANGES (1)"),
@@ -163,9 +163,10 @@ fn source_control_lists_stages_commits_and_discards() {
     );
     let shown = sidebar_text(&mut app);
     assert!(!shown.contains("STAGED"), "{shown}");
+    let screen = render(&mut app, 70, 16).rows.join("\n");
     assert!(
-        !render(&mut app, 70, 16).rows[0].contains('▎'),
-        "committed: no changes in the gutter"
+        !screen.lines().next().unwrap().contains('▎'),
+        "committed: no changes in the gutter\n{screen}"
     );
 
     // Discard asks first.
@@ -195,4 +196,97 @@ fn committing_with_nothing_staged_says_so() {
         .map(|m| m.text.clone())
         .unwrap_or_default();
     assert!(message.starts_with("Nothing staged"), "{message}");
+}
+
+#[test]
+fn the_git_view_stages_a_hunk_commits_and_shows_commits() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let path = dir.path().join("code.txt");
+    let lines: Vec<String> = (1..=20).map(|n| format!("line {n}")).collect();
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    assert!(git(dir.path(), &["add", "."]));
+    assert!(git(
+        dir.path(),
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            "twenty lines"
+        ]
+    ));
+    let mut changed = lines.clone();
+    changed[1] = "LINE 2".into();
+    changed[17] = "LINE 18".into();
+    std::fs::write(&path, changed.join("\n") + "\n").unwrap();
+
+    let mut app = app();
+    keys(&mut app, &format!(":e {}<CR><Space>g", path.display()));
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Git);
+    let shown = render(&mut app, 110, 30).rows.join("\n");
+    for part in [
+        "[1] Files",
+        "[2] Branches (1)",
+        "[3] Commits",
+        "[4] code.txt (unstaged)",
+        "* main",
+        "+LINE 2",
+        "+LINE 18",
+        "twenty lines",
+    ] {
+        assert!(shown.contains(part), "{part}: {shown}");
+    }
+
+    // Into the diff, the second hunk, staged on its own.
+    keys(&mut app, "<CR>js");
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args(["status", "--porcelain"])
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "MM code.txt\n");
+    keys(&mut app, "<Esc>");
+    let shown = render(&mut app, 110, 30).rows.join("\n");
+    assert!(
+        shown.contains("STAGED (1)") && shown.contains("CHANGES (1)"),
+        "{shown}"
+    );
+
+    // Commit it from here, and stay here.
+    keys(&mut app, "cjust line 18<CR>");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Git);
+    let shown = render(&mut app, 110, 30).rows.join("\n");
+    assert!(shown.contains("just line 18"), "in the commits: {shown}");
+
+    // A click on the older commit shows it.
+    let screen = render(&mut app, 110, 30);
+    let (y, row) = screen
+        .rows
+        .iter()
+        .enumerate()
+        .find(|(_, r)| r.contains("twenty lines"))
+        .unwrap();
+    let x = row[..row.find("twenty").unwrap()].chars().count() as u16;
+    app.handle_mouse(crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        column: x,
+        row: y as u16,
+        modifiers: crossterm::event::KeyModifiers::NONE,
+    });
+    let gui = app.editor().git_gui().unwrap();
+    assert!(gui.diff_title.starts_with("Commit "), "{}", gui.diff_title);
+    assert!(
+        gui.diff.lines.iter().any(|(_, l)| l == "+line 20"),
+        "its diff"
+    );
+
+    keys(&mut app, "q");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
+    assert!(app.editor().git_gui().is_none());
 }

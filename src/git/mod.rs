@@ -197,6 +197,262 @@ pub fn commit(root: &Path, message: &str) -> Result<String, String> {
         .to_string())
 }
 
+/// A branch, as `git branch` lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Branch {
+    pub name: String,
+    /// The branch checked out.
+    pub current: bool,
+    /// The branch it tracks, and how far ahead and behind (`[ahead 1]`).
+    pub upstream: String,
+    pub track: String,
+}
+
+/// The local branches, the current one first.
+pub fn branches(root: &Path) -> Vec<Branch> {
+    let format = "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)%00%(upstream:track)";
+    let Some(bytes) = git(root, &["branch", format]) else {
+        return Vec::new();
+    };
+    let mut list: Vec<Branch> = String::from_utf8_lossy(&bytes)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\0');
+            let head = parts.next()?;
+            Some(Branch {
+                current: head == "*",
+                name: parts.next()?.to_string(),
+                upstream: parts.next().unwrap_or("").to_string(),
+                track: parts.next().unwrap_or("").to_string(),
+            })
+        })
+        .collect();
+    list.sort_by_key(|b| !b.current);
+    list
+}
+
+/// A commit, as the log shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commit {
+    pub hash: String,
+    pub short: String,
+    pub subject: String,
+    pub author: String,
+    /// How long ago (`2 hours ago`).
+    pub when: String,
+}
+
+/// The last `count` commits on `rev` (`HEAD` for the current branch).
+pub fn log(root: &Path, rev: &str, count: usize) -> Vec<Commit> {
+    let count = format!("-n{count}");
+    let format = "--format=%H%x00%h%x00%s%x00%an%x00%ar";
+    let Some(bytes) = git(root, &["log", &count, format, rev, "--"]) else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\0');
+            Some(Commit {
+                hash: parts.next()?.to_string(),
+                short: parts.next()?.to_string(),
+                subject: parts.next().unwrap_or("").to_string(),
+                author: parts.next().unwrap_or("").to_string(),
+                when: parts.next().unwrap_or("").to_string(),
+            })
+        })
+        .collect()
+}
+
+/// A file's diff: its staged changes (against `HEAD`), or its unstaged
+/// ones (against what's staged); an untracked file shows as all added.
+pub fn file_diff(root: &Path, file: &FileStatus, staged: bool) -> String {
+    let args: Vec<&str> = if staged {
+        vec![
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--cached",
+            "--",
+            &file.path,
+        ]
+    } else if file.unstaged == Some('U') {
+        vec![
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-index",
+            "--",
+            "/dev/null",
+            &file.path,
+        ]
+    } else {
+        vec!["diff", "--no-color", "--no-ext-diff", "--", &file.path]
+    };
+    // `--no-index` exits 1 when the files differ, which they do.
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    output
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// A commit's message, files changed and diff.
+pub fn show_commit(root: &Path, hash: &str) -> String {
+    git(
+        root,
+        &[
+            "show",
+            "--no-color",
+            "--no-ext-diff",
+            "--stat",
+            "--patch",
+            "--format=commit %H%nAuthor: %an <%ae>%nDate:   %ad%n%n%w(0,4,4)%B",
+            hash,
+        ],
+    )
+    .map(|b| String::from_utf8_lossy(&b).into_owned())
+    .unwrap_or_default()
+}
+
+/// Applies `patch` to what's staged (`reverse`: takes it back out).
+pub fn apply_to_index(root: &Path, patch: &str, reverse: bool) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut args = vec!["apply", "--cached", "--whitespace=nowarn"];
+    if reverse {
+        args.push("--reverse");
+    }
+    args.push("-");
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("git: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(patch.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let error = String::from_utf8_lossy(&output.stderr);
+        Err(error
+            .lines()
+            .map(|l| l.trim_start_matches("error: ").trim())
+            .find(|l| !l.is_empty())
+            .unwrap_or("git apply failed")
+            .to_string())
+    }
+}
+
+/// A line of a diff, by what it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffLineKind {
+    /// `diff --git`, `index`, `---`, `+++`, a commit's header...
+    Header,
+    /// `@@ -1,3 +1,4 @@`
+    HunkHeader,
+    Added,
+    Removed,
+    Context,
+}
+
+/// A diff split into lines, and where its hunks are.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Diff {
+    pub lines: Vec<(DiffLineKind, String)>,
+    /// Each hunk's lines (`start..end`, from its `@@` line), and the file
+    /// header lines before it (for making a patch of just that hunk).
+    pub hunks: Vec<DiffHunk>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffHunk {
+    pub start: usize,
+    pub end: usize,
+    pub file_header: std::ops::Range<usize>,
+}
+
+impl Diff {
+    pub fn parse(text: &str) -> Self {
+        let mut diff = Diff::default();
+        let mut file_header = 0..0;
+        let mut in_file_header = false;
+        for line in text.lines() {
+            let i = diff.lines.len();
+            let kind = if line.starts_with("diff --git") || line.starts_with("diff --cc") {
+                in_file_header = true;
+                file_header = i..i;
+                DiffLineKind::Header
+            } else if line.starts_with("@@") {
+                in_file_header = false;
+                diff.hunks.push(DiffHunk {
+                    start: i,
+                    end: i + 1,
+                    file_header: file_header.clone(),
+                });
+                DiffLineKind::HunkHeader
+            } else if in_file_header || diff.hunks.is_empty() {
+                DiffLineKind::Header
+            } else if line.starts_with('+') {
+                DiffLineKind::Added
+            } else if line.starts_with('-') {
+                DiffLineKind::Removed
+            } else if line.starts_with(' ') || line.starts_with('\\') {
+                DiffLineKind::Context
+            } else {
+                // A commit's next message or stat lines: not in a hunk.
+                DiffLineKind::Header
+            };
+            if in_file_header {
+                file_header.end = i + 1;
+            }
+            if matches!(
+                kind,
+                DiffLineKind::Added | DiffLineKind::Removed | DiffLineKind::Context
+            ) && let Some(hunk) = diff.hunks.last_mut()
+            {
+                hunk.end = i + 1;
+            }
+            diff.lines.push((kind, line.to_string()));
+        }
+        diff
+    }
+
+    /// A patch of just hunk `index`: its file's header and the hunk.
+    pub fn hunk_patch(&self, index: usize) -> Option<String> {
+        let hunk = self.hunks.get(index)?;
+        let mut patch = String::new();
+        for (_, line) in &self.lines[hunk.file_header.clone()] {
+            patch.push_str(line);
+            patch.push('\n');
+        }
+        for (_, line) in &self.lines[hunk.start..hunk.end] {
+            patch.push_str(line);
+            patch.push('\n');
+        }
+        Some(patch)
+    }
+
+    /// The hunk line `line` is in.
+    pub fn hunk_at(&self, line: usize) -> Option<usize> {
+        self.hunks
+            .iter()
+            .position(|h| (h.start..h.end).contains(&line))
+    }
+}
+
 /// What happened to some lines, compared with the base.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeKind {
@@ -372,6 +628,72 @@ mod tests {
     }
 
     use super::tests_support::repo;
+
+    #[test]
+    fn branches_log_diffs_and_staging_one_hunk() {
+        let Some(dir) = repo() else {
+            return;
+        };
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let lines: Vec<String> = (1..=20).map(|n| format!("line {n}")).collect();
+        std::fs::write(root.join("file.txt"), lines.join("\n") + "\n").unwrap();
+        stage(&root, &["file.txt"]).unwrap();
+        commit(&root, "twenty lines").unwrap();
+
+        let branches = branches(&root);
+        assert_eq!(branches.len(), 1);
+        assert!(branches[0].current && branches[0].name == "main");
+        let log = log(&root, "HEAD", 10);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].subject, "twenty lines");
+        assert!(show_commit(&root, &log[0].hash).contains("+line 20"));
+
+        // Two changes far apart: two hunks.
+        let mut changed = lines.clone();
+        changed[1] = "LINE 2".into();
+        changed[17] = "LINE 18".into();
+        std::fs::write(root.join("file.txt"), changed.join("\n") + "\n").unwrap();
+        let file = status(&root).unwrap().files.remove(0);
+        let diff = Diff::parse(&file_diff(&root, &file, false));
+        assert_eq!(diff.hunks.len(), 2, "{diff:?}");
+        let second = diff.hunks[1].start;
+        assert_eq!(diff.lines[second].0, DiffLineKind::HunkHeader);
+        assert_eq!(diff.hunk_at(second + 1), Some(1));
+
+        // Stage only the second.
+        apply_to_index(&root, &diff.hunk_patch(1).unwrap(), false).unwrap();
+        let file = status(&root).unwrap().files.remove(0);
+        assert_eq!((file.staged, file.unstaged), (Some('M'), Some('M')));
+        let staged = Diff::parse(&file_diff(&root, &file, true));
+        assert_eq!(staged.hunks.len(), 1);
+        assert!(
+            staged
+                .lines
+                .iter()
+                .any(|(k, l)| *k == DiffLineKind::Added && l == "+LINE 18")
+        );
+        // And take it back out.
+        apply_to_index(&root, &staged.hunk_patch(0).unwrap(), true).unwrap();
+        let file = status(&root).unwrap().files.remove(0);
+        assert_eq!(file.staged, None);
+
+        // An untracked file is all added.
+        std::fs::write(root.join("new.txt"), "a\nb\n").unwrap();
+        let new = status(&root)
+            .unwrap()
+            .files
+            .into_iter()
+            .find(|f| f.path == "new.txt")
+            .unwrap();
+        let diff = Diff::parse(&file_diff(&root, &new, false));
+        assert_eq!(
+            diff.lines
+                .iter()
+                .filter(|(k, _)| *k == DiffLineKind::Added)
+                .count(),
+            2
+        );
+    }
 
     #[test]
     fn status_stage_unstage_discard_and_commit() {

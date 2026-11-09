@@ -358,6 +358,24 @@ moving, `R` and clicks act on it. Discarding asks in a built-in popup
 (whose submit runs `git_commit_message`). A popup opened from the sidebar
 goes back to it when it closes.
 
+The git view (`editor/git_gui.rs`, `ui/git_gui.rs`) is `Mode::Git` with
+`[keys.git]`: a `GitGui` with the focused panel, the branches
+(`git::branches`), the last 300 commits (`git::log`) and the diff panel's
+`Diff`. The files panel uses Source Control's rows and selection, so the
+two agree. Whenever the selection or focus changes, the diff is made for
+what the focused list has selected: `git::file_diff` (`diff --cached` for
+a staged row, `diff --no-index /dev/null` for an untracked file),
+`show_commit`, or a branch's log. `Diff::parse` splits it into lines by
+kind and finds the hunks, each with its file header, so `hunk_patch` can
+make a patch of one hunk; staging it is `git apply --cached` with the patch
+on stdin, unstaging the same with `--reverse` (as lazygit does). After any
+action the status, branches, commits and diff are read again, and the
+selection stays on the same file in the same section when it's still
+there. Commit and discard ask in the input box and popup, which go back to
+the git view (they remember the mode they came from). `ui::draw` draws the
+view over everything but the command line and maps its panels and lists
+for the mouse (`GitGuiMap`).
+
 ## Syntax highlighting
 
 `syntax/` wraps tree-sitter:
@@ -1439,10 +1457,10 @@ than files: Git's changed files will be another view in it.
 ### Git support
 
 Started: changes in the gutter, `]c`/`[c`, the branch, the file tree's
-marks and Source Control in the sidebar (see [Git](#git)). Next: a
-full-screen git view in the style of lazygit (files, branches and commits
-panels with a diff preview, and staging hunks), then branches and
-push/pull/fetch in the background.
+marks, Source Control in the sidebar, and the full-screen git view with
+diffs and staging hunks (see [Git](#git)). Next: branches (switch,
+create, delete, ahead and behind) and push, pull and fetch in the
+background with progress; then amending, stash, blame and history.
 
 The everyday Git features, without leaving the editor:
 
@@ -1713,9 +1731,10 @@ not. The answer is dropped unless the editor is still where it was asked
 
 ## Known gaps / next steps
 
-- Git: changes are against what's staged only (not `HEAD`), with no way
-  yet to stage, reset or preview a hunk, see a diff, amend, or work with
-  branches and remotes (coming with the full-screen git view); the file
+- Git: the gutter compares with what's staged only (not `HEAD`); no
+  staging single lines (only hunks), amending, stashes, blame, or working
+  with branches and remotes yet; the git view's diffs aren't syntax
+  coloured, and huge commits are read whole; the file
   tree's marks are for the repository the current file is in; no marks with `line-numbers =
   "none"` (there's no gutter); a file's staged text is read again only on
   open, save, focus and leaving the terminal panel; submodules and files

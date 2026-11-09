@@ -19,6 +19,7 @@ mod command_line;
 mod completion_menu;
 pub mod editor_view;
 pub mod find;
+pub mod git_gui;
 mod hover;
 mod input_box;
 mod picker;
@@ -83,6 +84,8 @@ pub struct ScreenMap {
     pub find: Option<find::FindHits>,
     /// An input box, and its field.
     pub input: Option<(Rect, Rect)>,
+    /// The git view's panels and lists.
+    pub git: Option<git_gui::GitGuiMap>,
 }
 
 /// A box with a list: its area, the list's rows, and the index of the item
@@ -323,6 +326,13 @@ pub fn draw(
         frame.render_widget(view, area);
     }
 
+    // The git view covers everything but the command line.
+    if editor.git_gui().is_some() {
+        let full = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
+        frame.render_widget(git_gui::GitGuiView::new(editor, theme), full);
+        map.git = Some(git_gui::GitGuiView::map(editor, full));
+    }
+
     // A plugin's popup floats over the windows.
     if let Some(popup) = editor.popup() {
         let area = PopupView::area(popup, main, window_cursor, drawn.active);
@@ -371,6 +381,7 @@ pub fn draw(
         // The selection shows where it is.
         (Mode::Popup, _) => None,
         (Mode::Input, _) => input_cursor,
+        (Mode::Git, _) => None,
         _ => window_cursor,
     };
     if let Some(position) = cursor {

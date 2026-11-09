@@ -141,6 +141,7 @@ find = "bar"
 terminal = "block"
 popup = "block"
 input = "bar"
+git = "block"
 # While an operator (d, c, y) waits for a motion.
 operator = "underline"
 visual = "block"
@@ -335,6 +336,23 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.sidebar.git.folder" = "#c8a96e"
 "ui.sidebar.git.header" = { fg = "#7aa2f7", modifiers = ["bold"] }
 "ui.sidebar.git.branch" = "#6b7280"
+# The full-screen git view (<Space>g).
+"ui.git" = { fg = "#d4d7dd", bg = "#16181d" }
+"ui.git.border" = "#3b4048"
+"ui.git.border.focused" = "#7aa2f7"
+"ui.git.title" = { fg = "#a0a6b0", modifiers = ["bold"] }
+"ui.git.title.focused" = { fg = "#7aa2f7", modifiers = ["bold"] }
+"ui.git.selected" = { bg = "#33467c" }
+"ui.git.selected.unfocused" = { bg = "#262a33" }
+"ui.git.dim" = "#6b7280"
+"ui.git.current" = { fg = "#9ece6a", modifiers = ["bold"] }
+"ui.git.hash" = "#e0af68"
+"ui.git.diff.added" = "#9ece6a"
+"ui.git.diff.removed" = "#f7768e"
+"ui.git.diff.hunk" = "#7dcfff"
+"ui.git.diff.header" = { fg = "#a9b1d6", modifiers = ["bold"] }
+"ui.git.diff.selected" = { bg = "#262a33" }
+"ui.git.hint" = "#565f89"
 # The tabs at the top of the sidebar, when plugins add views.
 "ui.sidebar.tabs" = { bg = "#1f2229" }
 "ui.sidebar.tab" = { fg = "#6b7280", bg = "#1f2229" }
@@ -405,7 +423,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.statusline.input" = { fg = "#16181d", bg = "#e0af68", modifiers = ["bold"] }
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
 "ui.statusline.lsp" = { fg = "#6b7280", bg = "#1f2229" }
-"ui.statusline.git" = { fg = "#a9b1d6", bg = "#1f2229" }
+"ui.statusline.branch" = { fg = "#a9b1d6", bg = "#1f2229" }
+"ui.statusline.git" = { fg = "#16181d", bg = "#9ece6a", modifiers = ["bold"] }
 "ui.statusline.recording" = { fg = "#f7768e", bg = "#1f2229", modifiers = ["bold"] }
 "ui.statusline.modified" = { fg = "#e0af68", bg = "#1f2229", modifiers = ["bold"] }
 # The status lines of windows other than the active one.
@@ -555,6 +574,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>/" = "find_open"
 "<Space>h" = "find_replace_open"
 "<Space>t" = "terminal_toggle"
+"<Space>g" = "git_gui_open"
 "<C-`>" = "terminal_toggle"
 "<Space>f" = "file_picker"
 "<Space>r" = "register_picker"
@@ -875,6 +895,41 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "q" = "popup_close"
 "<Esc>" = "popup_close"
 "<C-c>" = "popup_close"
+":" = "command_mode"
+
+# The full-screen git view (<Space>g, :git), while it has focus.
+[keys.git]
+"q" = "git_gui_close"
+"<Esc>" = "git_gui_back"
+"h" = "git_gui_back"
+"<Left>" = "git_gui_back"
+"1" = "git_gui_files"
+"2" = "git_gui_branches"
+"3" = "git_gui_commits"
+"4" = "git_gui_diff"
+"<Tab>" = "git_gui_next_panel"
+"<S-Tab>" = "git_gui_prev_panel"
+"j" = "git_gui_down"
+"k" = "git_gui_up"
+"<Down>" = "git_gui_down"
+"<Up>" = "git_gui_up"
+"<C-d>" = "git_gui_scroll_down"
+"<C-u>" = "git_gui_scroll_up"
+"J" = "git_gui_scroll_down"
+"K" = "git_gui_scroll_up"
+"<PageDown>" = "git_gui_scroll_down"
+"<PageUp>" = "git_gui_scroll_up"
+"<CR>" = "git_gui_enter"
+"l" = "git_gui_enter"
+"<Right>" = "git_gui_enter"
+"s" = "git_gui_stage"
+"<Space>" = "git_gui_stage"
+"u" = "git_gui_unstage"
+"a" = "git_stage_all"
+"A" = "git_unstage_all"
+"x" = "git_discard"
+"c" = "git_commit"
+"R" = "git_refresh"
 ":" = "command_mode"
 
 # A plugin's input box (ctx:input), while it has focus. Typing edits it.

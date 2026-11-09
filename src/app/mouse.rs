@@ -93,6 +93,12 @@ impl App {
     /// The pointer's shape over `at`: a CSS cursor name.
     pub fn pointer_for(&self, at: Position) -> &'static str {
         let map = &self.screen_map;
+        if let Some(git) = &map.git {
+            let on_list = git.lists.iter().any(|(list, panel, _)| {
+                *panel != crate::editor::git_gui::GitPanel::Diff && list.contains(at)
+            });
+            return if on_list { "pointer" } else { "default" };
+        }
         if let Some(picker) = &map.picker {
             return if picker.list.contains(at) {
                 "pointer"
@@ -401,6 +407,22 @@ impl App {
                 }
                 true
             }
+            Mode::Git => {
+                let Some(git) = map.git else {
+                    return true;
+                };
+                if let Some(&(list, panel, first)) =
+                    git.lists.iter().find(|(list, ..)| list.contains(at))
+                {
+                    self.editor
+                        .git_gui_select(panel, first + (at.y - list.y) as usize);
+                } else if let Some(&(_, panel)) =
+                    git.panels.iter().find(|(area, _)| area.contains(at))
+                {
+                    self.editor.git_gui_focus(panel);
+                }
+                true
+            }
             // The `:` line, or an operator waiting: clicks wait too.
             Mode::Command | Mode::OperatorPending => true,
             _ => false,
@@ -507,6 +529,25 @@ impl App {
                         WHEEL_LINES as isize
                     };
                     popup.move_by(sign * step);
+                }
+                return;
+            }
+            Mode::Git => {
+                let panel = self.screen_map.git.as_ref().and_then(|git| {
+                    git.panels
+                        .iter()
+                        .find(|(area, _)| area.contains(at))
+                        .map(|&(_, panel)| panel)
+                });
+                match panel {
+                    Some(crate::editor::git_gui::GitPanel::Diff) => {
+                        self.editor.git_gui_scroll(WHEEL_LINES as isize * sign);
+                    }
+                    Some(panel) => {
+                        self.editor.git_gui_focus(panel);
+                        self.editor.git_gui_move(sign);
+                    }
+                    None => {}
                 }
                 return;
             }
