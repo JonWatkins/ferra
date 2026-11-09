@@ -791,6 +791,7 @@ a `ctx`:
 | `message(text)` | Show a message |
 | `run(name, ...)` | Run any command, with arguments |
 | `option(name)`, `set_option(name, value [, "local"])` | Read an option (`"tab-width"`, `"search.case"`), or set it everywhere or for this window or buffer, checked as config is |
+| `popup{...}`, `popup_update{...}`, `popup_close()`, `popup_selected()`, `popup_name()` | Show a popup (below) and work with it |
 
 Plus `ctx.count` and `ctx.args`. Hooks also get an `event` table (`kind`,
 and `path` or `from`/`to` where relevant). Raising a Lua `error` cancels the
@@ -799,6 +800,46 @@ the file and line it came from; use `error("message", 0)` for messages meant
 for users. A
 plugin that fails to load is reported without stopping the others. Plugin
 commands appear in the command palette and can override built-in ones.
+
+### Popups
+
+`ctx:popup{...}` shows a bordered window over the editor: text, or a list
+to choose from, with its own keys that run the plugin's commands.
+
+```lua
+editor.command("fruit", "Pick a fruit", function(ctx)
+  ctx:popup({
+    name = "fruit",                  -- so commands can tell popups apart
+    title = "Fruit",
+    lines = {
+      "apple",                       -- a line is a string,
+      { { "cherry", "keyword" }, { " (red)" } },  -- or spans: text, theme scope
+    },
+    footer = "⏎ insert  q close",    -- in the bottom border
+    select = true,                   -- a list: j/k move a selected line
+    keys = { ["<CR>"] = "fruit_insert" },  -- its own keys, run commands
+    on_close = "fruit_closed",       -- optional: run when q/<Esc> closes it
+    -- position = "center" | "cursor" | "top-right"; width, height;
+    -- selected = 1; focus = false shows it until the next key, like a hover
+  })
+end)
+
+editor.command("fruit_insert", function(ctx)
+  local chosen = ({ "apple", "cherry" })[ctx:popup_selected()]
+  ctx:popup_close()
+  ctx:insert(chosen)
+end)
+```
+
+While it has focus, its own keys come first, then `[keys.popup]`: `j`/`k`
+(and arrows, `<C-n>`/`<C-p>`) move the selection or scroll, `<C-d>`/`<C-u>`
+by half a page, `gg`/`G` to the ends, `q`/`<Esc>` close it, `:` for
+commands. `ctx:popup_update{ lines = ..., title = ..., footer = ...,
+selected = n }` changes it in place. A mistake in the table (an unknown
+command in `keys`, a bad key) is the plugin's error, shown as a message.
+
+[`examples/plugins/todos.lua`](examples/plugins/todos.lua) lists the file's
+TODO, FIXME and XXX comments in a popup (`<Space>T`), `<CR>` to go to one.
 
 [`examples/plugins/toolkit.lua`](examples/plugins/toolkit.lua) is a
 complete example (`:todo`, `:duplicate_line`, `:sort_paragraph`,

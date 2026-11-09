@@ -1214,14 +1214,39 @@ override earlier commands and bindings. Errors are collected per file; a
 broken file doesn't stop the rest. `main` loads plugins before opening the
 startup files, so `opened` hooks see them.
 
+### Plugin popups
+
+`ctx:popup{...}` (`plugins/popup.rs`) reads a Lua table into an
+`editor::popup::Popup`: styled lines (spans with a theme scope), title,
+footer, position, size, whether it's a list, whether it takes focus, its
+own keys and an `on_close` command. Everything is checked as it's read
+(key notation, that each command exists), so a mistake is the plugin's
+error rather than a popup that half works. The popup's keys name commands
+rather than holding Lua functions, so they go through the registry like any
+key: undo, hooks, errors and `ctx` work with no special cases, and the
+editor holds no Lua state.
+
+A popup with focus is `Mode::Popup`. When one opens, the app makes a copy of
+the keymap with the popup's keys bound in that mode (`App::popup_keymap`)
+and uses it while the mode lasts; `[keys.popup]` has the moving and
+closing commands (`commands/builtin/popup.rs`). `popup_close` runs the
+popup's `on_close` through `cx.registry`; `ctx:popup_close()` from the
+plugin doesn't, so a plugin closing its own popup can't loop. A popup
+without focus is dropped after the next key that didn't open it, like the
+hover. `ui/popup.rs` sizes it to its lines (within the windows' area),
+places it centred, by the cursor or at the top right of the active window,
+scrolls it to keep the selection in view, and shows where it's at in the
+bottom border.
+
 ## Plugin roadmap
 
 Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 1. **A wider API**, driven by real plugins: selections, registers, search,
    buffers, options, and creating pickers from Lua.
-2. **Plugin UI**: plugins drawing their own windows and modals, and adding
-   to existing ones (see "Plugin windows and decorations" below).
+2. **Plugin UI**: started with popups (see [Plugin popups](#plugin-popups));
+   still to come are views in the sidebar, pickers from Lua, input boxes,
+   and decorations (see "Plugin windows and decorations" below).
 3. **Registering at runtime.** Registrations made inside a callback (rather
    than while loading) are collected but not yet installed.
 4. **Isolation.** If sandboxing untrusted plugins becomes a goal, a WASM
@@ -1574,6 +1599,10 @@ not. The answer is dropped unless the editor is still where it was asked
   (`keys(&mut app, "ihello<Esc>dd")`) and render through `TestBackend`.
 
 ## Known gaps / next steps
+
+- Plugin popups: one at a time; no input field in them (a plugin can't ask
+  for text yet); keys run commands, not Lua functions; no mouse; a plugin
+  can't add a view to the sidebar or the panel yet.
 
 - Terminal panel: one shell (no tabs or splits); no mouse (scrolling,
   selecting) and no copying from it with the editor's keys (Neovim's

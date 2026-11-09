@@ -28,6 +28,7 @@ pub mod diagnostics;
 pub mod explorer;
 pub mod find;
 pub mod lsp;
+pub mod popup;
 mod selection;
 mod terminal_panel;
 pub mod text_field;
@@ -204,6 +205,9 @@ pub struct Editor {
     /// whether the panel's open.
     terminal: Option<crate::terminal::Terminal>,
     terminal_open: bool,
+    /// A plugin's popup, and whether a new one brought keys to bind.
+    popup: Option<popup::Popup>,
+    popup_keys_changed: bool,
     /// The uses of the symbol under the cursor (a language server's).
     references: Option<lsp::References>,
     /// Servers' diagnostics for files that aren't open, by path.
@@ -616,7 +620,8 @@ impl Editor {
             | Mode::OperatorPending
             | Mode::Visual
             | Mode::Sidebar
-            | Mode::Terminal => {}
+            | Mode::Terminal
+            | Mode::Popup => {}
         }
     }
 

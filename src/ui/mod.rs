@@ -21,6 +21,7 @@ pub mod editor_view;
 mod find;
 mod hover;
 mod picker;
+mod popup;
 mod sidebar;
 mod signature;
 mod splash;
@@ -34,6 +35,7 @@ pub use completion_menu::CompletionMenu;
 pub use editor_view::{EditorView, ViewState};
 pub use find::{FindKeys, FindView, key_label};
 pub use picker::PickerView;
+pub use popup::PopupView;
 pub use sidebar::SidebarView;
 pub use splash::{LOGO, Splash, SplashEntry};
 pub use statusline::StatusLine;
@@ -239,6 +241,12 @@ pub fn draw(
         frame.render_widget(view, area);
     }
 
+    // A plugin's popup floats over the windows.
+    if let Some(popup) = editor.popup() {
+        let area = PopupView::area(popup, main, window_cursor, drawn.active);
+        frame.render_widget(PopupView::new(popup, theme), area);
+    }
+
     // The picker popup floats over the editor pane.
     let popup = editor.picker().filter(|_| editor.mode() == Mode::Picker);
     if let Some(picker) = popup {
@@ -255,6 +263,8 @@ pub fn draw(
         (Mode::Sidebar, _) => sidebar_cursor,
         (Mode::Find, _) => find_cursor,
         (Mode::Terminal, _) => terminal_cursor,
+        // The selection shows where it is.
+        (Mode::Popup, _) => None,
         _ => window_cursor,
     };
     if let Some(position) = cursor {

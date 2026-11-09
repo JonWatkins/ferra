@@ -130,6 +130,7 @@ picker = "bar"
 sidebar = "block"
 find = "bar"
 terminal = "block"
+popup = "block"
 # While an operator (d, c, y) waits for a motion.
 operator = "underline"
 visual = "block"
@@ -370,6 +371,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.statusline.sidebar" = { fg = "#16181d", bg = "#9ece6a", modifiers = ["bold"] }
 "ui.statusline.find" = { fg = "#16181d", bg = "#ff9e64", modifiers = ["bold"] }
 "ui.statusline.terminal" = { fg = "#16181d", bg = "#bb9af7", modifiers = ["bold"] }
+"ui.statusline.popup" = { fg = "#16181d", bg = "#7dcfff", modifiers = ["bold"] }
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
 "ui.statusline.lsp" = { fg = "#6b7280", bg = "#1f2229" }
 "ui.statusline.recording" = { fg = "#f7768e", bg = "#1f2229", modifiers = ["bold"] }
@@ -816,6 +818,26 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>f" = "file_picker"
 "<Space>b" = "buffer_picker"
 "<Space>p" = "command_palette"
+
+# A plugin's popup, while it has focus. The plugin's own keys for it come
+# first.
+[keys.popup]
+"j" = "popup_down"
+"k" = "popup_up"
+"<Down>" = "popup_down"
+"<Up>" = "popup_up"
+"<C-n>" = "popup_down"
+"<C-p>" = "popup_up"
+"<C-d>" = "popup_page_down"
+"<C-u>" = "popup_page_up"
+"<PageDown>" = "popup_page_down"
+"<PageUp>" = "popup_page_up"
+"gg" = "popup_first"
+"G" = "popup_last"
+"q" = "popup_close"
+"<Esc>" = "popup_close"
+"<C-c>" = "popup_close"
+":" = "command_mode"
 
 # The terminal panel (<Space>t), while it has focus. Every other key goes
 # to the shell.

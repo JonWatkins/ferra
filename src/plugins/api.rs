@@ -19,6 +19,11 @@
 //! | `ctx:run(name, ...)` | Run any command, with optional arguments |
 //! | `ctx:option(name)` | An option's value here (`"tab-width"`, `"search.case"`) |
 //! | `ctx:set_option(name, value [, "local"])` | Set it everywhere, or for this window or buffer |
+//! | `ctx:popup{...}` | Open a popup (see `plugins/popup.rs`), replacing any other |
+//! | `ctx:popup_update{lines, title, footer, selected}` | Change the open popup |
+//! | `ctx:popup_close()` | Close it (without its `on_close`) |
+//! | `ctx:popup_selected()` | The selected line of a list popup, or `nil` |
+//! | `ctx:popup_name()` | The open popup's `name`, or `nil` |
 //!
 //! Fields: `ctx.count` (number or `nil`) and `ctx.args` (a list of strings).
 //! Edits go through the document like built-in commands, so they're undoable
@@ -211,6 +216,69 @@ pub fn call_returning<R: mlua::FromLuaMulti>(
                         .map_err(mlua::Error::runtime)
                 },
             )?,
+        )?;
+
+        // Popups (`plugins/popup.rs` reads the table).
+        ctx.set(
+            "popup",
+            scope.create_function(|_, (_, spec): (Value, Table)| {
+                let mut guard = cell.borrow_mut();
+                let cx = &mut **guard;
+                let popup =
+                    super::popup::from_table(&spec, cx.registry).map_err(mlua::Error::runtime)?;
+                cx.editor.open_popup(popup);
+                Ok(())
+            })?,
+        )?;
+        ctx.set(
+            "popup_update",
+            scope.create_function(|_, (_, spec): (Value, Table)| {
+                let mut guard = cell.borrow_mut();
+                let popup = guard
+                    .editor
+                    .popup_mut()
+                    .ok_or_else(|| mlua::Error::runtime("No popup is open"))?;
+                if let Some(title) = spec.get::<Option<String>>("title")? {
+                    popup.title = title;
+                }
+                if let Some(footer) = spec.get::<Option<String>>("footer")? {
+                    popup.footer = footer;
+                }
+                let lines: Value = spec.get("lines")?;
+                if !lines.is_nil() {
+                    popup.lines = super::popup::lines(&lines).map_err(mlua::Error::runtime)?;
+                    let selected = popup.selected().unwrap_or(0);
+                    popup.select(selected);
+                }
+                if let Some(selected) = spec.get::<Option<i64>>("selected")? {
+                    popup.select((selected.max(1) - 1) as usize);
+                }
+                Ok(())
+            })?,
+        )?;
+        ctx.set(
+            "popup_close",
+            scope.create_function(|_, _: Value| {
+                cell.borrow_mut().editor.close_popup();
+                Ok(())
+            })?,
+        )?;
+        ctx.set(
+            "popup_selected",
+            scope.create_function(|_, _: Value| {
+                Ok(cell
+                    .borrow()
+                    .editor
+                    .popup()
+                    .and_then(|p| p.selected())
+                    .map(|i| i + 1))
+            })?,
+        )?;
+        ctx.set(
+            "popup_name",
+            scope.create_function(|_, _: Value| {
+                Ok(cell.borrow().editor.popup().map(|p| p.name.clone()))
+            })?,
         )?;
 
         let event = match event {

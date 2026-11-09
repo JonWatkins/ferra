@@ -108,3 +108,27 @@ fn after_save_hook_reports_the_file() {
     keys(&mut app, ":w<CR>");
     assert_eq!(message(&app), "Saved notes.md (2 lines)");
 }
+
+#[test]
+fn todos_lists_the_files_todos_in_a_popup_and_goes_to_one() {
+    let mut app = common::app_with_config("[editor]\nauto-indent = false");
+    let source = fs::read_to_string("examples/plugins/todos.lua").unwrap();
+    app.load_plugin("todos.lua", &source)
+        .expect("todos.lua loads");
+    keys(
+        &mut app,
+        "ifn a() {}\n  // TODO: first\nlet x = 1;\n  # FIXME broken\nlet URL = 1; // XXX here\n<Esc>gg0",
+    );
+    keys(&mut app, "<Space>T");
+    let popup = app.editor().popup().expect("a popup");
+    assert_eq!(popup.title, "TODOs");
+    assert_eq!(popup.lines.len(), 3, "not fooled by URL");
+    let texts: Vec<String> = popup.lines[1].iter().map(|s| s.text.clone()).collect();
+    assert_eq!(texts.concat(), "   4  FIXME  broken");
+    keys(&mut app, "j<CR>");
+    assert!(app.editor().popup().is_none());
+    assert_eq!(cursor(&app), (3, 2), "at the FIXME's line, past its indent");
+
+    keys(&mut app, "ggdG<Space>T");
+    assert_eq!(message(&app), "No TODOs in this file");
+}

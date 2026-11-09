@@ -25,10 +25,12 @@ pub enum Mode {
     Find,
     /// The terminal panel (`<Space>t`) has focus: keys go to the shell.
     Terminal,
+    /// A plugin's popup has focus.
+    Popup,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 9] = [
+    pub const ALL: [Mode; 10] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
@@ -38,6 +40,7 @@ impl Mode {
         Mode::Sidebar,
         Mode::Find,
         Mode::Terminal,
+        Mode::Popup,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -52,6 +55,7 @@ impl Mode {
             Mode::Sidebar => "sidebar",
             Mode::Find => "find",
             Mode::Terminal => "terminal",
+            Mode::Popup => "popup",
         }
     }
 
@@ -67,7 +71,7 @@ impl Mode {
     pub const fn accepts_count(self) -> bool {
         matches!(
             self,
-            Mode::Normal | Mode::OperatorPending | Mode::Visual | Mode::Sidebar
+            Mode::Normal | Mode::OperatorPending | Mode::Visual | Mode::Sidebar | Mode::Popup
         )
     }
 

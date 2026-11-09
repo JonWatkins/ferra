@@ -20,6 +20,7 @@
 //! call, so a plugin can never hold on to the editor.
 
 mod api;
+mod popup;
 
 use std::cell::RefCell;
 use std::path::Path;

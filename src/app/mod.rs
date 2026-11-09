@@ -42,6 +42,8 @@ pub struct App {
     editor: Editor,
     commands: CommandRegistry,
     keymap: Keymap,
+    /// The keymap with the open popup's own keys, while it has some.
+    popup_keymap: Option<Keymap>,
     theme: Theme,
     input: InputHandler,
     /// Scroll state per window and buffer.
@@ -90,6 +92,7 @@ impl App {
             editor,
             commands,
             keymap: config.keys,
+            popup_keymap: None,
             theme: config.theme,
             input: InputHandler::default(),
             views: Views::default(),
@@ -449,6 +452,7 @@ impl App {
                 self.editor.finish_command();
             }
             Mode::Terminal => self.editor.terminal_paste(text),
+            Mode::Popup => {}
             // Nothing to paste into.
             Mode::Sidebar => {}
         }
@@ -606,6 +610,38 @@ impl App {
         .collect()
     }
 
+    /// The keymap for the current mode: with a popup's own keys while it
+    /// has focus.
+    fn mode_keymap(&self) -> &Keymap {
+        match (&self.popup_keymap, self.editor.mode()) {
+            (Some(popup), Mode::Popup) => popup,
+            _ => &self.keymap,
+        }
+    }
+
+    /// After a key: a popup it opened gets its keys bound (in a copy of
+    /// the keymap); a popup without focus from before goes.
+    fn after_popup_key(&mut self) {
+        if !self.editor.take_popup_keys_changed() {
+            self.editor.end_popup_unless_new(true);
+            return;
+        }
+        self.popup_keymap = self
+            .editor
+            .popup()
+            .filter(|p| !p.keys.is_empty())
+            .map(|popup| {
+                let mut keymap = self.keymap.clone();
+                for (notation, command) in &popup.keys {
+                    // Checked when the plugin opened it.
+                    if let Ok(keys) = crate::input::parse_keys(notation) {
+                        keymap.bind(Mode::Popup, &keys, command.clone());
+                    }
+                }
+                keymap
+            });
+    }
+
     /// When the key timeout should end the sequence being typed, if any.
     fn key_deadline(&self) -> Option<Instant> {
         let millis = self.editor.options.key_timeout;
@@ -633,8 +669,14 @@ impl App {
     /// [`InputHandler::timeout`]). Public so tests can trigger it.
     pub fn handle_key_timeout(&mut self) {
         self.tracked(&[], |app| {
-            let outcomes = app.input.timeout(app.editor.mode(), &app.keymap);
+            let mode = app.editor.mode();
+            let keymap = match (&app.popup_keymap, mode) {
+                (Some(popup), Mode::Popup) => popup,
+                _ => &app.keymap,
+            };
+            let outcomes = app.input.timeout(mode, keymap);
             app.apply_outcomes(outcomes);
+            app.after_popup_key();
         });
     }
 
@@ -646,7 +688,8 @@ impl App {
     fn as_legacy(&self, key: KeyPress) -> KeyPress {
         match key.legacy_equivalent() {
             Some(legacy)
-                if key.code == KeyCode::Char('[') || !self.keymap.uses(self.editor.mode(), key) =>
+                if key.code == KeyCode::Char('[')
+                    || !self.mode_keymap().uses(self.editor.mode(), key) =>
             {
                 legacy
             }
@@ -659,7 +702,9 @@ impl App {
     /// Neovim, an Alt key with no binding in this mode is taken as Esc
     /// followed by the key.
     fn split_alt(&self, key: KeyPress) -> Option<[KeyPress; 2]> {
-        if !key.modifiers.alt || self.keymap.lookup(self.editor.mode(), &[key]) != Lookup::NoMatch {
+        if !key.modifiers.alt
+            || self.mode_keymap().lookup(self.editor.mode(), &[key]) != Lookup::NoMatch
+        {
             return None;
         }
         let mut modifiers = key.modifiers;
@@ -776,8 +821,15 @@ impl App {
         }
         self.editor.note_key_for_completion();
         self.editor.note_key_for_hover();
-        let outcomes = self.input.handle(key, self.editor.mode(), &self.keymap);
+        let mode = self.editor.mode();
+        // A popup's own keys are in a copy of the keymap made for it.
+        let keymap = match (&self.popup_keymap, mode) {
+            (Some(popup), Mode::Popup) => popup,
+            _ => &self.keymap,
+        };
+        let outcomes = self.input.handle(key, mode, keymap);
         self.apply_outcomes(outcomes);
+        self.after_popup_key();
         self.editor.end_completion_unless_used();
         self.editor.end_hover_unless_used();
         self.editor.search_symbols_after_key();

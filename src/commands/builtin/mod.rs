@@ -20,6 +20,7 @@ mod motions;
 mod operators;
 mod options;
 mod picker;
+mod popup;
 mod scrolling;
 mod search;
 mod sidebar;
@@ -55,6 +56,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     sidebar::register(registry);
     find::register(registry);
     terminal::register(registry);
+    popup::register(registry);
 }
 
 #[cfg(test)]
