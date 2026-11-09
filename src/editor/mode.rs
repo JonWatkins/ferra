@@ -21,10 +21,12 @@ pub enum Mode {
     Picker,
     /// The sidebar (the file tree) has focus.
     Sidebar,
+    /// The find box (`<Space>/`) has focus.
+    Find,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 7] = [
+    pub const ALL: [Mode; 8] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
@@ -32,6 +34,7 @@ impl Mode {
         Mode::Visual,
         Mode::Picker,
         Mode::Sidebar,
+        Mode::Find,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -44,12 +47,16 @@ impl Mode {
             Mode::Visual => "visual",
             Mode::Picker => "picker",
             Mode::Sidebar => "sidebar",
+            Mode::Find => "find",
         }
     }
 
     /// Whether unbound printable keys are typed as text in this mode.
     pub const fn accepts_text(self) -> bool {
-        matches!(self, Mode::Insert | Mode::Command | Mode::Picker)
+        matches!(
+            self,
+            Mode::Insert | Mode::Command | Mode::Picker | Mode::Find
+        )
     }
 
     /// Whether a numeric count prefix (`3j`, `d2w`) can be typed.

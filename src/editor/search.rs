@@ -290,6 +290,9 @@ impl Editor {
     /// The pattern whose matches should be highlighted, if any: the one being
     /// typed, or else the last search.
     pub fn search_highlight(&self) -> Option<&SearchPattern> {
+        if self.mode() == Mode::Find {
+            return self.find_state().pattern();
+        }
         if self.mode() == Mode::Command && self.command_line.prompt().is_search() {
             return self.search.preview.as_ref();
         }

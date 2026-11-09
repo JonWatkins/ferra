@@ -170,6 +170,47 @@ The `:` and `/`/`?` prompts support:
 | `<C-r>{register}` | Insert a register's first line (`/<C-r>"` searches for what you yanked) |
 | `<C-r><C-w>`, `<C-r><C-a>` | Insert the word / WORD under the cursor (`:s/<C-r><C-w>/new/`) |
 
+## Find and replace
+
+Besides Vim's `/` and `:s`, there's a find box like VS Code's, at the top
+right of the window: `<Space>/` to find, `<Space>h` to find and replace
+(in normal or visual mode).
+
+```text
+╭────────────────────────────────────────────────────────────╮
+│ Find       total                                   2 of 3  │
+│                                                            │
+│ Replace    NUM                                             │
+│                                                            │
+│  Aa  Match case ⌃A    W  Whole word ⌃W    .*  Regex ⌃R     │
+╰──────── ⏎ replace one  ⌃⏎ replace all  Tab find  Esc close ╯
+```
+
+Each toggle shows its key and is highlighted when on; the bottom edge
+shows the keys for the field you're in. They're the keys actually bound
+(rebind them in `[keys.find]` and the box follows), drawn as `⌃A` on macOS
+and `C-a` elsewhere. It finds as you
+type: the cursor goes to the first match, every match is
+highlighted (the current one in its own colour), and the box counts them.
+It starts with the selection, or the word under the cursor (or, once
+you've searched, what you looked for last), selected so typing replaces it.
+
+| Keys (in the box) | Action |
+|-------------------|--------|
+| `<CR>`, `<Down>` (`<C-n>`) | Next match; in the replace field, replace this match and go to the next |
+| `<Up>` (`<C-p>`), `<S-CR>` | Previous match (`<S-CR>` needs the kitty keyboard protocol) |
+| `<Tab>` | Between the find and replace fields (showing the replace field) |
+| `<C-a>`, `<C-w>`, `<C-r>` | Toggle match case (`Aa`), whole words (`W`), regex (`.*`). VS Code's `<A-c>` `<A-w>` `<A-r>` work too where the terminal sends Alt (on macOS, with Option set to act as Alt) |
+| `<C-CR>` (`<A-a>`) | Replace all (one undo step). `<C-CR>` needs the kitty keyboard protocol (Ghostty, kitty, WezTerm, iTerm2); elsewhere use `<A-a>` |
+| `<Left>` `<Right>`, `<Home>` `<End>` (`<C-e>`), `<BS>` `<Del>` `<A-BS>` `<C-u>` | Edit the field |
+| `<Esc>` | Close it, the cursor left at the match |
+
+Text is found as it's typed, ignoring case, unless the toggles say
+otherwise; with `.*` it's a Rust regex, and the replacement can use `$1`,
+`${name}`. After closing it, `n` and `N` carry on with the same search and
+the matches stay highlighted (`:noh` hides them). The colours are the
+`ui.find.*` scopes and `ui.search.current`.
+
 ## Substitute and ranges
 
 `:[range]s/pattern/replacement/[flags]` replaces matches, using the same

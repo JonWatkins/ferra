@@ -63,6 +63,19 @@ impl SearchPattern {
         })
     }
 
+    /// A pattern from a regex in `regex` syntax as it is (no `\<` `\>`
+    /// translation), shown as `source`: the find box builds these.
+    pub fn from_regex(regex: &str, source: &str, ignore_case: bool) -> Result<Self, String> {
+        let regex = RegexBuilder::new(regex)
+            .case_insensitive(ignore_case)
+            .build()
+            .map_err(|e| format!("Invalid pattern: {}", last_line(&e.to_string())))?;
+        Ok(Self {
+            source: source.to_string(),
+            regex,
+        })
+    }
+
     /// A pattern matching `word` exactly, as a whole word (for `*` and `#`).
     pub fn whole_word(word: &str) -> Self {
         let pattern = format!(r"\<{}\>", regex::escape(word));

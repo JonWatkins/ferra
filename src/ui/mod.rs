@@ -17,6 +17,7 @@
 mod command_line;
 mod completion_menu;
 pub mod editor_view;
+mod find;
 mod hover;
 mod picker;
 mod sidebar;
@@ -29,6 +30,7 @@ mod windows;
 pub use command_line::CommandLineView;
 pub use completion_menu::CompletionMenu;
 pub use editor_view::{EditorView, ViewState};
+pub use find::{FindKeys, FindView};
 pub use picker::PickerView;
 pub use sidebar::SidebarView;
 pub use splash::{LOGO, Splash, SplashEntry};
@@ -45,6 +47,15 @@ use crate::config::{StatuslineMode, Theme};
 use crate::editor::{Editor, Mode};
 use crate::syntax::SyntaxEngine;
 
+/// The keys the interface shows, as bound (so a rebinding shows up).
+#[derive(Debug, Clone, Default)]
+pub struct KeyHints {
+    /// The splash screen's menu (only while it's shown).
+    pub splash: Vec<SplashEntry>,
+    /// The find box's (only while it's open).
+    pub find: FindKeys,
+}
+
 /// Draws the whole screen and positions the terminal cursor.
 pub fn draw(
     frame: &mut Frame,
@@ -53,8 +64,10 @@ pub fn draw(
     views: &mut Views,
     pending: &str,
     mut syntax: Option<&mut SyntaxEngine>,
-    splash: &[SplashEntry],
+    keys: &KeyHints,
 ) {
+    let splash = keys.splash.as_slice();
+    let find_keys = &keys.find;
     let area = frame.area();
     let base = theme.get("ui.background").patch(theme.get("ui.text"));
     frame.buffer_mut().set_style(area, base);
@@ -104,7 +117,7 @@ pub fn draw(
         _ => (main, status, None),
     };
 
-    let window_cursor = match editor.options.statusline {
+    let drawn = match editor.options.statusline {
         StatuslineMode::Windows => {
             let per_window = windows::WindowStatus {
                 pending,
@@ -121,7 +134,7 @@ pub fn draw(
             )
         }
         StatuslineMode::Global => {
-            let cursor = windows::draw_windows(
+            let drawn = windows::draw_windows(
                 frame,
                 editor,
                 theme,
@@ -131,9 +144,10 @@ pub fn draw(
                 None,
             );
             frame.render_widget(StatusLine::new(editor, theme, pending), status);
-            cursor
+            drawn
         }
     };
+    let window_cursor = drawn.cursor;
     frame.render_widget(CommandLineView::new(editor, theme), command);
     if editor.splash_visible() && !splash.is_empty() {
         frame.render_widget(Splash::new(splash, theme), main);
@@ -176,6 +190,17 @@ pub fn draw(
         frame.render_widget(view, area);
     }
 
+    // The find box floats at the top right of the active window.
+    let mut find_cursor = None;
+    if editor.mode() == Mode::Find
+        && let Some(window) = drawn.active
+    {
+        let view = FindView::new(editor.find_state(), editor.find_count(), find_keys, theme);
+        let area = FindView::area(editor.find_state(), window);
+        find_cursor = FindView::cursor_position(editor.find_state(), area);
+        frame.render_widget(view, area);
+    }
+
     // The picker popup floats over the editor pane.
     let popup = editor.picker().filter(|_| editor.mode() == Mode::Picker);
     if let Some(picker) = popup {
@@ -190,6 +215,7 @@ pub fn draw(
         )),
         (Mode::Command, _) => Some(CommandLineView::cursor_position(editor, command)),
         (Mode::Sidebar, _) => sidebar_cursor,
+        (Mode::Find, _) => find_cursor,
         _ => window_cursor,
     };
     if let Some(position) = cursor {

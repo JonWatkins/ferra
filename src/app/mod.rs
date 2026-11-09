@@ -429,7 +429,7 @@ impl App {
                 doc.insert_str(text);
                 self.editor.note_typed(text);
             }
-            Mode::Command | Mode::Picker => {
+            Mode::Command | Mode::Picker | Mode::Find => {
                 let first_line = text.lines().next().unwrap_or_default();
                 first_line
                     .chars()
@@ -539,6 +539,12 @@ impl App {
         } else {
             Vec::new()
         };
+        // The find box's key hints, from the keymap (so rebinding shows).
+        let find_keys = if self.editor.mode() == Mode::Find {
+            ui::FindKeys::from_keymap(&self.keymap)
+        } else {
+            ui::FindKeys::default()
+        };
         ui::draw(
             frame,
             &self.editor,
@@ -549,7 +555,10 @@ impl App {
                 .options
                 .syntax_highlighting
                 .then_some(&mut self.syntax),
-            &splash,
+            &ui::KeyHints {
+                splash,
+                find: find_keys,
+            },
         );
     }
 
@@ -675,7 +684,7 @@ impl App {
         // is, as an operator's motion (`d/foo<CR>`).
         let at_colon_prompt =
             self.editor.mode() == Mode::Command && !self.editor.command_line.prompt().is_search();
-        if at_colon_prompt || self.editor.mode() == Mode::Picker {
+        if at_colon_prompt || matches!(self.editor.mode(), Mode::Picker | Mode::Find) {
             self.changes.note_command_line();
         }
         if self.is_idle() {

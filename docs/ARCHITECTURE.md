@@ -677,6 +677,41 @@ where they change, so marks elsewhere on them stay put.
   backspacing out), which puts visual mode and the selection back; a finished
   search then moves the cursor, extending it.
 
+### The find box
+
+`editor/find.rs` holds the find box's state (`FindState`): two
+`TextField`s (`editor/text_field.rs`, a one-line field whose text can
+start selected, for reuse by later boxes), which has focus, the toggles,
+and where finding as you type starts. Every change to the find field or a
+toggle compiles a pattern with `SearchPattern::from_regex` (the text
+escaped unless regex is on, wrapped in `\b(?:...)\b` for whole words, no
+Vim translation) and moves the cursor to the first match at or after that
+start; `<CR>` moves the start along. `find_match` walks lines for the next
+non-empty match either way, wrapping, so the box never lands on an empty
+regex match.
+
+The box has focus in `Mode::Find` (its own `[keys.find]`, text typed into
+the field). `search_highlight` returns its pattern while it's open, and
+`find_current_match` the match at the cursor, which the editor pane draws
+with `ui.search.current`. The count is made the first time it's drawn after
+the pattern or the text changes (keyed by the document's id and edit
+count, so drawing doesn't search again), up to 10,000. Replacing goes
+through `SearchPattern::next_replacement` / `replace` (a literal
+replacement has `$` doubled); each command is an undo step as usual, so
+replace all is one. Closing hands the pattern to `set_last_search`. The app
+treats keys in find mode like the `:` line: replacements aren't repeated
+by `.`.
+
+The keys the box shows come from the keymap (`Keymap::hint_keys`: the
+binding without Alt if there is one, since macOS terminals don't send
+Option as Alt by default, then the shortest, then the fewest modifiers),
+labelled by `ui::find::key_label` (`⌃A` on macOS, `C-a` elsewhere). The app
+passes them to `ui::draw` in `KeyHints`, with the splash screen's.
+
+`ui/find.rs` draws it at the top right of the active window
+(`windows::draw_windows` now also returns that window's area), the field
+scrolled to keep its cursor in view.
+
 ### The command line
 
 `editor/command_line/` holds the prompt's text and cursor, its editing
@@ -1237,9 +1272,9 @@ search and yank from.
 ### Interface
 
 A VS Code-like layout, so the editor can be driven without many commands:
-the sidebar's file tree (done; see [The sidebar](#the-sidebar)), then
-find and replace in the interface, a terminal panel at the bottom, plugin
-windows and popups, and the mouse. The sidebar is meant to hold more
+the sidebar's file tree and the find box (done; see [The
+sidebar](#the-sidebar) and [The find box](#the-find-box)), then a terminal
+panel at the bottom, plugin windows and popups, and the mouse. The sidebar is meant to hold more
 than files: Git's changed files will be another view in it.
 
 ### Git support
@@ -1512,6 +1547,13 @@ not. The answer is dropped unless the editor is still where it was asked
   (`keys(&mut app, "ihello<Esc>dd")`) and render through `TestBackend`.
 
 ## Known gaps / next steps
+
+- Find box: one file only (no search across the project, VS Code's
+  `Ctrl+Shift+F`, yet); no history of what was found; no "in selection"
+  toggle or preserve-case replace; matches don't span lines (no `\n` in
+  the pattern or the replacement); it can cover the matches in the
+  window's top lines. The `<Space>/` and `<Space>h` keys leave Vim's
+  `<C-f>` alone; bind `"<C-f>" = "find_open"` for VS Code's.
 
 - Sidebar: no creating, renaming, moving or deleting files from it; no
   mouse; it shows the current file only when `<Space>e` reveals it (it

@@ -21,7 +21,7 @@ use ratatui::{
 };
 
 use crate::config::{EditorOptions, Theme};
-use crate::core::search::SearchPattern;
+use crate::core::search::{Match, SearchPattern};
 use crate::core::{Position as TextPosition, Range};
 use crate::editor::Document;
 use crate::editor::windows::TextLayout;
@@ -68,6 +68,7 @@ pub struct EditorView<'a> {
     selection: Option<Range>,
     block: Option<crate::core::Block>,
     search: Option<&'a SearchPattern>,
+    current_match: Option<Match>,
     /// The other uses of the symbol under the cursor (a language server's).
     references: &'a [(crate::core::Position, crate::core::Position)],
     syntax: Option<&'a Highlights>,
@@ -88,6 +89,7 @@ impl<'a> EditorView<'a> {
             selection: None,
             block: None,
             search: None,
+            current_match: None,
             references: &[],
             syntax: None,
             diagnostics: &[],
@@ -120,6 +122,12 @@ impl<'a> EditorView<'a> {
 
     pub fn syntax(mut self, syntax: Option<&'a Highlights>) -> Self {
         self.syntax = syntax;
+        self
+    }
+
+    /// Highlights `found` apart from the other matches (the find box's).
+    pub fn current_match(mut self, found: Option<Match>) -> Self {
+        self.current_match = found;
         self
     }
 
@@ -466,6 +474,9 @@ impl EditorView<'_> {
             for (from, to) in pattern.matches_in_line(line_text) {
                 highlight(from, to, style);
             }
+        }
+        if let Some(found) = self.current_match.filter(|m| m.row == row) {
+            highlight(found.start, found.end, self.theme.get("ui.search.current"));
         }
         for d in self
             .diagnostics

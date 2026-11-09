@@ -124,6 +124,7 @@ insert = "bar"
 command = "bar"
 picker = "bar"
 sidebar = "block"
+find = "bar"
 # While an operator (d, c, y) waits for a motion.
 operator = "underline"
 visual = "block"
@@ -260,6 +261,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.cursorline" = { bg = "#1f2229" }
 "ui.selection" = { bg = "#33467c" }
 "ui.search.match" = { fg = "#16181d", bg = "#e0af68" }
+# The match the cursor's on while the find box (<Space>/) has focus.
+"ui.search.current" = { fg = "#16181d", bg = "#ff9e64", modifiers = ["bold"] }
 # The other uses of the symbol under the cursor (a language server's).
 "ui.highlight.reference" = { bg = "#2c3242" }
 
@@ -303,6 +306,20 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.sidebar.selected" = { bg = "#33467c" }
 "ui.sidebar.modified" = "#e0af68"
 "ui.sidebar.empty" = { fg = "#6b7280", modifiers = ["italic"] }
+# The find box (<Space>/, <Space>h).
+"ui.find" = { fg = "#d4d7dd", bg = "#1f2229" }
+"ui.find.border" = "#4b5263"
+"ui.find.label" = "#6b7280"
+"ui.find.label.focused" = { fg = "#7aa2f7", modifiers = ["bold"] }
+"ui.find.field" = { fg = "#a0a6b0", bg = "#2a2e38" }
+"ui.find.field.focused" = { fg = "#d4d7dd", bg = "#343a4a" }
+"ui.find.field.selected" = { bg = "#33467c" }
+"ui.find.toggle" = { fg = "#a0a6b0", bg = "#2a2e38" }
+"ui.find.toggle.on" = { fg = "#16181d", bg = "#7aa2f7", modifiers = ["bold"] }
+"ui.find.toggle.label" = "#a0a6b0"
+"ui.find.count" = "#a0a6b0"
+"ui.find.none" = "#f7768e"
+"ui.find.hint" = "#565f89"
 # The splash screen shown when starting without a file.
 "ui.splash.logo" = { fg = "#7aa2f7", modifiers = ["bold"] }
 "ui.splash.version" = "#565f89"
@@ -340,6 +357,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.statusline.visual" = { fg = "#16181d", bg = "#bb9af7", modifiers = ["bold"] }
 "ui.statusline.picker" = { fg = "#16181d", bg = "#7dcfff", modifiers = ["bold"] }
 "ui.statusline.sidebar" = { fg = "#16181d", bg = "#9ece6a", modifiers = ["bold"] }
+"ui.statusline.find" = { fg = "#16181d", bg = "#ff9e64", modifiers = ["bold"] }
 "ui.statusline.pending" = { fg = "#e0af68", bg = "#1f2229" }
 "ui.statusline.lsp" = { fg = "#6b7280", bg = "#1f2229" }
 "ui.statusline.recording" = { fg = "#f7768e", bg = "#1f2229", modifiers = ["bold"] }
@@ -486,6 +504,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>b" = "buffer_picker"
 "<Space>p" = "command_palette"
 "<Space>e" = "sidebar_focus"
+"<Space>/" = "find_open"
+"<Space>h" = "find_replace_open"
 "<Space>f" = "file_picker"
 "<Space>r" = "register_picker"
 "<C-w>s" = "split_horizontal"
@@ -755,6 +775,8 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "i>" = "inner_angle"
 "a>" = "around_angle"
 "<Space>a" = "code_actions"
+"<Space>/" = "find_open"
+"<Space>h" = "find_replace_open"
 "<Tab>" = "operator_indent"
 "<S-Tab>" = "operator_outdent"
 
@@ -780,6 +802,41 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>f" = "file_picker"
 "<Space>b" = "buffer_picker"
 "<Space>p" = "command_palette"
+
+# The find box (<Space>/ find, <Space>h find and replace), while it has
+# focus. Typing edits the field with focus. The toggles have Ctrl keys
+# (macOS terminals don't send Option as Alt unless set to) and VS Code's
+# Alt ones; the box shows the first binding without Alt.
+[keys.find]
+"<Esc>" = "find_close"
+"<C-c>" = "find_close"
+"<CR>" = "find_enter"
+"<S-CR>" = "find_prev"
+"<Down>" = "find_next"
+"<C-n>" = "find_next"
+"<Up>" = "find_prev"
+"<C-p>" = "find_prev"
+"<Tab>" = "find_switch_field"
+"<S-Tab>" = "find_switch_field"
+"<C-a>" = "find_toggle_case"
+"<A-c>" = "find_toggle_case"
+"<C-w>" = "find_toggle_word"
+"<A-w>" = "find_toggle_word"
+"<C-r>" = "find_toggle_regex"
+"<A-r>" = "find_toggle_regex"
+"<C-CR>" = "find_replace_all"
+"<A-a>" = "find_replace_all"
+"<C-A-CR>" = "find_replace_all"
+"<BS>" = "find_backspace"
+"<Del>" = "find_delete"
+"<A-BS>" = "find_delete_word"
+"<C-BS>" = "find_delete_word"
+"<C-u>" = "find_delete_to_start"
+"<Left>" = "find_left"
+"<Right>" = "find_right"
+"<Home>" = "find_home"
+"<End>" = "find_end"
+"<C-e>" = "find_end"
 
 # The picker popup (<Space>b buffers, <Space>f files, <Space>p commands,
 # <Space>r registers). Typing filters.

@@ -30,8 +30,15 @@ pub struct WindowStatus<'a> {
     pub bottom_row: Rect,
 }
 
-/// Draws every window into `area` and returns where the terminal cursor
-/// goes (in the active window).
+/// Where drawing the windows put things.
+pub struct Drawn {
+    /// Where the terminal cursor goes (in the active window).
+    pub cursor: Option<Position>,
+    /// The active window's area (its text, not its status line).
+    pub active: Option<Rect>,
+}
+
+/// Draws every window into `area`.
 pub fn draw_windows(
     frame: &mut Frame,
     editor: &Editor,
@@ -40,7 +47,7 @@ pub fn draw_windows(
     views: &mut Views,
     mut syntax: Option<&mut SyntaxEngine>,
     status: Option<WindowStatus>,
-) -> Option<Position> {
+) -> Drawn {
     let windows = editor.windows();
     let area_cells = Area::new(area.x, area.y, area.width, area.height);
     // Resizing works in cells, so the editor needs to know the real size.
@@ -80,6 +87,7 @@ pub fn draw_windows(
     }
 
     let mut cursor = None;
+    let mut active_area = None;
     for (id, window_area) in placed {
         let Some((document, window_cursor)) = editor.window_view(id) else {
             continue;
@@ -113,6 +121,11 @@ pub fn draw_windows(
             })
             .block(editor.selection_block().filter(|_| active))
             .search(editor.search_highlight())
+            .current_match(if active {
+                editor.find_current_match()
+            } else {
+                None
+            })
             .references(if active {
                 editor.references_shown()
             } else {
@@ -124,6 +137,7 @@ pub fn draw_windows(
         windows.note_top(id, state.viewport.top);
         if active {
             cursor = state.cursor;
+            active_area = Some(rect);
         }
 
         if let Some(status) = &status {
@@ -138,5 +152,8 @@ pub fn draw_windows(
             }
         }
     }
-    cursor
+    Drawn {
+        cursor,
+        active: active_area,
+    }
 }

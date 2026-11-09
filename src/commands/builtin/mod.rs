@@ -8,6 +8,7 @@ mod command_line;
 mod editing;
 mod ex_commands;
 mod files;
+mod find;
 mod folds;
 mod history;
 mod jumps;
@@ -51,6 +52,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     folds::register(registry);
     lsp::register(registry);
     sidebar::register(registry);
+    find::register(registry);
 }
 
 #[cfg(test)]

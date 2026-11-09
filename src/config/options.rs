@@ -304,6 +304,7 @@ pub struct CursorShapes {
     pub visual: CursorShape,
     pub picker: CursorShape,
     pub sidebar: CursorShape,
+    pub find: CursorShape,
     /// Replace mode (`R`).
     pub replace: CursorShape,
 }
@@ -318,6 +319,7 @@ impl CursorShapes {
             Mode::Visual => self.visual,
             Mode::Picker => self.picker,
             Mode::Sidebar => self.sidebar,
+            Mode::Find => self.find,
         }
     }
 }
@@ -336,6 +338,7 @@ mod tests {
             visual: CursorShape::Block,
             picker: CursorShape::Bar,
             sidebar: CursorShape::Block,
+            find: CursorShape::Bar,
             replace: CursorShape::Underline,
         };
         assert_eq!(shapes.for_mode(Mode::Insert), CursorShape::Bar);

@@ -109,6 +109,38 @@ impl Keymap {
         best
     }
 
+    /// The keys to show for `command` in `mode` in the interface's hints:
+    /// one without Alt (which macOS terminals don't send by default), then
+    /// the shortest, then with the fewest modifiers (`<Up>` over `<C-p>`).
+    pub fn hint_keys(&self, mode: Mode, command: &str) -> Option<Vec<KeyPress>> {
+        fn walk(
+            node: &Node,
+            command: &str,
+            path: &mut Vec<KeyPress>,
+            found: &mut Vec<Vec<KeyPress>>,
+        ) {
+            if node.command.as_deref() == Some(command) {
+                found.push(path.clone());
+            }
+            for (key, child) in &node.children {
+                path.push(*key);
+                walk(child, command, path, found);
+                path.pop();
+            }
+        }
+        let mut found = Vec::new();
+        walk(self.modes.get(&mode)?, command, &mut Vec::new(), &mut found);
+        found.into_iter().min_by_key(|keys| {
+            let alt = keys.iter().any(|k| k.modifiers.alt);
+            let modifiers: usize = keys
+                .iter()
+                .map(|k| usize::from(k.modifiers.ctrl) + usize::from(k.modifiers.shift))
+                .sum();
+            let text: String = keys.iter().map(ToString::to_string).collect();
+            (alt, keys.len(), modifiers, text)
+        })
+    }
+
     /// Whether `key` appears anywhere in `mode`'s bindings.
     pub fn uses(&self, mode: Mode, key: KeyPress) -> bool {
         fn walk(node: &Node, key: KeyPress) -> bool {
@@ -266,6 +298,22 @@ mod tests {
         assert_eq!(map.command_at(Mode::Normal, &keys("g")), Some("short"));
         assert_eq!(map.command_at(Mode::Normal, &keys("x")), None);
         assert_eq!(map.command_at(Mode::Insert, &keys("g")), None);
+    }
+
+    #[test]
+    fn hint_keys_prefer_bindings_without_alt() {
+        let mut map = Keymap::default();
+        map.bind(Mode::Find, &parse_keys("<A-c>").unwrap(), "case");
+        map.bind(Mode::Find, &parse_keys("<C-a>").unwrap(), "case");
+        map.bind(Mode::Find, &parse_keys("<A-r>").unwrap(), "regex");
+        let shown = |c| map.hint_keys(Mode::Find, c).map(|k| k[0].to_string());
+        assert_eq!(shown("case").as_deref(), Some("<C-a>"));
+        assert_eq!(
+            shown("regex").as_deref(),
+            Some("<A-r>"),
+            "if that's all there is"
+        );
+        assert_eq!(shown("nothing"), None);
     }
 
     #[test]
