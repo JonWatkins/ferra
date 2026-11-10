@@ -635,6 +635,18 @@ impl EditorView<'_> {
                 highlight(span.start, span.end, syntax_styles[span.highlight]);
             }
         }
+        // Plugins' highlighted ranges (decorations).
+        for h in self.document.highlights_on(row) {
+            let from = if h.start.row == row { h.start.col } else { 0 };
+            let to = if h.end.row == row {
+                h.end.col
+            } else {
+                line_len
+            };
+            if from < to {
+                highlight(from, to, self.theme.get(&h.style));
+            }
+        }
         let reference = self.theme.get("ui.highlight.reference");
         for (start, end) in self.references {
             if start.row <= row && row <= end.row {
@@ -881,6 +893,33 @@ mod tests {
             state.position_at(&doc, 20, 0, 4).map(|p| p.col),
             Some(5),
             "clicks past it: the end"
+        );
+    }
+
+    #[test]
+    fn plugins_highlighted_ranges_are_drawn() {
+        use crate::editor::RangeHighlight;
+        let mut doc = Document::with_text("trailing   \nfine");
+        doc.add_highlights(vec![RangeHighlight {
+            start: TextPos::new(0, 8),
+            end: TextPos::new(0, 11),
+            style: "ui.search.match".into(),
+            source: "plugin:ws".into(),
+        }]);
+        let options = options(LineNumbers::None);
+        let theme = theme();
+        let area = Rect::new(0, 0, 20, 2);
+        let mut buf = Buffer::empty(area);
+        EditorView::new(&doc, &options, &theme).render(area, &mut buf, &mut ViewState::default());
+        let bg = theme.get("ui.search.match").bg.unwrap();
+        assert_eq!(
+            [
+                buf[(7, 0)].bg == bg,
+                buf[(8, 0)].bg == bg,
+                buf[(10, 0)].bg == bg,
+                buf[(11, 0)].bg == bg
+            ],
+            [false, true, true, false]
         );
     }
 

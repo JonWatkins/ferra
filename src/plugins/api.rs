@@ -24,6 +24,8 @@
 //! | `ctx:popup_close()` | Close it (without its `on_close`) |
 //! | `ctx:popup_selected()` | The selected line of a list popup, or `nil` |
 //! | `ctx:popup_name()` | The open popup's `name`, or `nil` |
+//! | `ctx:decorate{line, col, text / to_line, to_col, style, group, end_of_line}` | Virtual text, or a highlighted range, in the buffer |
+//! | `ctx:clear_decorations([group])` | Take a group's decorations away |
 //! | `ctx:pick{title, items, on_choose}` | The fuzzy picker with the plugin's items; `on_choose` runs with the item's value (see `plugins/prompts.rs`) |
 //! | `ctx:input{title, value, placeholder, on_submit, on_cancel}` | A box asking for a line of text; `on_submit` runs with it |
 //! | `ctx:view_selected()` | The selected line of the plugin view in the sidebar, or `nil` |
@@ -286,6 +288,26 @@ pub fn call_returning<R: mlua::FromLuaMulti>(
             })?,
         )?;
 
+        // Decorations: virtual text and highlights in the current buffer.
+        ctx.set(
+            "decorate",
+            scope.create_function(|_, (_, spec): (Value, Table)| {
+                let mut guard = cell.borrow_mut();
+                decorate(&mut guard.editor.document, &spec).map_err(mlua::Error::runtime)
+            })?,
+        )?;
+        ctx.set(
+            "clear_decorations",
+            scope.create_function(|_, (_, group): (Value, Option<String>)| {
+                let group = group.unwrap_or_else(|| "default".into());
+                cell.borrow_mut()
+                    .editor
+                    .document
+                    .clear_decorations(&format!("plugin:{group}"));
+                Ok(())
+            })?,
+        )?;
+
         // Asking the user (`plugins/prompts.rs`).
         ctx.set(
             "pick",
@@ -352,6 +374,102 @@ pub fn call_returning<R: mlua::FromLuaMulti>(
         function.call::<R>((ctx, event))
     })
     .map_err(|e| describe(&e))
+}
+
+/// `ctx:decorate{...}`: virtual text (with `text`) or a highlighted range
+/// (with `to_col`, and `to_line` if it's another line) in `document`.
+/// Lines and columns are 1-based; `to_col` is the last column, inclusive,
+/// as `string.find` gives it.
+fn decorate(document: &mut crate::editor::Document, spec: &Table) -> Result<(), String> {
+    let get_number = |name: &str| -> Result<Option<i64>, String> {
+        match spec.get::<Value>(name).map_err(|e| e.to_string())? {
+            Value::Nil => Ok(None),
+            Value::Integer(n) => Ok(Some(n)),
+            Value::Number(n) if n.fract() == 0.0 => Ok(Some(n as i64)),
+            other => Err(format!(
+                "decorate: {name} should be a whole number, not {}",
+                other.type_name()
+            )),
+        }
+    };
+    let get_text = |name: &str| -> Result<Option<String>, String> {
+        match spec.get::<Value>(name).map_err(|e| e.to_string())? {
+            Value::Nil => Ok(None),
+            Value::String(s) => Ok(Some(s.to_string_lossy())),
+            other => Err(format!(
+                "decorate: {name} should be text, not {}",
+                other.type_name()
+            )),
+        }
+    };
+    let buffer = document.buffer();
+    let lines = buffer.line_count();
+    let row = |n: i64| -> Result<usize, String> {
+        if n >= 1 && (n as usize) <= lines {
+            Ok(n as usize - 1)
+        } else {
+            Err(format!("decorate: line {n} is out of range (1 to {lines})"))
+        }
+    };
+    let line = row(get_number("line")?.ok_or("decorate: needs a line")?)?;
+    let col = |row: usize, n: Option<i64>| -> usize {
+        let n = n.unwrap_or(1).max(1) as usize - 1;
+        n.min(buffer.line_len(row))
+    };
+    let start = Position::new(line, col(line, get_number("col")?));
+    let group = get_text("group")?.unwrap_or_else(|| "default".into());
+    let source = format!("plugin:{group}");
+    let style = get_text("style")?;
+    let end_of_line = match spec
+        .get::<Value>("end_of_line")
+        .map_err(|e| e.to_string())?
+    {
+        Value::Nil => false,
+        Value::Boolean(b) => b,
+        other => {
+            return Err(format!(
+                "decorate: end_of_line should be true or false, not {}",
+                other.type_name()
+            ));
+        }
+    };
+    if let Some(text) = get_text("text")? {
+        let piece = crate::editor::VirtualText {
+            at: start,
+            text: text.replace(['\n', '\r'], " "),
+            style: style.unwrap_or_else(|| "ui.virtual.inlay-hint".into()),
+            source,
+            end_of_line,
+        };
+        let mut pieces: Vec<_> = document
+            .virtual_text()
+            .iter()
+            .filter(|v| v.source == piece.source)
+            .cloned()
+            .collect();
+        pieces.push(piece.clone());
+        document.set_virtual_text(&piece.source, pieces);
+        return Ok(());
+    }
+    let to_line = match get_number("to_line")? {
+        Some(n) => row(n)?,
+        None => line,
+    };
+    let to_col = get_number("to_col")?
+        .ok_or("decorate: needs text (virtual text) or to_col (a range to highlight)")?;
+    // The last column, 1-based and inclusive: the range's end, 0-based.
+    let end_col = (to_col.max(0) as usize).min(buffer.line_len(to_line));
+    let end = Position::new(to_line, end_col);
+    if end <= start {
+        return Err("decorate: the range ends before it starts".into());
+    }
+    document.add_highlights(vec![crate::editor::RangeHighlight {
+        start,
+        end,
+        style: style.unwrap_or_else(|| "ui.highlight.reference".into()),
+        source,
+    }]);
+    Ok(())
 }
 
 /// An option's value for Lua: booleans, integers, strings, and tables for

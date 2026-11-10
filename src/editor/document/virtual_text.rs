@@ -26,6 +26,17 @@ pub struct VirtualText {
     pub end_of_line: bool,
 }
 
+/// A range of the text drawn in a theme scope (a plugin's decoration),
+/// kept in place through edits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeHighlight {
+    pub start: Position,
+    pub end: Position,
+    pub style: String,
+    /// What put it there, so it can be cleared as a whole.
+    pub source: String,
+}
+
 /// A line with its virtual text put in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayLine {
@@ -81,6 +92,26 @@ impl Document {
 
     pub fn clear_virtual_text(&mut self, source: &str) {
         self.virtual_text.retain(|v| v.source != source);
+    }
+
+    /// Adds highlighted ranges (from `source`).
+    pub fn add_highlights(&mut self, highlights: Vec<RangeHighlight>) {
+        self.highlights.extend(highlights);
+        self.highlights.sort_by_key(|h| h.start);
+    }
+
+    /// Takes away everything `source` put in: virtual text and highlights.
+    pub fn clear_decorations(&mut self, source: &str) {
+        self.virtual_text.retain(|v| v.source != source);
+        self.highlights.retain(|h| h.source != source);
+    }
+
+    /// The highlighted ranges that touch line `row`.
+    pub fn highlights_on(&self, row: usize) -> impl Iterator<Item = &RangeHighlight> {
+        self.highlights
+            .iter()
+            .take_while(move |h| h.start.row <= row)
+            .filter(move |h| h.end.row >= row)
     }
 
     pub fn virtual_text(&self) -> &[VirtualText] {
@@ -139,8 +170,25 @@ impl Document {
             .filter(|v| v.end_of_line)
     }
 
-    /// After `at..end` was inserted: virtual text after it moves on.
+    /// After `at..end` was inserted: virtual text after it moves on, and
+    /// highlights stretch over text typed inside them.
     pub(super) fn virtual_text_after_insert(&mut self, at: Position, end: Position) {
+        let shift = |p: Position| {
+            if p.row == at.row {
+                Position::new(end.row, end.col + (p.col - at.col))
+            } else {
+                Position::new(p.row + (end.row - at.row), p.col)
+            }
+        };
+        for h in &mut self.highlights {
+            if h.start >= at && !(h.start == at && h.end > at) {
+                h.start = shift(h.start);
+            }
+            if h.end > at {
+                h.end = shift(h.end);
+            }
+            h.end = h.end.max(h.start);
+        }
         for v in &mut self.virtual_text {
             if v.at > at || (v.at == at && at != end) {
                 v.at = if v.at.row == at.row {
@@ -155,6 +203,23 @@ impl Document {
     /// After `start..end` was deleted: virtual text in it goes, and after
     /// it moves back.
     pub(super) fn virtual_text_after_delete(&mut self, start: Position, end: Position) {
+        let shift = |p: Position| {
+            if p <= start {
+                p
+            } else if p < end {
+                start
+            } else if p.row == end.row {
+                Position::new(start.row, start.col + (p.col - end.col))
+            } else {
+                Position::new(p.row - (end.row - start.row), p.col)
+            }
+        };
+        for h in &mut self.highlights {
+            h.start = shift(h.start);
+            h.end = shift(h.end);
+        }
+        // A highlight whose text is all gone goes too.
+        self.highlights.retain(|h| h.start < h.end);
         self.virtual_text.retain(|v| !(v.at > start && v.at < end));
         for v in &mut self.virtual_text {
             if v.at >= end {
@@ -208,6 +273,44 @@ mod tests {
         assert_eq!(line.to_real(7), 5, "in a hint: the char after it");
         assert_eq!(line.to_real(18), 10);
         assert_eq!(doc.display_line(1), None, "no virtual text");
+    }
+
+    #[test]
+    fn highlights_follow_edits_and_clear_by_source() {
+        let mut doc = Document::with_text("hello world\nsecond");
+        let highlight = |sr, sc, er, ec| RangeHighlight {
+            start: Position::new(sr, sc),
+            end: Position::new(er, ec),
+            style: "error".into(),
+            source: "plugin:x".into(),
+        };
+        doc.add_highlights(vec![highlight(0, 6, 0, 11), highlight(1, 0, 1, 6)]);
+        assert_eq!(doc.highlights_on(0).count(), 1);
+        doc.insert(Position::new(0, 0), ">> ");
+        let first = doc.highlights_on(0).next().unwrap();
+        assert_eq!((first.start.col, first.end.col), (9, 14), "moved along");
+        doc.insert(Position::new(0, 11), "XX");
+        let first = doc.highlights_on(0).next().unwrap();
+        assert_eq!(
+            (first.start.col, first.end.col),
+            (9, 16),
+            "stretched over text typed inside"
+        );
+        doc.delete(Position::new(1, 0), Position::new(1, 6));
+        assert_eq!(doc.highlights_on(1).count(), 0, "its text gone, it's gone");
+        doc.set_virtual_text(
+            "plugin:x",
+            vec![VirtualText {
+                at: Position::new(0, 0),
+                text: "!".into(),
+                style: "error".into(),
+                source: "plugin:x".into(),
+                end_of_line: true,
+            }],
+        );
+        doc.clear_decorations("plugin:x");
+        assert_eq!(doc.highlights_on(0).count(), 0);
+        assert!(doc.virtual_text().is_empty());
     }
 
     #[test]

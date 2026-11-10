@@ -273,3 +273,54 @@ fn no_config_directory_means_no_plugins() {
     let mut app = app();
     assert_eq!(app.load_plugins(dir.path()), None);
 }
+
+#[test]
+fn decorations_are_checked_and_grouped() {
+    let mut app = with_plugin(
+        r#"
+        editor.command("deco", function(ctx)
+          local spec = ({
+            nothing = {},
+            far = { line = 99, text = "x" },
+            neither = { line = 1 },
+            wrong = { line = 1, text = 5 },
+          })[ctx.args[1]]
+          if spec then
+            ctx:decorate(spec)
+            return
+          end
+          ctx:decorate({ group = "a", line = 1, col = 1, to_col = 3, style = "ui.decoration.error" })
+          ctx:decorate({ group = "b", line = 1, text = "!", end_of_line = true })
+          ctx:decorate({ group = "b", line = 1, col = 4, text = "<" })
+        end)
+        editor.command("clear_b", function(ctx) ctx:clear_decorations("b") end)
+        "#,
+    );
+    keys(&mut app, "ihello<Esc>");
+    for (arg, error) in [
+        ("nothing", "decorate: needs a line"),
+        ("far", "decorate: line 99 is out of range (1 to 1)"),
+        (
+            "neither",
+            "decorate: needs text (virtual text) or to_col (a range to highlight)",
+        ),
+        ("wrong", "decorate: text should be text, not integer"),
+    ] {
+        keys(&mut app, &format!(":deco {arg}<CR>"));
+        assert!(message(&app).contains(error), "{arg}: {}", message(&app));
+    }
+    keys(&mut app, ":deco<CR>");
+    let doc = &app.editor().document;
+    assert_eq!(
+        doc.highlights_on(0)
+            .map(|h| (h.start.col, h.end.col))
+            .collect::<Vec<_>>(),
+        [(0, 3)]
+    );
+    assert_eq!(doc.virtual_text().len(), 2);
+    assert_eq!(doc.display_line(0).unwrap().text, "hel<lo");
+    keys(&mut app, ":clear_b<CR>");
+    let doc = &app.editor().document;
+    assert!(doc.virtual_text().is_empty(), "group b's gone");
+    assert_eq!(doc.highlights_on(0).count(), 1, "group a's still there");
+}

@@ -256,6 +256,13 @@ line and drawn after the line's own text on its last row, after any
 diagnostic message, cut off at the window's edge: it takes no room, so
 nothing else changes.
 
+A `Document` also keeps `RangeHighlight`s: ranges drawn in a theme scope,
+moved along with edits (text typed inside one stretches it; one whose text
+is all deleted goes), drawn after syntax colours and before search
+matches. Plugins make both through `ctx:decorate` (`plugins/api.rs`), with
+the source `plugin:<group>`, and `ctx:clear_decorations(group)` takes a
+group's away together (`Document::clear_decorations`).
+
 Inlay hints (`LspFeature::InlayHint`) are asked for the whole buffer once
 its text has been still for 300 ms and a ready server has it
 (`Lsp::ask_for_inlay_hints`), again after each change and when the server
@@ -1424,8 +1431,10 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
    buffers, options, and creating pickers from Lua.
 2. **Plugin UI**: started with popups (see [Plugin popups](#plugin-popups));
    views in the sidebar (see [Plugin sidebar views](#plugin-sidebar-views)),
-   and asking the user (pickers and input boxes, see [Asking the user from
-   plugins](#asking-the-user-from-plugins)); still to come are decorations (see "Plugin windows and decorations" below).
+   asking the user (pickers and input boxes, see [Asking the user from
+   plugins](#asking-the-user-from-plugins)), and decorations (see [Virtual
+   text](#virtual-text)); still to come are windows and scratch buffers
+   (see "Plugin windows and decorations" below).
 3. **Registering at runtime.** Registrations made inside a callback (rather
    than while loading) are collected but not yet installed.
 4. **Isolation.** If sandboxing untrusted plugins becomes a goal, a WASM
@@ -1433,11 +1442,11 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
 
 ## Roadmap: deferred features
 
-Planned: plugin UI, the rest of LSP support (diagnostics, hover, go to
-definition and references, completion, formatting, rename, code actions
-signature help, symbol and diagnostic pickers, progress and restarting,
-and highlighting references are done), an
-agent harness, an embedded terminal and Git support. They share three foundations, which should come first.
+Done: the planned LSP support, the VS Code-like interface (sidebar, find
+box, terminal panel, mouse), plugin UI (popups, sidebar views, prompts,
+decorations) and the everyday Git features. Still to come: plugin windows
+and scratch buffers, the agent harness, more of the embedded terminal, and
+the rest of Git. They share three foundations, started below.
 
 ### Foundations
 
@@ -1458,9 +1467,10 @@ agent harness, an embedded terminal and Git support. They share three foundation
    inline), gutter signs and status line segments, all kept in place as
    text is edited (the same bookkeeping as marks and `track_rows`), drawn by
    the editor pane after syntax highlighting. Started: inline virtual text
-   and at the end of a line (see [Virtual text](#virtual-text)), used by
-   inlay hints and line blame; git's gutter marks are drawn by the pane.
-   Still to come: plugins' decorations.
+   and at the end of a line, and highlighted ranges (see [Virtual
+   text](#virtual-text)), used by inlay hints, line blame and plugins'
+   decorations; git's gutter marks are drawn by the pane. Still to come:
+   gutter signs and status line segments from plugins.
 
 ### Plugin windows and decorations
 
@@ -1472,9 +1482,9 @@ Built on the foundations, exposed to Lua in the style of Neovim's
   title } })`, or as a split; then `focus`, `close`, `set_config`.
 - Buffer-local `editor.map` and `on("buffer-closed")`, so a plugin's modal
   handles its own keys.
-- `editor.decorate(buffer, range, { highlight, virtual_text, sign })`,
-  returning a handle to update or clear: diagnostics, git signs, inline
-  hints, search counts.
+- Decorations: done for the current buffer as `ctx:decorate` (virtual
+  text and highlights, cleared by group); still to come are gutter signs,
+  and decorating buffers other than the current one.
 - Status line and gutter components that plugins add to the built-in ones.
 
 ### LSP support
@@ -1507,8 +1517,8 @@ A VS Code-like layout, so the editor can be driven without many commands:
 the sidebar's file tree and the find box (done; see [The
 sidebar](#the-sidebar), [The find box](#the-find-box), [The terminal
 panel](#the-terminal-panel), plugin popups and views, and [The
-mouse](#the-mouse)). The sidebar is meant to hold more
-than files: Git's changed files will be another view in it.
+mouse](#the-mouse)). The sidebar holds more than files: Git's Source
+Control is a view in it, and plugins add their own.
 
 ### Git support
 

@@ -950,6 +950,7 @@ a `ctx`:
 | `run(name, ...)` | Run any command, with arguments |
 | `option(name)`, `set_option(name, value [, "local"])` | Read an option (`"tab-width"`, `"search.case"`), or set it everywhere or for this window or buffer, checked as config is |
 | `popup{...}`, `popup_update{...}`, `popup_close()`, `popup_selected()`, `popup_name()` | Show a popup (below) and work with it |
+| `decorate{...}`, `clear_decorations([group])` | Virtual text and highlighted ranges in the buffer (below) |
 | `view_selected()`, `view_name()`, `view_refresh([name])` | The sidebar view shown, and making one again (below) |
 | `pick{...}`, `input{...}` | Ask the user: a picker of the plugin's items, or a line of text (below) |
 
@@ -1031,6 +1032,28 @@ they're `[keys.input]`.
 [`examples/plugins/snippets.lua`](examples/plugins/snippets.lua) picks a
 snippet to insert (`<Space>i`) and asks what to wrap a word in
 (`<Space>w`).
+
+### Decorations
+
+`ctx:decorate{...}` marks up the current buffer without changing its text:
+virtual text in a line or after it (as inlay hints and blame are drawn),
+or a highlighted range. Decorations follow your edits, and belong to a
+`group` the plugin names, so it can clear and redo them together.
+
+```lua
+-- A red background on columns 9 to 11 of line 1 (1-based, the last
+-- column included, as string.find gives them).
+ctx:decorate({ group = "mine", line = 1, col = 9, to_col = 11, style = "ui.decoration.error" })
+-- Grey text after line 2 (or, without end_of_line, before column `col`).
+ctx:decorate({ group = "mine", line = 2, text = "← too long", end_of_line = true, style = "ui.decoration.text" })
+ctx:clear_decorations("mine")
+```
+
+`to_line` makes a range span lines. Any theme scope works as a `style`;
+`ui.decoration.error`, `.warning`, `.info` (backgrounds) and
+`ui.decoration.text` are there for plugins.
+[`examples/plugins/tidy.lua`](examples/plugins/tidy.lua) marks trailing
+whitespace and says how far lines run past `text-width`, as you type.
 
 ### Sidebar views
 

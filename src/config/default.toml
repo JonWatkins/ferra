@@ -324,6 +324,12 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.virtual.inlay-hint" = { fg = "#6b7280", modifiers = ["italic"] }
 "ui.virtual.inlay-hint.type" = { fg = "#6b7280", modifiers = ["italic"] }
 "ui.virtual.inlay-hint.parameter" = { fg = "#6b7280", modifiers = ["italic"] }
+# For plugins' decorations (ctx:decorate): backgrounds for problems, and
+# text after or inside lines. Any other scope works too ("comment"...).
+"ui.decoration.error" = { bg = "#4a2530" }
+"ui.decoration.warning" = { bg = "#4a3e25" }
+"ui.decoration.info" = { bg = "#253447" }
+"ui.decoration.text" = { fg = "#6b7280", modifiers = ["italic"] }
 # Git blame for the cursor's line, after it.
 "ui.virtual.blame" = { fg = "#565f89", modifiers = ["italic"] }
 # Git changes in the gutter (against what's staged).

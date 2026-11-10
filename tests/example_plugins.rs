@@ -172,3 +172,32 @@ fn snippets_picks_a_snippet_and_asks_what_to_wrap_a_word_in() {
     keys(&mut app, "0<Space>w<Esc>");
     assert_eq!(text(&app), "some **word** here", "cancelled");
 }
+
+#[test]
+fn tidy_marks_trailing_whitespace_and_long_lines() {
+    let mut app = common::app_with_config("[editor]\nauto-indent = false\ntext-width = 20");
+    let source = fs::read_to_string("examples/plugins/tidy.lua").unwrap();
+    app.load_plugin("tidy.lua", &source)
+        .expect("tidy.lua loads");
+    keys(
+        &mut app,
+        "itrailing   \nthis line is longer than twenty\nfine<Esc>",
+    );
+    let doc = &app.editor().document;
+    let spaces: Vec<_> = doc
+        .highlights_on(0)
+        .map(|h| (h.start.col, h.end.col, h.style.clone()))
+        .collect();
+    assert_eq!(spaces, [(8, 11, "ui.decoration.error".to_string())]);
+    let notes: Vec<_> = doc.end_of_line_text(1).map(|v| v.text.clone()).collect();
+    assert_eq!(notes, ["← 11 over 20"], "31 chars");
+    assert_eq!(doc.highlights_on(2).count(), 0);
+
+    // Fixed as you type: the marks follow.
+    keys(&mut app, "ggA<BS><BS><BS><Esc>");
+    assert_eq!(app.editor().document.highlights_on(0).count(), 0);
+
+    keys(&mut app, ":tidy<CR>");
+    assert_eq!(message(&app), "Tidy marks off");
+    assert_eq!(app.editor().document.end_of_line_text(1).count(), 0);
+}

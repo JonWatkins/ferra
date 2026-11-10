@@ -3,7 +3,7 @@ mod folds;
 mod marks;
 mod virtual_text;
 
-pub use virtual_text::{DisplayLine, VirtualText};
+pub use virtual_text::{DisplayLine, RangeHighlight, VirtualText};
 
 pub use file::{DiskState, OpenInfo, SaveInfo};
 
@@ -72,6 +72,8 @@ pub struct Document {
     /// Text drawn in lines that isn't in the file (inlay hints), moved
     /// along as the text is edited.
     virtual_text: Vec<VirtualText>,
+    /// Ranges plugins have highlighted, moved along as the text is edited.
+    highlights: Vec<RangeHighlight>,
     /// How the file was indented when read (see [`crate::core::indent`]).
     detected_indent: Option<IndentUnit>,
     /// The indentation chosen with `:indent`, over any detected one.
