@@ -1,6 +1,6 @@
 # Default configuration.
 #
-# This file is embedded in the binary. Your own config file (see README) is
+# This file is embedded in the binary. Your own config file (see README.md) is
 # merged on top of it, so you only need to specify what you want to change.
 
 [editor]

@@ -125,12 +125,21 @@ fn shipped_default_config_parses_as_user_config() {
 }
 
 #[test]
-fn readme_example_config_is_valid() {
-    let readme = include_str!("../README.md");
-    let example = readme
-        .split("```toml")
-        .nth(1)
-        .and_then(|rest| rest.split("```").next())
-        .expect("README contains a ```toml example");
-    Config::from_toml(example).unwrap();
+fn documented_example_configs_are_valid() {
+    // Every TOML example in the README and the user guide parses as a
+    // user config, so they can't fall behind the options.
+    for (name, doc) in [
+        ("README.md", include_str!("../README.md")),
+        ("docs/GUIDE.md", include_str!("../docs/GUIDE.md")),
+    ] {
+        let examples: Vec<&str> = doc
+            .split("```toml")
+            .skip(1)
+            .map(|rest| rest.split("```").next().unwrap_or(""))
+            .collect();
+        assert!(!examples.is_empty(), "{name} has a ```toml example");
+        for example in examples {
+            Config::from_toml(example).unwrap_or_else(|e| panic!("{name}: {e}\n{example}"));
+        }
+    }
 }
