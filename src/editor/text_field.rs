@@ -28,6 +28,14 @@ impl TextField {
         self.selected && !self.text.is_empty()
     }
 
+    /// Replaces the text, not selected, with the cursor at its end (to
+    /// edit it rather than type over it).
+    pub fn set_text(&mut self, text: &str) {
+        self.text = text.to_string();
+        self.cursor = self.len();
+        self.selected = false;
+    }
+
     /// Replaces the text, selected, with the cursor at its end.
     pub fn set_selected(&mut self, text: &str) {
         self.text = text.to_string();

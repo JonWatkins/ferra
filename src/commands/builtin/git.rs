@@ -241,6 +241,55 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "git_amend",
+        "Fold what's staged into the last commit, editing its message (C)",
+        |cx| cx.editor.git_ask_amend(),
+    );
+    r.register(
+        "git_amend_message",
+        "Amend the last commit with the message given",
+        |cx| {
+            let message = if cx.arg_text.is_empty() {
+                cx.args.join(" ")
+            } else {
+                cx.arg_text.to_string()
+            };
+            cx.editor.git_amend(&message)
+        },
+    );
+    r.register(
+        "git_stash",
+        "Put every change away in a stash, asking for a message (z)",
+        |cx| cx.editor.git_ask_stash(),
+    );
+    r.register(
+        "git_stash_message",
+        "Stash every change with the message given",
+        |cx| {
+            let message = if cx.arg_text.is_empty() {
+                cx.args.join(" ")
+            } else {
+                cx.arg_text.to_string()
+            };
+            cx.editor.git_stash(&message)
+        },
+    );
+    r.register("git_stash_list", "Pick a stash to put back (Z)", |cx| {
+        cx.editor.git_stash_picker()
+    });
+    r.register(
+        "git_stash_pop",
+        "Put back the stash named (:git_stash_pop stash@{0}), and drop it",
+        |cx| {
+            let name = cx
+                .args
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "stash@{0}".into());
+            cx.editor.git_stash_pop(&name)
+        },
+    );
+    r.register(
         "git_refresh",
         "Read what git has staged again, for the gutter and status line",
         |cx| {

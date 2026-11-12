@@ -437,6 +437,15 @@ ssh command) `ssh -o BatchMode=yes`, so nothing can stop to ask on the
 terminal ferra is drawing on. A branch's first push adds
 `--set-upstream <first remote> <branch>`.
 
+Amending is `commit --amend -m` with the last message (`log -1
+--format=%B`) put in the input box to edit; the title says if the branch
+isn't ahead of its upstream (the commit's been pushed). Stashing is `stash
+push --include-untracked`, the list `stash list --format=%gd%x00%gs`, and
+putting one back `stash pop <name>`. Like switching branch, both refuse
+while buffers have unsaved changes (`git_check_saved`) and reload open
+files after. With the git view open, a picker, box or `:` line asked from
+it comes back to it when it closes (`Editor::set_mode`).
+
 ## Syntax highlighting
 
 `syntax/` wraps tree-sitter:
@@ -1525,8 +1534,9 @@ Control is a view in it, and plugins add their own.
 Started: changes in the gutter, `]c`/`[c`, the branch, the file tree's
 marks, Source Control in the sidebar, and the full-screen git view with
 diffs and staging hunks, branches, and fetch, pull and push in the
-background (see [Git](#git)). Next: amending, stashes, blame, a file's
-history, merge conflicts, and staging single lines.
+background, amending and stashes (see [Git](#git)). Next: a whole-file
+blame view, a file's history, side-by-side diffs, merge conflicts, and
+staging single lines.
 
 The everyday Git features, without leaving the editor:
 
@@ -1805,7 +1815,7 @@ not. The answer is dropped unless the editor is still where it was asked
   count columns without them.
 
 - Git: the gutter compares with what's staged only (not `HEAD`); no
-  staging single lines (only hunks), amending, stashes, blame, rebasing,
+  staging single lines (only hunks), a whole-file blame view, rebasing,
   merging, or resolving conflicts yet; one fetch, pull or push at a time,
   with no way to cancel one, and none that needs a password typed; the git view's diffs aren't syntax
   coloured, and huge commits are read whole; the file

@@ -58,7 +58,10 @@ pub enum GitRow {
 }
 
 /// The Source Control view's keys (bound in the sidebar while it's shown).
-pub const GIT_VIEW_KEYS: [(&str, &str); 10] = [
+pub const GIT_VIEW_KEYS: [(&str, &str); 13] = [
+    ("C", "git_amend"),
+    ("z", "git_stash"),
+    ("Z", "git_stash_list"),
     ("f", "git_fetch"),
     ("p", "git_pull"),
     ("P", "git_push"),
@@ -678,6 +681,17 @@ impl Editor {
         if self.git_branch() == Some(name) {
             return Err(format!("Already on {name}"));
         }
+        self.git_check_saved()?;
+        git::switch(&root, name)?;
+        self.check_disk_changes();
+        self.git_refresh_all();
+        self.set_message(Message::info(format!("Switched to {name}")));
+        Ok(())
+    }
+
+    /// Refuses while buffers have unsaved changes: what git's about to do
+    /// changes files on disk, which they'd no longer match.
+    fn git_check_saved(&self) -> Result<(), String> {
         let unsaved = self.buffers().iter().filter(|b| b.modified).count();
         if unsaved > 0 {
             return Err(format!(
@@ -685,10 +699,105 @@ impl Editor {
                 if unsaved == 1 { "" } else { "s" }
             ));
         }
-        git::switch(&root, name)?;
+        Ok(())
+    }
+
+    /// `C`: asks for the last commit's message again (to edit), to fold
+    /// what's staged into it. Says so if it's been pushed.
+    pub fn git_ask_amend(&mut self) -> Result<(), String> {
+        let root = self.git_root()?;
+        let message = git::last_message(&root).ok_or("There's no commit to amend yet")?;
+        let short = git::log(&root, "HEAD", 1)
+            .first()
+            .map(|c| c.short.clone())
+            .unwrap_or_default();
+        // Its upstream has it too when the branch isn't ahead of it.
+        let pushed = matches!(self.git_ahead_behind(), Some((0, _)));
+        let title = if pushed {
+            format!("Amend {short} (already pushed)")
+        } else {
+            format!("Amend {short}")
+        };
+        let mut input = super::input_box::InputBox::new(&title, "", "git_amend_message");
+        input.field.set_text(&message);
+        input.placeholder = "Message".into();
+        self.open_input_box(input);
+        Ok(())
+    }
+
+    /// Folds what's staged into the last commit, with `message`.
+    pub fn git_amend(&mut self, message: &str) -> Result<(), String> {
+        if message.trim().is_empty() {
+            return Err("A commit needs a message".into());
+        }
+        let root = self.git_root()?;
+        let id = match git::amend(&root, message) {
+            Ok(id) => id,
+            Err(error) => return self.git_after_action(Err(error)),
+        };
+        self.git_after_action(Ok(()))?;
+        let first = message.lines().next().unwrap_or("");
+        self.set_message(Message::info(format!("Amended {id}: {first}")));
+        Ok(())
+    }
+
+    /// `z`: asks for a message (optional), to stash every change.
+    pub fn git_ask_stash(&mut self) -> Result<(), String> {
+        self.git_root()?;
+        self.git_check_saved()?;
+        if self.git_status().is_none_or(|s| s.files.is_empty()) {
+            return Err("No changes to stash".into());
+        }
+        let mut input =
+            super::input_box::InputBox::new("Stash all changes", "", "git_stash_message");
+        input.placeholder = "Message (optional)".into();
+        self.open_input_box(input);
+        Ok(())
+    }
+
+    /// Stashes every change (untracked files too), with `message`.
+    pub fn git_stash(&mut self, message: &str) -> Result<(), String> {
+        let root = self.git_root()?;
+        self.git_check_saved()?;
+        let result = git::stash_push(&root, message);
         self.check_disk_changes();
-        self.git_refresh_all();
-        self.set_message(Message::info(format!("Switched to {name}")));
+        self.git_after_action(result)?;
+        self.set_message(Message::info("Stashed your changes (Z puts them back)"));
+        Ok(())
+    }
+
+    /// `Z`: a picker of the stashes, to pop one.
+    pub fn git_stash_picker(&mut self) -> Result<(), String> {
+        let root = self.git_root()?;
+        let stashes = git::stashes(&root);
+        if stashes.is_empty() {
+            return Err("No stashes".into());
+        }
+        let items = stashes
+            .into_iter()
+            .map(|s| super::picker::PickerItem {
+                action: super::picker::PickerAction::RunWith(
+                    "git_stash_pop".into(),
+                    vec![s.name.clone()],
+                ),
+                label: s.subject,
+                detail: s.name,
+            })
+            .collect();
+        // Labels start with what's useful ("On main: wip").
+        let picker = super::picker::Picker::new("Stashes: put one back", items).keep_label_start();
+        self.open_picker(picker);
+        Ok(())
+    }
+
+    /// Puts stash `name`'s changes back, and drops it.
+    pub fn git_stash_pop(&mut self, name: &str) -> Result<(), String> {
+        let root = self.git_root()?;
+        self.git_check_saved()?;
+        let result = git::stash_pop(&root, name);
+        self.check_disk_changes();
+        self.git_after_action(result)?;
+        self.set_message(Message::info(format!("Put back {name}")));
         Ok(())
     }
 

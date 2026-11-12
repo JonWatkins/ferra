@@ -445,3 +445,74 @@ fn the_cursors_line_is_blamed_after_it() {
     }
     assert_eq!(blame_shown(&app), None);
 }
+
+#[test]
+fn amending_and_stashing_from_the_git_view() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let path = dir.path().join("code.txt");
+    let mut app = app();
+    keys(&mut app, &format!(":e {}<CR>", path.display()));
+
+    // Amend: the last message to edit, and the staged change goes in.
+    std::fs::write(&path, "one\ntwo\nthree\nfour\nfive\nsix\n").unwrap();
+    assert!(git(dir.path(), &["add", "code.txt"]));
+    keys(&mut app, ":e!<CR><Space>gC");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Input);
+    let input = app.editor().input_box().unwrap();
+    assert_eq!(input.field.text(), "x", "the last message");
+    assert!(!input.field.is_selected(), "to edit, not type over");
+    keys(&mut app, ", now with six<CR>");
+    assert!(
+        message(&app).ends_with(": x, now with six"),
+        "{}",
+        message(&app)
+    );
+    assert_eq!(
+        app.editor().mode(),
+        ferra::editor::Mode::Git,
+        "back in the view"
+    );
+    let gui = app.editor().git_gui().unwrap();
+    assert_eq!(gui.commits.len(), 1, "still one commit");
+    assert_eq!(gui.commits[0].subject, "x, now with six");
+
+    // `:` in the view comes back to it too.
+    keys(&mut app, ":git_refresh<CR>");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Git);
+
+    // Stash: changes (an untracked file too) put away, and back.
+    std::fs::write(&path, "changed\n").unwrap();
+    std::fs::write(dir.path().join("notes.md"), "notes\n").unwrap();
+    keys(&mut app, "R");
+    keys(&mut app, "zwip<CR>");
+    assert_eq!(message(&app), "Stashed your changes (Z puts them back)");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "one\ntwo\nthree\nfour\nfive\nsix\n"
+    );
+    assert!(!dir.path().join("notes.md").exists());
+    assert_eq!(
+        common::text(&app),
+        "one\ntwo\nthree\nfour\nfive\nsix",
+        "the open file follows"
+    );
+    keys(&mut app, "Z");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Picker);
+    keys(&mut app, "<CR>");
+    assert_eq!(message(&app), "Put back stash@{0}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "changed\n");
+    assert!(dir.path().join("notes.md").exists());
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Git);
+    keys(&mut app, "Z");
+    assert_eq!(message(&app), "No stashes");
+
+    // Not with unsaved changes.
+    keys(&mut app, "q:e!<CR>ccedited<Esc><Space>gz");
+    assert!(
+        message(&app).starts_with("Save or undo the unsaved changes first"),
+        "{}",
+        message(&app)
+    );
+}

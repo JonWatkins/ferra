@@ -955,6 +955,9 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "n" = "git_new_branch"
 "d" = "git_delete_branch"
 "D" = "git_force_delete_branch"
+"C" = "git_amend"
+"z" = "git_stash"
+"Z" = "git_stash_list"
 ":" = "command_mode"
 
 # A plugin's input box (ctx:input), while it has focus. Typing edits it.

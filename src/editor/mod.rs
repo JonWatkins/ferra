@@ -505,6 +505,18 @@ impl Editor {
 
     /// Switches mode, applying Vim's transition rules.
     pub fn set_mode(&mut self, mode: Mode) {
+        // With the git view open, leaving a box or the `:` line asked from
+        // it goes back to it, not to the text behind.
+        let mode = if mode == Mode::Normal
+            && self.git_gui.is_some()
+            && matches!(
+                self.mode,
+                Mode::Command | Mode::Picker | Mode::Input | Mode::Popup
+            ) {
+            Mode::Git
+        } else {
+            mode
+        };
         let previous = std::mem::replace(&mut self.mode, mode);
         if previous != mode {
             self.emit(Event::ModeChanged {

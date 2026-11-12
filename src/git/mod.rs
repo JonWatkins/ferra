@@ -423,6 +423,61 @@ pub fn start_remote(
     receiver
 }
 
+/// The last commit's message.
+pub fn last_message(root: &Path) -> Option<String> {
+    git(root, &["log", "-1", "--format=%B"])
+        .map(|b| String::from_utf8_lossy(&b).trim_end().to_string())
+}
+
+/// Folds what's staged into the last commit, with `message`. Returns its
+/// new short id.
+pub fn amend(root: &Path, message: &str) -> Result<String, String> {
+    run(root, &["commit", "-q", "--amend", "-m", message])?;
+    Ok(run(root, &["rev-parse", "--short", "HEAD"])?
+        .trim()
+        .to_string())
+}
+
+/// A stash, as `git stash list` gives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stash {
+    /// `stash@{0}`.
+    pub name: String,
+    /// `On main: message`.
+    pub subject: String,
+}
+
+/// Puts every change (untracked files too) away in a stash.
+pub fn stash_push(root: &Path, message: &str) -> Result<(), String> {
+    let mut args = vec!["stash", "push", "--include-untracked", "--quiet"];
+    if !message.trim().is_empty() {
+        args.extend(["-m", message]);
+    }
+    run(root, &args).map(drop)
+}
+
+/// The stashes, newest first.
+pub fn stashes(root: &Path) -> Vec<Stash> {
+    let Some(bytes) = git(root, &["stash", "list", "--format=%gd%x00%gs"]) else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .filter_map(|line| {
+            let (name, subject) = line.split_once('\0')?;
+            Some(Stash {
+                name: name.to_string(),
+                subject: subject.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Puts stash `name`'s changes back and drops it.
+pub fn stash_pop(root: &Path, name: &str) -> Result<(), String> {
+    run(root, &["stash", "pop", "--quiet", name]).map(drop)
+}
+
 /// Who last changed a line, and in which commit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Blame {
@@ -927,6 +982,44 @@ mod tests {
     }
 
     use super::tests_support::repo;
+
+    #[test]
+    fn amending_and_stashing() {
+        let Some(dir) = repo() else {
+            return;
+        };
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        assert_eq!(last_message(&root).as_deref(), Some("first"));
+        std::fs::write(root.join("file.txt"), "one\ntwo\nthree\n").unwrap();
+        stage(&root, &["file.txt"]).unwrap();
+        amend(&root, "first, with three").unwrap();
+        assert_eq!(log(&root, "HEAD", 10).len(), 1, "still one commit");
+        assert_eq!(last_message(&root).as_deref(), Some("first, with three"));
+        assert!(
+            status(&root).unwrap().files.is_empty(),
+            "the change went in"
+        );
+
+        std::fs::write(root.join("file.txt"), "changed\n").unwrap();
+        std::fs::write(root.join("new.txt"), "new\n").unwrap();
+        stash_push(&root, "wip").unwrap();
+        assert!(
+            status(&root).unwrap().files.is_empty(),
+            "put away, untracked too"
+        );
+        let list = stashes(&root);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "stash@{0}");
+        assert!(list[0].subject.ends_with("wip"), "{}", list[0].subject);
+        stash_pop(&root, "stash@{0}").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("file.txt")).unwrap(),
+            "changed\n"
+        );
+        assert!(root.join("new.txt").exists());
+        assert!(stashes(&root).is_empty());
+        assert!(stash_pop(&root, "stash@{0}").is_err());
+    }
 
     #[test]
     fn blames_a_line_counting_unsaved_edits() {

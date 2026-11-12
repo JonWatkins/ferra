@@ -498,13 +498,19 @@ or staged changes, a commit, or a branch's log.
 | `<CR>`, `<Space>` (on a branch) | Switch to it |
 | `n` | Make a branch where you are, and switch to it (asks for the name) |
 | `d` / `D` | Delete the selected branch (asks first) / even if it isn't merged |
+| `C` | Amend the last commit: what's staged goes into it, and its message opens to edit (says if it's been pushed) |
+| `z` | Stash every change, untracked files too (asks for an optional message) |
+| `Z` | Pick a stash to put back (it's dropped once it's back) |
 | `q` | Close |
 
 Fetching, pulling and pushing run in the background with git's progress
 as the message (`Pushing: Writing objects: 45%`); the first push of a
 branch sets its upstream, as `git push -u` does. They use your credential
 helpers and ssh agent, and fail with a message rather than wait for a
-password to be typed. The sidebar's Git tab takes `f`, `p` and `P` too,
+password to be typed. Stashing and putting a stash back are refused
+while buffers have unsaved changes, as switching branch is; open files
+show the result. The sidebar's Git tab takes `f`, `p`, `P`, `C`, `z`
+and `Z` too,
 `:git_branch` picks a branch to switch to from anywhere, and the status
 line shows how far ahead and behind its upstream the branch is (`⎇ main
 ↑2 ↓1`). Switching is refused while buffers have unsaved changes; after
