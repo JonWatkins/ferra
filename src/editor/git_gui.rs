@@ -7,8 +7,15 @@
 //! its diff, where `j`/`k` move between hunks and `s`/`u` stage or
 //! unstage just the hunk (a patch of it applied to the index). Committing
 //! and discarding ask in an input box and a popup, which come back here.
+//!
+//! `H` on a file (or `<Space>l` / `:git_history` in a buffer) turns the
+//! commits panel into the file's history: the commits that changed it,
+//! following renames, each showing just what it did to the file. `H` or
+//! `<Esc>` there goes back to the whole log.
 
 use std::cell::Cell;
+use std::collections::HashMap;
+use std::sync::mpsc::{self, Receiver};
 
 use super::{Editor, GitRow, Message, Mode};
 use crate::git::{self, Branch, Commit, Diff};
@@ -53,6 +60,11 @@ pub struct GitGui {
     pub branch: usize,
     pub commits: Vec<Commit>,
     pub commit: usize,
+    /// The file whose history the commits panel shows (its path in the
+    /// repository), instead of the branch's log.
+    pub history: Option<String>,
+    /// The file's name in each of `commits` (it may have been renamed).
+    pub history_names: Vec<String>,
     pub diff: Diff,
     pub diff_title: String,
     pub diff_of: DiffOf,
@@ -65,6 +77,63 @@ pub struct GitGui {
     pub commit_scroll: Cell<usize>,
     /// Rows the diff panel showed last (for keeping a hunk in view).
     pub diff_rows: Cell<usize>,
+    /// The diff being read in the background, to show when it's come.
+    pub diff_job: Option<DiffJob>,
+    /// Commits' diffs already read.
+    diff_cache: HashMap<String, Diff>,
+}
+
+/// A diff being read on a thread.
+#[derive(Debug)]
+pub struct DiffJob {
+    of: DiffOf,
+    title: String,
+    /// What to keep it under, if it never changes (a commit).
+    key: Option<String>,
+    receiver: Receiver<Diff>,
+}
+
+enum Load {
+    Ready(DiffOf, String, Diff),
+    Thread(DiffJob),
+}
+
+/// Runs `read` on a thread, its output parsed as a diff.
+fn spawn_diff(read: impl FnOnce() -> String + Send + 'static) -> Receiver<Diff> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(Diff::parse(&read()));
+    });
+    receiver
+}
+
+/// How many commits' diffs are kept before starting again.
+const DIFF_CACHE_SIZE: usize = 100;
+
+impl GitGui {
+    fn set_diff(&mut self, of: DiffOf, title: String, diff: Diff) {
+        if of != self.diff_of {
+            self.diff_scroll = 0;
+            self.hunk = 0;
+        }
+        self.diff = diff;
+        self.diff_title = title;
+        self.diff_of = of;
+        self.hunk = self.hunk.min(self.diff.hunks.len().saturating_sub(1));
+    }
+
+    fn finish_job(&mut self, diff: Diff) {
+        let Some(job) = self.diff_job.take() else {
+            return;
+        };
+        if let Some(key) = job.key {
+            if self.diff_cache.len() >= DIFF_CACHE_SIZE {
+                self.diff_cache.clear();
+            }
+            self.diff_cache.insert(key, diff.clone());
+        }
+        self.set_diff(job.of, job.title, diff);
+    }
 }
 
 impl Editor {
@@ -107,7 +176,17 @@ impl Editor {
             return;
         };
         gui.branches = git::branches(&root);
-        gui.commits = git::log(&root, "HEAD", LOG_LENGTH);
+        match &gui.history {
+            Some(path) => {
+                let (commits, names) = git::file_log(&root, path, LOG_LENGTH).into_iter().unzip();
+                gui.commits = commits;
+                gui.history_names = names;
+            }
+            None => {
+                gui.commits = git::log(&root, "HEAD", LOG_LENGTH);
+                gui.history_names.clear();
+            }
+        }
         gui.branch = gui.branch.min(gui.branches.len().saturating_sub(1));
         gui.commit = gui.commit.min(gui.commits.len().saturating_sub(1));
         self.git_gui_show_diff();
@@ -130,12 +209,16 @@ impl Editor {
             GitPanel::Diff => gui.from,
             panel => panel,
         };
-        let (of, title, text) = match list {
+        // A file's diff is read here (staging a hunk needs it as it is
+        // now); a commit's or a branch's log on a thread, so moving down the
+        // list doesn't wait for git each step.
+        let ready = |of, title: String, text: String| Load::Ready(of, title, Diff::parse(&text));
+        let load = match list {
             GitPanel::Files => match selected_file {
                 Some((file, staged)) => {
                     let text = git::file_diff(&root, &file, staged);
                     let what = if staged { "staged" } else { "unstaged" };
-                    (
+                    ready(
                         DiffOf::File {
                             path: file.path.clone(),
                             staged,
@@ -144,39 +227,134 @@ impl Editor {
                         text,
                     )
                 }
-                None => (DiffOf::Nothing, "No changes".into(), String::new()),
+                None => ready(DiffOf::Nothing, "No changes".into(), String::new()),
             },
             GitPanel::Branches => match gui.branches.get(gui.branch) {
                 Some(branch) => {
-                    let log: Vec<String> = git::log(&root, &branch.name, 100)
-                        .iter()
-                        .map(|c| format!("{} {}  ({}, {})", c.short, c.subject, c.author, c.when))
-                        .collect();
-                    (
-                        DiffOf::Branch(branch.name.clone()),
-                        format!("Log: {}", branch.name),
-                        log.join("\n"),
-                    )
+                    let name = branch.name.clone();
+                    Load::Thread(DiffJob {
+                        of: DiffOf::Branch(name.clone()),
+                        title: format!("Log: {name}"),
+                        key: None,
+                        receiver: spawn_diff(move || {
+                            git::log(&root, &name, 100)
+                                .iter()
+                                .map(|c| {
+                                    format!("{} {}  ({}, {})", c.short, c.subject, c.author, c.when)
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        }),
+                    })
                 }
-                None => (DiffOf::Nothing, String::new(), String::new()),
+                None => ready(DiffOf::Nothing, String::new(), String::new()),
             },
             GitPanel::Commits | GitPanel::Diff => match gui.commits.get(gui.commit) {
-                Some(commit) => (
-                    DiffOf::Commit(commit.hash.clone()),
-                    format!("Commit {}", commit.short),
-                    git::show_commit(&root, &commit.hash),
-                ),
-                None => (DiffOf::Nothing, String::new(), String::new()),
+                Some(commit) => {
+                    let hash = commit.hash.clone();
+                    let (title, paths) = if gui.history.is_some() {
+                        let name = gui
+                            .history_names
+                            .get(gui.commit)
+                            .cloned()
+                            .unwrap_or_default();
+                        // The name before this commit, if it renamed the file.
+                        let before = gui
+                            .history_names
+                            .get(gui.commit + 1)
+                            .filter(|n| **n != name)
+                            .cloned();
+                        let title = format!("{name} @ {}", commit.short);
+                        (
+                            title,
+                            Some(
+                                [Some(name), before]
+                                    .into_iter()
+                                    .flatten()
+                                    .collect::<Vec<_>>(),
+                            ),
+                        )
+                    } else {
+                        (format!("Commit {}", commit.short), None)
+                    };
+                    let of = DiffOf::Commit(hash.clone());
+                    // A commit never changes, so its diff is kept.
+                    let key = format!(
+                        "{hash}\0{}",
+                        paths.as_deref().unwrap_or_default().join("\0")
+                    );
+                    match gui.diff_cache.get(&key) {
+                        Some(diff) => Load::Ready(of, title, diff.clone()),
+                        None => Load::Thread(DiffJob {
+                            of,
+                            title,
+                            key: Some(key),
+                            receiver: spawn_diff(move || match paths {
+                                Some(paths) => {
+                                    let paths: Vec<&str> =
+                                        paths.iter().map(String::as_str).collect();
+                                    git::show_commit_file(&root, &hash, &paths)
+                                }
+                                None => git::show_commit(&root, &hash),
+                            }),
+                        }),
+                    }
+                }
+                None => ready(DiffOf::Nothing, String::new(), String::new()),
             },
         };
-        if of != gui.diff_of {
-            gui.diff_scroll = 0;
-            gui.hunk = 0;
+        match load {
+            Load::Ready(of, title, diff) => {
+                gui.diff_job = None;
+                gui.set_diff(of, title, diff);
+            }
+            // The one asked for last wins; an earlier one's answer is dropped.
+            Load::Thread(job) => gui.diff_job = Some(job),
         }
-        gui.diff = Diff::parse(&text);
-        gui.diff_title = title;
-        gui.diff_of = of;
-        gui.hunk = gui.hunk.min(gui.diff.hunks.len().saturating_sub(1));
+    }
+
+    /// Takes the diff loaded in the background, if it's come. Returns
+    /// whether there's anything new to draw.
+    pub fn pump_git_gui_diff(&mut self) -> bool {
+        let Some(gui) = self.git_gui.as_mut() else {
+            return false;
+        };
+        let Some(job) = &gui.diff_job else {
+            return false;
+        };
+        match job.receiver.try_recv() {
+            Ok(diff) => {
+                gui.finish_job(diff);
+                true
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                gui.diff_job = None;
+                false
+            }
+        }
+    }
+
+    /// Whether a diff is loading (so the event loop keeps checking).
+    pub fn git_gui_diff_loading(&self) -> bool {
+        self.git_gui.as_ref().is_some_and(|g| g.diff_job.is_some())
+    }
+
+    /// Waits for the diff loading, if one is (for tests and scripts).
+    pub fn git_gui_wait(&mut self) {
+        let Some(gui) = self.git_gui.as_mut() else {
+            return;
+        };
+        let Some(job) = &gui.diff_job else {
+            return;
+        };
+        match job
+            .receiver
+            .recv_timeout(std::time::Duration::from_secs(10))
+        {
+            Ok(diff) => gui.finish_job(diff),
+            Err(_) => gui.diff_job = None,
+        }
     }
 
     /// `1` `2` `3`, `<Tab>`, a click: focuses a panel.
@@ -314,12 +492,97 @@ impl Editor {
         }
     }
 
-    /// `<Esc>`: out of the diff, or else closes the view.
+    /// `<Esc>`: out of the diff, out of a file's history, or else closes
+    /// the view.
     pub fn git_gui_back(&mut self) {
-        match self.git_gui.as_ref().map(|g| (g.panel, g.from)) {
-            Some((GitPanel::Diff, from)) => self.git_gui_focus(from),
+        match self
+            .git_gui
+            .as_ref()
+            .map(|g| (g.panel, g.from, g.history.is_some()))
+        {
+            Some((GitPanel::Diff, from, _)) => self.git_gui_focus(from),
+            Some((GitPanel::Commits, _, true)) => self.git_gui_set_history(None),
             Some(_) => self.close_git_gui(),
             None => {}
+        }
+    }
+
+    /// The commits panel shows `path`'s history (or, with `None`, the
+    /// branch's log again), focused, from its newest commit.
+    fn git_gui_set_history(&mut self, path: Option<String>) {
+        let Some(gui) = self.git_gui.as_mut() else {
+            return;
+        };
+        gui.history = path;
+        gui.commit = 0;
+        gui.commit_scroll.set(0);
+        gui.panel = GitPanel::Commits;
+        gui.from = GitPanel::Commits;
+        self.git_gui_reload();
+    }
+
+    /// Shows the history of `path` (relative to the repository's root),
+    /// opening the git view if it isn't.
+    pub fn git_show_history(&mut self, path: &str) -> Result<(), String> {
+        if self.git_gui.is_none() {
+            self.open_git_gui()?;
+        }
+        let root = self
+            .git_status()
+            .ok_or("Not in a git repository")?
+            .root
+            .clone();
+        if git::file_log(&root, path, 1).is_empty() {
+            return Err(format!("No commits have changed {path} yet"));
+        }
+        self.git_gui_set_history(Some(path.to_string()));
+        Ok(())
+    }
+
+    /// `<Space>l`, `:git_history`: the current file's history, in the
+    /// git view.
+    pub fn git_file_history(&mut self) -> Result<(), String> {
+        if !self.options.git {
+            return Err("git is turned off (git = false)".into());
+        }
+        let path = self
+            .document
+            .path()
+            .and_then(|p| std::fs::canonicalize(p).ok())
+            .ok_or("This buffer isn't a file")?;
+        let root = path
+            .parent()
+            .and_then(git::repo_root)
+            .and_then(|r| std::fs::canonicalize(r).ok())
+            .ok_or("This file isn't in a git repository")?;
+        let relative = path
+            .strip_prefix(&root)
+            .map_err(|_| "This file isn't in the repository")?
+            .to_string_lossy()
+            .replace('\\', "/");
+        // Before opening the view, so there's nothing to back out of.
+        if git::file_log(&root, &relative, 1).is_empty() {
+            return Err(format!("No commits have changed {relative} yet"));
+        }
+        self.git_show_history(&relative)
+    }
+
+    /// `H`: on a file, its history; in a history, back to the whole log.
+    pub fn git_gui_history(&mut self) -> Result<(), String> {
+        let gui = self.git_gui.as_ref().ok_or("The git view isn't open")?;
+        if gui.history.is_some() && gui.panel != GitPanel::Files {
+            self.git_gui_set_history(None);
+            return Ok(());
+        }
+        match (gui.panel, &gui.diff_of) {
+            (GitPanel::Files, _) | (GitPanel::Diff, DiffOf::File { .. }) => {
+                let path = match self.git_rows().get(self.git_selected()) {
+                    Some(GitRow::File { file, .. }) => file.path.clone(),
+                    _ => return Err("Choose a file (in [1] Files) to see its history".into()),
+                };
+                self.git_show_history(&path)
+            }
+            _ => Err("Choose a file (in [1] Files) to see its history".into()),
         }
     }
 
@@ -423,6 +686,7 @@ mod tests {
         assert_eq!(editor.git_gui().unwrap().panel, GitPanel::Files);
         editor.git_gui_cycle(2);
         assert_eq!(editor.git_gui().unwrap().panel, GitPanel::Commits);
+        editor.git_gui_wait();
         assert!(editor.git_gui().unwrap().diff_title.starts_with("Commit "));
         editor.git_gui_back();
         assert!(editor.git_gui().is_none());

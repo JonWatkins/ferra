@@ -290,6 +290,22 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "git_history",
+        "The current file's history: the commits that changed it, in the git view (<Space>l)",
+        |cx| match cx.args.first() {
+            Some(path) => {
+                let path = path.clone();
+                cx.editor.git_show_history(&path)
+            }
+            None => cx.editor.git_file_history(),
+        },
+    );
+    r.register(
+        "git_gui_history",
+        "Git view: the selected file's history, or back to the whole log (H)",
+        |cx| cx.editor.git_gui_history(),
+    );
+    r.register(
         "git_refresh",
         "Read what git has staged again, for the gutter and status line",
         |cx| {

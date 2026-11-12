@@ -446,6 +446,22 @@ while buffers have unsaved changes (`git_check_saved`) and reload open
 files after. With the git view open, a picker, box or `:` line asked from
 it comes back to it when it closes (`Editor::set_mode`).
 
+A file's history (`GitGui::history`) swaps the commits panel's log for
+`log --follow --name-only -- <path>` (`git::file_log`), keeping the
+file's name in each commit. A commit's diff is then `show -- <name>`
+(`git::show_commit_file`), with the name in the commit before it added
+when they differ, so a rename shows as one rather than as a new file.
+`<Esc>` (`git_gui_back`) leaves the history before it closes the view.
+
+A commit's diff and a branch's log are read on a thread (`spawn_diff`,
+a `DiffJob` in `GitGui::diff_job`), since `git show` takes tens of
+milliseconds and a held `j` repeats faster than that: the selection
+moves at once and the diff follows, the event loop taking it with
+`pump_git_gui_diff`. Only the latest request is kept; an earlier one's
+answer is dropped with its receiver. Commits' diffs are cached (up to
+100, by hash and paths), so moving back is instant. A file's diff stays
+synchronous, as staging a hunk needs it exactly as it is.
+
 ## Syntax highlighting
 
 `syntax/` wraps tree-sitter:
@@ -887,9 +903,10 @@ the pattern or the text changes (keyed by the document's id and edit
 count, so drawing doesn't search again), up to 10,000. Replacing goes
 through `SearchPattern::next_replacement` / `replace` (a literal
 replacement has `$` doubled); each command is an undo step as usual, so
-replace all is one. Closing hands the pattern to `set_last_search`. The app
-treats keys in find mode like the `:` line: replacements aren't repeated
-by `.`.
+replace all is one. Closing hands the pattern to `set_last_search` and
+clears the highlight (`clear_search_highlight`), as VS Code does; `n`/`N`
+turn it back on. The app treats keys in find mode like the `:` line:
+replacements aren't repeated by `.`.
 
 The keys the box shows come from the keymap (`Keymap::hint_keys`: the
 binding without Alt if there is one, since macOS terminals don't send
@@ -1534,9 +1551,9 @@ Control is a view in it, and plugins add their own.
 Started: changes in the gutter, `]c`/`[c`, the branch, the file tree's
 marks, Source Control in the sidebar, and the full-screen git view with
 diffs and staging hunks, branches, and fetch, pull and push in the
-background, amending and stashes (see [Git](#git)). Next: a whole-file
-blame view, a file's history, side-by-side diffs, merge conflicts, and
-staging single lines.
+background, amending and stashes, and a file's history (see
+[Git](#git)). Next: a whole-file blame view, side-by-side diffs, merge
+conflicts, and staging single lines.
 
 The everyday Git features, without leaving the editor:
 
@@ -1554,7 +1571,8 @@ The everyday Git features, without leaving the editor:
 - **Status and commits**: a picker of changed files (stage or unstage from
   it), writing the commit message in a buffer and committing on save,
   amending, and branches (list, switch, create) in a picker.
-- **History**: the log of a file or a line range, opening any version.
+- **History**: the log of a file (done) or a line range, opening any
+  version.
 - **Conflicts**: jumping between conflict markers and keeping ours, theirs
   or both, as one undo step each.
 

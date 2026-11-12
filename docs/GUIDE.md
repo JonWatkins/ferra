@@ -198,8 +198,9 @@ you've searched, what you looked for last), selected so typing replaces it.
 
 Text is found as it's typed, ignoring case, unless the toggles say
 otherwise; with `.*` it's a Rust regex, and the replacement can use `$1`,
-`${name}`. After closing it, `n` and `N` carry on with the same search and
-the matches stay highlighted (`:noh` hides them). The colours are the
+`${name}`. Closing it clears the highlights, as VS Code does; `n` and `N`
+carry on with the same search and highlight its matches again (`:noh`
+hides them). The colours are the
 `ui.find.*` scopes and `ui.search.current`.
 
 ## Substitute and ranges
@@ -501,6 +502,7 @@ or staged changes, a commit, or a branch's log.
 | `C` | Amend the last commit: what's staged goes into it, and its message opens to edit (says if it's been pushed) |
 | `z` | Stash every change, untracked files too (asks for an optional message) |
 | `Z` | Pick a stash to put back (it's dropped once it's back) |
+| `H` | The selected file's history, in place of the commits; `H` or `<Esc>` there goes back to the whole log |
 | `q` | Close |
 
 Fetching, pulling and pushing run in the background with git's progress
@@ -515,6 +517,12 @@ and `Z` too,
 line shows how far ahead and behind its upstream the branch is (`⎇ main
 ↑2 ↓1`). Switching is refused while buffers have unsaved changes; after
 it (and a pull), open files show what's now on disk.
+
+A file's history lists the commits that changed it, newest first,
+following it back through renames, and each shows only what it did to
+that file (a rename as one). `<Space>l` (or `:git_history`) opens it for
+the file you're editing; `:git_history path` for any file in the
+repository.
 
 `git = false` turns all of this off. ferra runs the `git` command, so it
 needs git installed; commits run your hooks, and their errors show as

@@ -618,6 +618,65 @@ pub fn log(root: &Path, rev: &str, count: usize) -> Vec<Commit> {
         .collect()
 }
 
+/// The last `count` commits that changed `path` (relative to `root`),
+/// following it back through renames: each with the file's name in it.
+pub fn file_log(root: &Path, path: &str, count: usize) -> Vec<(Commit, String)> {
+    let count = format!("-n{count}");
+    let format = "--format=%x1e%H%x00%h%x00%s%x00%an%x00%ar";
+    let args = [
+        "log",
+        "--follow",
+        "--name-only",
+        "--no-color",
+        &count,
+        format,
+        "--",
+        path,
+    ];
+    let Some(bytes) = git(root, &args) else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&bytes)
+        .split('\x1e')
+        .filter_map(|entry| {
+            let mut lines = entry.lines();
+            let mut parts = lines.next()?.split('\0');
+            let commit = Commit {
+                hash: parts.next()?.to_string(),
+                short: parts.next()?.to_string(),
+                subject: parts.next().unwrap_or("").to_string(),
+                author: parts.next().unwrap_or("").to_string(),
+                when: parts.next().unwrap_or("").to_string(),
+            };
+            let name = lines
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or(path)
+                .to_string();
+            Some((commit, name))
+        })
+        .collect()
+}
+
+/// A commit's message and what it did to the file at `paths` (its name
+/// then, and before it if it was renamed, so the rename shows as one).
+pub fn show_commit_file(root: &Path, hash: &str, paths: &[&str]) -> String {
+    let mut args = vec![
+        "show",
+        "--no-color",
+        "--no-ext-diff",
+        "--find-renames",
+        "--patch",
+        "--format=commit %H%nAuthor: %an <%ae>%nDate:   %ad%n%n%w(0,4,4)%B",
+        hash,
+        "--",
+    ];
+    args.extend_from_slice(paths);
+    git(root, &args)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default()
+}
+
 /// A file's diff: its staged changes (against `HEAD`), or its unstaged
 /// ones (against what's staged); an untracked file shows as all added.
 pub fn file_diff(root: &Path, file: &FileStatus, staged: bool) -> String {

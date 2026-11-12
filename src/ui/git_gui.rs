@@ -240,12 +240,12 @@ impl<'a> GitGuiView<'a> {
             return;
         };
         if gui.commits.is_empty() {
-            buf.set_string(
-                inner.x + 1,
-                inner.y,
-                "No commits yet",
-                theme.get("ui.git.dim"),
-            );
+            let text = if gui.history.is_some() {
+                "No commits changed it"
+            } else {
+                "No commits yet"
+            };
+            buf.set_string(inner.x + 1, inner.y, text, theme.get("ui.git.dim"));
             return;
         }
         let first = keep_in_view(
@@ -343,13 +343,16 @@ impl<'a> GitGuiView<'a> {
         };
         match (gui.panel, &gui.diff_of) {
             (GitPanel::Files, _) => {
-                " s stage/unstage  ⏎ hunks  a stage all  x discard  c commit  Tab panels  q close"
+                " s stage/unstage  ⏎ hunks  H history  a stage all  x discard  c commit  Tab panels  q close"
             }
             (GitPanel::Diff, DiffOf::File { staged: false, .. }) => {
                 " j/k hunks  s stage the hunk  ⌃d/⌃u scroll  Esc back  q close"
             }
             (GitPanel::Diff, DiffOf::File { staged: true, .. }) => {
                 " j/k hunks  u unstage the hunk  ⌃d/⌃u scroll  Esc back  q close"
+            }
+            (GitPanel::Commits, _) if gui.history.is_some() => {
+                " j/k commits  ⏎ into the diff  ⌃d/⌃u scroll  H/Esc whole log  q close"
             }
             (GitPanel::Branches, _) => {
                 " ⏎ switch  n new  d delete  f fetch  p pull  P push  Tab panels  q close"
@@ -394,7 +397,13 @@ impl Widget for GitGuiView<'_> {
             let title = match panel {
                 GitPanel::Files => " [1] Files ".to_string(),
                 GitPanel::Branches => format!(" [2] Branches ({}) ", gui.branches.len()),
-                GitPanel::Commits => " [3] Commits ".to_string(),
+                GitPanel::Commits => match &gui.history {
+                    Some(path) => {
+                        let room = rect.width.saturating_sub(16) as usize;
+                        format!(" [3] History: {} ", truncate_end(path, room))
+                    }
+                    None => " [3] Commits ".to_string(),
+                },
                 GitPanel::Diff => {
                     let room = rect.width.saturating_sub(10) as usize;
                     format!(" [4] {} ", truncate_end(&gui.diff_title, room))

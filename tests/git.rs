@@ -279,6 +279,7 @@ fn the_git_view_stages_a_hunk_commits_and_shows_commits() {
         row: y as u16,
         modifiers: crossterm::event::KeyModifiers::NONE,
     });
+    app.editor_mut().git_gui_wait();
     let gui = app.editor().git_gui().unwrap();
     assert!(gui.diff_title.starts_with("Commit "), "{}", gui.diff_title);
     assert!(
@@ -514,5 +515,123 @@ fn amending_and_stashing_from_the_git_view() {
         message(&app).starts_with("Save or undo the unsaved changes first"),
         "{}",
         message(&app)
+    );
+}
+
+#[test]
+fn a_files_history_follows_renames_and_shows_only_that_file() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let commit = |message: &str| {
+        assert!(git(dir.path(), &["add", "-A"]));
+        assert!(git(
+            dir.path(),
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "-m",
+                message,
+            ],
+        ));
+    };
+    // Another file changes in the same commit; the history doesn't show it.
+    std::fs::write(dir.path().join("code.txt"), "one\nTWO\nthree\nfour\nfive\n").unwrap();
+    std::fs::write(dir.path().join("other.txt"), "other\n").unwrap();
+    commit("shout two");
+    assert!(git(dir.path(), &["mv", "code.txt", "main.txt"]));
+    commit("rename");
+    std::fs::write(dir.path().join("other.txt"), "other, changed\n").unwrap();
+    commit("only other");
+
+    let path = dir.path().join("main.txt");
+    let mut app = app();
+    keys(&mut app, &format!(":e {}<CR><Space>l", path.display()));
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Git);
+    app.editor_mut().git_gui_wait();
+    let gui = app.editor().git_gui().unwrap();
+    assert_eq!(gui.history.as_deref(), Some("main.txt"));
+    let subjects: Vec<&str> = gui.commits.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(subjects, ["rename", "shout two", "x"], "through the rename");
+    assert_eq!(gui.history_names, ["main.txt", "code.txt", "code.txt"]);
+    assert!(
+        gui.diff_title.starts_with("main.txt @ "),
+        "{}",
+        gui.diff_title
+    );
+    let diff: Vec<&str> = gui.diff.lines.iter().map(|(_, t)| t.as_str()).collect();
+    assert!(
+        diff.contains(&"rename from code.txt"),
+        "the rename shows as one:\n{}",
+        diff.join("\n")
+    );
+    let screen = render(&mut app, 100, 20).rows.join("\n");
+    assert!(screen.contains("[3] History: main.txt"), "{screen}");
+
+    // The older commit shows only this file's change. Its diff is read in
+    // the background; the selection moves at once.
+    keys(&mut app, "j");
+    assert_eq!(app.editor().git_gui().unwrap().commit, 1);
+    app.editor_mut().git_gui_wait();
+    let gui = app.editor().git_gui().unwrap();
+    assert!(
+        gui.diff_title.starts_with("code.txt @ "),
+        "{}",
+        gui.diff_title
+    );
+    let diff: Vec<&str> = gui.diff.lines.iter().map(|(_, t)| t.as_str()).collect();
+    assert!(diff.contains(&"+TWO"), "{}", diff.join("\n"));
+    assert!(
+        !diff.iter().any(|l| l.contains("other")),
+        "{}",
+        diff.join("\n")
+    );
+
+    // Back up: that one's kept, so it shows straight away.
+    keys(&mut app, "k");
+    assert!(!app.editor().git_gui_diff_loading());
+    assert!(
+        app.editor()
+            .git_gui()
+            .unwrap()
+            .diff_title
+            .starts_with("main.txt @ ")
+    );
+    keys(&mut app, "j");
+    app.editor_mut().git_gui_wait();
+
+    // Into the diff and out, then out of the history to the whole log.
+    keys(&mut app, "<CR><Esc>");
+    assert!(app.editor().git_gui().unwrap().history.is_some());
+    keys(&mut app, "<Esc>");
+    let gui = app.editor().git_gui().unwrap();
+    assert_eq!(gui.history, None);
+    assert_eq!(gui.commits.len(), 4, "the whole log");
+    assert_eq!(gui.commits[0].subject, "only other");
+
+    // `H` on a changed file in [1] Files, and `H` back.
+    std::fs::write(dir.path().join("other.txt"), "again\n").unwrap();
+    keys(&mut app, "R1H");
+    let gui = app.editor().git_gui().unwrap();
+    assert_eq!(gui.history.as_deref(), Some("other.txt"));
+    assert_eq!(gui.commits.len(), 2);
+    keys(&mut app, "H");
+    assert_eq!(app.editor().git_gui().unwrap().history, None);
+
+    // A file git doesn't know yet has no history.
+    std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
+    keys(
+        &mut app,
+        &format!("q:e {}<CR><Space>l", dir.path().join("new.txt").display()),
+    );
+    assert_eq!(message(&app), "No commits have changed new.txt yet");
+    assert_eq!(
+        app.editor().mode(),
+        ferra::editor::Mode::Normal,
+        "the view stays shut"
     );
 }

@@ -363,6 +363,7 @@ impl App {
                 || self.lsp.borrow().active()
                 || self.editor.terminal_running()
                 || self.editor.git_job_running()
+                || self.editor.git_gui_diff_loading()
                 || self.editor.git_blame_waiting();
             let wait = match (due, busy) {
                 (Some(due), busy) => {
@@ -383,6 +384,7 @@ impl App {
             redraw |= self.handle_background();
             redraw |= self.editor.pump_terminal();
             redraw |= self.editor.pump_git_job();
+            redraw |= self.editor.pump_git_gui_diff();
             redraw |= self.editor.git_blame_tick();
             if !input_ready {
                 redraw |= self.update_lsp();

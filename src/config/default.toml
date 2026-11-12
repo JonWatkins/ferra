@@ -594,6 +594,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>h" = "find_replace_open"
 "<Space>t" = "terminal_toggle"
 "<Space>g" = "git_gui_open"
+"<Space>l" = "git_history"
 "<C-`>" = "terminal_toggle"
 "<Space>f" = "file_picker"
 "<Space>r" = "register_picker"
@@ -958,6 +959,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "C" = "git_amend"
 "z" = "git_stash"
 "Z" = "git_stash_list"
+"H" = "git_gui_history"
 ":" = "command_mode"
 
 # A plugin's input box (ctx:input), while it has focus. Typing edits it.

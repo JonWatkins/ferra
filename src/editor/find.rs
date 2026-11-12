@@ -7,7 +7,8 @@
 //! `<A-c>`), whole words (`W`, `<A-w>`) or a regex (`.*`, `<A-r>`, Rust's
 //! `regex` syntax, with `$1` in the replacement). It has focus in
 //! `Mode::Find`, with its own `[keys.find]`. Closing it leaves its search
-//! as the last one, so `n`/`N` carry on and the matches stay highlighted.
+//! as the last one, so `n`/`N` carry on; its highlights go with it, as in
+//! VS Code, and come back with the next `n`/`N`.
 
 use std::cell::RefCell;
 
@@ -271,12 +272,14 @@ impl Editor {
         cursor.with_col(cursor.col - start)
     }
 
-    /// `<Esc>`: closes the box, the cursor left at the match. Its search
-    /// becomes the last one (for `n`, `N` and the highlight).
+    /// `<Esc>`: closes the box, the cursor left at the match, and its
+    /// highlights cleared. Its search becomes the last one, for `n` and
+    /// `N` (which highlight it again).
     pub fn close_find(&mut self) {
         if let Some(pattern) = self.find.pattern().cloned() {
             self.set_last_search(pattern);
         }
+        self.clear_search_highlight();
         self.find.replacing = false;
         self.set_mode(Mode::Normal);
     }
@@ -566,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn closing_leaves_the_search_for_n() {
+    fn closing_clears_the_highlights_but_leaves_the_search_for_n() {
         let mut e = editor("ab ab ab");
         e.open_find(false);
         e.find_edit(|f| f.delete_to_start());
@@ -574,6 +577,7 @@ mod tests {
         e.find_step(true).unwrap();
         e.close_find();
         assert_eq!(e.mode(), Mode::Normal);
+        assert!(e.search_highlight().is_none(), "gone with the box");
         e.search_next(1, false).unwrap();
         assert_eq!(cursor(&e), (0, 6));
         assert!(e.search_highlight().is_some());

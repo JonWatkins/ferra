@@ -180,11 +180,14 @@ fn the_find_box_takes_clicks_on_its_toggles_and_fields() {
         ferra::editor::find::FindField::Replace
     );
 
-    // Out of the box, into the text: it closes, keeping the search.
+    // Out of the box, into the text: it closes, keeping the search for
+    // `n` but not its highlights.
     let (x, y) = find(&mut app, "concat");
     click(&mut app, x + 1, y);
     assert_eq!(app.editor().mode(), Mode::Normal);
     assert_eq!(cursor(&app), (8, 9));
+    assert!(app.editor().search_highlight().is_none());
+    keys(&mut app, "n");
     assert!(app.editor().search_highlight().is_some());
 }
 
