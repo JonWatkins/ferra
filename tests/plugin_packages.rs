@@ -6,7 +6,7 @@
 mod common;
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use common::{app, keys, text};
@@ -1024,4 +1024,203 @@ fn language_packs_bring_indentation_rules() {
     app.open(&file);
     keys(&mut app, "jo2]<Esc>");
     assert_eq!(text(&app), "{\n    \"a\": [1,\n        2]\n}");
+}
+
+/// A directory like `ferra-plugins`: an index, and plugins in folders
+/// (`plugins/hello`, `plugins/other`), listed without a `repo`.
+fn directory_repo(root: &Path) -> String {
+    repo(
+        root,
+        "directory",
+        &[
+            (
+                "index.toml",
+                "version = 1\n\n[[plugin]]\nname = \"hello\"\npath = \"plugins/hello\"\ndescription = \"Says hello\"\n\n[[plugin]]\nname = \"other\"\npath = \"plugins/other\"\n",
+            ),
+            ("plugins/hello/ferra-plugin.toml", MANIFEST),
+            (
+                "plugins/hello/init.lua",
+                r#"local util = require("hello.util")
+                   editor.command("hello", function(ctx) ctx:insert(util.greeting()) end)"#,
+            ),
+            (
+                "plugins/hello/lua/hello/util.lua",
+                r#"return { greeting = function() return "hello from a folder" end }"#,
+            ),
+            (
+                "plugins/other/ferra-plugin.toml",
+                "name = \"other\"\nversion = \"0.1.0\"\n",
+            ),
+            ("plugins/other/init.lua", ""),
+        ],
+    )
+}
+
+#[test]
+fn plugins_install_from_a_folder_of_a_repository() {
+    let s = setup();
+    let directory = directory_repo(s.temp.path());
+    let mut app = app_with(&s.paths);
+    install(&mut app, &format!("{directory}//plugins/hello"));
+    assert!(
+        message(&app).starts_with("Installed hello 0.1.0"),
+        "{}",
+        message(&app)
+    );
+    keys(&mut app, ":hello<CR>");
+    assert_eq!(text(&app), "hello from a folder");
+
+    // Only that folder is checked out.
+    let clone = s.paths.data.join("hello");
+    assert!(clone.join("plugins/hello/init.lua").is_file());
+    assert!(!clone.join("plugins/other").exists());
+
+    let list = fs::read_to_string(s.paths.config.join("plugins.toml")).unwrap();
+    assert!(list.contains("path = \"plugins/hello\""), "{list}");
+    keys(
+        &mut app,
+        &format!(":plugin_install {directory}//plugins/hello<CR>"),
+    );
+    assert_eq!(
+        message(&app),
+        format!("{directory}//plugins/hello is already installed as hello")
+    );
+
+    // At startup, and restored on a new machine.
+    let mut again = app_with(&s.paths);
+    assert_eq!(again.load_plugins(&s.paths.config), None);
+    keys(&mut again, ":hello<CR>");
+    assert_eq!(text(&again), "hello from a folder");
+    fs::remove_dir_all(&s.paths.data).unwrap();
+    let mut fresh = app_with(&s.paths);
+    fresh.load_plugins(&s.paths.config);
+    keys(&mut fresh, ":plugin_install<CR>y");
+    fresh.wait_for_background();
+    assert!(
+        message(&fresh).starts_with("Installed hello 0.1.0"),
+        "{}",
+        message(&fresh)
+    );
+    keys(&mut fresh, ":hello<CR>");
+    assert_eq!(text(&fresh), "hello from a folder");
+
+    keys(
+        &mut fresh,
+        &format!(":plugin_install {directory}//plugins/nope<CR>y"),
+    );
+    fresh.wait_for_background();
+    assert!(
+        message(&fresh).contains("has no folder plugins/nope"),
+        "{}",
+        message(&fresh)
+    );
+}
+
+#[test]
+fn a_plugin_in_a_folder_only_updates_for_its_own_commits() {
+    let s = setup();
+    let directory = directory_repo(s.temp.path());
+    let mut app = app_with(&s.paths);
+    install(&mut app, &format!("{directory}//plugins/hello"));
+
+    commit(
+        &directory,
+        &[("plugins/other/init.lua", "-- changed")],
+        "Change other",
+    );
+    keys(&mut app, ":plugin_update<CR>");
+    app.wait_for_background();
+    assert_eq!(message(&app), "hello is up to date");
+
+    commit(
+        &directory,
+        &[(
+            "plugins/hello/lua/hello/util.lua",
+            r#"return { greeting = function() return "newer" end }"#,
+        )],
+        "Greet newer",
+    );
+    commit(
+        &directory,
+        &[("plugins/other/init.lua", "-- again")],
+        "Change other again",
+    );
+    keys(&mut app, ":plugin_update<CR>");
+    app.wait_for_background();
+    let shown = popup_text(&app);
+    assert!(shown.contains("Greet newer"), "{shown}");
+    assert!(!shown.contains("Change other"), "{shown}");
+    keys(&mut app, "y");
+    app.wait_for_background();
+    assert!(
+        message(&app).starts_with("Updated hello"),
+        "{}",
+        message(&app)
+    );
+    keys(&mut app, ":hello<CR>");
+    assert_eq!(text(&app), "newer");
+}
+
+#[test]
+fn the_directory_lists_its_own_plugins_by_folder() {
+    let s = setup();
+    let directory = directory_repo(s.temp.path());
+    let mut app = app_browsing(&s.paths, &directory);
+    keys(&mut app, ":plugin_browse<CR>");
+    app.wait_for_background();
+    assert_eq!(
+        picker_items(&app)[0],
+        ("hello".to_string(), "Says hello".to_string())
+    );
+    keys(&mut app, "hello<CR>");
+    assert!(
+        popup_text(&app).contains("folder plugins/hello"),
+        "{}",
+        popup_text(&app)
+    );
+    keys(&mut app, "y");
+    app.wait_for_background();
+    assert!(
+        message(&app).starts_with("Installed hello"),
+        "{}",
+        message(&app)
+    );
+
+    keys(&mut app, ":plugin_browse<CR>");
+    app.wait_for_background();
+    assert_eq!(picker_items(&app)[0].1, "(installed) Says hello");
+}
+
+#[test]
+fn grammars_build_for_plugins_in_folders() {
+    if !have_cc() {
+        eprintln!("no C compiler: skipped");
+        return;
+    }
+    let s = setup();
+    // The grammar pack, moved into plugins/data of another repository.
+    let pack = PathBuf::from(grammar_pack(s.temp.path()));
+    let directory = s.temp.path().join("directory");
+    fs::create_dir_all(directory.join("plugins")).unwrap();
+    fs::rename(&pack, directory.join("plugins/data")).unwrap();
+    fs::remove_dir_all(directory.join("plugins/data/.git")).unwrap();
+    git(&directory, &["init", "--quiet"]);
+    git(&directory, &["add", "."]);
+    git(&directory, &["commit", "--quiet", "-m", "first"]);
+
+    let mut app = app_with(&s.paths);
+    install(&mut app, &format!("{}//plugins/data", directory.display()));
+    assert!(
+        message(&app).starts_with("Installed data"),
+        "{}",
+        message(&app)
+    );
+    let clone = s.paths.data.join("data");
+    assert!(clone.join("plugins/data/.ferra-build").is_dir());
+    assert_eq!(git(&clone, &["status", "--porcelain"]), "");
+
+    let file = s.temp.path().join("z.data");
+    fs::write(&file, "{\"key\": 12}\n").unwrap();
+    app.open(&file);
+    assert_eq!(string_cells(&mut app, 0), vec![6, 7, 8, 9, 10]);
 }

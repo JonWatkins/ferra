@@ -252,10 +252,28 @@ fn remove_all(paths: &[PathBuf]) {
     }
 }
 
-/// Lists the build folder in the clone's `.git/info/exclude`, so the
-/// clone stays clean for `git status` and updates.
+/// Lists the build folder in the clone's `info/exclude`, so the clone
+/// stays clean for `git status` and updates. (`dir` may be a folder inside
+/// the clone: git says where the file is.)
 fn keep_out_of_git(dir: &Path) {
-    let exclude = dir.join(".git/info/exclude");
+    let Ok(output) = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "info/exclude",
+        ])
+        .stdin(Stdio::null())
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let exclude = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
     let text = std::fs::read_to_string(&exclude).unwrap_or_default();
     if !text.lines().any(|l| l.trim() == BUILD_DIR) {
         if let Some(parent) = exclude.parent() {

@@ -1169,7 +1169,7 @@ Plugins published as git repositories install from inside ferra:
 | Command | |
 |---------|---|
 | `:plugin_browse` | Pick from the [plugin directory](https://github.com/JonWatkins/ferra-plugins) and install the choice |
-| `:plugin_install owner/repo` | Install a plugin from GitHub (`owner/repo@tag` for a tag or branch; any git URL or local path works too) |
+| `:plugin_install owner/repo` | Install a plugin from GitHub (`owner/repo@tag` for a tag or branch, `owner/repo//folder` for one kept in a folder; any git URL or local path works too) |
 | `:plugin_install` | Install what `plugins.toml` lists but isn't installed, at the locked commits (a new machine) |
 | `:plugin_update [name...]` | Fetch the plugins (or the ones named), show the new commits, and update after asking |
 | `:plugin_reload` | Load every plugin again from scratch, after changing one (or `init.lua`) |
@@ -1192,7 +1192,15 @@ Plugins are cloned into `~/.local/share/ferra/plugins/<name>/`
 [plugins.todos]
 source = "someone/ferra-todos"
 tag = "v0.2.0"
+
+[plugins.zig]
+source = "JonWatkins/ferra-plugins"
+path = "plugins/zig"
 ```
+
+The official plugins are kept together in the plugin directory's
+repository, one folder each; installing one clones just its folder, and
+`:plugin_update` only counts the commits that change it.
 
 At startup ferra loads the installed plugins first, then `init.lua` and
 `plugins/*.lua`, so your own Lua can set them up.

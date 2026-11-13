@@ -230,14 +230,19 @@ pub fn version_matches(range: &str, version: &str) -> Result<bool, String> {
 /// What to install: a git URL (or path) and maybe a tag or branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Source {
-    /// As typed (`owner/repo`, a URL or a path), without the `@tag`.
+    /// As typed (`owner/repo`, a URL or a path), without the `//folder`
+    /// or `@tag`.
     pub spec: String,
     pub tag: Option<String>,
+    /// The folder in the repository the plugin is in (`plugins/todos`),
+    /// if it isn't the repository's root.
+    pub path: Option<String>,
 }
 
 impl Source {
-    /// `owner/repo`, `owner/repo@tag`, or any git URL or local path,
-    /// optionally with `@tag`.
+    /// `owner/repo`, or any git URL or local path, then optionally
+    /// `//folder` (a plugin inside the repository) and `@tag`:
+    /// `JonWatkins/ferra-plugins//plugins/todos`.
     pub fn parse(text: &str) -> Result<Self, String> {
         let text = text.trim();
         // `@tag` at the end, where it can't be part of a URL's user
@@ -250,6 +255,26 @@ impl Source {
             }
             _ => (text, None),
         };
+        // `//folder`, after any `scheme://`.
+        let after_scheme = spec.find("://").map_or(0, |i| i + 3);
+        let (spec, path) = match spec[after_scheme..].find("//") {
+            Some(i) => {
+                let at = after_scheme + i;
+                (&spec[..at], Some(spec[at + 2..].trim_end_matches('/')))
+            }
+            None => (spec, None),
+        };
+        if let Some(path) = path {
+            let inside = !path.is_empty()
+                && Path::new(path)
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_)));
+            if !inside {
+                return Err(format!(
+                    "Not a folder in the repository: '{path}' (owner/repo//folder)"
+                ));
+            }
+        }
         if spec.is_empty() || spec.chars().any(char::is_whitespace) || spec.starts_with('-') {
             return Err(format!(
                 "Not a plugin to install: '{text}' (owner/repo, or a git URL)"
@@ -263,7 +288,30 @@ impl Source {
         Ok(Self {
             spec: spec.to_string(),
             tag,
+            path: path.map(str::to_string),
         })
+    }
+
+    /// The plugin's folder in a clone of its repository at `clone`.
+    pub fn root(&self, clone: &Path) -> PathBuf {
+        match &self.path {
+            Some(path) => clone.join(path),
+            None => clone.to_path_buf(),
+        }
+    }
+
+    /// The source a `plugins.toml` entry records.
+    pub fn from_wanted(wanted: &Wanted) -> Self {
+        Self {
+            spec: wanted.source.clone(),
+            tag: wanted.tag.clone(),
+            path: wanted.path.clone(),
+        }
+    }
+
+    /// Whether this is the same plugin as `wanted` (repository and folder).
+    pub fn same_as(&self, wanted: &Wanted) -> bool {
+        self.spec == wanted.source && self.path == wanted.path
     }
 
     /// What `git clone` is given.
@@ -282,10 +330,14 @@ impl Source {
 
 impl std::fmt::Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.tag {
-            Some(tag) => write!(f, "{}@{tag}", self.spec),
-            None => f.write_str(&self.spec),
+        f.write_str(&self.spec)?;
+        if let Some(path) = &self.path {
+            write!(f, "//{path}")?;
         }
+        if let Some(tag) = &self.tag {
+            write!(f, "@{tag}")?;
+        }
+        Ok(())
     }
 }
 
@@ -314,8 +366,22 @@ fn looks_like_url_or_path(spec: &str) -> bool {
 #[serde(deny_unknown_fields)]
 pub struct Wanted {
     pub source: String,
+    /// The plugin's folder in the repository, if not its root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+}
+
+impl PluginPaths {
+    /// Where plugin `name`'s files are: its clone, or the folder in it
+    /// `plugins.toml` names.
+    pub fn root(&self, name: &str, wanted: &Wanted) -> PathBuf {
+        match &wanted.path {
+            Some(path) => self.dir(name).join(path),
+            None => self.dir(name),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -393,6 +459,7 @@ pub fn record(paths: &PluginPaths, installed: &Installed) -> Result<(), String> 
         name.clone(),
         Wanted {
             source: installed.source.spec.clone(),
+            path: installed.source.path.clone(),
             tag: installed.source.tag.clone(),
         },
     );
@@ -446,11 +513,8 @@ pub fn list(paths: &PluginPaths) -> Result<Vec<Listed>, String> {
     Ok(wanted(paths)?
         .into_iter()
         .map(|(name, wanted)| {
-            let source = Source {
-                spec: wanted.source,
-                tag: wanted.tag,
-            };
-            let manifest = Manifest::read(&paths.dir(&name));
+            let source = Source::from_wanted(&wanted);
+            let manifest = Manifest::read(&paths.root(&name, &wanted));
             let commit = lock.get(&name).map(|l| l.commit.clone());
             let (version, description, languages, problem) = match manifest {
                 Ok(m) => (
@@ -528,7 +592,7 @@ pub fn install(
             ));
         }
         std::fs::rename(temp, paths.dir(name)).map_err(|e| format!("{name}: {e}"))?;
-        let warnings = super::grammars::build_all(&paths.dir(name), &manifest);
+        let warnings = super::grammars::build_all(&source.root(&paths.dir(name)), &manifest);
         Ok(Installed {
             manifest,
             source: source.clone(),
@@ -554,10 +618,7 @@ pub fn restore(paths: &PluginPaths, name: &str) -> Result<Installed, String> {
         .remove(name)
         .ok_or_else(|| format!("{name} isn't in plugins.toml"))?;
     let commit = locked(paths)?.remove(name).map(|l| l.commit);
-    let source = Source {
-        spec: wanted.source,
-        tag: wanted.tag,
-    };
+    let source = Source::from_wanted(&wanted);
     in_temp_clone(paths, |temp| {
         let (manifest, commit) = clone_and_check(&source, commit.as_deref(), temp)?;
         if manifest.name != name {
@@ -570,7 +631,7 @@ pub fn restore(paths: &PluginPaths, name: &str) -> Result<Installed, String> {
             return Err(format!("{name} is already installed"));
         }
         std::fs::rename(temp, paths.dir(name)).map_err(|e| format!("{name}: {e}"))?;
-        let warnings = super::grammars::build_all(&paths.dir(name), &manifest);
+        let warnings = super::grammars::build_all(&source.root(&paths.dir(name)), &manifest);
         Ok(Installed {
             manifest,
             source: source.clone(),
@@ -612,17 +673,30 @@ fn clone_and_check(
     let url = source.url();
     let temp_arg = temp.to_string_lossy();
     let mut args = vec!["clone", "--quiet"];
+    if source.path.is_some() {
+        // Only the plugin's folder is checked out, and file contents are
+        // fetched only for it: a repository of hundreds of plugins stays
+        // a small download.
+        args.extend(["--filter=blob:none", "--sparse"]);
+    }
     if let Some(tag) = &source.tag {
         args.extend(["--branch", tag]);
     }
     args.extend(["--", &url, &temp_arg]);
     git(None, &args).map_err(|e| format!("Couldn't clone {url}: {e}"))?;
+    if let Some(path) = &source.path {
+        git(Some(temp), &["sparse-checkout", "set", "--", path])
+            .map_err(|e| format!("Couldn't check out {path}: {e}"))?;
+        if !temp.join(path).is_dir() {
+            return Err(format!("{url} has no folder {path}"));
+        }
+    }
     if let Some(commit) = commit {
         // `reset` rather than `checkout`, so the branch (and updating) stays.
         git(Some(temp), &["reset", "--quiet", "--hard", commit])
             .map_err(|e| format!("Couldn't go to commit {commit}: {e}"))?;
     }
-    let manifest = check_plugin(temp).map_err(|e| format!("{source}: {e}"))?;
+    let manifest = check_plugin(&source.root(temp)).map_err(|e| format!("{source}: {e}"))?;
     let commit = git(Some(temp), &["rev-parse", "HEAD"])?;
     Ok((manifest, commit))
 }
@@ -640,6 +714,8 @@ fn check_plugin(dir: &Path) -> Result<Manifest, String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Incoming {
     pub name: String,
+    /// Its folder in the repository, if not the root.
+    pub path: Option<String>,
     /// The commit it's at, and the one it would move to.
     pub from: String,
     pub to: String,
@@ -711,9 +787,21 @@ pub fn check_updates(paths: &PluginPaths, names: &[String]) -> Result<Checked, S
             ));
             continue;
         }
-        let log = git(dir, &["log", "--format=%h %s", &format!("{from}..{to}")])?;
+        // A plugin in a folder only gains the commits that touch it.
+        let range = format!("{from}..{to}");
+        let mut args = vec!["log", "--format=%h %s", &range];
+        let path = wanted[&name].path.clone();
+        if let Some(path) = &path {
+            args.extend(["--", path]);
+        }
+        let log = git(dir, &args)?;
+        if log.is_empty() {
+            checked.current.push(name);
+            continue;
+        }
         checked.incoming.push(Incoming {
             name,
+            path,
             from,
             to,
             commits: log.lines().map(str::to_string).collect(),
@@ -735,9 +823,13 @@ pub fn apply_update(
     let dir = Some(dir.as_path());
     git(dir, &["merge", "--quiet", "--ff-only", &incoming.to])
         .map_err(|e| format!("{name}: {e}"))?;
-    match check_plugin(&paths.dir(name)) {
+    let root = match &incoming.path {
+        Some(path) => paths.dir(name).join(path),
+        None => paths.dir(name),
+    };
+    match check_plugin(&root) {
         Ok(manifest) if manifest.name == *name => {
-            let warnings = super::grammars::build_all(&paths.dir(name), &manifest);
+            let warnings = super::grammars::build_all(&root, &manifest);
             Ok((manifest, warnings))
         }
         result => {
@@ -768,8 +860,13 @@ pub fn lock(paths: &PluginPaths, name: &str, commit: &str) -> Result<(), String>
 #[serde(deny_unknown_fields)]
 pub struct IndexEntry {
     pub name: String,
-    /// `owner/repo` on GitHub.
-    pub repo: String,
+    /// `owner/repo` on GitHub (or a git URL); without one, the plugin is
+    /// in the directory's own repository, in `path`.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// The plugin's folder in its repository, if not the root.
+    #[serde(default)]
+    pub path: Option<String>,
     #[serde(default)]
     pub description: String,
     #[serde(default)]
@@ -791,6 +888,16 @@ struct IndexFile {
 pub fn parse_index(text: &str) -> Result<Vec<IndexEntry>, String> {
     let file: IndexFile =
         toml::from_str(text).map_err(|e| format!("index.toml: {}", e.message().trim()))?;
+    if let Some(entry) = file
+        .plugin
+        .iter()
+        .find(|e| e.repo.is_none() && e.path.is_none())
+    {
+        return Err(format!(
+            "index.toml: {} needs a repo, or a path in the directory",
+            entry.name
+        ));
+    }
     if file.version != 1 {
         return Err(format!(
             "index.toml is version {}, this ferra reads version 1 (a newer ferra may be needed)",
@@ -798,6 +905,18 @@ pub fn parse_index(text: &str) -> Result<Vec<IndexEntry>, String> {
         ));
     }
     Ok(file.plugin)
+}
+
+impl IndexEntry {
+    /// What to install, for a directory at `directory` (its entries
+    /// without a `repo` are in it).
+    pub fn source(&self, directory: &Source) -> String {
+        let repo = self.repo.as_deref().unwrap_or(&directory.spec);
+        match &self.path {
+            Some(path) => format!("{repo}//{path}"),
+            None => repo.to_string(),
+        }
+    }
 }
 
 /// The directory's plugins, as `:plugin_browse` lists them.
@@ -880,6 +999,20 @@ mod tests {
         assert_eq!(s.tag.as_deref(), Some("main"));
         let s = Source::parse("https://example.com/a/b").unwrap();
         assert_eq!(s.url(), "https://example.com/a/b");
+        let s = Source::parse("o/plugins//plugins/todos@v1").unwrap();
+        assert_eq!(
+            (s.spec.as_str(), s.path.as_deref(), s.tag.as_deref()),
+            ("o/plugins", Some("plugins/todos"), Some("v1"))
+        );
+        assert_eq!(s.to_string(), "o/plugins//plugins/todos@v1");
+        assert_eq!(s.root(Path::new("/c")), Path::new("/c/plugins/todos"));
+        let s = Source::parse("https://example.com/a/b//x").unwrap();
+        assert_eq!(
+            (s.spec.as_str(), s.path.as_deref()),
+            ("https://example.com/a/b", Some("x"))
+        );
+        assert!(Source::parse("o/r//../x").is_err());
+        assert!(Source::parse("o/r//").is_err());
         let s = Source::parse("/tmp/x@y/repo").unwrap();
         assert_eq!((s.spec.as_str(), s.tag.as_deref()), ("/tmp/x@y/repo", None));
 
@@ -894,7 +1027,15 @@ mod tests {
             "version = 1\n[[plugin]]\nname = \"todos\"\nrepo = \"o/todos\"\ntags = [\"a\"]",
         )
         .unwrap();
-        assert_eq!(entries[0].repo, "o/todos");
+        assert_eq!(entries[0].repo.as_deref(), Some("o/todos"));
+        let own =
+            parse_index("version = 1\n[[plugin]]\nname = \"zig\"\npath = \"plugins/zig\"").unwrap();
+        let directory = Source::parse("JonWatkins/ferra-plugins").unwrap();
+        assert_eq!(
+            own[0].source(&directory),
+            "JonWatkins/ferra-plugins//plugins/zig"
+        );
+        assert!(parse_index("version = 1\n[[plugin]]\nname = \"x\"").is_err());
         assert_eq!(entries[0].tags, ["a"]);
         assert!(!entries[0].language);
         assert!(parse_index("version = 1").unwrap().is_empty());

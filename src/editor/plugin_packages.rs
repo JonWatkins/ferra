@@ -125,14 +125,24 @@ impl Editor {
         }
         let source = Source::parse(spec)?;
         let wanted = packages::wanted(&paths)?;
-        if let Some((name, _)) = wanted.iter().find(|(_, w)| w.source == source.spec) {
-            return Err(format!("{} is already installed as {name}", source.spec));
+        if let Some((name, _)) = wanted.iter().find(|(_, w)| source.same_as(w)) {
+            let what = match &source.path {
+                Some(path) => format!("{}//{path}", source.spec),
+                None => source.spec.clone(),
+            };
+            return Err(format!("{what} is already installed as {name}"));
         }
         let url = source.url();
         let mut lines = vec![vec![
             span("Install the plugin from ", None),
             span(&url, Some("ui.popup.title")),
         ]];
+        if let Some(path) = &source.path {
+            lines.push(vec![
+                span("folder ", None),
+                span(path, Some("ui.popup.title")),
+            ]);
+        }
         if let Some(tag) = &source.tag {
             lines.push(vec![span("at ", None), span(tag, Some("ui.popup.title"))]);
         }
@@ -262,13 +272,14 @@ impl Editor {
     /// The directory's plugins in the picker; choosing one installs it
     /// (asking first, as `:plugin_install` does).
     pub fn plugin_show_index(&mut self, index: Index) {
-        let installed: Vec<(String, String)> = self
+        let installed: Vec<(String, packages::Wanted)> = self
             .packages
             .paths
             .as_ref()
             .and_then(|p| packages::wanted(p).ok())
-            .map(|w| w.into_iter().map(|(name, w)| (name, w.source)).collect())
+            .map(|w| w.into_iter().collect())
             .unwrap_or_default();
+        let directory = Source::parse(&self.options.plugin_index).ok();
         if index.entries.is_empty() {
             self.set_message(Message::info("The plugin directory has no plugins yet"));
             return;
@@ -284,16 +295,22 @@ impl Editor {
                 if !entry.tags.is_empty() {
                     detail = format!("{detail}  #{}", entry.tags.join(" #"));
                 }
+                let source = match &directory {
+                    Some(directory) => entry.source(directory),
+                    None => entry.repo.clone().unwrap_or_default(),
+                };
+                let same =
+                    |w: &packages::Wanted| Source::parse(&source).is_ok_and(|s| s.same_as(w));
                 if installed
                     .iter()
-                    .any(|(name, source)| *name == entry.name || *source == entry.repo)
+                    .any(|(name, w)| *name == entry.name || same(w))
                 {
                     detail = format!("(installed) {detail}");
                 }
                 PickerItem {
                     label: entry.name,
                     detail: detail.trim().to_string(),
-                    action: PickerAction::RunWith("plugin_install".into(), vec![entry.repo]),
+                    action: PickerAction::RunWith("plugin_install".into(), vec![source]),
                 }
             })
             .collect();

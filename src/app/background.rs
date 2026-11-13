@@ -49,7 +49,7 @@ pub(super) struct Updated {
 
 /// How a plugin job went.
 pub(super) enum PackageDone {
-    Installed(Result<Installed, String>),
+    Installed(Result<Box<Installed>, String>),
     Checked(Result<Checked, String>),
     Updated(Vec<Result<Updated, String>>),
     Restored(Vec<Result<Installed, String>>),
@@ -121,7 +121,7 @@ impl Background {
             let paths = &request.paths;
             let done = match request.job {
                 PackageJob::Install { source, taken } => {
-                    PackageDone::Installed(packages::install(paths, &source, &taken))
+                    PackageDone::Installed(packages::install(paths, &source, &taken).map(Box::new))
                 }
                 PackageJob::Check(names) => {
                     PackageDone::Checked(packages::check_updates(paths, &names))

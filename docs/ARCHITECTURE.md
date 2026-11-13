@@ -1475,6 +1475,17 @@ the plugin again, resetting to the old commit if it no longer loads.
 isn't cloned: clone, then `reset --hard` to the locked commit (so the
 branch, and later updates, stay).
 
+A plugin can be a folder of a repository (`owner/repo//plugins/zig`,
+`Source::path`, kept in `plugins.toml` as `path`): the official plugins
+share the directory's repository. It's cloned blobless and sparse
+(`--filter=blob:none --sparse`, then `sparse-checkout set`), so only that
+folder's files are fetched; `PluginPaths::dir` stays the clone, for git,
+and `PluginPaths::root`/`Source::root` is the plugin's folder, for its
+manifest, Lua and grammars. `check_updates` lists only the commits that
+touch the folder (none: up to date). Index entries without a `repo` are
+folders of the directory's own repository (`IndexEntry::source`), so a
+fork of the directory works as it is.
+
 `:plugin_browse` is a `Browse` job: `fetch_index` keeps a shallow clone
 of the `plugin-index` source in the data folder (`.index`, which can't be
 a plugin's name), fetching and resetting it each time and cloning afresh

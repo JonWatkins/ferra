@@ -200,10 +200,9 @@ impl App {
         } else {
             match (&paths, packages) {
                 (Some(paths), Ok(packages)) => {
-                    for name in packages.keys() {
-                        let dir = paths.dir(name);
-                        if dir.is_dir() {
-                            errors.extend(self.load_package(&dir));
+                    for (name, wanted) in &packages {
+                        if paths.dir(name).is_dir() {
+                            errors.extend(self.load_package(&paths.root(name, wanted)));
                         } else {
                             errors.push(format!(
                                 "{name} is in plugins.toml but not installed \
@@ -358,6 +357,7 @@ impl App {
                 .editor
                 .set_message(Message::error(format!("Plugin not installed: {error}"))),
             PackageDone::Installed(Ok(installed)) => {
+                let installed = *installed;
                 let done = format!("Installed {}", installed_text(&installed));
                 let message = match packages::record(&paths, &installed) {
                     Err(error) => {
@@ -367,7 +367,8 @@ impl App {
                         // Only the new one loads: the others are unchanged.
                         let name = &installed.manifest.name;
                         let mut errors = installed.warnings.clone();
-                        errors.extend(self.load_package(&paths.dir(name)));
+                        let root = installed.source.root(&paths.dir(name));
+                        errors.extend(self.load_package(&root));
                         errors.extend(self.install_plugins());
                         if errors.is_empty() {
                             Message::info(done)
