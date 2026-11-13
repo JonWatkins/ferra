@@ -11,7 +11,7 @@ mod theme;
 
 pub use languages::{CommentTokens, FileType, Languages, ServerConfig};
 pub use options::{
-    AutoWrap, CursorShape, CursorShapes, EditorOptions, FallbackEncoding, FilePickerOptions,
+    AutoWrap, CursorShape, CursorShapes, EditorOptions, FallbackEncoding, FilePickerOptions, Icons,
     LineNumbers, SearchCase, SearchOptions, StatusElement, StatuslineLayout, StatuslineMode,
 };
 pub use theme::{StyleSpec, Theme};

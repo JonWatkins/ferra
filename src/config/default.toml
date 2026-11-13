@@ -58,6 +58,13 @@ mouse = true
 # Columns the sidebar's file tree (<Space>e, :explorer) takes, left of the
 # windows. It never takes more than half the screen.
 sidebar-width = 30
+# The activity bar: a column of icons down the left, always there, that
+# shows the sidebar's views (click one; click the shown one to hide the
+# sidebar) and opens the settings.
+activity-bar = true
+# Its icons: "plain" (symbols every font has) or "nerd" (VS Code's own
+# icons, for a Nerd Font: https://www.nerdfonts.com).
+icons = "plain"
 # Rows the terminal panel (<Space>t, :terminal) takes, under the windows.
 terminal-height = 12
 # The terminal panel's shell. "" runs $SHELL (or /bin/sh).
@@ -298,6 +305,11 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.gutter.added" = "#9ece6a"
 "ui.gutter.changed" = "#7aa2f7"
 "ui.gutter.removed" = "#f7768e"
+# The activity bar down the left: its icons, the shown view's, and the mark
+# beside that.
+"ui.activitybar" = { fg = "#6b7280", bg = "#16181d" }
+"ui.activitybar.active" = { fg = "#c0caf5", bg = "#24283b", modifiers = ["bold"] }
+"ui.activitybar.marker" = { fg = "#7aa2f7", bg = "#24283b" }
 # The sidebar's file tree (<Space>e).
 "ui.sidebar" = { fg = "#a9b1d6", bg = "#1a1c22" }
 "ui.sidebar.title" = { fg = "#7aa2f7", modifiers = ["bold"] }

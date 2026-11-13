@@ -324,6 +324,17 @@ folder as the file picker names them. The `Explorer` is made the first time
 it's needed and kept when the sidebar closes, so its open folders are still
 open next time.
 
+The activity bar (`ui/activity.rs`) is laid out first, at the screen's
+left edge, with the sidebar's height rules: `Editor::activity_items` says
+what it shows (the sidebar's views, the shown one marked, and the
+settings), `activity::layout` puts each in a block of three rows, and
+`ScreenMap::activity` records the rows for the mouse, whose click runs
+`Editor::activity` (show the view, hide the sidebar if it's the one shown,
+or open the config). With it, the sidebar has no tabs row. Most
+integration tests run without it (`tests/common`'s classic chrome), so
+what they check doesn't move with the chrome; `tests/activity_bar.rs`
+tests it as shipped.
+
 `ui/sidebar.rs` draws it. `ui::draw` takes the sidebar's columns (plus a
 `│`) from the left before the windows are laid out, so splits, resizing and
 per-window status lines work within what's left. With per-window status

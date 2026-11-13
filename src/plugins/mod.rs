@@ -341,12 +341,14 @@ impl PluginHost {
                 if name == "files" {
                     return Err(usage("\"files\" is the file tree's name"));
                 }
+                let icon = spec.get::<Option<String>>("icon")?;
                 let key = lua.create_registry_value(lines)?;
                 let spec = ViewSpec {
                     name: name.clone(),
                     title,
                     keys,
                     refresh,
+                    icon,
                 };
                 pending.borrow_mut().views.push((spec, key));
                 Ok(())

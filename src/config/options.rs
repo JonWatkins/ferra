@@ -48,6 +48,10 @@ pub struct EditorOptions {
     /// Use the mouse: click, drag to select, scroll (the terminal's own
     /// selecting then needs Shift, or Option in some macOS terminals).
     pub mouse: bool,
+    /// The column of icons down the left that shows the sidebar's views.
+    pub activity_bar: bool,
+    /// What icons are drawn with.
+    pub icons: Icons,
     /// Rows the terminal panel takes (at most most of the screen).
     pub terminal_height: u16,
     /// The terminal panel's shell ("": `$SHELL`, else `/bin/sh`).
@@ -297,6 +301,16 @@ pub enum StatuslineMode {
     Windows,
     /// One line at the bottom for the active window (`laststatus=3`).
     Global,
+}
+
+/// What icons are drawn with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Icons {
+    /// Symbols every font has.
+    Plain,
+    /// A Nerd Font's (VS Code's codicons among them).
+    Nerd,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]

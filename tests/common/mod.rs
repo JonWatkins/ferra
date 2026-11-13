@@ -4,14 +4,37 @@
 use ferra::{App, Config, input::parse_keys};
 use ratatui::{Terminal, backend::TestBackend};
 
-/// An app with the default config.
-pub fn app() -> App {
-    App::default()
+/// The screen most tests check positions on: the editor without the
+/// activity bar down the left (its own tests turn it on). Tests of what's
+/// in the windows needn't move with the chrome around them.
+fn with_classic_chrome(toml: &str) -> String {
+    let mut table: toml::Table = toml.parse().expect("test config should be valid TOML");
+    let editor = table
+        .entry("editor")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .expect("[editor] is a table");
+    editor
+        .entry("activity-bar")
+        .or_insert(toml::Value::Boolean(false));
+    toml::to_string(&table).expect("serializes")
 }
 
-/// An app with `toml` merged over the default config.
+/// An app with the default config, but the classic chrome (see
+/// `with_classic_chrome`).
+pub fn app() -> App {
+    app_with_config("")
+}
+
+/// An app with `toml` merged over the default config (and the classic
+/// chrome, unless `toml` says otherwise).
 pub fn app_with_config(toml: &str) -> App {
-    App::new(Config::from_toml(toml).expect("test config should be valid"))
+    App::new(Config::from_toml(&with_classic_chrome(toml)).expect("test config should be valid"))
+}
+
+/// An app with the default config exactly, chrome and all.
+pub fn app_as_shipped() -> App {
+    App::default()
 }
 
 /// Feeds keys to the app using Vim notation, e.g. `"ihello<Esc>"`.

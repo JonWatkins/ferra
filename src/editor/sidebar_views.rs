@@ -25,6 +25,20 @@ pub struct ViewSpec {
     pub keys: Vec<(String, String)>,
     /// Events after which its lines are made again.
     pub refresh: Vec<EventKind>,
+    /// Its activity bar icon (a character or two); else its title's first
+    /// letter.
+    pub icon: Option<String>,
+}
+
+/// One of the activity bar's icons.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityItem {
+    /// What clicking it does: `activity <name>`.
+    pub name: String,
+    pub title: String,
+    pub icon: String,
+    /// It's the view the sidebar shows.
+    pub active: bool,
 }
 
 #[derive(Debug, Default)]
@@ -178,6 +192,83 @@ impl Editor {
         self.show_view(next as usize);
     }
 
+    /// What the activity bar shows, top to bottom: the sidebar's views
+    /// (files, Source Control, plugins'), each marked if it's the one
+    /// shown; then, at the bottom, the settings.
+    pub fn activity_items(&self) -> (Vec<ActivityItem>, ActivityItem) {
+        let nerd = self.options.icons == crate::config::Icons::Nerd;
+        let icon = |plain: &str, codicon: &str| if nerd { codicon } else { plain }.to_string();
+        let shown = self
+            .sidebar()
+            .is_some()
+            .then(|| self.sidebar_view_names()[self.sidebar_view]);
+        let (titles, _) = self.sidebar_tabs();
+        let items = self
+            .sidebar_view_names()
+            .into_iter()
+            .zip(titles)
+            .map(|(name, title)| {
+                let icon = match name {
+                    "files" => icon("☰", "\u{eaf0}"),
+                    "git" => icon("⎇", "\u{ea68}"),
+                    _ => self
+                        .sidebar_views
+                        .iter()
+                        .find(|v| v.spec.name == name)
+                        .and_then(|v| v.spec.icon.clone())
+                        .unwrap_or_else(|| {
+                            title
+                                .chars()
+                                .next()
+                                .map_or("?".into(), |c| c.to_uppercase().to_string())
+                        }),
+                };
+                ActivityItem {
+                    name: name.to_string(),
+                    title: title.to_string(),
+                    icon,
+                    active: shown == Some(name),
+                }
+            })
+            .collect();
+        let settings = ActivityItem {
+            name: "settings".into(),
+            title: "Settings".into(),
+            icon: icon("⚙", "\u{eb51}"),
+            active: false,
+        };
+        (items, settings)
+    }
+
+    /// A click on the activity bar's item `name`: shows that view (opening
+    /// the sidebar, with focus), or hides the sidebar if it's the view
+    /// shown; `settings` opens the config.
+    pub fn activity(&mut self, name: &str) -> Result<(), String> {
+        if name == "settings" {
+            return self.open_config();
+        }
+        let shown = self.sidebar().is_some()
+            && self.sidebar_view_names().get(self.sidebar_view) == Some(&name);
+        if shown {
+            self.toggle_sidebar();
+            Ok(())
+        } else {
+            self.open_sidebar_view(name)
+        }
+    }
+
+    /// `:open_config`: the config file (made if there isn't one yet).
+    pub fn open_config(&mut self) -> Result<(), String> {
+        let path = crate::config::default_path().ok_or("No config folder (is HOME set?)")?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        if self.mode() == Mode::Sidebar {
+            self.set_mode(Mode::Normal);
+        }
+        self.open(&path).map_err(|e| e.to_string())
+    }
+
     /// `:sidebar_view name`: opens the sidebar at that view, with focus.
     pub fn open_sidebar_view(&mut self, name: &str) -> Result<(), String> {
         let index = self
@@ -288,6 +379,7 @@ mod tests {
             title: name.to_uppercase(),
             keys: vec![("<CR>".into(), "go".into())],
             refresh: vec![EventKind::AfterSave],
+            icon: None,
         }
     }
 

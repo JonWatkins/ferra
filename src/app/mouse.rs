@@ -59,6 +59,10 @@ pub(super) enum Drag {
 /// What's at a place on the screen (boxes aside).
 enum Hit {
     Window(WindowId),
+    /// An activity bar icon: what it shows.
+    Activity(String),
+    /// The activity bar between its icons.
+    ActivityBar,
     SidebarTab(usize),
     /// A line of the sidebar's list, rows down from its top.
     SidebarLine(usize),
@@ -141,7 +145,7 @@ impl App {
             };
         }
         match self.hit(at) {
-            Hit::SidebarTab(_) => "pointer",
+            Hit::SidebarTab(_) | Hit::Activity(_) => "pointer",
             Hit::SidebarLine(row) if self.sidebar_line_exists(row) => "pointer",
             Hit::Window(_) | Hit::Terminal => "text",
             _ => "default",
@@ -167,6 +171,15 @@ impl App {
 
     fn hit(&self, at: Position) -> Hit {
         let map = &self.screen_map;
+        if let Some((bar, items)) = &map.activity
+            && bar.contains(at)
+        {
+            // Anywhere in an icon's block.
+            return items
+                .iter()
+                .find(|(y, _)| (*y..y + crate::ui::activity::BLOCK).contains(&at.y))
+                .map_or(Hit::ActivityBar, |(_, name)| Hit::Activity(name.clone()));
+        }
         if let Some(sidebar) = &map.sidebar
             && sidebar.area.contains(at)
         {
@@ -267,6 +280,13 @@ impl App {
                     _ => {}
                 }
             }
+            Hit::Activity(name) => {
+                self.leave_panes();
+                if let Err(error) = self.editor.activity(&name) {
+                    self.editor.set_message(Message::error(error));
+                }
+            }
+            Hit::ActivityBar => {}
             Hit::SidebarTab(index) => {
                 let names: Vec<String> = self
                     .editor
@@ -599,7 +619,7 @@ impl App {
                 self.editor.sidebar_move(lines);
             }
             Hit::Terminal => self.editor.terminal_scroll_rows(-lines),
-            Hit::Nothing => {}
+            Hit::Activity(_) | Hit::ActivityBar | Hit::Nothing => {}
         }
     }
 }

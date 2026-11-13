@@ -376,6 +376,30 @@ current file is highlighted and files with unsaved changes have a `●`.
 `sidebar-width` (30 columns, at most half the screen) sets its width; the
 colours are the `ui.sidebar.*` theme scopes.
 
+### The activity bar
+
+Down the left edge, always there, is the activity bar, as in VS Code: an
+icon for each of the sidebar's views (the files, Source Control, and any
+plugins add), with the gear for the settings at the bottom. Clicking an
+icon shows its view (opening the sidebar, with focus); clicking the one
+shown hides the sidebar. The gear opens `config.toml` (`:open_config`).
+
+```text
+ ▎    │ FERRA                │   1 fn main() {
+ ▎ ☰  │ ▾ src                │   2     println!("hi");
+ ▎    │   ▸ ui               │   3 }
+      │     main.rs        ● │
+   ⎇  │   Cargo.toml         │
+```
+
+`icons = "nerd"` draws VS Code's own icons (its codicons), for a terminal
+font from [Nerd Fonts](https://www.nerdfonts.com); the default, `"plain"`,
+uses symbols every font has. A plugin's view can name its icon
+(`editor.view(name, { icon = "✎", ... })`); otherwise it's the first
+letter of its title. `activity-bar = false` turns the bar off, and the
+sidebar shows a row of tabs for its views instead. The colours are the
+`ui.activitybar.*` scopes.
+
 ## The terminal panel
 
 `<Space>t` (or `:terminal`) opens a shell in a panel under the windows, as

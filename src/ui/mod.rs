@@ -15,6 +15,7 @@
 //! under the sidebar too. The terminal panel (`TerminalView`, `<Space>t`)
 //! takes the bottom of the windows' side, under their status lines.
 
+pub mod activity;
 mod command_line;
 mod completion_menu;
 pub mod editor_view;
@@ -73,6 +74,8 @@ pub struct KeyHints {
 pub struct ScreenMap {
     /// Each window's text area (status line not included).
     pub windows: Vec<(crate::editor::WindowId, Rect)>,
+    /// The activity bar: its area, and each icon's row and what it shows.
+    pub activity: Option<(Rect, Vec<(u16, String)>)>,
     pub sidebar: Option<SidebarMap>,
     /// The terminal panel, title row included.
     pub terminal: Option<Rect>,
@@ -135,6 +138,37 @@ pub fn draw(
     .areas(area);
 
     let screen_main = main;
+    // The activity bar takes the screen's left edge, as the sidebar does
+    // (below), from the top down to the status line or the command line.
+    let activity_bar = editor.options.activity_bar && main.width >= 30;
+    let (main, status) = if activity_bar {
+        let per_window = editor.options.statusline == StatuslineMode::Windows;
+        let height = main.height + u16::from(per_window);
+        let bar = Rect::new(main.x, main.y, activity::WIDTH, height);
+        let (items, settings) = editor.activity_items();
+        frame.render_widget(activity::ActivityBar::new(&items, &settings, theme), bar);
+        let (rows, settings_row) = activity::layout(bar, items.len());
+        let mut hits: Vec<(u16, String)> = rows
+            .into_iter()
+            .zip(items.iter().map(|i| i.name.clone()))
+            .collect();
+        hits.extend(settings_row.map(|y| (y, settings.name.clone())));
+        map.activity = Some((bar, hits));
+        let main = Rect::new(
+            main.x + bar.width,
+            main.y,
+            main.width - bar.width,
+            main.height,
+        );
+        let status = if per_window {
+            Rect::new(main.x, status.y, main.width, status.height)
+        } else {
+            status
+        };
+        (main, status)
+    } else {
+        (main, status)
+    };
     // The sidebar takes the left of the screen, down to the command line
     // with per-window status lines (they're the windows'), or down to the
     // one status line, which keeps the full width.
@@ -153,9 +187,11 @@ pub fn draw(
                 status
             };
             let focused = editor.mode() == Mode::Sidebar;
-            // With plugins' views, a row of tabs first.
+            // With plugins' views, a row of tabs first (the activity bar
+            // does that when it's there).
             let (titles, shown) = editor.sidebar_tabs();
-            let content = if titles.len() > 1 {
+            let tabs = titles.len() > 1 && !activity_bar;
+            let content = if tabs {
                 frame.render_widget(SidebarTabs::new(&titles, shown, focused, theme), side);
                 Rect::new(
                     side.x,
@@ -170,7 +206,7 @@ pub fn draw(
             let git_view = editor.git_view_shown();
             map.sidebar = Some(SidebarMap {
                 area: side,
-                tabs: (titles.len() > 1).then(|| (side.y, sidebar::tab_spans(&titles, side.x))),
+                tabs: tabs.then(|| (side.y, sidebar::tab_spans(&titles, side.x))),
                 list: if git_view {
                     GitViewWidget::list(content)
                 } else {

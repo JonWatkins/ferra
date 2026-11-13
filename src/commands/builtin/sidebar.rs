@@ -76,6 +76,19 @@ pub fn register(r: &mut CommandRegistry) {
         Ok(())
     });
     r.register(
+        "activity",
+        "The activity bar: show a sidebar view (or hide the sidebar if it's shown); settings opens the config",
+        |cx| {
+            let name = cx.args.first().cloned().unwrap_or_default();
+            cx.editor.activity(&name)
+        },
+    );
+    r.register(
+        "open_config",
+        "Open the config file, config.toml (made if there isn't one)",
+        |cx| cx.editor.open_config(),
+    );
+    r.register(
         "sidebar_view",
         "Open the sidebar at a view (:sidebar_view files, or a plugin's)",
         |cx| {
