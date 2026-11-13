@@ -14,7 +14,9 @@ mod languages;
 mod trees;
 
 pub use highlight::{HIGHLIGHT_NAMES, Highlights, LanguageConfig, Span};
-pub use languages::{INJECTION_ONLY, LANGUAGES, LanguageDef, language};
+pub use languages::{
+    Grammar, INJECTION_ONLY, LANGUAGES, LanguageDef, is_built_in, language, register,
+};
 pub use trees::SyntaxTrees;
 
 use std::cell::OnceCell;
@@ -45,7 +47,8 @@ struct DocumentHighlights {
 pub struct SyntaxEngine {
     /// For injected languages, which parse only parts of the text.
     injection_parser: tree_sitter::Parser,
-    /// Compiled queries, one per entry in `LANGUAGES`, built on first use.
+    /// Compiled queries, one per language (by its registry position),
+    /// built on first use; grows as plugins add languages.
     configs: Vec<OnceCell<Result<LanguageConfig, String>>>,
     documents: HashMap<DocumentId, DocumentHighlights>,
     /// Trees for `highlights_default`, which has no editor's to use.
@@ -92,12 +95,18 @@ impl SyntaxEngine {
     ) -> Option<&Highlights> {
         let id = document.id();
         let buffer = document.buffer();
-        let Some(index) = LANGUAGES.iter().position(|l| Some(l.name) == name) else {
+        let Some(index) = name.and_then(languages::position) else {
             self.documents.remove(&id);
             return None;
         };
+        // Room for languages added since.
+        let count = languages::count();
+        if self.configs.len() < count {
+            self.configs.resize_with(count, OnceCell::new);
+        }
+        let definition = languages::get(index)?;
         let config = self.configs[index]
-            .get_or_init(|| load(&LANGUAGES[index]))
+            .get_or_init(|| load(definition))
             .as_ref()
             .ok()?;
 
@@ -125,14 +134,16 @@ impl SyntaxEngine {
             return state.highlights.get(at);
         }
 
-        let tree = trees.tree(document, LANGUAGES[index].name)?;
+        let tree = trees.tree(document, definition.name)?;
         let configs = &self.configs;
         // Languages inside this one (a code block's, `<script>`'s), by name
         // or file extension (`js`, `py`), loaded on first use.
         let inject = move |name: &str| {
             let index = injected_language(name, languages)?;
-            configs[index]
-                .get_or_init(|| load(&LANGUAGES[index]))
+            let definition = languages::get(index)?;
+            configs
+                .get(index)?
+                .get_or_init(|| load(definition))
                 .as_ref()
                 .ok()
         };
@@ -199,18 +210,18 @@ impl SyntaxEngine {
 /// `py`, `sh`), ignoring case.
 fn injected_language(name: &str, languages: &Languages) -> Option<usize> {
     let name = name.trim().to_ascii_lowercase();
-    if let Some(index) = LANGUAGES.iter().position(|l| l.name == name) {
+    if let Some(index) = languages::position(&name) {
         return Some(index);
     }
     let path = std::path::PathBuf::from(format!("x.{name}"));
     let language = languages.detect(Some(&path), "")?;
-    LANGUAGES.iter().position(|l| l.name == language)
+    languages::position(language)
 }
 
 fn load(language: &LanguageDef) -> Result<LanguageConfig, String> {
     LanguageConfig::new(
         language.name,
-        (language.grammar)(),
+        language.grammar(),
         &language.highlight_query(),
         language.injections,
         language.locals,
@@ -422,7 +433,7 @@ mod tests {
                 .iter()
                 .map(|l| {
                     let mut config = HighlightConfiguration::new(
-                        (l.grammar)(),
+                        l.grammar(),
                         l.name,
                         &l.highlight_query(),
                         l.injections,

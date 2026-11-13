@@ -20,6 +20,7 @@
 //! call, so a plugin can never hold on to the editor.
 
 mod api;
+pub mod grammars;
 pub mod packages;
 mod popup;
 mod prompts;

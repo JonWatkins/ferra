@@ -273,6 +273,22 @@ impl App {
             // Reported by the host, below, with the plugin's name.
             Ok(_) | Err(_) => {}
         }
+        if let Ok(manifest) = crate::plugins::packages::Manifest::read(dir) {
+            for (language, spec) in &manifest.grammars {
+                let known = self.editor.languages.names().any(|n| n == language);
+                let result = if known {
+                    crate::plugins::grammars::load(dir, language, spec)
+                } else {
+                    Err(format!(
+                        "grammars.{language}: there's no language {language} \
+                         (add [languages.{language}])"
+                    ))
+                };
+                if let Err(e) = result {
+                    errors.push(format!("{}: {e}", manifest.name));
+                }
+            }
+        }
         match self.plugin_host() {
             Ok(host) => errors.extend(host.load_package(dir).err()),
             Err(e) => errors.push(e),
@@ -350,7 +366,8 @@ impl App {
                     Ok(()) => {
                         // Only the new one loads: the others are unchanged.
                         let name = &installed.manifest.name;
-                        let mut errors = self.load_package(&paths.dir(name));
+                        let mut errors = installed.warnings.clone();
+                        errors.extend(self.load_package(&paths.dir(name)));
                         errors.extend(self.install_plugins());
                         if errors.is_empty() {
                             Message::info(done)
@@ -372,14 +389,21 @@ impl App {
                 let mut done = Vec::new();
                 let mut errors = Vec::new();
                 for result in results {
-                    match result.and_then(|(name, commit, version)| {
+                    match result.and_then(|updated| {
+                        let background::Updated {
+                            name,
+                            commit,
+                            version,
+                            warnings,
+                        } = updated;
                         packages::lock(&paths, &name, &commit)?;
-                        Ok(format!(
-                            "{name} {version} ({})",
-                            &commit[..commit.len().min(7)]
-                        ))
+                        let short = &commit[..commit.len().min(7)];
+                        Ok((format!("{name} {version} ({short})"), warnings))
                     }) {
-                        Ok(text) => done.push(text),
+                        Ok((text, warnings)) => {
+                            done.push(text);
+                            errors.extend(warnings);
+                        }
                         Err(error) => errors.push(error),
                     }
                 }
@@ -391,9 +415,12 @@ impl App {
                 for result in results {
                     match result.and_then(|installed| {
                         packages::record(&paths, &installed)?;
-                        Ok(installed_text(&installed))
+                        Ok((installed_text(&installed), installed.warnings))
                     }) {
-                        Ok(text) => done.push(text),
+                        Ok((text, warnings)) => {
+                            done.push(text);
+                            errors.extend(warnings);
+                        }
                         Err(error) => errors.push(error),
                     }
                 }

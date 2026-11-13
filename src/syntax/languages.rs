@@ -4,11 +4,29 @@
 //!
 //! Adding a language is one entry here, its grammar crate, and a
 //! `[languages.name]` table in the default config.
+//!
+//! Plugins' language packs add grammars while ferra runs ([`register`]):
+//! the built-ins come first, then those, in the order they were added. A
+//! language's position never changes, so it can index caches; a grammar
+//! registered again under the same name (an updated plugin) gets a new
+//! position, and wins.
 
-/// A built-in language: its grammar and queries.
+use std::sync::RwLock;
+
+/// Where a language's grammar comes from.
+#[derive(Clone, Copy)]
+pub enum Grammar {
+    /// A grammar crate built into ferra.
+    BuiltIn(fn() -> tree_sitter::Language),
+    /// A plugin's compiled grammar, loaded from a shared library that's
+    /// never unloaded.
+    Loaded(tree_sitter_language::LanguageFn),
+}
+
+/// A language: its grammar and queries.
 pub struct LanguageDef {
     pub name: &'static str,
-    pub grammar: fn() -> tree_sitter::Language,
+    pub grammar: Grammar,
     /// Highlight queries, joined in order. A language built on another
     /// (TypeScript on JavaScript, C++ on C) lists its own first, so its
     /// patterns win, then the base language's.
@@ -18,6 +36,13 @@ pub struct LanguageDef {
 }
 
 impl LanguageDef {
+    pub fn grammar(&self) -> tree_sitter::Language {
+        match self.grammar {
+            Grammar::BuiltIn(grammar) => grammar(),
+            Grammar::Loaded(grammar) => tree_sitter::Language::new(grammar),
+        }
+    }
+
     /// The highlight queries as one query.
     pub fn highlight_query(&self) -> String {
         self.highlights.join("\n")
@@ -49,7 +74,7 @@ const MARKDOWN_INJECTIONS: &str = r#"
 pub const LANGUAGES: &[LanguageDef] = &[
     LanguageDef {
         name: "rust",
-        grammar: || tree_sitter_rust::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_rust::LANGUAGE.into()),
         highlights: &[tree_sitter_rust::HIGHLIGHTS_QUERY],
         // Macro calls' and `macro_rules!` bodies are highlighted as Rust.
         injections: tree_sitter_rust::INJECTIONS_QUERY,
@@ -57,28 +82,28 @@ pub const LANGUAGES: &[LanguageDef] = &[
     },
     LanguageDef {
         name: "toml",
-        grammar: || tree_sitter_toml_ng::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_toml_ng::LANGUAGE.into()),
         highlights: &[tree_sitter_toml_ng::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
     },
     LanguageDef {
         name: "json",
-        grammar: || tree_sitter_json::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_json::LANGUAGE.into()),
         highlights: &[tree_sitter_json::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
     },
     LanguageDef {
         name: "python",
-        grammar: || tree_sitter_python::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_python::LANGUAGE.into()),
         highlights: &[tree_sitter_python::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
     },
     LanguageDef {
         name: "javascript",
-        grammar: || tree_sitter_javascript::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_javascript::LANGUAGE.into()),
         highlights: &[
             tree_sitter_javascript::HIGHLIGHT_QUERY,
             tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
@@ -88,7 +113,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
     },
     LanguageDef {
         name: "typescript",
-        grammar: || tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         highlights: &[
             tree_sitter_typescript::HIGHLIGHTS_QUERY,
             tree_sitter_javascript::HIGHLIGHT_QUERY,
@@ -98,7 +123,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
     },
     LanguageDef {
         name: "tsx",
-        grammar: || tree_sitter_typescript::LANGUAGE_TSX.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_typescript::LANGUAGE_TSX.into()),
         highlights: &[
             tree_sitter_typescript::HIGHLIGHTS_QUERY,
             tree_sitter_javascript::HIGHLIGHT_QUERY,
@@ -109,21 +134,21 @@ pub const LANGUAGES: &[LanguageDef] = &[
     },
     LanguageDef {
         name: "go",
-        grammar: || tree_sitter_go::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_go::LANGUAGE.into()),
         highlights: &[tree_sitter_go::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
     },
     LanguageDef {
         name: "c",
-        grammar: || tree_sitter_c::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_c::LANGUAGE.into()),
         highlights: &[tree_sitter_c::HIGHLIGHT_QUERY],
         injections: "",
         locals: "",
     },
     LanguageDef {
         name: "cpp",
-        grammar: || tree_sitter_cpp::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_cpp::LANGUAGE.into()),
         highlights: &[
             tree_sitter_cpp::HIGHLIGHT_QUERY,
             tree_sitter_c::HIGHLIGHT_QUERY,
@@ -133,7 +158,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
     },
     LanguageDef {
         name: "bash",
-        grammar: || tree_sitter_bash::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_bash::LANGUAGE.into()),
         highlights: &[tree_sitter_bash::HIGHLIGHT_QUERY],
         injections: "",
         locals: "",
@@ -143,7 +168,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         // emphasis and links are a second grammar reached by injection,
         // which is off for now.
         name: "markdown",
-        grammar: || tree_sitter_md::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_md::LANGUAGE.into()),
         highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
         injections: MARKDOWN_INJECTIONS,
         locals: "",
@@ -152,28 +177,28 @@ pub const LANGUAGES: &[LanguageDef] = &[
         // Markdown's inline syntax (emphasis, links, code spans): a second
         // grammar the block grammar injects into each paragraph.
         name: "markdown_inline",
-        grammar: || tree_sitter_md::INLINE_LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_md::INLINE_LANGUAGE.into()),
         highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_INLINE],
         injections: tree_sitter_md::INJECTION_QUERY_INLINE,
         locals: "",
     },
     LanguageDef {
         name: "yaml",
-        grammar: || tree_sitter_yaml::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_yaml::LANGUAGE.into()),
         highlights: &[tree_sitter_yaml::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
     },
     LanguageDef {
         name: "html",
-        grammar: || tree_sitter_html::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_html::LANGUAGE.into()),
         highlights: &[tree_sitter_html::HIGHLIGHTS_QUERY],
         injections: tree_sitter_html::INJECTIONS_QUERY,
         locals: "",
     },
     LanguageDef {
         name: "css",
-        grammar: || tree_sitter_css::LANGUAGE.into(),
+        grammar: Grammar::BuiltIn(|| tree_sitter_css::LANGUAGE.into()),
         highlights: &[tree_sitter_css::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
@@ -184,9 +209,56 @@ pub const LANGUAGES: &[LanguageDef] = &[
 /// no `[languages]` entry.
 pub const INJECTION_ONLY: &[&str] = &["markdown_inline"];
 
-/// The built-in language called `name`.
+/// Languages plugins added, in order. Leaked: they live as long as ferra
+/// (trees and compiled queries point into their grammars).
+static ADDED: RwLock<Vec<&'static LanguageDef>> = RwLock::new(Vec::new());
+
+/// Adds a plugin's language, after the built-ins and earlier ones.
+pub fn register(definition: LanguageDef) -> &'static LanguageDef {
+    let definition: &'static LanguageDef = Box::leak(Box::new(definition));
+    ADDED
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(definition);
+    definition
+}
+
+fn added() -> std::sync::RwLockReadGuard<'static, Vec<&'static LanguageDef>> {
+    ADDED.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// How many languages there are, built in and added.
+pub fn count() -> usize {
+    LANGUAGES.len() + added().len()
+}
+
+/// The language at `index` (see [`position`]).
+pub fn get(index: usize) -> Option<&'static LanguageDef> {
+    LANGUAGES
+        .get(index)
+        .or_else(|| added().get(index - LANGUAGES.len()).copied())
+}
+
+/// Where language `name` is: a built-in's, else the last added under it.
+pub fn position(name: &str) -> Option<usize> {
+    if let Some(index) = LANGUAGES.iter().position(|l| l.name == name) {
+        return Some(index);
+    }
+    let added = added();
+    added
+        .iter()
+        .rposition(|l| l.name == name)
+        .map(|i| LANGUAGES.len() + i)
+}
+
+/// The language called `name` (see [`position`]).
 pub fn language(name: &str) -> Option<&'static LanguageDef> {
-    LANGUAGES.iter().find(|l| l.name == name)
+    get(position(name)?)
+}
+
+/// Whether ferra has a grammar built in for `name`.
+pub fn is_built_in(name: &str) -> bool {
+    LANGUAGES.iter().any(|l| l.name == name)
 }
 
 #[cfg(test)]

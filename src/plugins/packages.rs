@@ -78,6 +78,9 @@ pub struct Manifest {
     /// Languages the plugin adds, as in `config.toml`'s `[languages]`.
     #[serde(default)]
     pub languages: BTreeMap<String, crate::config::FileType>,
+    /// Tree-sitter grammars it carries, by language.
+    #[serde(default)]
+    pub grammars: BTreeMap<String, super::grammars::GrammarSpec>,
 }
 
 impl Manifest {
@@ -94,6 +97,10 @@ impl Manifest {
                     "{MANIFEST}: main should be a file inside the plugin, not {main}"
                 ));
             }
+        }
+        for (language, spec) in &manifest.grammars {
+            spec.check(language)
+                .map_err(|e| format!("{MANIFEST}: {e}"))?;
         }
         for language in manifest.languages.keys() {
             let ok = !language.is_empty()
@@ -117,7 +124,7 @@ impl Manifest {
             Some(main) if dir.join(main).is_file() => Ok(Some(main.clone())),
             Some(main) => Err(format!("its main file {main} is missing")),
             None if dir.join("init.lua").is_file() => Ok(Some("init.lua".into())),
-            None if !self.languages.is_empty() => Ok(None),
+            None if !self.languages.is_empty() || !self.grammars.is_empty() => Ok(None),
             None => Err("it has no init.lua (or main file) and adds no languages".into()),
         }
     }
@@ -367,6 +374,8 @@ pub struct Installed {
     pub manifest: Manifest,
     pub source: Source,
     pub commit: String,
+    /// Grammars that didn't build (the plugin's installed anyway).
+    pub warnings: Vec<String>,
 }
 
 impl Installed {
@@ -519,10 +528,12 @@ pub fn install(
             ));
         }
         std::fs::rename(temp, paths.dir(name)).map_err(|e| format!("{name}: {e}"))?;
+        let warnings = super::grammars::build_all(&paths.dir(name), &manifest);
         Ok(Installed {
             manifest,
             source: source.clone(),
             commit,
+            warnings,
         })
     })
 }
@@ -559,10 +570,12 @@ pub fn restore(paths: &PluginPaths, name: &str) -> Result<Installed, String> {
             return Err(format!("{name} is already installed"));
         }
         std::fs::rename(temp, paths.dir(name)).map_err(|e| format!("{name}: {e}"))?;
+        let warnings = super::grammars::build_all(&paths.dir(name), &manifest);
         Ok(Installed {
             manifest,
             source: source.clone(),
             commit,
+            warnings,
         })
     })
     .map_err(|e| format!("{name}: {e}"))
@@ -710,16 +723,23 @@ pub fn check_updates(paths: &PluginPaths, names: &[String]) -> Result<Checked, S
 }
 
 /// Moves a plugin to the commit `check_updates` found, going back if the
-/// new version isn't one this ferra can load. Returns the new manifest;
-/// the caller records the commit. Blocking.
-pub fn apply_update(paths: &PluginPaths, incoming: &Incoming) -> Result<Manifest, String> {
+/// new version isn't one this ferra can load, and builds its grammars.
+/// Returns the new manifest and grammars that didn't build; the caller
+/// records the commit. Blocking.
+pub fn apply_update(
+    paths: &PluginPaths,
+    incoming: &Incoming,
+) -> Result<(Manifest, Vec<String>), String> {
     let name = &incoming.name;
     let dir = paths.dir(name);
     let dir = Some(dir.as_path());
     git(dir, &["merge", "--quiet", "--ff-only", &incoming.to])
         .map_err(|e| format!("{name}: {e}"))?;
     match check_plugin(&paths.dir(name)) {
-        Ok(manifest) if manifest.name == *name => Ok(manifest),
+        Ok(manifest) if manifest.name == *name => {
+            let warnings = super::grammars::build_all(&paths.dir(name), &manifest);
+            Ok((manifest, warnings))
+        }
         result => {
             let _ = git(dir, &["reset", "--quiet", "--hard", &incoming.from]);
             let why = match result {
@@ -957,6 +977,7 @@ mod tests {
             manifest: Manifest::parse("name = \"todos\"\nversion = \"0.1.0\"").unwrap(),
             source: Source::parse("o/todos@v1").unwrap(),
             commit: "0123456789abcdef".into(),
+            warnings: Vec::new(),
         };
         std::fs::create_dir_all(paths.dir("todos")).unwrap();
         record(&paths, &installed).unwrap();

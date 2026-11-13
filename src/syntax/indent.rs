@@ -162,7 +162,7 @@ fn rules(language: &str) -> Option<&'static Query> {
     cells[index]
         .get_or_init(|| {
             let source = rules_source(language)?;
-            Query::new(&(LANGUAGES[index].grammar)(), &source).ok()
+            Query::new(&LANGUAGES[index].grammar(), &source).ok()
         })
         .as_ref()
 }
@@ -664,8 +664,7 @@ done",
     fn every_languages_rules_compile() {
         for def in LANGUAGES {
             if let Some(source) = rules_source(def.name) {
-                Query::new(&(def.grammar)(), &source)
-                    .unwrap_or_else(|e| panic!("{}: {e}", def.name));
+                Query::new(&def.grammar(), &source).unwrap_or_else(|e| panic!("{}: {e}", def.name));
             }
         }
         assert!(!has_rules("python"));

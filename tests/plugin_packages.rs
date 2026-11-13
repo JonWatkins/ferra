@@ -843,3 +843,161 @@ fn language_packs_cannot_replace_known_languages() {
         message(&app)
     );
 }
+
+/// Whether there's a C compiler to build grammars with.
+fn have_cc() -> bool {
+    Command::new("cc")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// A language pack carrying the test grammar (tree-sitter-json's, as a
+/// language called "data") with its highlight query.
+fn grammar_pack(root: &Path) -> String {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/grammar-json");
+    let read = |p: &str| fs::read_to_string(fixture.join(p)).unwrap();
+    let parser = read("src/parser.c");
+    let header = read("src/tree_sitter/parser.h");
+    let alloc = read("src/tree_sitter/alloc.h");
+    let array = read("src/tree_sitter/array.h");
+    let highlights = read("queries/highlights.scm");
+    repo(
+        root,
+        "ferra-data",
+        &[
+            (
+                "ferra-plugin.toml",
+                r#"
+name = "data"
+version = "0.1.0"
+description = "A test language with a compiled grammar"
+
+[languages.data]
+extensions = ["data"]
+
+[grammars.data]
+path = "grammar"
+symbol = "tree_sitter_json"
+"#,
+            ),
+            ("grammar/src/parser.c", &parser),
+            ("grammar/src/tree_sitter/parser.h", &header),
+            ("grammar/src/tree_sitter/alloc.h", &alloc),
+            ("grammar/src/tree_sitter/array.h", &array),
+            ("queries/data/highlights.scm", &highlights),
+        ],
+    )
+}
+
+/// Screen columns on row `y` drawn in the default theme's string colour
+/// (the gutter is 5 wide, so text column 0 is screen column 5).
+fn string_cells(app: &mut App, y: u16) -> Vec<u16> {
+    use ratatui::{Terminal, backend::TestBackend, style::Color};
+    let string = Color::Rgb(0x9e, 0xce, 0x6a);
+    let mut terminal = Terminal::new(TestBackend::new(40, 6)).unwrap();
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let buffer = terminal.backend().buffer();
+    (0..40).filter(|&x| buffer[(x, y)].fg == string).collect()
+}
+
+#[test]
+fn language_packs_compile_and_load_grammars() {
+    if !have_cc() {
+        eprintln!("no C compiler: skipped");
+        return;
+    }
+    let s = setup();
+    let pack = grammar_pack(s.temp.path());
+    let file = s.temp.path().join("x.data");
+    fs::write(&file, "{\"key\": 12}\n").unwrap();
+
+    let mut app = app_with(&s.paths);
+    install(&mut app, &pack);
+    assert!(
+        message(&app).starts_with("Installed data 0.1.0"),
+        "{}",
+        message(&app)
+    );
+    let builds: Vec<_> = fs::read_dir(s.paths.data.join("data/.ferra-build"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(builds.len(), 1, "{builds:?}");
+    assert!(builds[0].starts_with("data-"), "{builds:?}");
+    let dir = s.paths.data.join("data");
+    assert_eq!(
+        git(&dir, &["status", "--porcelain"]),
+        "",
+        "the build isn't in git's way"
+    );
+
+    app.open(&file);
+    // `{"key": 12}`: the key is a string; the number isn't.
+    let cells = string_cells(&mut app, 0);
+    assert_eq!(cells, vec![6, 7, 8, 9, 10], "{cells:?}");
+
+    // At startup the build is reused, not made again.
+    let mut again = app_with(&s.paths);
+    assert_eq!(again.load_plugins(&s.paths.config), None);
+    again.open(&file);
+    assert_eq!(string_cells(&mut again, 0), vec![6, 7, 8, 9, 10]);
+    keys(&mut again, ":plugin_reload<CR>");
+    assert_eq!(message(&again), "Plugins reloaded");
+    assert_eq!(string_cells(&mut again, 0), vec![6, 7, 8, 9, 10]);
+}
+
+#[test]
+fn grammars_that_do_not_build_still_install_the_language() {
+    let s = setup();
+    let pack = repo(
+        s.temp.path(),
+        "broken",
+        &[
+            (
+                "ferra-plugin.toml",
+                "name = \"broken\"\nversion = \"0.1.0\"\n[languages.broken]\nextensions = [\"brk\"]\ncomment = \"#\"\n[grammars.broken]\n",
+            ),
+            ("src/parser.c", "this is not C"),
+        ],
+    );
+    let mut app = app_with(&s.paths);
+    install(&mut app, &pack);
+    let shown = message(&app);
+    assert!(shown.starts_with("Installed broken 0.1.0"), "{shown}");
+    let why = if have_cc() {
+        "didn't compile"
+    } else {
+        "no C compiler"
+    };
+    assert!(shown.contains(why), "{shown}");
+    let file = s.temp.path().join("a.brk");
+    fs::write(&file, "x").unwrap();
+    app.open(&file);
+    assert_eq!(
+        app.editor().language_of(&app.editor().document),
+        Some("broken")
+    );
+}
+
+#[test]
+fn grammars_need_their_language_and_cannot_replace_built_ins() {
+    let s = setup();
+    let pack = repo(
+        s.temp.path(),
+        "rusty",
+        &[(
+            "ferra-plugin.toml",
+            "name = \"rusty\"\nversion = \"0.1.0\"\n[grammars.rust]\n[grammars.nolang]\n",
+        )],
+    );
+    let mut app = app_with(&s.paths);
+    install(&mut app, &pack);
+    let shown = message(&app);
+    assert!(
+        shown.contains("ferra has a rust grammar built in"),
+        "{shown}"
+    );
+    assert!(shown.contains("there's no language nolang"), "{shown}");
+}

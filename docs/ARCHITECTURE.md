@@ -1492,6 +1492,24 @@ servers are matched to open buffers on every update, open files take the
 new language at once. `main` is optional: a pack with languages needs no
 Lua. The app keeps the config's languages and puts them back on reload.
 
+Grammars (`plugins/grammars.rs`): `syntax::LANGUAGES` stays the
+built-ins, and `syntax::register` appends plugins' languages to a
+process-wide registry; positions never change (so `SyntaxEngine` keeps
+indexing its compiled queries by position, growing the cache as the
+registry grows), and a name registered again (an update) resolves to the
+newest. A `LanguageDef`'s grammar is `Grammar::BuiltIn(fn)` or
+`Grammar::Loaded(LanguageFn)` (`Copy`, so the built-in table stays a
+`const`); kept trees compare definitions by address, so an updated
+grammar never edits a tree from the old one. Installing, updating and
+restoring compile each `[grammars.<lang>]` on the job's thread with `cc`
+into `.ferra-build/<lang>-<commit>.<dylib|so>` (excluded in the clone's
+`.git/info/exclude`): a new commit is a new path, since a process can't
+load a second library from a path it already has. Loading builds if the
+file's missing, opens it with `libloading` and never closes it (trees and
+queries point into it), checks the ABI version, compiles the queries
+before registering, and remembers what it registered by library and query
+text, so `:plugin_reload` reuses it.
+
 `:plugin_reload` doesn't unregister piece by piece: `App::reload_plugins`
 drops the `PluginHost` (so `require`'s cache goes too), rebuilds the
 registry from the built-ins and the config's hooks (`base_commands`),
@@ -1582,10 +1600,10 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
    lists on a new machine. Phase 2 is done too: `:plugin_browse`, picking
    from the `ferra-plugins` directory's `index.toml`. Phase 3 round 1
    is done: language packs add file types, comments, options and a
-   language server. Round 2: the grammar's C source, compiled on install
-   with the system C compiler and loaded at runtime, and its highlight
-   queries; that means `syntax::LANGUAGES` making room for languages that
-   aren't built in.
+   language server. Round 2 is done:
+   grammars compiled on install with the system C compiler and loaded at
+   runtime, with their queries. Not yet: indentation rules for plugins'
+   languages (they indent by heuristics).
 
 ## Roadmap: deferred features
 

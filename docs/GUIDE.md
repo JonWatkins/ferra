@@ -1261,8 +1261,25 @@ language-server = { command = "zls" }
 
 Open files in the language pick it up as soon as it's installed. A pack
 can't change a language ferra already has (built in or in your config):
-change those in your own `[languages]`. Highlighting a new language needs
-its tree-sitter grammar, which packs will bring next (compiled on
-install).
+change those in your own `[languages]`.
+
+For highlighting, a pack carries the language's tree-sitter grammar as C
+source (the generated `src/parser.c`, and `src/scanner.c` if it has one),
+which ferra compiles with your C compiler when the pack is installed or
+updated, and its queries:
+
+```toml
+# ferra-plugin.toml
+[grammars.zig]
+path = "tree-sitter-zig"      # the folder with src/parser.c ("." if left out)
+symbol = "tree_sitter_zig"    # the grammar's function (this is the default)
+queries = "queries/zig"       # highlights.scm, injections.scm, locals.scm (the default)
+```
+
+Building needs a C compiler (`cc`, or `$CC`; on macOS
+`xcode-select --install`). Without one the pack still installs, and the
+language works without highlighting; ferra tries again when it next
+starts. Builds go in the plugin's folder, in `.ferra-build/`. A grammar
+can't replace one ferra has built in.
 
 See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for the design.

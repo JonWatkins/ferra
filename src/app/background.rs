@@ -35,15 +35,23 @@ pub(super) enum Update {
         max_files: usize,
     },
     /// A plugin job finished.
-    Plugins(PackageDone),
+    Plugins(Box<PackageDone>),
+}
+
+/// One plugin updated.
+pub(super) struct Updated {
+    pub name: String,
+    pub commit: String,
+    pub version: String,
+    /// Grammars that didn't build.
+    pub warnings: Vec<String>,
 }
 
 /// How a plugin job went.
 pub(super) enum PackageDone {
     Installed(Result<Installed, String>),
     Checked(Result<Checked, String>),
-    /// Per plugin: its name, new commit and version.
-    Updated(Vec<Result<(String, String, String), String>>),
+    Updated(Vec<Result<Updated, String>>),
     Restored(Vec<Result<Installed, String>>),
     Browsed(Result<packages::Index, String>),
 }
@@ -122,8 +130,12 @@ impl Background {
                     incoming
                         .iter()
                         .map(|i| {
-                            packages::apply_update(paths, i)
-                                .map(|m| (i.name.clone(), i.to.clone(), m.version))
+                            packages::apply_update(paths, i).map(|(m, warnings)| Updated {
+                                name: i.name.clone(),
+                                commit: i.to.clone(),
+                                version: m.version,
+                                warnings,
+                            })
                         })
                         .collect(),
                 ),
@@ -137,7 +149,7 @@ impl Background {
                         .collect(),
                 ),
             };
-            let _ = sender.send(Update::Plugins(done));
+            let _ = sender.send(Update::Plugins(Box::new(done)));
         });
     }
 
@@ -195,7 +207,7 @@ impl App {
             Update::Plugins(done) => {
                 self.background.running -= 1;
                 self.editor.plugin_job_done();
-                self.finish_plugin_job(done);
+                self.finish_plugin_job(*done);
             }
             Update::Files { job, base, paths } => {
                 if let Some(picker) = self.picker_loading(job) {

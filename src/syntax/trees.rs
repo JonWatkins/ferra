@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 use tree_sitter::{InputEdit, Parser, Point, Tree};
 
-use super::{LANGUAGES, MAX_HIGHLIGHT_CHARS};
+use super::{LanguageDef, MAX_HIGHLIGHT_CHARS};
 use crate::core::{Buffer, TextEdit};
 use crate::editor::{Document, DocumentId};
 
@@ -32,7 +32,8 @@ struct Inner {
 }
 
 struct Kept {
-    language: &'static str,
+    /// Compared by address: a plugin's updated grammar has the same name.
+    language: &'static LanguageDef,
     buffer_id: u64,
     /// The buffer's `edit_seq` the tree was last brought up to.
     edit_seq: u64,
@@ -55,7 +56,7 @@ impl SyntaxTrees {
     /// [`MAX_HIGHLIGHT_CHARS`], or a failed parse. Cloning a tree is cheap
     /// (it shares its nodes).
     pub fn tree(&self, document: &Document, language: &str) -> Option<Tree> {
-        let definition = LANGUAGES.iter().find(|l| l.name == language)?;
+        let definition = super::language(language)?;
         let mut inner = self.inner.borrow_mut();
         let Inner { parser, kept } = &mut *inner;
         let buffer = document.buffer();
@@ -63,7 +64,7 @@ impl SyntaxTrees {
 
         let edits = kept
             .get(&id)
-            .filter(|k| k.language == definition.name && k.buffer_id == buffer.id())
+            .filter(|k| std::ptr::eq(k.language, definition) && k.buffer_id == buffer.id())
             .and_then(|k| buffer.edits_since(k.edit_seq))
             .map(<[TextEdit]>::to_vec);
         match edits {
@@ -89,7 +90,7 @@ impl SyntaxTrees {
                 kept.insert(
                     id,
                     Kept {
-                        language: definition.name,
+                        language: definition,
                         buffer_id: buffer.id(),
                         edit_seq: buffer.edit_seq(),
                         tree: tree.clone(),
@@ -118,11 +119,11 @@ impl SyntaxTrees {
 /// unchanged parts of `old` (already told about the edits) if given.
 fn parse(
     parser: &mut Parser,
-    language: &super::LanguageDef,
+    language: &LanguageDef,
     buffer: &Buffer,
     old: Option<&Tree>,
 ) -> Option<Tree> {
-    parser.set_language(&(language.grammar)()).ok()?;
+    parser.set_language(&language.grammar()).ok()?;
     parser.parse_with_options(&mut |byte, _| buffer.chunk_from_byte(byte), old, None)
 }
 
@@ -141,6 +142,6 @@ fn input_edit(edit: &TextEdit) -> InputEdit {
 /// A fresh parse of `buffer` in `language`, for checking kept trees.
 #[cfg(test)]
 pub(super) fn parse_fresh(language: &str, buffer: &Buffer) -> Option<Tree> {
-    let definition = LANGUAGES.iter().find(|l| l.name == language)?;
+    let definition = super::language(language)?;
     parse(&mut Parser::new(), definition, buffer, None)
 }
