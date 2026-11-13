@@ -7,7 +7,7 @@
 //! [grammars.zig]
 //! path = "tree-sitter-zig"      # the folder with src/parser.c ("." if left out)
 //! symbol = "tree_sitter_zig"    # (the default: tree_sitter_<language>)
-//! queries = "queries/zig"       # highlights.scm, injections.scm, locals.scm
+//! queries = "queries/zig"       # highlights, injections, locals, indents (.scm)
 //! ```
 //!
 //! A build goes in the clone's `.ferra-build/`, named after the language
@@ -266,8 +266,9 @@ fn keep_out_of_git(dir: &Path) {
 }
 
 /// What a loaded grammar is registered under, so loading the same build
-/// with the same queries again (`:plugin_reload`) reuses it.
-type Key = (PathBuf, String, String, String);
+/// with the same queries again (`:plugin_reload`) reuses it: the library,
+/// then the highlights, injections, locals and indents queries.
+type Key = (PathBuf, String, String, String, String);
 
 static LOADED: Mutex<Option<HashMap<Key, &'static LanguageDef>>> = Mutex::new(None);
 
@@ -284,12 +285,13 @@ pub fn load(dir: &Path, language: &str, spec: &GrammarSpec) -> Result<(), String
         let path = dir.join(spec.queries(language)).join(name);
         std::fs::read_to_string(path).unwrap_or_default()
     };
-    let (highlights, injections, locals) = (
+    let key = (
+        library.clone(),
         read("highlights.scm"),
         read("injections.scm"),
         read("locals.scm"),
+        read("indents.scm"),
     );
-    let key = (library.clone(), highlights, injections, locals);
     let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
     let loaded = loaded.get_or_insert_with(HashMap::new);
     if let Some(definition) = loaded.get(&key) {
@@ -300,6 +302,7 @@ pub fn load(dir: &Path, language: &str, spec: &GrammarSpec) -> Result<(), String
             highlights: definition.highlights,
             injections: definition.injections,
             locals: definition.locals,
+            indents: definition.indents,
         };
         if syntax::language(language).is_none_or(|l| !std::ptr::eq(l, *definition)) {
             let definition = syntax::register(again);
@@ -316,6 +319,7 @@ pub fn load(dir: &Path, language: &str, spec: &GrammarSpec) -> Result<(), String
         highlights: Box::leak(vec![leak(&key.1)].into_boxed_slice()),
         injections: leak(&key.2),
         locals: leak(&key.3),
+        indents: leak(&key.4),
     };
     // The queries must fit the grammar: say so now, not on first draw.
     syntax::LanguageConfig::new(
@@ -325,6 +329,10 @@ pub fn load(dir: &Path, language: &str, spec: &GrammarSpec) -> Result<(), String
         definition.injections,
         definition.locals,
     )?;
+    if !definition.indents.trim().is_empty() {
+        tree_sitter::Query::new(&definition.grammar(), definition.indents)
+            .map_err(|e| format!("{language}: invalid indents.scm: {e}"))?;
+    }
     let definition = syntax::register(definition);
     loaded.insert(key, definition);
     Ok(())

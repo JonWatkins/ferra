@@ -886,6 +886,10 @@ symbol = "tree_sitter_json"
             ("grammar/src/tree_sitter/alloc.h", &alloc),
             ("grammar/src/tree_sitter/array.h", &array),
             ("queries/data/highlights.scm", &highlights),
+            (
+                "queries/data/indents.scm",
+                "[(object) (array)] @indent\n[\"}\" \"]\"] @outdent\n",
+            ),
         ],
     )
 }
@@ -1000,4 +1004,24 @@ fn grammars_need_their_language_and_cannot_replace_built_ins() {
         "{shown}"
     );
     assert!(shown.contains("there's no language nolang"), "{shown}");
+}
+
+#[test]
+fn language_packs_bring_indentation_rules() {
+    if !have_cc() {
+        eprintln!("no C compiler: skipped");
+        return;
+    }
+    let s = setup();
+    let pack = grammar_pack(s.temp.path());
+    let file = s.temp.path().join("y.data");
+    // A list opened mid-line: the line after it is one level in from
+    // where the list starts, which plain indentation (copying the line
+    // above) gets wrong.
+    fs::write(&file, "{\n    \"a\": [1,\n}\n").unwrap();
+    let mut app = app_with(&s.paths);
+    install(&mut app, &pack);
+    app.open(&file);
+    keys(&mut app, "jo2]<Esc>");
+    assert_eq!(text(&app), "{\n    \"a\": [1,\n        2]\n}");
 }

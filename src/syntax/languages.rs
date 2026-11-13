@@ -33,6 +33,9 @@ pub struct LanguageDef {
     pub highlights: &'static [&'static str],
     pub injections: &'static str,
     pub locals: &'static str,
+    /// Indentation rules (`@indent`, `@outdent`; see `indent.rs`) for a
+    /// plugin's language; the built-ins' are in `indent.rs`.
+    pub indents: &'static str,
 }
 
 impl LanguageDef {
@@ -79,6 +82,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         // Macro calls' and `macro_rules!` bodies are highlighted as Rust.
         injections: tree_sitter_rust::INJECTIONS_QUERY,
         locals: "",
+        indents: "",
     },
     LanguageDef {
         name: "toml",
@@ -86,6 +90,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_toml_ng::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
+        indents: "",
     },
     LanguageDef {
         name: "json",
@@ -93,6 +98,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_json::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
+        indents: "",
     },
     LanguageDef {
         name: "python",
@@ -100,6 +106,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_python::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
+        indents: "",
     },
     LanguageDef {
         name: "javascript",
@@ -110,6 +117,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         ],
         injections: tree_sitter_javascript::INJECTIONS_QUERY,
         locals: tree_sitter_javascript::LOCALS_QUERY,
+        indents: "",
     },
     LanguageDef {
         name: "typescript",
@@ -120,6 +128,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         ],
         injections: "",
         locals: tree_sitter_typescript::LOCALS_QUERY,
+        indents: "",
     },
     LanguageDef {
         name: "tsx",
@@ -131,6 +140,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         ],
         injections: "",
         locals: tree_sitter_typescript::LOCALS_QUERY,
+        indents: "",
     },
     LanguageDef {
         name: "go",
@@ -138,6 +148,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_go::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
+        indents: "",
     },
     LanguageDef {
         name: "c",
@@ -145,6 +156,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_c::HIGHLIGHT_QUERY],
         injections: "",
         locals: "",
+        indents: "",
     },
     LanguageDef {
         name: "cpp",
@@ -155,6 +167,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         ],
         injections: "",
         locals: "",
+        indents: "",
     },
     LanguageDef {
         name: "bash",
@@ -162,6 +175,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_bash::HIGHLIGHT_QUERY],
         injections: "",
         locals: "",
+        indents: "",
     },
     LanguageDef {
         // Block structure only (headings, lists, code fences, quotes):
@@ -172,6 +186,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
         injections: MARKDOWN_INJECTIONS,
         locals: "",
+        indents: "",
     },
     LanguageDef {
         // Markdown's inline syntax (emphasis, links, code spans): a second
@@ -181,6 +196,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_INLINE],
         injections: tree_sitter_md::INJECTION_QUERY_INLINE,
         locals: "",
+        indents: "",
     },
     LanguageDef {
         name: "yaml",
@@ -188,6 +204,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_yaml::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
+        indents: "",
     },
     LanguageDef {
         name: "html",
@@ -195,6 +212,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_html::HIGHLIGHTS_QUERY],
         injections: tree_sitter_html::INJECTIONS_QUERY,
         locals: "",
+        indents: "",
     },
     LanguageDef {
         name: "css",
@@ -202,6 +220,7 @@ pub const LANGUAGES: &[LanguageDef] = &[
         highlights: &[tree_sitter_css::HIGHLIGHTS_QUERY],
         injections: "",
         locals: "",
+        indents: "",
     },
 ];
 

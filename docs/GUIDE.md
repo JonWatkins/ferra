@@ -1273,7 +1273,7 @@ updated, and its queries:
 [grammars.zig]
 path = "tree-sitter-zig"      # the folder with src/parser.c ("." if left out)
 symbol = "tree_sitter_zig"    # the grammar's function (this is the default)
-queries = "queries/zig"       # highlights.scm, injections.scm, locals.scm (the default)
+queries = "queries/zig"       # highlights, injections, locals and indents .scm (the default)
 ```
 
 Building needs a C compiler (`cc`, or `$CC`; on macOS
@@ -1281,5 +1281,18 @@ Building needs a C compiler (`cc`, or `$CC`; on macOS
 language works without highlighting; ferra tries again when it next
 starts. Builds go in the plugin's folder, in `.ferra-build/`. A grammar
 can't replace one ferra has built in.
+
+`indents.scm` gives the language ferra's indentation, from the syntax
+tree: `@indent` marks a node whose lines after its first go one level in
+(a block, a list), `@outdent` a token that, starting a line, puts it back
+(`}`, `end`):
+
+```scheme
+[(block) (array) (arguments)] @indent
+["}" "]" ")"] @outdent
+```
+
+Without one, a new line follows the line above (one level in after a
+line ending in an open bracket).
 
 See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for the design.

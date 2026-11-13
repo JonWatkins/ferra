@@ -1602,8 +1602,9 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
    is done: language packs add file types, comments, options and a
    language server. Round 2 is done:
    grammars compiled on install with the system C compiler and loaded at
-   runtime, with their queries. Not yet: indentation rules for plugins'
-   languages (they indent by heuristics).
+   runtime, with their queries, including `indents.scm` (the same
+   `@indent`/`@outdent` rules the built-ins have, compiled per definition
+   in `indent::plugin_rules`).
 
 ## Roadmap: deferred features
 

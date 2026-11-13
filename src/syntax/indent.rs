@@ -26,7 +26,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::{Range, RangeInclusive};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use tree_sitter::{Node, Point, Query, QueryCursor, StreamingIterator, Tree};
 
@@ -154,10 +154,13 @@ fn rules_source(language: &str) -> Option<String> {
     })
 }
 
-/// A language's compiled rules (built on first use).
+/// A language's compiled rules (built on first use): a built-in's from
+/// this file, a plugin's from its `indents.scm`.
 fn rules(language: &str) -> Option<&'static Query> {
     static QUERIES: OnceLock<Vec<OnceLock<Option<Query>>>> = OnceLock::new();
-    let index = LANGUAGES.iter().position(|l| l.name == language)?;
+    let Some(index) = LANGUAGES.iter().position(|l| l.name == language) else {
+        return plugin_rules(language);
+    };
     let cells = QUERIES.get_or_init(|| LANGUAGES.iter().map(|_| OnceLock::new()).collect());
     cells[index]
         .get_or_init(|| {
@@ -165,6 +168,25 @@ fn rules(language: &str) -> Option<&'static Query> {
             Query::new(&LANGUAGES[index].grammar(), &source).ok()
         })
         .as_ref()
+}
+
+/// A plugin language's rules, by its definition (an updated plugin's is a
+/// new one). Leaked, like the definitions: they live as long as ferra.
+fn plugin_rules(language: &str) -> Option<&'static Query> {
+    type Cache = HashMap<usize, Option<&'static Query>>;
+    static ADDED: Mutex<Option<Cache>> = Mutex::new(None);
+    let definition = super::language(language)?;
+    if definition.indents.trim().is_empty() {
+        return None;
+    }
+    let mut cache = ADDED.lock().unwrap_or_else(|e| e.into_inner());
+    *cache
+        .get_or_insert_with(HashMap::new)
+        .entry(std::ptr::from_ref(definition) as usize)
+        .or_insert_with(|| {
+            let query = Query::new(&definition.grammar(), definition.indents).ok()?;
+            Some(&*Box::leak(Box::new(query)))
+        })
 }
 
 /// Whether `language` has indentation rules.
