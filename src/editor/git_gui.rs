@@ -85,6 +85,10 @@ pub struct GitGui {
     pub diff_scroll: usize,
     /// The selected hunk, while the diff panel has focus.
     pub hunk: usize,
+    /// Picking lines (`<CR>` on a hunk): the diff line selected, and where
+    /// a range (`v`) started.
+    pub line: Option<usize>,
+    pub anchor: Option<usize>,
     /// The lists' first rows shown (set as they're drawn).
     pub branch_scroll: Cell<usize>,
     pub commit_scroll: Cell<usize>,
@@ -220,11 +224,34 @@ impl GitGui {
         if of != self.diff_of {
             self.diff_scroll = 0;
             self.hunk = 0;
+            self.line = None;
         }
+        self.anchor = None;
         self.diff = diff;
         self.diff_title = title;
         self.diff_of = of;
         self.hunk = self.hunk.min(self.diff.hunks.len().saturating_sub(1));
+        // Still picking lines: the nearest changed line, below or else above.
+        if let Some(at) = self.line {
+            let changed = |i: &usize| self.diff.is_change(*i);
+            self.line = (at..self.diff.lines.len())
+                .find(changed)
+                .or_else(|| (0..at).rev().find(changed));
+            if let Some(line) = self.line {
+                self.hunk = self.diff.hunk_at(line).unwrap_or(self.hunk);
+            }
+        }
+    }
+
+    /// The lines chosen while picking lines: the range from `v` (or the
+    /// selected line), within the selected line's hunk.
+    pub fn chosen_lines(&self) -> Option<std::ops::Range<usize>> {
+        let line = self.line?;
+        let anchor = self.anchor.unwrap_or(line);
+        let hunk = self.diff.hunks.get(self.diff.hunk_at(line)?)?;
+        let from = line.min(anchor).max(hunk.start);
+        let to = (line.max(anchor) + 1).min(hunk.end);
+        Some(from..to)
     }
 
     fn finish_job(&mut self, diff: Diff) {
@@ -475,6 +502,8 @@ impl Editor {
             }
         } else {
             gui.from = panel;
+            gui.line = None;
+            gui.anchor = None;
         }
         gui.panel = panel;
         self.git_gui_show_diff();
@@ -529,7 +558,28 @@ impl Editor {
                 self.git_gui_show_diff();
             }
             GitPanel::Diff => {
-                if matches!(gui.diff_of, DiffOf::File { .. }) && !gui.diff.hunks.is_empty() {
+                if let Some(mut line) = gui.line {
+                    // Between changed lines.
+                    for _ in 0..delta.unsigned_abs() {
+                        let next = if delta > 0 {
+                            (line + 1..gui.diff.lines.len()).find(|&i| gui.diff.is_change(i))
+                        } else {
+                            (0..line).rev().find(|&i| gui.diff.is_change(i))
+                        };
+                        match next {
+                            Some(i) => line = i,
+                            None => break,
+                        }
+                    }
+                    gui.line = Some(line);
+                    gui.hunk = gui.diff.hunk_at(line).unwrap_or(gui.hunk);
+                    let rows = gui.diff_rows.get().max(1);
+                    if line < gui.diff_scroll {
+                        gui.diff_scroll = line;
+                    } else if line >= gui.diff_scroll + rows {
+                        gui.diff_scroll = line + 1 - rows;
+                    }
+                } else if matches!(gui.diff_of, DiffOf::File { .. }) && !gui.diff.hunks.is_empty() {
                     gui.hunk = step(gui.hunk, gui.diff.hunks.len());
                     self.git_gui_keep_hunk_in_view();
                 } else {
@@ -552,6 +602,9 @@ impl Editor {
             GitPanel::Diff => {
                 if let Some(hunk) = gui.diff.hunk_at(index) {
                     gui.hunk = hunk;
+                }
+                if gui.line.is_some() && gui.diff.is_change(index) {
+                    gui.line = Some(index);
                 }
                 return;
             }
@@ -639,7 +692,7 @@ impl Editor {
             return Ok(());
         }
         match gui.panel {
-            GitPanel::Diff => Ok(()),
+            GitPanel::Diff => self.git_gui_pick_lines(),
             GitPanel::Branches => {
                 let name = gui
                     .branches
@@ -658,6 +711,22 @@ impl Editor {
                 Ok(())
             }
         }
+    }
+
+    /// `<CR>` on a hunk of a file's diff: picks lines in it, starting at
+    /// its first changed one.
+    fn git_gui_pick_lines(&mut self) -> Result<(), String> {
+        let gui = self.git_gui.as_mut().ok_or("The git view isn't open")?;
+        if !matches!(gui.diff_of, DiffOf::File { .. }) {
+            return Ok(());
+        }
+        let hunk = gui.diff.hunks.get(gui.hunk).ok_or("No hunk selected")?;
+        let first = (hunk.start..hunk.end)
+            .find(|&i| gui.diff.is_change(i))
+            .ok_or("No changed lines in this hunk")?;
+        gui.line = Some(first);
+        gui.anchor = None;
+        Ok(())
     }
 
     /// Whether the selected file's in conflict (so it opens at its first
@@ -682,6 +751,15 @@ impl Editor {
         if let Some(blame) = self.git_gui.as_mut().and_then(|g| g.blame.take()) {
             if blame.close_view {
                 self.close_git_gui();
+            }
+            return;
+        }
+        if let Some(gui) = self.git_gui.as_mut()
+            && gui.line.is_some()
+        {
+            // Out of the range, then out of picking lines.
+            if gui.anchor.take().is_none() {
+                gui.line = None;
             }
             return;
         }
@@ -961,6 +1039,16 @@ impl Editor {
     /// `<CR>` on a file in the sidebar's Git tab, `v` in the git view:
     /// the selected file's change side by side.
     pub fn git_side_selected(&mut self) -> Result<(), String> {
+        if let Some(gui) = self.git_gui.as_mut()
+            && gui.line.is_some()
+        {
+            // Picking lines: `v` starts (or ends) a range.
+            gui.anchor = match gui.anchor {
+                Some(_) => None,
+                None => gui.line,
+            };
+            return Ok(());
+        }
         if let Some(gui) = &self.git_gui
             && gui.side.is_some()
         {
@@ -1064,12 +1152,27 @@ impl Editor {
                 let staged = *staged;
                 if stage == staged {
                     return Err(if staged {
-                        "This hunk's staged already (u unstages it)".into()
+                        "This is staged already (u unstages it)".into()
                     } else {
-                        "This hunk isn't staged (s stages it)".into()
+                        "This isn't staged (s stages it)".into()
                     });
                 }
-                let patch = gui.diff.hunk_patch(gui.hunk).ok_or("No hunk selected")?;
+                let (patch, what) = match gui.chosen_lines() {
+                    Some(chosen) => {
+                        let hunk = gui.diff.hunk_at(chosen.start).unwrap_or(gui.hunk);
+                        let count = chosen.clone().filter(|&i| gui.diff.is_change(i)).count();
+                        let patch = gui
+                            .diff
+                            .lines_patch(hunk, chosen, !stage)
+                            .ok_or("No changed lines chosen")?;
+                        let plural = if count == 1 { "" } else { "s" };
+                        (patch, format!("{count} line{plural}"))
+                    }
+                    None => (
+                        gui.diff.hunk_patch(gui.hunk).ok_or("No hunk selected")?,
+                        "the hunk".to_string(),
+                    ),
+                };
                 let root = self
                     .git_status()
                     .ok_or("Not in a git repository")?
@@ -1086,7 +1189,7 @@ impl Editor {
                     self.git_gui_focus(GitPanel::Files);
                 }
                 let verb = if stage { "Staged" } else { "Unstaged" };
-                self.set_message(Message::info(format!("{verb} the hunk")));
+                self.set_message(Message::info(format!("{verb} {what}")));
                 Ok(())
             }
             _ => Err("Choose a file (in [1] Files) to stage".into()),

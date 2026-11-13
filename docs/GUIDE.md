@@ -483,14 +483,21 @@ lazygit, over the editor; `q` closes it.
 The right-hand panel shows the diff of what's selected: a file's unstaged
 or staged changes, a commit, or a branch's log.
 
+To stage only some of a hunk, `<CR>` on it picks lines, as lazygit does:
+`j` `k` move between its added and removed lines (marked `▌`), `v`
+starts a range (within the hunk), and `s` stages them (`u` unstages,
+in a staged change). The rest stays as it was: a removed line you leave
+out stays in, and an added one stays out. You keep picking in what's
+left; `<Esc>` goes back to hunks.
+
 | Keys (in the git view) | Action |
 |------------------------|--------|
 | `1` `2` `3` `4`, `<Tab>` `<S-Tab>`, click | Go to a panel |
 | `j` `k`, click | Move (between hunks, in a file's diff) |
-| `<CR>`, `l` | Into the file's diff, to pick hunks |
-| `<Esc>`, `h` | Back out of the diff (or close the view) |
-| `s`, `<Space>` | Stage the file (or unstage a staged one), or the hunk |
-| `u` | Unstage the file, or the hunk |
+| `<CR>`, `l` | Into the file's diff, to pick hunks; on a hunk, pick lines in it |
+| `<Esc>`, `h` | Back out of a range of lines, picking lines, the diff (or close the view) |
+| `s`, `<Space>` | Stage the file (or unstage a staged one), the hunk, or the lines picked |
+| `u` | Unstage the file, the hunk, or the lines picked |
 | `a` / `A` | Stage / unstage everything |
 | `x` | Discard the file's unstaged changes (asks first) |
 | `c` | Commit what's staged (asks for the message) |

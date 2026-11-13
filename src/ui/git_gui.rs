@@ -326,6 +326,8 @@ impl<'a> GitGuiView<'a> {
         let selected_hunk = (focused && matches!(gui.diff_of, DiffOf::File { .. }))
             .then(|| gui.diff.hunks.get(gui.hunk))
             .flatten();
+        // Picking lines: those chosen, instead of the hunk.
+        let chosen = gui.chosen_lines().filter(|_| focused);
         let width = inner.width as usize;
         if gui.diff.lines.is_empty() {
             let text = match gui.diff_of {
@@ -346,9 +348,21 @@ impl<'a> GitGuiView<'a> {
         {
             let y = inner.y + offset as u16;
             let mut style = theme.get("ui.git");
-            if selected_hunk.is_some_and(|h| (h.start..h.end).contains(&index)) {
+            let selected = match &chosen {
+                Some(chosen) => chosen.contains(&index),
+                None => selected_hunk.is_some_and(|h| (h.start..h.end).contains(&index)),
+            };
+            if selected {
                 style = style.patch(theme.get("ui.git.diff.selected"));
                 buf.set_style(Rect::new(inner.x, y, inner.width, 1), style);
+            }
+            if gui.line == Some(index) && focused {
+                buf.set_string(
+                    inner.x,
+                    y,
+                    "▌",
+                    style.patch(theme.get("ui.git.title.focused")),
+                );
             }
             let scope = match kind {
                 DiffLineKind::Added => Some("ui.git.diff.added"),
@@ -627,11 +641,17 @@ impl<'a> GitGuiView<'a> {
             (GitPanel::Files, _) => {
                 " s stage/unstage  ⏎ hunks  H history  a stage all  x discard  c commit  Tab panels  q close"
             }
+            (GitPanel::Diff, DiffOf::File { staged: false, .. }) if gui.line.is_some() => {
+                " j/k lines  v select a range  s stage the lines  Esc back to hunks  q close"
+            }
+            (GitPanel::Diff, DiffOf::File { staged: true, .. }) if gui.line.is_some() => {
+                " j/k lines  v select a range  u unstage the lines  Esc back to hunks  q close"
+            }
             (GitPanel::Diff, DiffOf::File { staged: false, .. }) => {
-                " j/k hunks  s stage the hunk  ⌃d/⌃u scroll  Esc back  q close"
+                " j/k hunks  s stage the hunk  ⏎ pick lines  ⌃d/⌃u scroll  Esc back  q close"
             }
             (GitPanel::Diff, DiffOf::File { staged: true, .. }) => {
-                " j/k hunks  u unstage the hunk  ⌃d/⌃u scroll  Esc back  q close"
+                " j/k hunks  u unstage the hunk  ⏎ pick lines  ⌃d/⌃u scroll  Esc back  q close"
             }
             (GitPanel::Commits, _) if gui.history.is_some() => {
                 " j/k commits  ⏎ into the diff  ⌃d/⌃u scroll  H/Esc whole log  q close"

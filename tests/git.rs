@@ -928,3 +928,83 @@ fn merging_a_branch_resolving_its_conflict_and_committing() {
         "a merge commit"
     );
 }
+
+/// The staged text of `file`.
+fn staged(dir: &Path, file: &str) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["show", &format!(":{file}")])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn staging_and_unstaging_single_lines_in_the_git_view() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let path = dir.path().join("code.txt");
+    std::fs::write(&path, "ONE\ntwo\nthree\nfour\nfive\nsix\n").unwrap();
+    let mut app = app();
+    keys(&mut app, &format!(":e {}<CR><Space>g<CR>", path.display()));
+    let gui = app.editor().git_gui().unwrap();
+    assert_eq!(gui.diff.hunks.len(), 1, "one hunk");
+    assert_eq!(gui.line, None);
+
+    // <CR> picks lines: -one, +ONE, +six. Just the last.
+    keys(&mut app, "<CR>");
+    let gui = app.editor().git_gui().unwrap();
+    assert_eq!(gui.diff.lines[gui.line.unwrap()].1, "-one");
+    let screen = render(&mut app, 120, 20).rows.join("\n");
+    assert!(screen.contains("s stage the lines"), "{screen}");
+    keys(&mut app, "jjs");
+    assert_eq!(message(&app), "Staged 1 line");
+    assert_eq!(
+        staged(dir.path(), "code.txt"),
+        "one\ntwo\nthree\nfour\nfive\nsix\n"
+    );
+
+    // Still picking, at the nearest line left (above, as the last's
+    // gone): a range of the other two.
+    let gui = app.editor().git_gui().unwrap();
+    assert_eq!(gui.diff.lines[gui.line.unwrap()].1, "+ONE");
+    keys(&mut app, "vks");
+    assert_eq!(message(&app), "Staged 2 lines");
+    assert_eq!(
+        staged(dir.path(), "code.txt"),
+        "ONE\ntwo\nthree\nfour\nfive\nsix\n"
+    );
+    // The staged change shows now: hunks again, until <CR>.
+    let gui = app.editor().git_gui().unwrap();
+    assert!(
+        matches!(
+            gui.diff_of,
+            ferra::editor::git_gui::DiffOf::File { staged: true, .. }
+        ),
+        "the staged change"
+    );
+    assert_eq!(gui.line, None);
+
+    // Unstaging just the removal of "one".
+    keys(&mut app, "<CR>u");
+    assert_eq!(message(&app), "Unstaged 1 line");
+    assert_eq!(
+        staged(dir.path(), "code.txt"),
+        "one\nONE\ntwo\nthree\nfour\nfive\nsix\n"
+    );
+
+    // Esc: out of the range, out of picking lines, then out of the diff.
+    keys(&mut app, "1<CR><CR>v");
+    assert!(app.editor().git_gui().unwrap().anchor.is_some());
+    keys(&mut app, "<Esc>");
+    let gui = app.editor().git_gui().unwrap();
+    assert!(gui.anchor.is_none() && gui.line.is_some());
+    keys(&mut app, "<Esc>");
+    assert!(app.editor().git_gui().unwrap().line.is_none());
+    assert_eq!(
+        app.editor().git_gui().unwrap().panel,
+        ferra::editor::git_gui::GitPanel::Diff
+    );
+}

@@ -417,7 +417,13 @@ a staged row, `diff --no-index /dev/null` for an untracked file),
 `show_commit`, or a branch's log. `Diff::parse` splits it into lines by
 kind and finds the hunks, each with its file header, so `hunk_patch` can
 make a patch of one hunk; staging it is `git apply --cached` with the patch
-on stdin, unstaging the same with `--reverse` (as lazygit does). After any
+on stdin, unstaging the same with `--reverse` (as lazygit does). Picking
+lines (`GitGui::line`, and `anchor` for a range) makes a patch of part of
+a hunk (`Diff::lines_patch`): chosen lines kept, and of the rest, applied
+forward, removed lines turned into context and added ones dropped (in
+reverse the other way round, as the new side is what's in the index),
+with the header's counts worked out again. After the diff's read again,
+the selected line goes to the nearest changed one left. After any
 action the status, branches, commits and diff are read again, and the
 selection stays on the same file in the same section when it's still
 there. Commit and discard ask in the input box and popup, which go back to
@@ -1594,8 +1600,8 @@ marks, Source Control in the sidebar, and the full-screen git view with
 diffs and staging hunks, branches, and fetch, pull and push in the
 background, amending and stashes, a file's history and its blame, and a
 read-only side-by-side diff, and merging with conflicts resolved in the
-editor (see [Git](#git)). Next: staging single lines, and making the
-side-by-side diff editable.
+editor, and staging single lines (see [Git](#git)). Deferred: making
+the side-by-side diff editable.
 
 The everyday Git features, without leaving the editor:
 
@@ -1880,7 +1886,7 @@ not. The answer is dropped unless the editor is still where it was asked
   count columns without them.
 
 - Git: the gutter compares with what's staged only (not `HEAD`); no
-  staging single lines (only hunks), rebasing, or continuing a rebase
+  rebasing, or continuing a rebase
   or cherry-pick stopped on conflicts (their markers are resolved the
   same way, but the merge state shown is a merge's only); one fetch, pull or push at a time,
   with no way to cancel one, and none that needs a password typed; the git view's diffs aren't syntax

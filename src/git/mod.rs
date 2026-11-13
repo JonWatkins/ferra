@@ -1185,12 +1185,102 @@ impl Diff {
         Some(patch)
     }
 
+    /// A patch of only some of hunk `index`'s changed lines: those of
+    /// the diff's lines `chosen`. Applied forward (staging), a removed
+    /// line left out stays (as context) and an added one is dropped;
+    /// applied in `reverse` (unstaging), the other way round, since then
+    /// the hunk's new side is what's there.
+    pub fn lines_patch(
+        &self,
+        index: usize,
+        chosen: std::ops::Range<usize>,
+        reverse: bool,
+    ) -> Option<String> {
+        let hunk = self.hunks.get(index)?;
+        let (old_start, new_start, rest) = parse_hunk_header(&self.lines[hunk.start].1)?;
+        let mut body = Vec::new();
+        let (mut old_count, mut new_count) = (0, 0);
+        let mut any = false;
+        // Whether the line before a `\ No newline` one was kept.
+        let mut kept_last = true;
+        for i in hunk.start + 1..hunk.end {
+            let (kind, text) = &self.lines[i];
+            let picked = chosen.contains(&i);
+            let line = match kind {
+                DiffLineKind::Context if text.starts_with('\\') => {
+                    if kept_last {
+                        body.push(text.clone());
+                    }
+                    continue;
+                }
+                DiffLineKind::Added if picked => {
+                    any = true;
+                    Some(text.clone())
+                }
+                DiffLineKind::Removed if picked => {
+                    any = true;
+                    Some(text.clone())
+                }
+                // Left out: whichever side is there already stays as it is.
+                DiffLineKind::Added if reverse => Some(format!(" {}", &text[1..])),
+                DiffLineKind::Removed if !reverse => Some(format!(" {}", &text[1..])),
+                DiffLineKind::Added | DiffLineKind::Removed => None,
+                _ => Some(text.clone()),
+            };
+            kept_last = line.is_some();
+            if let Some(line) = line {
+                match line.as_bytes().first() {
+                    Some(b'+') => new_count += 1,
+                    Some(b'-') => old_count += 1,
+                    _ => {
+                        old_count += 1;
+                        new_count += 1;
+                    }
+                }
+                body.push(line);
+            }
+        }
+        if !any {
+            return None;
+        }
+        let mut patch = String::new();
+        for (_, line) in &self.lines[hunk.file_header.clone()] {
+            patch.push_str(line);
+            patch.push('\n');
+        }
+        patch.push_str(&format!(
+            "@@ -{old_start},{old_count} +{new_start},{new_count} @@{rest}\n"
+        ));
+        for line in body {
+            patch.push_str(&line);
+            patch.push('\n');
+        }
+        Some(patch)
+    }
+
+    /// Whether line `line` is an added or removed one.
+    pub fn is_change(&self, line: usize) -> bool {
+        matches!(
+            self.lines.get(line),
+            Some((DiffLineKind::Added | DiffLineKind::Removed, _))
+        )
+    }
+
     /// The hunk line `line` is in.
     pub fn hunk_at(&self, line: usize) -> Option<usize> {
         self.hunks
             .iter()
             .position(|h| (h.start..h.end).contains(&line))
     }
+}
+
+/// A hunk header's old and new start lines, and what follows its `@@`.
+fn parse_hunk_header(line: &str) -> Option<(usize, usize, &str)> {
+    let rest = line.strip_prefix("@@ -")?;
+    let (ranges, after) = rest.split_once(" @@")?;
+    let (old, new) = ranges.split_once(" +")?;
+    let start = |r: &str| r.split(',').next()?.parse::<usize>().ok();
+    Some((start(old)?, start(new)?, after))
 }
 
 /// What happened to some lines, compared with the base.
@@ -1528,6 +1618,62 @@ mod tests {
         ))
         .unwrap_err();
         assert!(!error.is_empty());
+    }
+
+    #[test]
+    fn staging_and_unstaging_some_lines_of_a_hunk() {
+        let Some(dir) = tests_support::repo() else {
+            return;
+        };
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join("file.txt"), "ONE\ntwo\nthree\n").unwrap();
+        let unstaged = || {
+            let file = status(&root).unwrap().files[0].clone();
+            Diff::parse(&file_diff(&root, &file, false))
+        };
+        let diff = unstaged();
+        assert_eq!(diff.hunks.len(), 1);
+        let line =
+            |diff: &Diff, text: &str| diff.lines.iter().position(|(_, l)| l == text).unwrap();
+
+        // Just the new line at the end: "one" stays, "ONE" isn't staged.
+        let three = line(&diff, "+three");
+        let patch = diff.lines_patch(0, three..three + 1, false).unwrap();
+        assert!(patch.contains("@@ -1,2 +1,3 @@"), "{patch}");
+        apply_to_index(&root, &patch, false).unwrap();
+        assert_eq!(
+            staged_text(&root.join("file.txt")).unwrap(),
+            "one\ntwo\nthree\n"
+        );
+        assert!(
+            diff.lines_patch(0, 0..1, false).is_none(),
+            "no changes chosen"
+        );
+
+        // Then "ONE" for "one": the removed and added lines together.
+        let diff = unstaged();
+        let from = line(&diff, "-one");
+        apply_to_index(
+            &root,
+            &diff.lines_patch(0, from..from + 2, false).unwrap(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            staged_text(&root.join("file.txt")).unwrap(),
+            "ONE\ntwo\nthree\n"
+        );
+
+        // Unstaging only the removal of "one": both lines are back.
+        let file = status(&root).unwrap().files[0].clone();
+        let staged = Diff::parse(&file_diff(&root, &file, true));
+        let minus = line(&staged, "-one");
+        let patch = staged.lines_patch(0, minus..minus + 1, true).unwrap();
+        apply_to_index(&root, &patch, true).unwrap();
+        assert_eq!(
+            staged_text(&root.join("file.txt")).unwrap(),
+            "one\nONE\ntwo\nthree\n"
+        );
     }
 
     #[test]
