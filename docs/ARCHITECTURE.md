@@ -1439,6 +1439,35 @@ override earlier commands and bindings. Errors are collected per file; a
 broken file doesn't stop the rest. `main` loads plugins before opening the
 startup files, so `opened` hooks see them.
 
+### Plugin packages
+
+Installed plugins are git clones with a `ferra-plugin.toml` manifest
+(`plugins/packages.rs`, which does only file and git work, so it can run
+on a thread). `PluginPaths` names the config folder (`plugins.toml`, what
+was asked for; `plugins.lock`, the commit of each) and the data folder
+holding one clone per plugin name. `main` gives the standard paths to the
+app; tests give temporary folders.
+
+`:plugin_install` (`editor/plugin_packages.rs`) parses the source
+(`owner/repo` is GitHub; URLs and paths pass through to git, with `@tag`
+split off where it can't be part of the URL) and asks in a popup. `y`
+leaves an `InstallRequest` on the editor, the way the file picker asks for
+a listing, since commands can't reach the app's `PluginHost`; the app
+starts it as a background job (`Update::PluginInstalled`). The job clones
+into a hidden folder beside the others (git with prompts off and ssh in
+batch mode, as for push), checks the manifest (name, `main` inside the
+plugin, the `ferra` version range), refuses a name already taken, and only
+then renames it into place, so a failed install leaves nothing. The app
+then records it and loads it: `PluginHost::load_package` puts the
+plugin's `lua/` folder first on `package.path`, so `require` finds its
+modules, and runs the main file under the plugin's name. At startup
+`App::load_plugins` loads every package in `plugins.toml` before
+`init.lua` and `plugins/*.lua`; one listed but not cloned is reported.
+
+`:plugin_remove` deletes the clone and the two entries; what the plugin
+registered stays until restart, since unregistering is the next round's
+`:plugin_reload` (a fresh Lua state, re-registering everything).
+
 ### Plugin popups
 
 `ctx:popup{...}` (`plugins/popup.rs`) reads a Lua table into an
@@ -1512,6 +1541,15 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
    than while loading) are collected but not yet installed.
 4. **Isolation.** If sandboxing untrusted plugins becomes a goal, a WASM
    runtime could sit behind the same command and hook interfaces.
+5. **Packages** (see [Plugin packages](#plugin-packages)). Phase 1 round 1
+   is done: `ferra-plugin.toml` packages, `:plugin_install`,
+   `:plugin_list`, `:plugin_remove`, `plugins.toml` and `plugins.lock`.
+   Next: `:plugin_update` (showing the incoming commits first) and
+   `:plugin_reload` (a fresh Lua state, dropping what plugins registered);
+   reinstalling what `plugins.lock` lists on a new machine. Phase 2:
+   `:plugin_browse`, picking from the `ferra-plugins` directory's
+   `index.toml`. Phase 3: language packs, whose grammar's C source is
+   compiled on install.
 
 ## Roadmap: deferred features
 

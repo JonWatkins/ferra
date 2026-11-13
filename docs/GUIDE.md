@@ -1162,4 +1162,59 @@ mkdir -p ~/.config/ferra/plugins
 ln -s "$PWD/examples/plugins/toolkit.lua" ~/.config/ferra/plugins/
 ```
 
+### Installing plugins
+
+Plugins published as git repositories install from inside ferra:
+
+| Command | |
+|---------|---|
+| `:plugin_install owner/repo` | Install a plugin from GitHub (`owner/repo@tag` for a tag or branch; any git URL or local path works too) |
+| `:plugin_list` | What's installed: version, where from, commit |
+| `:plugin_remove name` | Remove one (its commands stay until ferra restarts) |
+
+`:plugin_install` shows where the code comes from and asks first (`y` to
+install, `n` to cancel): **a plugin runs with your permissions** and can
+read and change your files and run programs, so only install code you
+trust. The clone runs in the background, then the plugin loads straight
+away.
+
+Plugins are cloned into `~/.local/share/ferra/plugins/<name>/`
+(`$XDG_DATA_HOME/ferra/plugins`). What you've installed is kept in
+`plugins.toml` in the config folder, and the exact commit of each in
+`plugins.lock`, so the two belong in your dotfiles:
+
+```toml
+# ~/.config/ferra/plugins.toml
+[plugins.todos]
+source = "someone/ferra-todos"
+tag = "v0.2.0"
+```
+
+At startup ferra loads the installed plugins first, then `init.lua` and
+`plugins/*.lua`, so your own Lua can set them up. Coming next:
+`:plugin_update` and `:plugin_reload`, then `:plugin_browse` to pick from
+the [plugin directory](https://github.com/JonWatkins/ferra-plugins).
+
+### Writing a plugin package
+
+A package is a git repository with a `ferra-plugin.toml` at its root:
+
+```toml
+# ferra-plugin.toml
+name = "todos"                 # lowercase letters, digits and -
+version = "0.1.0"
+description = "List the file's TODOs in the sidebar"
+ferra = ">=0.1"                # the ferra versions it works with (optional)
+main = "init.lua"              # the file loaded first (the default)
+```
+
+The main file uses the same `editor` API as any plugin. Split the rest
+into modules under `lua/`: `require("todos.util")` loads
+`lua/todos/util.lua` (or `lua/todos/util/init.lua`). Name modules after
+the plugin, since every plugin's `lua/` folder is searched. Version
+ranges are comparisons joined by commas (`">=0.1, <0.3"`); `^0.2` or a
+bare `0.2` means versions compatible with it, as in Cargo. To get listed
+in the directory, see its
+[README](https://github.com/JonWatkins/ferra-plugins#getting-listed).
+
 See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for the design.

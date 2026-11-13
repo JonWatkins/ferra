@@ -33,6 +33,8 @@ pub mod git_gui;
 pub use git::GitRow;
 pub mod input_box;
 pub mod lsp;
+mod plugin_packages;
+pub use plugin_packages::InstallRequest;
 pub mod popup;
 mod selection;
 pub mod sidebar_views;
@@ -223,6 +225,8 @@ pub struct Editor {
     popup_keys_changed: bool,
     /// A plugin's input box.
     input_box: Option<input_box::InputBox>,
+    /// Plugin packages: where they go, and an install asked about or running.
+    packages: plugin_packages::PackageState,
     /// Git: open files' staged text and changes, and the branch.
     git: git::GitState,
     /// The full-screen git view, while it's open.

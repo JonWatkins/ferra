@@ -30,6 +30,9 @@ fn main() -> color_eyre::Result<ExitCode> {
     };
 
     let mut app = App::new(config);
+    if let Some(paths) = ferra::plugins::packages::PluginPaths::standard() {
+        app.set_plugin_paths(paths);
+    }
     // Plugins load before files open, so their `opened` hooks see them.
     let plugin_error = ferra::config::config_dir().and_then(|dir| app.load_plugins(&dir));
     app.open_all(&files);

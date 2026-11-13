@@ -136,6 +136,13 @@ fn documented_example_configs_are_valid() {
             .split("```toml")
             .skip(1)
             .map(|rest| rest.split("```").next().unwrap_or(""))
+            // Plugin files (`plugins.toml`, a `ferra-plugin.toml`) say so
+            // on their first line; they aren't configs.
+            .filter(|example| {
+                let first = example.trim_start().lines().next().unwrap_or("");
+                !(first.starts_with('#') && first.ends_with("plugins.toml")
+                    || first.ends_with("ferra-plugin.toml"))
+            })
             .collect();
         assert!(!examples.is_empty(), "{name} has a ```toml example");
         for example in examples {

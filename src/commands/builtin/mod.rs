@@ -22,6 +22,7 @@ mod motions;
 mod operators;
 mod options;
 mod picker;
+mod plugins;
 mod popup;
 mod scrolling;
 mod search;
@@ -61,6 +62,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     popup::register(registry);
     input_box::register(registry);
     git::register(registry);
+    plugins::register(registry);
 }
 
 #[cfg(test)]

@@ -33,6 +33,8 @@ pub(super) enum Update {
         truncated: bool,
         max_files: usize,
     },
+    /// A plugin install finished.
+    PluginInstalled(Result<crate::plugins::packages::Installed, String>),
 }
 
 pub(super) struct Background {
@@ -92,6 +94,17 @@ impl Background {
         });
     }
 
+    /// Clones and checks a plugin on a new thread.
+    fn install_plugin(&mut self, request: crate::editor::InstallRequest) {
+        self.running += 1;
+        let sender = self.sender.clone();
+        thread::spawn(move || {
+            let result =
+                crate::plugins::packages::install(&request.paths, &request.source, &request.taken);
+            let _ = sender.send(Update::PluginInstalled(result));
+        });
+    }
+
     fn cancel_file_listing(&mut self) {
         if let Some((_, cancel)) = self.file_job.take() {
             cancel.store(true, Ordering::Relaxed);
@@ -104,6 +117,9 @@ impl App {
     pub(super) fn start_background_requests(&mut self) {
         if let Some(request) = self.editor.take_file_list_request() {
             self.background.list_files(request);
+        }
+        if let Some(request) = self.editor.take_plugin_install() {
+            self.background.install_plugin(request);
         }
     }
 
@@ -133,6 +149,15 @@ impl App {
 
     fn apply_update(&mut self, update: Update) {
         match update {
+            Update::PluginInstalled(result) => {
+                self.background.running -= 1;
+                self.editor.plugin_install_done();
+                let message = match result {
+                    Ok(installed) => self.finish_plugin_install(&installed),
+                    Err(error) => Message::error(format!("Plugin not installed: {error}")),
+                };
+                self.editor.set_message(message);
+            }
             Update::Files { job, base, paths } => {
                 if let Some(picker) = self.picker_loading(job) {
                     let items = paths

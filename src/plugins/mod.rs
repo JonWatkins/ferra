@@ -20,6 +20,7 @@
 //! call, so a plugin can never hold on to the editor.
 
 mod api;
+pub mod packages;
 mod popup;
 mod prompts;
 
@@ -82,6 +83,35 @@ impl PluginHost {
             .set_name(format!("@{name}"))
             .exec()
             .map_err(|e| format!("{name}: {}", api::describe(&e)))
+    }
+
+    /// Loads the plugin package in `dir` (a clone with `ferra-plugin.toml`):
+    /// its `lua/` folder joins the places `require` looks, then its main
+    /// file runs. Returns its manifest.
+    pub fn load_package(&self, dir: &Path) -> Result<packages::Manifest, String> {
+        let folder = dir.file_name().map_or_else(
+            || dir.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        let manifest = packages::Manifest::read(dir).map_err(|e| format!("{folder}: {e}"))?;
+        let name = manifest.name.clone();
+        manifest.check_ferra(env!("CARGO_PKG_VERSION"))?;
+        let main = dir.join(&manifest.main);
+        let source = std::fs::read_to_string(&main)
+            .map_err(|e| format!("{name}: {}: {e}", manifest.main))?;
+        self.add_require_path(&dir.join("lua"))
+            .map_err(|e| format!("{name}: {}", api::describe(&e)))?;
+        self.load(&format!("{name}/{}", manifest.main), &source)?;
+        Ok(manifest)
+    }
+
+    /// Lets `require("x.y")` find `lua/x/y.lua` (or `lua/x/y/init.lua`)
+    /// under `lua_dir`, before anywhere else.
+    fn add_require_path(&self, lua_dir: &Path) -> mlua::Result<()> {
+        let package: mlua::Table = self.lua.globals().get("package")?;
+        let path: String = package.get("path")?;
+        let dir = lua_dir.display();
+        package.set("path", format!("{dir}/?.lua;{dir}/?/init.lua;{path}"))
     }
 
     /// Loads `init.lua` and then `plugins/*.lua` (in name order) from

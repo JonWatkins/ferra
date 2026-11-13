@@ -173,20 +173,49 @@ impl App {
         &mut self.commands
     }
 
-    /// Loads Lua plugins from `config_dir`: `init.lua`, then `plugins/*.lua`.
+    /// Loads Lua plugins: the installed packages (`plugins.toml`, from
+    /// the folder `set_plugin_paths` gave), then from `config_dir`
+    /// `init.lua` and `plugins/*.lua`, so those can set packages up.
     /// Problems are shown on the message line (and returned, so they can be
     /// shown again after startup messages); a broken plugin doesn't stop the
     /// others, or the editor, from loading.
     pub fn load_plugins(&mut self, config_dir: &std::path::Path) -> Option<String> {
-        let has_plugins =
-            config_dir.join("init.lua").is_file() || config_dir.join("plugins").is_dir();
+        let paths = self.editor.plugin_paths().cloned();
+        let packages = match &paths {
+            Some(paths) => crate::plugins::packages::wanted(paths),
+            None => Ok(Default::default()),
+        };
+        let has_plugins = config_dir.join("init.lua").is_file()
+            || config_dir.join("plugins").is_dir()
+            || !matches!(&packages, Ok(p) if p.is_empty());
         if !has_plugins {
             return None;
         }
-        let mut errors = match self.plugin_host() {
-            Ok(host) => host.load_dir(config_dir),
-            Err(error) => vec![error],
-        };
+        let mut errors = Vec::new();
+        match self.plugin_host() {
+            Ok(host) => {
+                match (&paths, packages) {
+                    (Some(paths), Ok(packages)) => {
+                        for name in packages.keys() {
+                            let dir = paths.dir(name);
+                            let result = if dir.is_dir() {
+                                host.load_package(&dir).map(|_| ())
+                            } else {
+                                Err(format!(
+                                    "{name} is in plugins.toml but not installed \
+                                     (:plugin_remove {name}, then install it again)"
+                                ))
+                            };
+                            errors.extend(result.err());
+                        }
+                    }
+                    (_, Err(error)) => errors.push(error),
+                    (None, Ok(_)) => {}
+                }
+                errors.extend(host.load_dir(config_dir));
+            }
+            Err(error) => errors.push(error),
+        }
         errors.extend(self.install_plugins());
         // A `plugin:name` status line element no plugin provides.
         let layout = &self.editor.options.statusline_layout;
@@ -219,6 +248,43 @@ impl App {
         match errors.is_empty() {
             true => Ok(()),
             false => Err(errors.join("; ")),
+        }
+    }
+
+    /// Where plugin packages are installed and recorded.
+    pub fn set_plugin_paths(&mut self, paths: crate::plugins::packages::PluginPaths) {
+        self.editor.set_plugin_paths(paths);
+    }
+
+    /// After a clone: records the plugin and loads it. Says how it went.
+    fn finish_plugin_install(
+        &mut self,
+        installed: &crate::plugins::packages::Installed,
+    ) -> Message {
+        let name = &installed.manifest.name;
+        let done = format!(
+            "Installed {name} {} ({})",
+            installed.manifest.version,
+            installed.short_commit()
+        );
+        let Some(paths) = self.editor.plugin_paths().cloned() else {
+            return Message::error(format!("{done}, but there's nowhere to record it"));
+        };
+        if let Err(error) = crate::plugins::packages::record(&paths, installed) {
+            return Message::error(format!("{done}, but couldn't record it: {error}"));
+        }
+        let loaded = self
+            .plugin_host()
+            .and_then(|host| host.load_package(&paths.dir(name)).map(|_| ()));
+        let mut errors: Vec<String> = loaded.err().into_iter().collect();
+        errors.extend(self.install_plugins());
+        if errors.is_empty() {
+            Message::info(done)
+        } else {
+            Message::error(format!(
+                "{done}, but it failed to load: {}",
+                errors.join("; ")
+            ))
         }
     }
 
