@@ -727,3 +727,119 @@ fn browse_reports_what_is_not_a_directory() {
     );
     assert!(app.editor().picker().is_none());
 }
+
+const ZIG_PACK: &str = r#"
+name = "zig"
+version = "0.1.0"
+description = "Zig files: comments, tabs and zls"
+
+[languages.zig]
+extensions = ["zig", "zon"]
+comment = "//"
+options = { tab-width = 8 }
+language-server = { command = "zls" }
+"#;
+
+#[test]
+fn language_packs_add_languages() {
+    let s = setup();
+    let pack = repo(
+        s.temp.path(),
+        "ferra-zig",
+        &[("ferra-plugin.toml", ZIG_PACK)],
+    );
+    let file = s.temp.path().join("main.zig");
+    fs::write(&file, "const x = 1;\n").unwrap();
+
+    let mut app = app_with(&s.paths);
+    app.open(&file);
+    assert_eq!(app.editor().language_of(&app.editor().document), None);
+
+    // No Lua at all: a pure language pack.
+    install(&mut app, &pack);
+    assert!(
+        message(&app).starts_with("Installed zig 0.1.0"),
+        "{}",
+        message(&app)
+    );
+    assert_eq!(
+        app.editor().language_of(&app.editor().document),
+        Some("zig"),
+        "the open file is Zig now"
+    );
+    assert_eq!(app.editor().options.tab_width, 8);
+    assert_eq!(
+        app.editor()
+            .languages
+            .server("zig")
+            .map(|s| s.command.as_str()),
+        Some("zls")
+    );
+    keys(&mut app, "gcc");
+    assert_eq!(text(&app), "// const x = 1;");
+
+    // At startup too.
+    let mut again = app_with(&s.paths);
+    assert_eq!(again.load_plugins(&s.paths.config), None);
+    again.open(&file);
+    assert_eq!(
+        again.editor().language_of(&again.editor().document),
+        Some("zig")
+    );
+
+    // Removing it takes the language away.
+    keys(&mut again, ":plugin_remove zig<CR>");
+    assert_eq!(again.editor().language_of(&again.editor().document), None);
+    assert_ne!(again.editor().options.tab_width, 8);
+}
+
+#[test]
+fn language_packs_cannot_replace_known_languages() {
+    let s = setup();
+    let pack = repo(
+        s.temp.path(),
+        "my-rust",
+        &[(
+            "ferra-plugin.toml",
+            "name = \"my-rust\"\nversion = \"0.1.0\"\n[languages.rust]\nextensions = [\"rs\"]\n",
+        )],
+    );
+    let mut app = app_with(&s.paths);
+    install(&mut app, &pack);
+    assert!(
+        message(&app)
+            .contains("rust is already a language (change it in config.toml's [languages.rust])"),
+        "{}",
+        message(&app)
+    );
+
+    let bad = repo(
+        s.temp.path(),
+        "bad-options",
+        &[(
+            "ferra-plugin.toml",
+            "name = \"bad\"\nversion = \"0.1.0\"\n[languages.badlang]\nextensions = [\"bad\"]\noptions = { mouse = false }\n",
+        )],
+    );
+    install(&mut app, &bad);
+    assert!(
+        message(&app).contains("can't be set per language"),
+        "{}",
+        message(&app)
+    );
+
+    let empty = repo(
+        s.temp.path(),
+        "empty",
+        &[(
+            "ferra-plugin.toml",
+            "name = \"empty\"\nversion = \"0.1.0\"\n",
+        )],
+    );
+    install(&mut app, &empty);
+    assert!(
+        message(&app).contains("no init.lua (or main file) and adds no languages"),
+        "{}",
+        message(&app)
+    );
+}

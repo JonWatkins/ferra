@@ -73,6 +73,8 @@ pub struct App {
     /// reload (dropping what they registered).
     config_keys: Keymap,
     config_hooks: HashMap<EventKind, Vec<String>>,
+    /// The config's languages, before plugins add theirs.
+    config_languages: crate::config::Languages,
     /// Where `init.lua` and `plugins/` were loaded from, for reloading.
     plugin_config_dir: Option<std::path::PathBuf>,
     /// True while `.` feeds the last change back in, so it isn't re-recorded.
@@ -99,13 +101,14 @@ impl App {
     pub fn new(config: Config) -> Self {
         let (commands, mut unknown_hook_commands) = base_commands(&config.hooks);
         let mut editor = Editor::new(config.editor);
-        editor.languages = config.languages;
+        editor.languages = config.languages.clone();
         let mut app = Self {
             editor,
             commands,
             keymap: config.keys.clone(),
             config_keys: config.keys,
             config_hooks: config.hooks,
+            config_languages: config.languages,
             plugin_config_dir: None,
             popup_keymap: None,
             screen_map: ui::ScreenMap::default(),
@@ -192,29 +195,29 @@ impl App {
             return None;
         }
         let mut errors = Vec::new();
-        match self.plugin_host() {
-            Ok(host) => {
-                match (&paths, packages) {
-                    (Some(paths), Ok(packages)) => {
-                        for name in packages.keys() {
-                            let dir = paths.dir(name);
-                            let result = if dir.is_dir() {
-                                host.load_package(&dir).map(|_| ())
-                            } else {
-                                Err(format!(
-                                    "{name} is in plugins.toml but not installed \
-                                     (:plugin_install installs it)"
-                                ))
-                            };
-                            errors.extend(result.err());
+        if let Err(error) = self.plugin_host() {
+            errors.push(error);
+        } else {
+            match (&paths, packages) {
+                (Some(paths), Ok(packages)) => {
+                    for name in packages.keys() {
+                        let dir = paths.dir(name);
+                        if dir.is_dir() {
+                            errors.extend(self.load_package(&dir));
+                        } else {
+                            errors.push(format!(
+                                "{name} is in plugins.toml but not installed \
+                                 (:plugin_install installs it)"
+                            ));
                         }
                     }
-                    (_, Err(error)) => errors.push(error),
-                    (None, Ok(_)) => {}
                 }
+                (_, Err(error)) => errors.push(error),
+                (None, Ok(_)) => {}
+            }
+            if let Some(host) = &self.plugins {
                 errors.extend(host.load_dir(config_dir));
             }
-            Err(error) => errors.push(error),
         }
         errors.extend(self.install_plugins());
         // A `plugin:name` status line element no plugin provides.
@@ -251,6 +254,32 @@ impl App {
         }
     }
 
+    /// Loads the package in `dir`: adds the languages it brings, then runs
+    /// its Lua. Returns what went wrong. (Commands it registers wait for
+    /// `install_plugins`.)
+    fn load_package(&mut self, dir: &std::path::Path) -> Vec<String> {
+        let mut errors = Vec::new();
+        match crate::plugins::packages::Manifest::read(dir) {
+            Ok(manifest) if !manifest.languages.is_empty() => {
+                let options = self.editor.global_options().clone();
+                for (language, file_type) in manifest.languages {
+                    if let Err(e) = self.editor.languages.add(&language, file_type, &options) {
+                        errors.push(format!("{}: {e}", manifest.name));
+                    }
+                }
+                // Open buffers in the new languages get their options.
+                self.editor.refresh_options();
+            }
+            // Reported by the host, below, with the plugin's name.
+            Ok(_) | Err(_) => {}
+        }
+        match self.plugin_host() {
+            Ok(host) => errors.extend(host.load_package(dir).err()),
+            Err(e) => errors.push(e),
+        }
+        errors
+    }
+
     /// Where plugin packages are installed and recorded.
     pub fn set_plugin_paths(&mut self, paths: crate::plugins::packages::PluginPaths) {
         self.editor.set_plugin_paths(paths);
@@ -273,6 +302,7 @@ impl App {
         self.plugins = None;
         (self.commands, _) = base_commands(&self.config_hooks);
         self.keymap = self.config_keys.clone();
+        self.editor.languages = self.config_languages.clone();
         self.popup_keymap = None;
         self.plugin_status_errors.clear();
         let shown = self.editor.clear_plugin_ui();
@@ -280,6 +310,8 @@ impl App {
             self.editor.close_popup();
         }
         let error = self.load_plugins(&config_dir);
+        // Buffers in a language that went away lose its options.
+        self.editor.refresh_options();
         if let Some(name) = shown {
             self.editor.show_plugin_view_again(&name);
         }
@@ -318,10 +350,7 @@ impl App {
                     Ok(()) => {
                         // Only the new one loads: the others are unchanged.
                         let name = &installed.manifest.name;
-                        let loaded = self
-                            .plugin_host()
-                            .and_then(|host| host.load_package(&paths.dir(name)).map(|_| ()));
-                        let mut errors: Vec<String> = loaded.err().into_iter().collect();
+                        let mut errors = self.load_package(&paths.dir(name));
                         errors.extend(self.install_plugins());
                         if errors.is_empty() {
                             Message::info(done)

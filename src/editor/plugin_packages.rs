@@ -416,6 +416,12 @@ impl Editor {
             if let Some(commit) = &plugin.commit {
                 line.push(span(&format!(" {}", short(commit)), Some("comment")));
             }
+            if !plugin.languages.is_empty() {
+                line.push(span(
+                    &format!("  [{}]", plugin.languages.join(", ")),
+                    Some("type"),
+                ));
+            }
             match &plugin.problem {
                 Some(problem) => {
                     line.push(span(&format!("  ({problem})"), Some("ui.decoration.error")))

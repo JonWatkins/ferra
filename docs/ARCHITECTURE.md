@@ -1483,6 +1483,15 @@ read and the picker says so. The index's entries become picker items
 whose action is `plugin_install <repo>`, so choosing goes through the same
 confirm popup.
 
+A manifest's `[languages.<name>]` tables are `config::FileType`s.
+`App::load_package` adds them with `Languages::add` (which refuses a name
+already known and checks per-language options as the config does) before
+running the plugin's Lua, then refreshes options; since a buffer's
+language is detected when asked (`Editor::language_of`) and the language
+servers are matched to open buffers on every update, open files take the
+new language at once. `main` is optional: a pack with languages needs no
+Lua. The app keeps the config's languages and puts them back on reload.
+
 `:plugin_reload` doesn't unregister piece by piece: `App::reload_plugins`
 drops the `PluginHost` (so `require`'s cache goes too), rebuilds the
 registry from the built-ins and the config's hooks (`base_commands`),
@@ -1571,8 +1580,12 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
    and round 2: `:plugin_update` (showing the incoming commits first),
    `:plugin_reload` (a fresh Lua state) and restoring what `plugins.lock`
    lists on a new machine. Phase 2 is done too: `:plugin_browse`, picking
-   from the `ferra-plugins` directory's `index.toml`. Phase 3: language
-   packs, whose grammar's C source is compiled on install.
+   from the `ferra-plugins` directory's `index.toml`. Phase 3 round 1
+   is done: language packs add file types, comments, options and a
+   language server. Round 2: the grammar's C source, compiled on install
+   with the system C compiler and loaded at runtime, and its highlight
+   queries; that means `syntax::LANGUAGES` making room for languages that
+   aren't built in.
 
 ## Roadmap: deferred features
 

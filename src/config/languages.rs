@@ -170,6 +170,25 @@ impl Languages {
         })
     }
 
+    /// Adds a plugin's language. Languages already known (built in or in
+    /// the config) can't be replaced: the config is where they change.
+    pub fn add(
+        &mut self,
+        name: &str,
+        file_type: FileType,
+        editor: &super::EditorOptions,
+    ) -> Result<(), String> {
+        if self.0.contains_key(name) {
+            return Err(format!(
+                "{name} is already a language (change it in config.toml's [languages.{name}])"
+            ));
+        }
+        let one = Languages(BTreeMap::from([(name.to_string(), file_type)]));
+        one.check_options(editor)?;
+        self.0.extend(one.0);
+        Ok(())
+    }
+
     /// Every configured language name.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.0.keys().map(String::as_str)

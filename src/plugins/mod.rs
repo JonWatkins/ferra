@@ -96,12 +96,17 @@ impl PluginHost {
         let manifest = packages::Manifest::read(dir).map_err(|e| format!("{folder}: {e}"))?;
         let name = manifest.name.clone();
         manifest.check_ferra(env!("CARGO_PKG_VERSION"))?;
-        let main = dir.join(&manifest.main);
-        let source = std::fs::read_to_string(&main)
-            .map_err(|e| format!("{name}: {}: {e}", manifest.main))?;
+        let Some(main) = manifest
+            .main_file(dir)
+            .map_err(|e| format!("{name}: {e}"))?
+        else {
+            return Ok(manifest);
+        };
+        let source =
+            std::fs::read_to_string(dir.join(&main)).map_err(|e| format!("{name}: {main}: {e}"))?;
         self.add_require_path(&dir.join("lua"))
             .map_err(|e| format!("{name}: {}", api::describe(&e)))?;
-        self.load(&format!("{name}/{}", manifest.main), &source)?;
+        self.load(&format!("{name}/{main}"), &source)?;
         Ok(manifest)
     }
 

@@ -61,7 +61,7 @@ impl PluginPaths {
 }
 
 /// `ferra-plugin.toml`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub name: String,
@@ -71,13 +71,13 @@ pub struct Manifest {
     /// The ferra versions it works with (`">=0.1"`); any if left out.
     #[serde(default)]
     pub ferra: Option<String>,
-    /// The file loaded first, relative to the plugin's root.
-    #[serde(default = "default_main")]
-    pub main: String,
-}
-
-fn default_main() -> String {
-    "init.lua".into()
+    /// The Lua file loaded first, relative to the plugin's root: else
+    /// `init.lua`, if there is one (a language pack may have no Lua).
+    #[serde(default)]
+    pub main: Option<String>,
+    /// Languages the plugin adds, as in `config.toml`'s `[languages]`.
+    #[serde(default)]
+    pub languages: BTreeMap<String, crate::config::FileType>,
 }
 
 impl Manifest {
@@ -85,15 +85,41 @@ impl Manifest {
         let manifest: Self =
             toml::from_str(text).map_err(|e| format!("{MANIFEST}: {}", e.message()))?;
         check_name(&manifest.name).map_err(|e| format!("{MANIFEST}: {e}"))?;
-        let main = Path::new(&manifest.main);
-        let inside = main.components().all(|c| matches!(c, Component::Normal(_)));
-        if manifest.main.is_empty() || !inside {
-            return Err(format!(
-                "{MANIFEST}: main should be a file inside the plugin, not {}",
-                manifest.main
-            ));
+        if let Some(main) = &manifest.main {
+            let inside = Path::new(main)
+                .components()
+                .all(|c| matches!(c, Component::Normal(_)));
+            if main.is_empty() || !inside {
+                return Err(format!(
+                    "{MANIFEST}: main should be a file inside the plugin, not {main}"
+                ));
+            }
+        }
+        for language in manifest.languages.keys() {
+            let ok = !language.is_empty()
+                && language.chars().all(|c| {
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_')
+                });
+            if !ok {
+                return Err(format!(
+                    "{MANIFEST}: invalid language name '{language}' (lowercase letters, digits, - and _)"
+                ));
+            }
         }
         Ok(manifest)
+    }
+
+    /// The Lua file to run for the plugin in `dir`, if it has one. Fails
+    /// if `main` names a file that isn't there, or there's nothing to load
+    /// at all.
+    pub fn main_file(&self, dir: &Path) -> Result<Option<String>, String> {
+        match &self.main {
+            Some(main) if dir.join(main).is_file() => Ok(Some(main.clone())),
+            Some(main) => Err(format!("its main file {main} is missing")),
+            None if dir.join("init.lua").is_file() => Ok(Some("init.lua".into())),
+            None if !self.languages.is_empty() => Ok(None),
+            None => Err("it has no init.lua (or main file) and adds no languages".into()),
+        }
     }
 
     /// Reads the manifest of the plugin in `dir`.
@@ -336,7 +362,7 @@ pub fn locked(paths: &PluginPaths) -> Result<BTreeMap<String, Locked>, String> {
 }
 
 /// A plugin as installed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Installed {
     pub manifest: Manifest,
     pub source: Source,
@@ -398,6 +424,8 @@ pub struct Listed {
     /// From its manifest, if it's installed and readable.
     pub version: Option<String>,
     pub description: String,
+    /// The languages it adds.
+    pub languages: Vec<String>,
     pub commit: Option<String>,
     /// Why it can't be loaded (not cloned, a broken manifest).
     pub problem: Option<String>,
@@ -415,18 +443,27 @@ pub fn list(paths: &PluginPaths) -> Result<Vec<Listed>, String> {
             };
             let manifest = Manifest::read(&paths.dir(&name));
             let commit = lock.get(&name).map(|l| l.commit.clone());
-            let (version, description, problem) = match manifest {
-                Ok(m) => (Some(m.version), m.description, None),
-                Err(_) if !paths.dir(&name).is_dir() => {
-                    (None, String::new(), Some("not installed".to_string()))
-                }
-                Err(e) => (None, String::new(), Some(e)),
+            let (version, description, languages, problem) = match manifest {
+                Ok(m) => (
+                    Some(m.version),
+                    m.description,
+                    m.languages.into_keys().collect(),
+                    None,
+                ),
+                Err(_) if !paths.dir(&name).is_dir() => (
+                    None,
+                    String::new(),
+                    Vec::new(),
+                    Some("not installed".to_string()),
+                ),
+                Err(e) => (None, String::new(), Vec::new(), Some(e)),
             };
             Listed {
                 name,
                 source: source.to_string(),
                 version,
                 description,
+                languages,
                 commit,
                 problem,
             }
@@ -582,9 +619,7 @@ fn clone_and_check(
 fn check_plugin(dir: &Path) -> Result<Manifest, String> {
     let manifest = Manifest::read(dir)?;
     manifest.check_ferra(env!("CARGO_PKG_VERSION"))?;
-    if !dir.join(&manifest.main).is_file() {
-        return Err(format!("its main file {} is missing", manifest.main));
-    }
+    manifest.main_file(dir)?;
     Ok(manifest)
 }
 
@@ -871,7 +906,26 @@ mod tests {
     #[test]
     fn manifests() {
         let m = Manifest::parse("name = \"todos\"\nversion = \"0.1.0\"").unwrap();
-        assert_eq!(m.main, "init.lua");
+        assert_eq!(m.main, None);
+        assert!(
+            m.main_file(Path::new("/nowhere")).is_err(),
+            "nothing to load"
+        );
+
+        let m = Manifest::parse(
+            "name = \"zig\"\nversion = \"1\"\n[languages.zig]\nextensions = [\"zig\"]\ncomment = \"//\"\nlanguage-server = { command = \"zls\" }",
+        )
+        .unwrap();
+        assert_eq!(
+            m.main_file(Path::new("/nowhere")),
+            Ok(None),
+            "a pure language pack"
+        );
+        assert_eq!(m.languages["zig"].comment.as_deref(), Some("//"));
+        assert!(Manifest::parse("name = \"z\"\nversion = \"1\"\n[languages.Zig]").is_err());
+        assert!(
+            Manifest::parse("name = \"z\"\nversion = \"1\"\n[languages.zig]\nnope = 1").is_err()
+        );
         assert!(m.check_ferra("0.1.0").is_ok());
 
         let m = Manifest::parse("name = \"t\"\nversion = \"1\"\nferra = \">=9\"").unwrap();

@@ -1227,7 +1227,7 @@ name = "todos"                 # lowercase letters, digits and -
 version = "0.1.0"
 description = "List the file's TODOs in the sidebar"
 ferra = ">=0.1"                # the ferra versions it works with (optional)
-main = "init.lua"              # the file loaded first (the default)
+main = "init.lua"              # the Lua file loaded first (init.lua if left out)
 ```
 
 The main file uses the same `editor` API as any plugin. Split the rest
@@ -1238,5 +1238,31 @@ ranges are comparisons joined by commas (`">=0.1, <0.3"`); `^0.2` or a
 bare `0.2` means versions compatible with it, as in Cargo. To get listed
 in the directory, see its
 [README](https://github.com/JonWatkins/ferra-plugins#getting-listed).
+
+### Language packs
+
+A plugin can add languages ferra doesn't know, with `[languages.<name>]`
+tables in its `ferra-plugin.toml`, written as in `config.toml`: which
+files are in the language, how it comments, its options and its language
+server. A pack can be only that, with no Lua:
+
+```toml
+# ferra-plugin.toml
+name = "zig"
+version = "0.1.0"
+description = "Zig: file types, comments and zls"
+
+[languages.zig]
+extensions = ["zig", "zon"]
+comment = "//"
+options = { tab-width = 4 }
+language-server = { command = "zls" }
+```
+
+Open files in the language pick it up as soon as it's installed. A pack
+can't change a language ferra already has (built in or in your config):
+change those in your own `[languages]`. Highlighting a new language needs
+its tree-sitter grammar, which packs will bring next (compiled on
+install).
 
 See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for the design.
