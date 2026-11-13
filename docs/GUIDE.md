@@ -1168,6 +1168,7 @@ Plugins published as git repositories install from inside ferra:
 
 | Command | |
 |---------|---|
+| `:plugin_browse` | Pick from the [plugin directory](https://github.com/JonWatkins/ferra-plugins) and install the choice |
 | `:plugin_install owner/repo` | Install a plugin from GitHub (`owner/repo@tag` for a tag or branch; any git URL or local path works too) |
 | `:plugin_install` | Install what `plugins.toml` lists but isn't installed, at the locked commits (a new machine) |
 | `:plugin_update [name...]` | Fetch the plugins (or the ones named), show the new commits, and update after asking |
@@ -1207,8 +1208,14 @@ tag stays there; to move, remove it and install another tag.
 commands and keys go back to the built-ins and your config, and every
 plugin loads again, so it's how to try a change to a plugin or
 `init.lua` without restarting. Decorations plugins left in buffers stay
-until they clear them. Coming next: `:plugin_browse` to pick from the
-[plugin directory](https://github.com/JonWatkins/ferra-plugins).
+until they clear them.
+
+`:plugin_browse` fetches the directory's `index.toml` and lists its
+plugins in the picker (installed ones are marked); `<CR>` installs the
+choice, asking first as `:plugin_install` does. The `plugin-index` option
+says which directory (`JonWatkins/ferra-plugins` by default; any git
+URL or path, for your own list). If it can't be reached, the copy from
+last time is shown.
 
 ### Writing a plugin package
 

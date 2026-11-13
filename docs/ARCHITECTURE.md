@@ -1475,6 +1475,14 @@ the plugin again, resetting to the old commit if it no longer loads.
 isn't cloned: clone, then `reset --hard` to the locked commit (so the
 branch, and later updates, stay).
 
+`:plugin_browse` is a `Browse` job: `fetch_index` keeps a shallow clone
+of the `plugin-index` source in the data folder (`.index`, which can't be
+a plugin's name), fetching and resetting it each time and cloning afresh
+if the option points somewhere new; if the fetch fails, the last copy is
+read and the picker says so. The index's entries become picker items
+whose action is `plugin_install <repo>`, so choosing goes through the same
+confirm popup.
+
 `:plugin_reload` doesn't unregister piece by piece: `App::reload_plugins`
 drops the `PluginHost` (so `require`'s cache goes too), rebuilds the
 registry from the built-ins and the config's hooks (`base_commands`),
@@ -1562,10 +1570,9 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
    `:plugin_list`, `:plugin_remove`, `plugins.toml` and `plugins.lock`;
    and round 2: `:plugin_update` (showing the incoming commits first),
    `:plugin_reload` (a fresh Lua state) and restoring what `plugins.lock`
-   lists on a new machine. Phase 2:
-   `:plugin_browse`, picking from the `ferra-plugins` directory's
-   `index.toml`. Phase 3: language packs, whose grammar's C source is
-   compiled on install.
+   lists on a new machine. Phase 2 is done too: `:plugin_browse`, picking
+   from the `ferra-plugins` directory's `index.toml`. Phase 3: language
+   packs, whose grammar's C source is compiled on install.
 
 ## Roadmap: deferred features
 

@@ -9,9 +9,10 @@
 //! and, when it's done, records it and loads the plugins into the Lua host
 //! commands can't reach. Reloading is asked of the app the same way.
 
+use super::picker::{Picker, PickerAction, PickerItem};
 use super::popup::{Popup, PopupLine, PopupSpan};
 use super::{Editor, Message};
-use crate::plugins::packages::{self, Checked, Incoming, PluginPaths, Source};
+use crate::plugins::packages::{self, Checked, Incoming, Index, PluginPaths, Source};
 
 #[derive(Debug, Default)]
 pub struct PackageState {
@@ -40,6 +41,8 @@ pub enum PackageJob {
     Update(Vec<Incoming>),
     /// Clone these plugins from `plugins.toml`, at their locked commits.
     Restore(Vec<String>),
+    /// Fetch the plugin directory's index.
+    Browse(Source),
 }
 
 #[derive(Debug, Clone)]
@@ -245,6 +248,64 @@ impl Editor {
         );
     }
 
+    /// `:plugin_browse`: fetches the plugin directory (the `plugin-index`
+    /// option) in the background, then lists it (`plugin_show_index`).
+    pub fn plugin_browse(&mut self) -> Result<(), String> {
+        self.require_plugin_paths()?;
+        self.require_idle()?;
+        let source =
+            Source::parse(&self.options.plugin_index).map_err(|e| format!("plugin-index: {e}"))?;
+        self.start_plugin_job(PackageJob::Browse(source));
+        Ok(())
+    }
+
+    /// The directory's plugins in the picker; choosing one installs it
+    /// (asking first, as `:plugin_install` does).
+    pub fn plugin_show_index(&mut self, index: Index) {
+        let installed: Vec<(String, String)> = self
+            .packages
+            .paths
+            .as_ref()
+            .and_then(|p| packages::wanted(p).ok())
+            .map(|w| w.into_iter().map(|(name, w)| (name, w.source)).collect())
+            .unwrap_or_default();
+        if index.entries.is_empty() {
+            self.set_message(Message::info("The plugin directory has no plugins yet"));
+            return;
+        }
+        let items = index
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let mut detail = entry.description.clone();
+                if entry.language {
+                    detail = format!("[language] {detail}");
+                }
+                if !entry.tags.is_empty() {
+                    detail = format!("{detail}  #{}", entry.tags.join(" #"));
+                }
+                if installed
+                    .iter()
+                    .any(|(name, source)| *name == entry.name || *source == entry.repo)
+                {
+                    detail = format!("(installed) {detail}");
+                }
+                PickerItem {
+                    label: entry.name,
+                    detail: detail.trim().to_string(),
+                    action: PickerAction::RunWith("plugin_install".into(), vec![entry.repo]),
+                }
+            })
+            .collect();
+        self.open_picker(Picker::new("Plugins", items));
+        self.clear_message();
+        if let Some(why) = index.stale {
+            self.set_message(Message::error(format!(
+                "Couldn't update the plugin directory ({why}); showing the last copy"
+            )));
+        }
+    }
+
     /// `y` in an install, update or restore popup: the job starts in the
     /// background.
     pub fn plugin_confirmed(&mut self) -> Result<(), String> {
@@ -277,6 +338,7 @@ impl Editor {
                     .join(", ")
             ),
             PackageJob::Restore(names) => format!("Installing {}", names.join(", ")),
+            PackageJob::Browse(_) => "Getting the plugin directory".into(),
         };
         self.set_message(Message::info(format!("{doing}…")));
         self.packages.running = Some(doing);

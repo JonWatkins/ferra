@@ -45,6 +45,7 @@ pub(super) enum PackageDone {
     /// Per plugin: its name, new commit and version.
     Updated(Vec<Result<(String, String, String), String>>),
     Restored(Vec<Result<Installed, String>>),
+    Browsed(Result<packages::Index, String>),
 }
 
 pub(super) struct Background {
@@ -126,6 +127,9 @@ impl Background {
                         })
                         .collect(),
                 ),
+                PackageJob::Browse(source) => {
+                    PackageDone::Browsed(packages::fetch_index(paths, &source))
+                }
                 PackageJob::Restore(names) => PackageDone::Restored(
                     names
                         .iter()

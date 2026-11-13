@@ -13,6 +13,11 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "plugin_browse",
+        "Pick a plugin to install from the plugin directory (the plugin-index option)",
+        |cx| cx.editor.plugin_browse(),
+    );
+    r.register(
         "plugin_update",
         "Look for new commits of the plugins (or the ones named), show them and ask to update",
         |cx| {

@@ -52,6 +52,8 @@ pub struct EditorOptions {
     pub terminal_height: u16,
     /// The terminal panel's shell ("": `$SHELL`, else `/bin/sh`).
     pub shell: String,
+    /// The plugin directory `:plugin_browse` lists (a git source).
+    pub plugin_index: String,
     pub syntax_highlighting: bool,
     /// Milliseconds to wait for the rest of a key sequence that's also a
     /// prefix of a longer one (`jk` in insert mode). 0 waits forever.

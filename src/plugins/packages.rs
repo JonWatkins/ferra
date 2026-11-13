@@ -708,6 +708,100 @@ pub fn lock(paths: &PluginPaths, name: &str, commit: &str) -> Result<(), String>
     write_file(&paths.config.join(LOCK_FILE), LOCK_HEADER, lock)
 }
 
+/// One plugin in the directory's `index.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IndexEntry {
+    pub name: String,
+    /// `owner/repo` on GitHub.
+    pub repo: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// A language pack.
+    #[serde(default)]
+    pub language: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndexFile {
+    version: u32,
+    #[serde(default)]
+    plugin: Vec<IndexEntry>,
+}
+
+/// Reads a directory's `index.toml`.
+pub fn parse_index(text: &str) -> Result<Vec<IndexEntry>, String> {
+    let file: IndexFile =
+        toml::from_str(text).map_err(|e| format!("index.toml: {}", e.message().trim()))?;
+    if file.version != 1 {
+        return Err(format!(
+            "index.toml is version {}, this ferra reads version 1 (a newer ferra may be needed)",
+            file.version
+        ));
+    }
+    Ok(file.plugin)
+}
+
+/// The directory's plugins, as `:plugin_browse` lists them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Index {
+    pub entries: Vec<IndexEntry>,
+    /// Why this is the copy from last time (the fetch failed), if it is.
+    pub stale: Option<String>,
+}
+
+/// Fetches the plugin directory at `source` (a shallow clone kept in the
+/// data folder, brought up to date each time) and reads its index. If
+/// fetching fails, the last copy is used. Blocking.
+pub fn fetch_index(paths: &PluginPaths, source: &Source) -> Result<Index, String> {
+    // A name that can't be a plugin's.
+    let dir = paths.data.join(".index");
+    let url = source.url();
+    let same_source = git(Some(&dir), &["remote", "get-url", "origin"]).is_ok_and(|u| u == url);
+    let mut stale = None;
+    if same_source {
+        let branch = source.tag.as_deref().unwrap_or("HEAD");
+        let fetched = git(
+            Some(&dir),
+            &["fetch", "--quiet", "--depth", "1", "origin", branch],
+        )
+        .and_then(|_| git(Some(&dir), &["reset", "--quiet", "--hard", "FETCH_HEAD"]));
+        if let Err(e) = fetched {
+            stale = Some(e);
+        }
+    } else {
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::create_dir_all(&paths.data)
+            .map_err(|e| format!("{}: {e}", paths.data.display()))?;
+        let dir_arg = dir.to_string_lossy();
+        let mut args = vec!["clone", "--quiet", "--depth", "1"];
+        if let Some(tag) = &source.tag {
+            args.extend(["--branch", tag]);
+        }
+        args.extend(["--", &url, &dir_arg]);
+        if let Err(e) = git(None, &args) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(format!("Couldn't get the plugin directory {url}: {e}"));
+        }
+    }
+    let text = std::fs::read_to_string(dir.join("index.toml")).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            format!("{url} has no index.toml: not a plugin directory")
+        } else {
+            format!("index.toml: {e}")
+        }
+    })?;
+    Ok(Index {
+        entries: parse_index(&text)?,
+        stale,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,6 +831,24 @@ mod tests {
         for bad in ["", "repo", "a b/c", "-x/y", "owner/", "--upload-pack=x/y"] {
             assert!(Source::parse(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn indexes() {
+        let entries = parse_index(
+            "version = 1\n[[plugin]]\nname = \"todos\"\nrepo = \"o/todos\"\ntags = [\"a\"]",
+        )
+        .unwrap();
+        assert_eq!(entries[0].repo, "o/todos");
+        assert_eq!(entries[0].tags, ["a"]);
+        assert!(!entries[0].language);
+        assert!(parse_index("version = 1").unwrap().is_empty());
+        assert!(
+            parse_index("version = 2")
+                .unwrap_err()
+                .contains("version 2")
+        );
+        assert!(parse_index("version = 1\n[[plugin]]\nname = \"x\"").is_err());
     }
 
     #[test]

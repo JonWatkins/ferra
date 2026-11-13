@@ -337,6 +337,8 @@ impl App {
             }
             PackageDone::Checked(Err(error)) => self.editor.set_message(Message::error(error)),
             PackageDone::Checked(Ok(checked)) => self.editor.plugin_show_updates(checked),
+            PackageDone::Browsed(Ok(index)) => self.editor.plugin_show_index(index),
+            PackageDone::Browsed(Err(error)) => self.editor.set_message(Message::error(error)),
             PackageDone::Updated(results) => {
                 let mut done = Vec::new();
                 let mut errors = Vec::new();

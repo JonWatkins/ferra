@@ -593,3 +593,137 @@ fn a_popup_opened_by_background_results_takes_its_keys_at_once() {
         format!("Updated hello 0.1.0 ({})", &new[..7])
     );
 }
+
+/// An app whose plugin directory is `index` (a local repository).
+fn app_browsing(paths: &PluginPaths, index: &str) -> App {
+    let mut app = common::app_with_config(&format!("[editor]\nplugin-index = \"{index}\"\n"));
+    app.set_plugin_paths(paths.clone());
+    app
+}
+
+fn index_toml(entries: &[(&str, &str, &str)]) -> String {
+    let mut text = "version = 1\n".to_string();
+    for (name, repo, description) in entries {
+        text.push_str(&format!(
+            "\n[[plugin]]\nname = \"{name}\"\nrepo = \"{repo}\"\ndescription = \"{description}\"\n"
+        ));
+    }
+    text
+}
+
+fn picker_items(app: &App) -> Vec<(String, String)> {
+    let picker = app.editor().picker().expect("the picker is open");
+    picker
+        .matches()
+        .iter()
+        .map(|m| picker.item(m))
+        .map(|i| (i.label.clone(), i.detail.clone()))
+        .collect()
+}
+
+#[test]
+fn browse_lists_the_directory_and_installs_the_choice() {
+    let s = setup();
+    let hello = hello_repo(s.temp.path());
+    let other = repo(
+        s.temp.path(),
+        "other",
+        &[
+            ("ferra-plugin.toml", "name = \"other\"\nversion = \"0.2.0\""),
+            ("init.lua", ""),
+        ],
+    );
+    let index = repo(
+        s.temp.path(),
+        "index",
+        &[(
+            "index.toml",
+            &index_toml(&[
+                ("hello", &hello, "Says hello"),
+                ("other", &other, "Another"),
+            ]),
+        )],
+    );
+    let mut app = app_browsing(&s.paths, &index);
+    install(&mut app, &other);
+
+    keys(&mut app, ":plugin_browse<CR>");
+    assert_eq!(message(&app), "Getting the plugin directory…");
+    app.wait_for_background();
+    assert_eq!(
+        picker_items(&app),
+        [
+            ("hello".to_string(), "Says hello".to_string()),
+            ("other".to_string(), "(installed) Another".to_string()),
+        ]
+    );
+    assert_eq!(message(&app), "");
+
+    keys(&mut app, "hello<CR>");
+    let shown = popup_text(&app);
+    assert!(shown.contains(&hello), "asks first: {shown}");
+    keys(&mut app, "y");
+    app.wait_for_background();
+    assert!(
+        message(&app).starts_with("Installed hello 0.1.0"),
+        "{}",
+        message(&app)
+    );
+    keys(&mut app, ":hello<CR>");
+    assert_eq!(text(&app), "hello from a package");
+}
+
+#[test]
+fn browse_follows_the_directory_and_falls_back_to_the_last_copy() {
+    let s = setup();
+    let index = repo(s.temp.path(), "index", &[("index.toml", "version = 1\n")]);
+    let mut app = app_browsing(&s.paths, &index);
+    keys(&mut app, ":plugin_browse<CR>");
+    app.wait_for_background();
+    assert_eq!(message(&app), "The plugin directory has no plugins yet");
+
+    commit(
+        &index,
+        &[("index.toml", &index_toml(&[("new", "o/new", "Just added")]))],
+        "Add new",
+    );
+    keys(&mut app, ":plugin_browse<CR>");
+    app.wait_for_background();
+    assert_eq!(picker_items(&app)[0].0, "new");
+    keys(&mut app, "<Esc>");
+
+    // The directory can't be reached: the last copy is shown.
+    fs::rename(&index, s.temp.path().join("moved")).unwrap();
+    keys(&mut app, ":plugin_browse<CR>");
+    app.wait_for_background();
+    assert_eq!(picker_items(&app)[0].0, "new");
+    assert!(
+        message(&app).starts_with("Couldn't update the plugin directory"),
+        "{}",
+        message(&app)
+    );
+}
+
+#[test]
+fn browse_reports_what_is_not_a_directory() {
+    let s = setup();
+    let plain = repo(s.temp.path(), "plain", &[("README.md", "hi")]);
+    let mut app = app_browsing(&s.paths, &plain);
+    keys(&mut app, ":plugin_browse<CR>");
+    app.wait_for_background();
+    assert_eq!(
+        message(&app),
+        format!("{plain} has no index.toml: not a plugin directory")
+    );
+
+    let missing = s.temp.path().join("nowhere").display().to_string();
+    let mut app = app_browsing(&s.paths, &missing);
+    keys(&mut app, ":plugin_browse<CR>");
+    app.wait_for_background();
+    assert!(
+        message(&app).starts_with(&format!("Couldn't get the plugin directory {missing}")),
+        "{}",
+        message(&app)
+    );
+    assert!(app.editor().picker().is_none());
+}

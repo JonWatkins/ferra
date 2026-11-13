@@ -62,6 +62,9 @@ sidebar-width = 30
 terminal-height = 12
 # The terminal panel's shell. "" runs $SHELL (or /bin/sh).
 shell = ""
+# The plugin directory :plugin_browse lists: a git repository with an
+# index.toml (owner/repo on GitHub, or any git URL or path).
+plugin-index = "JonWatkins/ferra-plugins"
 # Colour code with tree-sitter (the languages in [languages] below).
 syntax-highlighting = true
 # Ask the terminal for the kitty keyboard protocol where it has it (kitty,
