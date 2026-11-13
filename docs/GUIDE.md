@@ -1169,8 +1169,11 @@ Plugins published as git repositories install from inside ferra:
 | Command | |
 |---------|---|
 | `:plugin_install owner/repo` | Install a plugin from GitHub (`owner/repo@tag` for a tag or branch; any git URL or local path works too) |
+| `:plugin_install` | Install what `plugins.toml` lists but isn't installed, at the locked commits (a new machine) |
+| `:plugin_update [name...]` | Fetch the plugins (or the ones named), show the new commits, and update after asking |
+| `:plugin_reload` | Load every plugin again from scratch, after changing one (or `init.lua`) |
 | `:plugin_list` | What's installed: version, where from, commit |
-| `:plugin_remove name` | Remove one (its commands stay until ferra restarts) |
+| `:plugin_remove name` | Remove one |
 
 `:plugin_install` shows where the code comes from and asks first (`y` to
 install, `n` to cancel): **a plugin runs with your permissions** and can
@@ -1191,9 +1194,21 @@ tag = "v0.2.0"
 ```
 
 At startup ferra loads the installed plugins first, then `init.lua` and
-`plugins/*.lua`, so your own Lua can set them up. Coming next:
-`:plugin_update` and `:plugin_reload`, then `:plugin_browse` to pick from
-the [plugin directory](https://github.com/JonWatkins/ferra-plugins).
+`plugins/*.lua`, so your own Lua can set them up.
+
+`:plugin_update` fast-forwards each plugin's branch. Read the commits it
+shows before saying `y`: new code runs with your permissions too. If the
+new version isn't one this ferra can load (its manifest is broken, or it
+needs a newer ferra), the plugin stays as it was. A plugin installed at a
+tag stays there; to move, remove it and install another tag.
+
+`:plugin_reload` starts a fresh Lua state: what plugins registered
+(commands, keys, hooks, status items, sidebar views) is dropped, the
+commands and keys go back to the built-ins and your config, and every
+plugin loads again, so it's how to try a change to a plugin or
+`init.lua` without restarting. Decorations plugins left in buffers stay
+until they clear them. Coming next: `:plugin_browse` to pick from the
+[plugin directory](https://github.com/JonWatkins/ferra-plugins).
 
 ### Writing a plugin package
 

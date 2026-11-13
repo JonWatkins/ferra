@@ -1464,9 +1464,25 @@ modules, and runs the main file under the plugin's name. At startup
 `App::load_plugins` loads every package in `plugins.toml` before
 `init.lua` and `plugins/*.lua`; one listed but not cloned is reported.
 
-`:plugin_remove` deletes the clone and the two entries; what the plugin
-registered stays until restart, since unregistering is the next round's
-`:plugin_reload` (a fresh Lua state, re-registering everything).
+Every job is a `PackageJob` (install, check for updates, update,
+restore) the editor hands over as a `PackageRequest`, one at a time, and
+the app gets a `PackageDone` back. `:plugin_update` is two jobs with a
+popup between: `check_updates` fetches and lists `HEAD..@{upstream}`
+(skipping tag clones, whose HEAD is detached, and branches that can't
+fast-forward); on `y`, `apply_update` runs `merge --ff-only` and checks
+the plugin again, resetting to the old commit if it no longer loads.
+`:plugin_install` with no source restores what `plugins.toml` lists but
+isn't cloned: clone, then `reset --hard` to the locked commit (so the
+branch, and later updates, stay).
+
+`:plugin_reload` doesn't unregister piece by piece: `App::reload_plugins`
+drops the `PluginHost` (so `require`'s cache goes too), rebuilds the
+registry from the built-ins and the config's hooks (`base_commands`),
+copies the config's keymap back, forgets plugin status texts and sidebar
+views (showing the same view again if it comes back), and runs
+`load_plugins` again. Updating, restoring and `:plugin_remove` reload the
+same way, so removed or replaced code stops running at once. Commands
+added from Rust with `commands_mut` (tests) don't survive a reload.
 
 ### Plugin popups
 
@@ -1543,10 +1559,10 @@ Done: named commands, runtime keybinding, event hooks and Lua plugins. Next:
    runtime could sit behind the same command and hook interfaces.
 5. **Packages** (see [Plugin packages](#plugin-packages)). Phase 1 round 1
    is done: `ferra-plugin.toml` packages, `:plugin_install`,
-   `:plugin_list`, `:plugin_remove`, `plugins.toml` and `plugins.lock`.
-   Next: `:plugin_update` (showing the incoming commits first) and
-   `:plugin_reload` (a fresh Lua state, dropping what plugins registered);
-   reinstalling what `plugins.lock` lists on a new machine. Phase 2:
+   `:plugin_list`, `:plugin_remove`, `plugins.toml` and `plugins.lock`;
+   and round 2: `:plugin_update` (showing the incoming commits first),
+   `:plugin_reload` (a fresh Lua state) and restoring what `plugins.lock`
+   lists on a new machine. Phase 2:
    `:plugin_browse`, picking from the `ferra-plugins` directory's
    `index.toml`. Phase 3: language packs, whose grammar's C source is
    compiled on install.

@@ -87,6 +87,23 @@ impl Editor {
         }
     }
 
+    /// Drops the plugins' views (they're loading again), showing the files
+    /// if one of them was shown.
+    pub(super) fn forget_plugin_views(&mut self) {
+        if self.sidebar_view >= self.builtin_views() {
+            self.sidebar_view = 0;
+        }
+        self.sidebar_views.clear();
+        self.view_keys_changed = true;
+    }
+
+    /// Shows plugin view `name` again after a reload, if it's back.
+    pub fn show_plugin_view_again(&mut self, name: &str) {
+        if let Some(i) = self.sidebar_views.iter().position(|v| v.spec.name == name) {
+            self.show_view(self.builtin_views() + i);
+        }
+    }
+
     /// How many views are built in: the files, and Source Control when
     /// `git` is on. Plugins' views come after them.
     fn builtin_views(&self) -> usize {

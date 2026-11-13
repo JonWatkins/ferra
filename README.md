@@ -98,8 +98,10 @@ See [examples/plugins](examples/plugins) and the guide's
 
 Plugins others have published install from inside ferra:
 `:plugin_install owner/repo` clones a GitHub repository (after asking:
-plugins run with your permissions), `:plugin_list` shows what's installed
-and `:plugin_remove name` removes one. See
+plugins run with your permissions), `:plugin_update` shows new commits and
+updates, `:plugin_reload` loads plugins again after a change,
+`:plugin_list` shows what's installed and `:plugin_remove name` removes
+one. See
 [Installing plugins](docs/GUIDE.md#installing-plugins).
 
 ## Documentation

@@ -15,8 +15,9 @@ use std::thread;
 
 use super::App;
 use crate::editor::picker::PickerItem;
-use crate::editor::{FileListRequest, Message};
+use crate::editor::{FileListRequest, Message, PackageJob, PackageRequest};
 use crate::files;
+use crate::plugins::packages::{self, Checked, Installed};
 
 /// What a background job reports.
 pub(super) enum Update {
@@ -33,8 +34,17 @@ pub(super) enum Update {
         truncated: bool,
         max_files: usize,
     },
-    /// A plugin install finished.
-    PluginInstalled(Result<crate::plugins::packages::Installed, String>),
+    /// A plugin job finished.
+    Plugins(PackageDone),
+}
+
+/// How a plugin job went.
+pub(super) enum PackageDone {
+    Installed(Result<Installed, String>),
+    Checked(Result<Checked, String>),
+    /// Per plugin: its name, new commit and version.
+    Updated(Vec<Result<(String, String, String), String>>),
+    Restored(Vec<Result<Installed, String>>),
 }
 
 pub(super) struct Background {
@@ -94,14 +104,36 @@ impl Background {
         });
     }
 
-    /// Clones and checks a plugin on a new thread.
-    fn install_plugin(&mut self, request: crate::editor::InstallRequest) {
+    /// Runs a plugin job (git work) on a new thread.
+    fn plugin_job(&mut self, request: PackageRequest) {
         self.running += 1;
         let sender = self.sender.clone();
         thread::spawn(move || {
-            let result =
-                crate::plugins::packages::install(&request.paths, &request.source, &request.taken);
-            let _ = sender.send(Update::PluginInstalled(result));
+            let paths = &request.paths;
+            let done = match request.job {
+                PackageJob::Install { source, taken } => {
+                    PackageDone::Installed(packages::install(paths, &source, &taken))
+                }
+                PackageJob::Check(names) => {
+                    PackageDone::Checked(packages::check_updates(paths, &names))
+                }
+                PackageJob::Update(incoming) => PackageDone::Updated(
+                    incoming
+                        .iter()
+                        .map(|i| {
+                            packages::apply_update(paths, i)
+                                .map(|m| (i.name.clone(), i.to.clone(), m.version))
+                        })
+                        .collect(),
+                ),
+                PackageJob::Restore(names) => PackageDone::Restored(
+                    names
+                        .iter()
+                        .map(|name| packages::restore(paths, name))
+                        .collect(),
+                ),
+            };
+            let _ = sender.send(Update::Plugins(done));
         });
     }
 
@@ -118,8 +150,11 @@ impl App {
         if let Some(request) = self.editor.take_file_list_request() {
             self.background.list_files(request);
         }
-        if let Some(request) = self.editor.take_plugin_install() {
-            self.background.install_plugin(request);
+        if let Some(request) = self.editor.take_plugin_request() {
+            self.background.plugin_job(request);
+        }
+        if let Some(announce) = self.editor.take_plugin_reload() {
+            self.reload_plugins(announce);
         }
     }
 
@@ -132,6 +167,9 @@ impl App {
             any = true;
         }
         self.stop_unwanted_listing();
+        if any {
+            self.after_background_popup();
+        }
         any
     }
 
@@ -145,18 +183,15 @@ impl App {
             }
         }
         self.stop_unwanted_listing();
+        self.after_background_popup();
     }
 
     fn apply_update(&mut self, update: Update) {
         match update {
-            Update::PluginInstalled(result) => {
+            Update::Plugins(done) => {
                 self.background.running -= 1;
-                self.editor.plugin_install_done();
-                let message = match result {
-                    Ok(installed) => self.finish_plugin_install(&installed),
-                    Err(error) => Message::error(format!("Plugin not installed: {error}")),
-                };
-                self.editor.set_message(message);
+                self.editor.plugin_job_done();
+                self.finish_plugin_job(done);
             }
             Update::Files { job, base, paths } => {
                 if let Some(picker) = self.picker_loading(job) {

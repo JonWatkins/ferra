@@ -473,28 +473,92 @@ pub fn install(
     source: &Source,
     installed: &[String],
 ) -> Result<Installed, String> {
+    in_temp_clone(paths, |temp| {
+        let (manifest, commit) = clone_and_check(source, None, temp)?;
+        let name = &manifest.name;
+        if installed.contains(name) || paths.dir(name).exists() {
+            return Err(format!(
+                "A plugin named {name} is already installed (:plugin_remove {name} first)"
+            ));
+        }
+        std::fs::rename(temp, paths.dir(name)).map_err(|e| format!("{name}: {e}"))?;
+        Ok(Installed {
+            manifest,
+            source: source.clone(),
+            commit,
+        })
+    })
+}
+
+/// The plugins in `plugins.toml` that aren't cloned (dotfiles brought to a
+/// new machine, say).
+pub fn missing(paths: &PluginPaths) -> Result<Vec<String>, String> {
+    Ok(wanted(paths)?
+        .into_keys()
+        .filter(|name| !paths.dir(name).exists())
+        .collect())
+}
+
+/// Clones plugin `name` from its `plugins.toml` source, at the commit in
+/// `plugins.lock` if there is one. Blocking.
+pub fn restore(paths: &PluginPaths, name: &str) -> Result<Installed, String> {
+    let wanted = wanted(paths)?
+        .remove(name)
+        .ok_or_else(|| format!("{name} isn't in plugins.toml"))?;
+    let commit = locked(paths)?.remove(name).map(|l| l.commit);
+    let source = Source {
+        spec: wanted.source,
+        tag: wanted.tag,
+    };
+    in_temp_clone(paths, |temp| {
+        let (manifest, commit) = clone_and_check(&source, commit.as_deref(), temp)?;
+        if manifest.name != name {
+            return Err(format!(
+                "{source} is now called {}, not {name}",
+                manifest.name
+            ));
+        }
+        if paths.dir(name).exists() {
+            return Err(format!("{name} is already installed"));
+        }
+        std::fs::rename(temp, paths.dir(name)).map_err(|e| format!("{name}: {e}"))?;
+        Ok(Installed {
+            manifest,
+            source: source.clone(),
+            commit,
+        })
+    })
+    .map_err(|e| format!("{name}: {e}"))
+}
+
+/// Runs `work` with a fresh folder beside the plugins, under a name that
+/// can't be a plugin's, removing it if `work` fails (on success `work`
+/// has renamed it into place).
+fn in_temp_clone<T>(
+    paths: &PluginPaths,
+    work: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
     std::fs::create_dir_all(&paths.data).map_err(|e| format!("{}: {e}", paths.data.display()))?;
-    // Cloned beside the others under a name that can't be a plugin's,
-    // then renamed once it's checked.
     let temp = paths
         .data
         .join(format!(".installing-{}", std::process::id()));
     if temp.exists() {
         let _ = std::fs::remove_dir_all(&temp);
     }
-    let result = clone_and_check(paths, source, installed, &temp);
+    let result = work(&temp);
     if result.is_err() {
         let _ = std::fs::remove_dir_all(&temp);
     }
     result
 }
 
+/// Clones `source` into `temp` (at `commit`, if given) and checks the
+/// plugin there. Returns its manifest and commit.
 fn clone_and_check(
-    paths: &PluginPaths,
     source: &Source,
-    installed: &[String],
+    commit: Option<&str>,
     temp: &Path,
-) -> Result<Installed, String> {
+) -> Result<(Manifest, String), String> {
     let url = source.url();
     let temp_arg = temp.to_string_lossy();
     let mut args = vec!["clone", "--quiet"];
@@ -503,28 +567,145 @@ fn clone_and_check(
     }
     args.extend(["--", &url, &temp_arg]);
     git(None, &args).map_err(|e| format!("Couldn't clone {url}: {e}"))?;
-
-    let manifest = Manifest::read(temp).map_err(|e| format!("{source}: {e}"))?;
-    manifest.check_ferra(env!("CARGO_PKG_VERSION"))?;
-    if !temp.join(&manifest.main).is_file() {
-        return Err(format!(
-            "{source}: its main file {} is missing",
-            manifest.main
-        ));
+    if let Some(commit) = commit {
+        // `reset` rather than `checkout`, so the branch (and updating) stays.
+        git(Some(temp), &["reset", "--quiet", "--hard", commit])
+            .map_err(|e| format!("Couldn't go to commit {commit}: {e}"))?;
     }
-    let name = &manifest.name;
-    if installed.contains(name) || paths.dir(name).exists() {
-        return Err(format!(
-            "A plugin named {name} is already installed (:plugin_remove {name} first)"
-        ));
-    }
+    let manifest = check_plugin(temp).map_err(|e| format!("{source}: {e}"))?;
     let commit = git(Some(temp), &["rev-parse", "HEAD"])?;
-    std::fs::rename(temp, paths.dir(name)).map_err(|e| format!("{name}: {e}"))?;
-    Ok(Installed {
-        manifest,
-        source: source.clone(),
-        commit,
-    })
+    Ok((manifest, commit))
+}
+
+/// Reads and checks the plugin in `dir`: its manifest, that it works with
+/// this ferra, and that its main file is there.
+fn check_plugin(dir: &Path) -> Result<Manifest, String> {
+    let manifest = Manifest::read(dir)?;
+    manifest.check_ferra(env!("CARGO_PKG_VERSION"))?;
+    if !dir.join(&manifest.main).is_file() {
+        return Err(format!("its main file {} is missing", manifest.main));
+    }
+    Ok(manifest)
+}
+
+/// New commits for one plugin, found by `check_updates`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Incoming {
+    pub name: String,
+    /// The commit it's at, and the one it would move to.
+    pub from: String,
+    pub to: String,
+    /// `abc1234 Subject`, newest first.
+    pub commits: Vec<String>,
+}
+
+/// What `check_updates` found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Checked {
+    pub incoming: Vec<Incoming>,
+    /// Plugins already at their newest commit.
+    pub current: Vec<String>,
+    /// Plugins that can't be updated, and why (`name: pinned to v1`).
+    pub skipped: Vec<String>,
+}
+
+/// Fetches plugins `names` (all of `plugins.toml` if empty) and lists the
+/// commits each would gain. Changes nothing but the clones' remote
+/// branches. Blocking.
+pub fn check_updates(paths: &PluginPaths, names: &[String]) -> Result<Checked, String> {
+    let wanted = wanted(paths)?;
+    let names: Vec<String> = if names.is_empty() {
+        wanted.keys().cloned().collect()
+    } else {
+        for name in names {
+            if !wanted.contains_key(name) {
+                return Err(format!("No plugin named {name} is installed"));
+            }
+        }
+        names.to_vec()
+    };
+    let mut checked = Checked::default();
+    for name in names {
+        let dir = paths.dir(&name);
+        if !dir.is_dir() {
+            checked.skipped.push(format!(
+                "{name}: not installed (:plugin_install restores it)"
+            ));
+            continue;
+        }
+        let dir = Some(dir.as_path());
+        // A tag clones as a detached HEAD: there's nothing to follow.
+        if git(dir, &["symbolic-ref", "--quiet", "HEAD"]).is_err() {
+            let at = wanted[&name].tag.as_deref().unwrap_or("a commit");
+            checked.skipped.push(format!("{name}: pinned to {at}"));
+            continue;
+        }
+        if let Err(e) = git(dir, &["fetch", "--quiet"]) {
+            checked
+                .skipped
+                .push(format!("{name}: couldn't fetch ({e})"));
+            continue;
+        }
+        let Ok(to) = git(dir, &["rev-parse", "@{upstream}"]) else {
+            checked
+                .skipped
+                .push(format!("{name}: its branch follows nothing"));
+            continue;
+        };
+        let from = git(dir, &["rev-parse", "HEAD"])?;
+        if from == to {
+            checked.current.push(name);
+            continue;
+        }
+        if git(dir, &["merge-base", "--is-ancestor", &from, &to]).is_err() {
+            checked.skipped.push(format!(
+                "{name}: has commits of its own, so it can't fast-forward"
+            ));
+            continue;
+        }
+        let log = git(dir, &["log", "--format=%h %s", &format!("{from}..{to}")])?;
+        checked.incoming.push(Incoming {
+            name,
+            from,
+            to,
+            commits: log.lines().map(str::to_string).collect(),
+        });
+    }
+    Ok(checked)
+}
+
+/// Moves a plugin to the commit `check_updates` found, going back if the
+/// new version isn't one this ferra can load. Returns the new manifest;
+/// the caller records the commit. Blocking.
+pub fn apply_update(paths: &PluginPaths, incoming: &Incoming) -> Result<Manifest, String> {
+    let name = &incoming.name;
+    let dir = paths.dir(name);
+    let dir = Some(dir.as_path());
+    git(dir, &["merge", "--quiet", "--ff-only", &incoming.to])
+        .map_err(|e| format!("{name}: {e}"))?;
+    match check_plugin(&paths.dir(name)) {
+        Ok(manifest) if manifest.name == *name => Ok(manifest),
+        result => {
+            let _ = git(dir, &["reset", "--quiet", "--hard", &incoming.from]);
+            let why = match result {
+                Ok(manifest) => format!("it's now called {}", manifest.name),
+                Err(e) => e,
+            };
+            Err(format!("{name}: kept the old version: {why}"))
+        }
+    }
+}
+
+/// Sets plugin `name`'s commit in `plugins.lock`.
+pub fn lock(paths: &PluginPaths, name: &str, commit: &str) -> Result<(), String> {
+    let mut lock = locked(paths)?;
+    lock.insert(
+        name.to_string(),
+        Locked {
+            commit: commit.to_string(),
+        },
+    );
+    write_file(&paths.config.join(LOCK_FILE), LOCK_HEADER, lock)
 }
 
 #[cfg(test)]

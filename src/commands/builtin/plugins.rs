@@ -5,25 +5,38 @@ use crate::commands::CommandRegistry;
 pub fn register(r: &mut CommandRegistry) {
     r.register(
         "plugin_install",
-        "Install a plugin from GitHub (owner/repo[@tag]) or any git URL, after asking",
+        "Install a plugin from GitHub (owner/repo[@tag]) or any git URL, after asking; \
+         with nothing, install what plugins.toml lists but isn't installed",
         |cx| {
             let spec = cx.args.join(" ");
             cx.editor.plugin_ask_install(&spec)
         },
     );
     r.register(
-        "plugin_install_confirmed",
-        "y when asked to install a plugin: install it",
-        |cx| cx.editor.plugin_install_confirmed(),
-    );
-    r.register(
-        "plugin_remove",
-        "Remove an installed plugin (its commands stay until ferra restarts)",
+        "plugin_update",
+        "Look for new commits of the plugins (or the ones named), show them and ask to update",
         |cx| {
-            let name = cx.args.join(" ");
-            cx.editor.plugin_remove(name.trim())
+            let names = cx.args.to_vec();
+            cx.editor.plugin_check_updates(&names)
         },
     );
+    r.register(
+        "plugin_confirmed",
+        "y when asked to install or update plugins: go ahead",
+        |cx| cx.editor.plugin_confirmed(),
+    );
+    r.register(
+        "plugin_reload",
+        "Load every plugin again, in a fresh Lua state (after changing one)",
+        |cx| {
+            cx.editor.request_plugin_reload(true);
+            Ok(())
+        },
+    );
+    r.register("plugin_remove", "Remove an installed plugin", |cx| {
+        let name = cx.args.join(" ");
+        cx.editor.plugin_remove(name.trim())
+    });
     r.register(
         "plugin_list",
         "List the installed plugins, their versions and commits",

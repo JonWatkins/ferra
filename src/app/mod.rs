@@ -21,7 +21,7 @@ use crate::commands::{CommandRegistry, Invocation};
 use crate::config::StatusElement;
 use crate::config::{Config, Theme};
 use crate::editor::{DocumentId, Editor, Message, Mode};
-use crate::events;
+use crate::events::{self, EventKind};
 use crate::input::{InputHandler, KeyCode, KeyPress, Keymap, Lookup, Outcome, paste_keys};
 use crate::plugins::PluginHost;
 use crate::syntax::SyntaxEngine;
@@ -69,6 +69,12 @@ pub struct App {
     macros: macros::MacroState,
     /// The Lua runtime, created when the first plugin loads.
     plugins: Option<PluginHost>,
+    /// The config's keys and hooks, to start again from when plugins
+    /// reload (dropping what they registered).
+    config_keys: Keymap,
+    config_hooks: HashMap<EventKind, Vec<String>>,
+    /// Where `init.lua` and `plugins/` were loaded from, for reloading.
+    plugin_config_dir: Option<std::path::PathBuf>,
     /// True while `.` feeds the last change back in, so it isn't re-recorded.
     replaying: bool,
     /// The text of a paste being replayed key by key (from a macro or
@@ -91,23 +97,16 @@ impl Default for App {
 
 impl App {
     pub fn new(config: Config) -> Self {
-        let mut commands = CommandRegistry::with_builtins();
-        let mut unknown_hook_commands = Vec::new();
-        for (kind, hook_commands) in config.hooks {
-            for name in &hook_commands {
-                if !commands.contains(name) {
-                    unknown_hook_commands.push(format!("{name} ({})", kind.id()));
-                }
-            }
-            commands.on_run_commands(kind, hook_commands);
-        }
-
+        let (commands, mut unknown_hook_commands) = base_commands(&config.hooks);
         let mut editor = Editor::new(config.editor);
         editor.languages = config.languages;
         let mut app = Self {
             editor,
             commands,
-            keymap: config.keys,
+            keymap: config.keys.clone(),
+            config_keys: config.keys,
+            config_hooks: config.hooks,
+            plugin_config_dir: None,
             popup_keymap: None,
             screen_map: ui::ScreenMap::default(),
             dragging: None,
@@ -135,7 +134,7 @@ impl App {
             .set_clipboard(clipboard::for_provider(provider), mode);
         app.validate_keymap();
         if !unknown_hook_commands.is_empty() {
-            unknown_hook_commands.sort();
+            unknown_hook_commands.sort_unstable();
             let text = format!(
                 "Hooks reference unknown commands: {}",
                 unknown_hook_commands.join(", ")
@@ -180,6 +179,7 @@ impl App {
     /// shown again after startup messages); a broken plugin doesn't stop the
     /// others, or the editor, from loading.
     pub fn load_plugins(&mut self, config_dir: &std::path::Path) -> Option<String> {
+        self.plugin_config_dir = Some(config_dir.to_path_buf());
         let paths = self.editor.plugin_paths().cloned();
         let packages = match &paths {
             Some(paths) => crate::plugins::packages::wanted(paths),
@@ -203,7 +203,7 @@ impl App {
                             } else {
                                 Err(format!(
                                     "{name} is in plugins.toml but not installed \
-                                     (:plugin_remove {name}, then install it again)"
+                                     (:plugin_install installs it)"
                                 ))
                             };
                             errors.extend(result.err());
@@ -256,36 +256,136 @@ impl App {
         self.editor.set_plugin_paths(paths);
     }
 
-    /// After a clone: records the plugin and loads it. Says how it went.
-    fn finish_plugin_install(
-        &mut self,
-        installed: &crate::plugins::packages::Installed,
-    ) -> Message {
-        let name = &installed.manifest.name;
-        let done = format!(
-            "Installed {name} {} ({})",
-            installed.manifest.version,
-            installed.short_commit()
-        );
-        let Some(paths) = self.editor.plugin_paths().cloned() else {
-            return Message::error(format!("{done}, but there's nowhere to record it"));
+    /// `:plugin_reload` (and after updating or removing): a fresh Lua
+    /// state, the commands and keys back to the built-ins and config, and
+    /// every plugin loaded again. Says so if `announce` (errors always,
+    /// and they're returned).
+    pub fn reload_plugins(&mut self, announce: bool) -> Option<String> {
+        let config_dir = self
+            .plugin_config_dir
+            .clone()
+            .or_else(|| self.editor.plugin_paths().map(|p| p.config.clone()));
+        let Some(config_dir) = config_dir else {
+            let error = "No config folder to load plugins from".to_string();
+            self.editor.set_message(Message::error(error.clone()));
+            return Some(error);
         };
-        if let Err(error) = crate::plugins::packages::record(&paths, installed) {
-            return Message::error(format!("{done}, but couldn't record it: {error}"));
+        self.plugins = None;
+        (self.commands, _) = base_commands(&self.config_hooks);
+        self.keymap = self.config_keys.clone();
+        self.popup_keymap = None;
+        self.plugin_status_errors.clear();
+        let shown = self.editor.clear_plugin_ui();
+        if self.editor.popup().is_some() {
+            self.editor.close_popup();
         }
-        let loaded = self
-            .plugin_host()
-            .and_then(|host| host.load_package(&paths.dir(name)).map(|_| ()));
-        let mut errors: Vec<String> = loaded.err().into_iter().collect();
-        errors.extend(self.install_plugins());
-        if errors.is_empty() {
-            Message::info(done)
-        } else {
-            Message::error(format!(
-                "{done}, but it failed to load: {}",
-                errors.join("; ")
-            ))
+        let error = self.load_plugins(&config_dir);
+        if let Some(name) = shown {
+            self.editor.show_plugin_view_again(&name);
         }
+        if error.is_none() && announce {
+            self.editor.set_message(Message::info("Plugins reloaded"));
+        }
+        error
+    }
+
+    /// A plugin job's results: records them, loads what changed and says
+    /// how it went.
+    fn finish_plugin_job(&mut self, done: background::PackageDone) {
+        use crate::plugins::packages;
+        use background::PackageDone;
+        let Some(paths) = self.editor.plugin_paths().cloned() else {
+            return;
+        };
+        let installed_text = |i: &packages::Installed| {
+            format!(
+                "{} {} ({})",
+                i.manifest.name,
+                i.manifest.version,
+                i.short_commit()
+            )
+        };
+        match done {
+            PackageDone::Installed(Err(error)) => self
+                .editor
+                .set_message(Message::error(format!("Plugin not installed: {error}"))),
+            PackageDone::Installed(Ok(installed)) => {
+                let done = format!("Installed {}", installed_text(&installed));
+                let message = match packages::record(&paths, &installed) {
+                    Err(error) => {
+                        Message::error(format!("{done}, but couldn't record it: {error}"))
+                    }
+                    Ok(()) => {
+                        // Only the new one loads: the others are unchanged.
+                        let name = &installed.manifest.name;
+                        let loaded = self
+                            .plugin_host()
+                            .and_then(|host| host.load_package(&paths.dir(name)).map(|_| ()));
+                        let mut errors: Vec<String> = loaded.err().into_iter().collect();
+                        errors.extend(self.install_plugins());
+                        if errors.is_empty() {
+                            Message::info(done)
+                        } else {
+                            Message::error(format!(
+                                "{done}, but it failed to load: {}",
+                                errors.join("; ")
+                            ))
+                        }
+                    }
+                };
+                self.editor.set_message(message);
+            }
+            PackageDone::Checked(Err(error)) => self.editor.set_message(Message::error(error)),
+            PackageDone::Checked(Ok(checked)) => self.editor.plugin_show_updates(checked),
+            PackageDone::Updated(results) => {
+                let mut done = Vec::new();
+                let mut errors = Vec::new();
+                for result in results {
+                    match result.and_then(|(name, commit, version)| {
+                        packages::lock(&paths, &name, &commit)?;
+                        Ok(format!(
+                            "{name} {version} ({})",
+                            &commit[..commit.len().min(7)]
+                        ))
+                    }) {
+                        Ok(text) => done.push(text),
+                        Err(error) => errors.push(error),
+                    }
+                }
+                self.after_plugin_changes("Updated", done, errors);
+            }
+            PackageDone::Restored(results) => {
+                let mut done = Vec::new();
+                let mut errors = Vec::new();
+                for result in results {
+                    match result.and_then(|installed| {
+                        packages::record(&paths, &installed)?;
+                        Ok(installed_text(&installed))
+                    }) {
+                        Ok(text) => done.push(text),
+                        Err(error) => errors.push(error),
+                    }
+                }
+                self.after_plugin_changes("Installed", done, errors);
+            }
+        }
+    }
+
+    /// After updating or restoring: reloads if anything changed, then says
+    /// what did and what failed.
+    fn after_plugin_changes(&mut self, verb: &str, done: Vec<String>, errors: Vec<String>) {
+        let mut errors = errors;
+        if !done.is_empty() {
+            errors.extend(self.reload_plugins(false));
+        }
+        let message = match (done.is_empty(), errors.is_empty()) {
+            (_, true) => Message::info(format!("{verb} {}", done.join(", "))),
+            (true, false) => Message::error(errors.join("; ")),
+            (false, false) => {
+                Message::error(format!("{verb} {}; {}", done.join(", "), errors.join("; ")))
+            }
+        };
+        self.editor.set_message(message);
     }
 
     fn plugin_host(&mut self) -> Result<&PluginHost, String> {
@@ -796,9 +896,24 @@ impl App {
         if !popup_opened {
             self.editor.end_popup_unless_new(true);
         }
-        if !popup_opened && !view_changed {
-            return;
+        if popup_opened || view_changed {
+            self.bind_popup_keys();
         }
+    }
+
+    /// After background results (which can open a popup, as
+    /// `:plugin_update` does): binds the new popup's or view's keys, so the
+    /// first key typed in it works.
+    fn after_background_popup(&mut self) {
+        let popup_opened = self.editor.take_popup_keys_changed();
+        let view_changed = self.editor.take_view_keys_changed();
+        if popup_opened || view_changed {
+            self.bind_popup_keys();
+        }
+    }
+
+    /// The keymap with the open popup's and the shown view's own keys.
+    fn bind_popup_keys(&mut self) {
         let popup_keys = self.editor.popup().map_or(&[][..], |p| p.keys.as_slice());
         let view_keys = self.editor.plugin_view_keys();
         self.popup_keymap = (!popup_keys.is_empty() || !view_keys.is_empty()).then(|| {
@@ -1126,4 +1241,20 @@ impl App {
         self.finish_open_paste();
         self.replaying = false;
     }
+}
+
+/// The built-in commands with the config's hooks, and the hooks' commands
+/// that don't exist (`name (event)`).
+fn base_commands(hooks: &HashMap<EventKind, Vec<String>>) -> (CommandRegistry, Vec<String>) {
+    let mut commands = CommandRegistry::with_builtins();
+    let mut unknown = Vec::new();
+    for (kind, hook_commands) in hooks {
+        for name in hook_commands {
+            if !commands.contains(name) {
+                unknown.push(format!("{name} ({})", kind.id()));
+            }
+        }
+        commands.on_run_commands(*kind, hook_commands.clone());
+    }
+    (commands, unknown)
 }

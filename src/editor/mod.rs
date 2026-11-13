@@ -34,7 +34,7 @@ pub use git::GitRow;
 pub mod input_box;
 pub mod lsp;
 mod plugin_packages;
-pub use plugin_packages::InstallRequest;
+pub use plugin_packages::{PackageJob, PackageRequest};
 pub mod popup;
 mod selection;
 pub mod sidebar_views;
@@ -386,6 +386,15 @@ impl Editor {
     }
 
     /// Records what plugin status function `name` returned.
+    /// Before plugins load again: forgets their status texts and sidebar
+    /// views. Returns the plugin view shown, to show again if it comes back.
+    pub fn clear_plugin_ui(&mut self) -> Option<String> {
+        self.plugin_statuses.clear();
+        let shown = self.plugin_view().map(|v| v.spec.name.clone());
+        self.forget_plugin_views();
+        shown
+    }
+
     pub fn set_plugin_status(&mut self, name: &str, text: String) {
         self.plugin_statuses.insert(name.to_string(), text);
     }
