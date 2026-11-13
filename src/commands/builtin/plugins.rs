@@ -36,6 +36,16 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.plugin_decline(),
     );
     r.register(
+        "plugin_install_compiler",
+        "y when a C compiler is offered: run its install command in the terminal panel",
+        |cx| cx.editor.plugin_install_compiler(),
+    );
+    r.register(
+        "plugin_decline_compiler",
+        "d when a C compiler is offered: don't offer again",
+        |cx| cx.editor.plugin_decline_compiler(),
+    );
+    r.register(
         "plugin_reload",
         "Load every plugin again, in a fresh Lua state (after changing one)",
         |cx| {

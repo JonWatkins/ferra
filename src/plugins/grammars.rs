@@ -338,15 +338,17 @@ fn compiler(cpp: bool) -> Command {
 
 fn run(mut command: Command, cpp: bool) -> Result<(), String> {
     let program = command.get_program().to_string_lossy().into_owned();
+    let what = if cpp { "C++" } else { "C" };
+    let missing = || {
+        let hint = match compiler_install(std::env::consts::OS, &os_release()) {
+            Some(install) => install.command,
+            None => "install gcc or clang".into(),
+        };
+        format!("no {what} compiler ({program}) to build the grammar with ({hint})")
+    };
     let output = command.output().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            let what = if cpp { "C++" } else { "C" };
-            let hint = if cfg!(target_os = "macos") {
-                "xcode-select --install"
-            } else {
-                "install gcc or clang"
-            };
-            format!("no {what} compiler ({program}) to build the grammar with ({hint})")
+            missing()
         } else {
             format!("{program}: {e}")
         }
@@ -355,12 +357,76 @@ fn run(mut command: Command, cpp: bool) -> Result<(), String> {
         return Ok(());
     }
     let errors = String::from_utf8_lossy(&output.stderr);
+    // macOS's `cc` without the command line tools is a stub that says so.
+    if errors.contains("xcrun: error") || errors.contains("invalid active developer path") {
+        return Err(missing());
+    }
     let first = errors
         .lines()
         .find(|l| l.contains("error"))
         .or_else(|| errors.lines().next())
         .unwrap_or("failed");
     Err(format!("the grammar didn't compile: {}", first.trim()))
+}
+
+/// Whether a grammar's error is that there's no compiler to build it.
+pub fn needs_compiler(error: &str) -> bool {
+    error.contains("no C compiler") || error.contains("no C++ compiler")
+}
+
+/// How to install a C compiler here: the command, and what it installs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompilerInstall {
+    pub command: String,
+    pub what: String,
+}
+
+/// The command that installs a C compiler on `os` (`std::env::consts::OS`),
+/// on Linux by the distribution `/etc/os-release` names (`ID`, then
+/// `ID_LIKE`). `None` where it isn't known.
+pub fn compiler_install(os: &str, os_release: &str) -> Option<CompilerInstall> {
+    let install = |command: &str, what: &str| {
+        Some(CompilerInstall {
+            command: command.into(),
+            what: what.into(),
+        })
+    };
+    match os {
+        "macos" => return install("xcode-select --install", "Apple's command line tools"),
+        "linux" => {}
+        _ => return None,
+    }
+    let field = |name: &str| {
+        os_release
+            .lines()
+            .find_map(|l| l.strip_prefix(name)?.strip_prefix('='))
+            .map(|v| v.trim().trim_matches('"').to_string())
+            .unwrap_or_default()
+    };
+    let ids = format!("{} {}", field("ID"), field("ID_LIKE"));
+    for id in ids.split_whitespace() {
+        let found = match id {
+            "debian" | "ubuntu" => {
+                install("sudo apt install build-essential", "gcc (build-essential)")
+            }
+            "fedora" | "rhel" | "centos" => install("sudo dnf install gcc", "gcc"),
+            "arch" => install("sudo pacman -S --needed base-devel", "gcc (base-devel)"),
+            "alpine" => install("sudo apk add build-base", "gcc (build-base)"),
+            "opensuse" | "suse" | "opensuse-tumbleweed" | "opensuse-leap" => {
+                install("sudo zypper install gcc", "gcc")
+            }
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+/// `/etc/os-release`, or nothing.
+pub fn os_release() -> String {
+    std::fs::read_to_string("/etc/os-release").unwrap_or_default()
 }
 
 fn remove_all(paths: &[PathBuf]) {
@@ -513,4 +579,67 @@ fn open(library: &Path, symbol: &str) -> Result<tree_sitter_language::LanguageFn
         ));
     }
     Ok(grammar)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compilers_are_installed_by_platform() {
+        let command = |os: &str, release: &str| compiler_install(os, release).map(|i| i.command);
+        assert_eq!(
+            command("macos", "").as_deref(),
+            Some("xcode-select --install")
+        );
+        assert_eq!(
+            command("linux", "NAME=\"Ubuntu\"\nID=ubuntu\nID_LIKE=debian\n").as_deref(),
+            Some("sudo apt install build-essential")
+        );
+        assert_eq!(
+            command("linux", "ID=linuxmint\nID_LIKE=\"ubuntu debian\"\n").as_deref(),
+            Some("sudo apt install build-essential")
+        );
+        assert_eq!(
+            command("linux", "ID=fedora\n").as_deref(),
+            Some("sudo dnf install gcc")
+        );
+        assert_eq!(
+            command("linux", "ID=endeavouros\nID_LIKE=arch\n").as_deref(),
+            Some("sudo pacman -S --needed base-devel")
+        );
+        assert_eq!(
+            command("linux", "ID=alpine\n").as_deref(),
+            Some("sudo apk add build-base")
+        );
+        assert_eq!(command("linux", "ID=gentoo\n"), None);
+        assert_eq!(command("linux", ""), None);
+        assert_eq!(command("windows", ""), None);
+    }
+
+    #[test]
+    fn macos_compiler_stubs_count_as_missing() {
+        // What /usr/bin/cc does on a Mac without the command line tools.
+        let mut stub = Command::new("sh");
+        stub.args([
+            "-c",
+            "echo 'xcrun: error: invalid active developer path (/Library/Developer/CommandLineTools)' >&2; exit 1",
+        ]);
+        let error = run(stub, false).unwrap_err();
+        assert!(needs_compiler(&error), "{error}");
+        let mut broken = Command::new("sh");
+        broken.args(["-c", "echo 'parser.c:1:1: error: expected' >&2; exit 1"]);
+        let error = run(broken, false).unwrap_err();
+        assert!(!needs_compiler(&error), "{error}");
+    }
+
+    #[test]
+    fn missing_compilers_are_told_apart() {
+        assert!(needs_compiler(
+            "zig: no C compiler (cc) to build the grammar with (x)"
+        ));
+        assert!(!needs_compiler(
+            "zig: the grammar didn't compile: parser.c:1: error"
+        ));
+    }
 }

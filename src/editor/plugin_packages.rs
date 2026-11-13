@@ -36,7 +36,14 @@ pub struct PackageState {
     refreshed: bool,
     /// The pack the open offer is about, for `d`.
     declining: Option<String>,
+    /// A C compiler's been offered this session.
+    compiler_offered: bool,
+    /// The command `y` runs to install one.
+    compiler_command: Option<String>,
 }
+
+/// What `d` records when a C compiler is offered (a name no pack has).
+const COMPILER_DECLINED: &str = ".c-compiler";
 
 /// Work on plugin packages, for the app to run on a thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,7 +89,8 @@ fn answers(yes: &str) -> PopupLine {
     ]
 }
 
-const POPUPS: [&str; 4] = [
+const POPUPS: [&str; 5] = [
+    "plugin-compiler",
     "plugin-install",
     "plugin-update",
     "plugin-restore",
@@ -320,6 +328,104 @@ impl Editor {
         self.set_message(Message::info(format!(
             "Won't offer {name} again (:plugin_install {name} installs it)"
         )));
+        Ok(())
+    }
+
+    /// A grammar couldn't be built for want of a C compiler (`grammar`
+    /// names it): offers, once a session, to install one, by running the
+    /// command for this system in the terminal panel.
+    pub fn offer_compiler(&mut self, grammar: &str) {
+        if self.packages.compiler_offered || self.popup().is_some() {
+            return;
+        }
+        let Some(paths) = self.packages.paths.clone() else {
+            return;
+        };
+        if packages::declined(&paths)
+            .iter()
+            .any(|n| n == COMPILER_DECLINED)
+        {
+            return;
+        }
+        let Some(install) = crate::plugins::grammars::compiler_install(
+            std::env::consts::OS,
+            &crate::plugins::grammars::os_release(),
+        ) else {
+            return;
+        };
+        self.packages.compiler_offered = true;
+        let lines = vec![
+            line(&format!(
+                "The {grammar} grammar is built from source with a C compiler,"
+            )),
+            line(&format!("and there isn't one. Install {}?", install.what)),
+            vec![],
+            vec![span(
+                &format!("  {}", install.command),
+                Some("ui.popup.title"),
+            )],
+            vec![],
+            line("It runs in the terminal panel, where you can see it and"),
+            line("answer what it asks. When it's done, :plugin_reload builds"),
+            line("the grammars."),
+            vec![],
+            vec![
+                span("y", Some("ui.popup.title")),
+                span(" install   ", None),
+                span("n", Some("ui.popup.title")),
+                span(" not now   ", None),
+                span("d", Some("ui.popup.title")),
+                span(" don't ask again", None),
+            ],
+        ];
+        self.packages.compiler_command = Some(install.command);
+        self.open_popup(Popup {
+            name: "plugin-compiler".into(),
+            title: "A C compiler is needed".into(),
+            lines,
+            keys: vec![
+                ("y".into(), "plugin_install_compiler".into()),
+                ("n".into(), "popup_close".into()),
+                ("d".into(), "plugin_decline_compiler".into()),
+            ],
+            focus: true,
+            ..Popup::default()
+        });
+    }
+
+    /// `y` when a C compiler is offered: runs the install command in the
+    /// terminal panel.
+    pub fn plugin_install_compiler(&mut self) -> Result<(), String> {
+        if self.popup().is_none_or(|p| p.name != "plugin-compiler") {
+            return Err("Nothing to install".into());
+        }
+        self.close_popup();
+        let command = self
+            .packages
+            .compiler_command
+            .take()
+            .ok_or("Nothing to install")?;
+        self.focus_terminal()?;
+        self.terminal_paste(&command);
+        self.terminal_keys(&[crate::input::KeyPress::plain(crate::input::KeyCode::Enter)]);
+        self.set_message(Message::info(format!(
+            "Running {command}; when it's finished, :plugin_reload builds the grammars"
+        )));
+        Ok(())
+    }
+
+    /// `d` when a C compiler is offered: don't offer again.
+    pub fn plugin_decline_compiler(&mut self) -> Result<(), String> {
+        if self.popup().is_none_or(|p| p.name != "plugin-compiler") {
+            return Err("Nothing to decline".into());
+        }
+        self.close_popup();
+        self.packages.compiler_command = None;
+        let paths = self.require_plugin_paths()?;
+        packages::decline(&paths, COMPILER_DECLINED)?;
+        self.set_message(Message::info(
+            "Won't offer a C compiler again; grammars need one to build",
+        ));
         Ok(())
     }
 

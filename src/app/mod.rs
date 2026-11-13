@@ -238,6 +238,7 @@ impl App {
         if errors.is_empty() {
             return None;
         }
+        self.offer_compiler_for(&errors);
         let text = format!("Plugin errors: {}", errors.join("; "));
         self.editor.set_message(Message::error(text.clone()));
         Some(text)
@@ -293,6 +294,26 @@ impl App {
             Err(e) => errors.push(e),
         }
         errors
+    }
+
+    /// If a grammar in `errors` (`name: ...`) couldn't be built for want of
+    /// a C compiler, offers to install one.
+    fn offer_compiler_for(&mut self, errors: &[String]) {
+        let Some(error) = errors
+            .iter()
+            .find(|e| crate::plugins::grammars::needs_compiler(e))
+        else {
+            return;
+        };
+        let grammar = error
+            .split(':')
+            .next()
+            .unwrap_or("plugin's")
+            .trim()
+            .to_string();
+        self.editor.offer_compiler(&grammar);
+        // Not opened by a key: its keys are bound now.
+        self.after_background_popup();
     }
 
     /// Where plugin packages are installed and recorded.
@@ -370,6 +391,7 @@ impl App {
                         let root = installed.source.root(&paths.dir(name));
                         errors.extend(self.load_package(&root));
                         errors.extend(self.install_plugins());
+                        self.offer_compiler_for(&errors);
                         if errors.is_empty() {
                             Message::info(done)
                         } else {
@@ -438,6 +460,7 @@ impl App {
         if !done.is_empty() {
             errors.extend(self.reload_plugins(false));
         }
+        self.offer_compiler_for(&errors);
         let message = match (done.is_empty(), errors.is_empty()) {
             (_, true) => Message::info(format!("{verb} {}", done.join(", "))),
             (true, false) => Message::error(errors.join("; ")),
@@ -512,6 +535,9 @@ impl App {
         if let Some(id) = first {
             self.editor.switch_to(id);
         }
+        // A popup plugins opened while loading (a C compiler's offer) keeps
+        // the keys.
+        self.editor.refocus_popup();
     }
 
     /// Opens a file, reporting any failure on the message line (the editor

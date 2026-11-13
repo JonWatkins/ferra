@@ -1307,10 +1307,14 @@ ferra reads them as they are: older capture names (`@conditional`,
 indentation rules. So a pack can be just a few lines, adding queries only
 where the grammar's need help.
 
-Building needs a C compiler (`cc`, or `$CC`; on macOS
-`xcode-select --install`). Without one the pack still installs, and the
-language works without highlighting; ferra tries again when it next
-starts. Builds go in the plugin's folder, in `.ferra-build/`. A grammar
+Building needs a C compiler (`cc`, or `$CC`). Without one the pack still
+installs and the language works without highlighting, and ferra offers to
+install a compiler: `y` runs the command for your system in the terminal
+panel (`xcode-select --install` on macOS, which opens Apple's installer;
+`sudo apt install build-essential`, `dnf`, `pacman`, `apk` or `zypper` on
+Linux), where you can see it and answer what it asks. When it's done,
+`:plugin_reload` builds the grammars. `n` asks again next time, `d`
+never. Builds go in the plugin's folder, in `.ferra-build/`. A grammar
 can't replace one ferra has built in.
 
 `indents.scm` gives the language ferra's indentation, from the syntax

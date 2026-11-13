@@ -148,6 +148,14 @@ impl Editor {
         }
     }
 
+    /// Gives a popup that takes keys its focus back, if something since it
+    /// opened (opening files at startup) went back to normal mode.
+    pub fn refocus_popup(&mut self) {
+        if self.popup.as_ref().is_some_and(|p| p.focus) && self.mode() == Mode::Normal {
+            self.set_mode(Mode::Popup);
+        }
+    }
+
     /// Closes the popup. Returns its `on_close` command, for `q`/`<Esc>`.
     pub fn close_popup(&mut self) -> Option<String> {
         let popup = self.popup.take()?;

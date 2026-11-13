@@ -1541,6 +1541,16 @@ the clause (Ruby's `else` within `elsif`) close the same node. A plugin language
 re-indenting words are the quoted words of its rules
 (`indent::keywords`).
 
+A grammar that can't be built for want of a compiler says so in a way
+`grammars::needs_compiler` recognises (the program not found, or macOS's
+`cc` stub answering `xcrun: error`); wherever grammar errors arrive (the
+plugins loading, an install, update or restore), `App::offer_compiler_for`
+has the editor offer, once a session, the install command
+`grammars::compiler_install` picks for the system (by
+`/etc/os-release` on Linux), typed into the terminal panel on `y`. Since
+plugins load before the startup files open, `App::open_all` gives a
+popup that takes keys its focus back (`Editor::refocus_popup`).
+
 Offering language packs (`Editor::plugin_saw`, on each `Opened` event):
 if ferra has no language for the file, `packages::suggest` reads the
 language packs' manifests from the copy of the directory (`.index`, only
