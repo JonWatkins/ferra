@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use crate::events::EventKind;
 use crate::input::Keymap;
 
-const DEFAULT_CONFIG: &str = include_str!("default.toml");
+pub(crate) const DEFAULT_CONFIG: &str = include_str!("default.toml");
 const APP_DIR: &str = "ferra";
 
 static DEFAULT: LazyLock<Config> =
@@ -78,6 +78,14 @@ impl Config {
         let invalid = |e: &dyn fmt::Display| ConfigError::Invalid(e.to_string().trim().to_string());
 
         let mut merged: Table = DEFAULT_CONFIG.parse().map_err(|e| invalid(&e))?;
+        // The languages that are packs now, for ferra's own tests.
+        #[cfg(feature = "test-languages")]
+        merge(
+            &mut merged,
+            include_str!("test_languages.toml")
+                .parse()
+                .map_err(|e| invalid(&e))?,
+        );
         let user: Table = user.parse().map_err(|e| invalid(&e))?;
         merge(&mut merged, user);
 

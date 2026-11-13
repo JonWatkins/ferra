@@ -812,17 +812,17 @@ fn language_packs_cannot_replace_known_languages() {
     let s = setup();
     let pack = repo(
         s.temp.path(),
-        "my-rust",
+        "my-toml",
         &[(
             "ferra-plugin.toml",
-            "name = \"my-rust\"\nversion = \"0.1.0\"\n[languages.rust]\nextensions = [\"rs\"]\n",
+            "name = \"my-toml\"\nversion = \"0.1.0\"\n[languages.toml]\nextensions = [\"toml\"]\n",
         )],
     );
     let mut app = app_with(&s.paths);
     install(&mut app, &pack);
     assert!(
         message(&app)
-            .contains("rust is already a language (change it in config.toml's [languages.rust])"),
+            .contains("toml is already a language (change it in config.toml's [languages.toml])"),
         "{}",
         message(&app)
     );
@@ -1004,17 +1004,17 @@ fn grammars_need_their_language_and_cannot_replace_built_ins() {
     let s = setup();
     let pack = repo(
         s.temp.path(),
-        "rusty",
+        "tomly",
         &[(
             "ferra-plugin.toml",
-            "name = \"rusty\"\nversion = \"0.1.0\"\n[grammars.rust]\n[grammars.nolang]\n",
+            "name = \"tomly\"\nversion = \"0.1.0\"\n[grammars.toml]\n[grammars.nolang]\n",
         )],
     );
     let mut app = app_with(&s.paths);
     install(&mut app, &pack);
     let shown = message(&app);
     assert!(
-        shown.contains("ferra has a rust grammar built in"),
+        shown.contains("ferra has a toml grammar built in"),
         "{shown}"
     );
     assert!(shown.contains("there's no language nolang"), "{shown}");
@@ -1446,4 +1446,29 @@ fn known_files_never_ask() {
     app.wait_for_background();
     assert!(app.editor().popup().is_none());
     assert!(!s.paths.data.join(".index").exists(), "nothing fetched");
+}
+
+#[test]
+fn the_config_sets_a_packs_language_and_wins() {
+    let s = setup();
+    let directory = directory_with_pack(s.temp.path());
+    // Options for a language the config doesn't otherwise define: the pack
+    // gives its files and comments, the config its options.
+    let mut app = common::app_with_config(
+        "[editor]\nplugin-suggestions = false\n\n[languages.zz]\noptions = { tab-width = 3 }\n",
+    );
+    app.set_plugin_paths(s.paths.clone());
+    install(&mut app, &format!("{directory}//languages/zz"));
+    assert!(
+        message(&app).starts_with("Installed zz"),
+        "{}",
+        message(&app)
+    );
+    let file = s.temp.path().join("w.zz");
+    fs::write(&file, "x\n").unwrap();
+    app.open(&file);
+    assert_eq!(app.editor().language_of(&app.editor().document), Some("zz"));
+    assert_eq!(app.editor().options.tab_width, 3);
+    keys(&mut app, "gcc");
+    assert_eq!(text(&app), "# x");
 }

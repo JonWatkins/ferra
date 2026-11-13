@@ -74,16 +74,10 @@ const MARKDOWN_INJECTIONS: &str = r#"
   (#set! injection.include-children))
 "#;
 
-pub const LANGUAGES: &[LanguageDef] = &[
-    LanguageDef {
-        name: "rust",
-        grammar: Grammar::BuiltIn(|| tree_sitter_rust::LANGUAGE.into()),
-        highlights: &[tree_sitter_rust::HIGHLIGHTS_QUERY],
-        // Macro calls' and `macro_rules!` bodies are highlighted as Rust.
-        injections: tree_sitter_rust::INJECTIONS_QUERY,
-        locals: "",
-        indents: "",
-    },
+/// The languages built into ferra: few, so it highlights the files it's
+/// most often used on (and its own config) with no plugins at all. The
+/// rest are language packs.
+const CORE: &[LanguageDef] = &[
     LanguageDef {
         name: "toml",
         grammar: Grammar::BuiltIn(|| tree_sitter_toml_ng::LANGUAGE.into()),
@@ -97,6 +91,58 @@ pub const LANGUAGES: &[LanguageDef] = &[
         grammar: Grammar::BuiltIn(|| tree_sitter_json::LANGUAGE.into()),
         highlights: &[tree_sitter_json::HIGHLIGHTS_QUERY],
         injections: "",
+        locals: "",
+        indents: "",
+    },
+    LanguageDef {
+        name: "bash",
+        grammar: Grammar::BuiltIn(|| tree_sitter_bash::LANGUAGE.into()),
+        highlights: &[tree_sitter_bash::HIGHLIGHT_QUERY],
+        injections: "",
+        locals: "",
+        indents: "",
+    },
+    LanguageDef {
+        // Block structure only (headings, lists, code fences, quotes):
+        // emphasis and links are a second grammar reached by injection,
+        // which is off for now.
+        name: "markdown",
+        grammar: Grammar::BuiltIn(|| tree_sitter_md::LANGUAGE.into()),
+        highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
+        injections: MARKDOWN_INJECTIONS,
+        locals: "",
+        indents: "",
+    },
+    LanguageDef {
+        // Markdown's inline syntax (emphasis, links, code spans): a second
+        // grammar the block grammar injects into each paragraph.
+        name: "markdown_inline",
+        grammar: Grammar::BuiltIn(|| tree_sitter_md::INLINE_LANGUAGE.into()),
+        highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_INLINE],
+        injections: tree_sitter_md::INJECTION_QUERY_INLINE,
+        locals: "",
+        indents: "",
+    },
+    LanguageDef {
+        name: "yaml",
+        grammar: Grammar::BuiltIn(|| tree_sitter_yaml::LANGUAGE.into()),
+        highlights: &[tree_sitter_yaml::HIGHLIGHTS_QUERY],
+        injections: "",
+        locals: "",
+        indents: "",
+    },
+];
+
+/// Languages that were built in and are language packs now. ferra's own
+/// tests still use them (the `test-languages` feature).
+#[cfg(feature = "test-languages")]
+const MOVED: &[LanguageDef] = &[
+    LanguageDef {
+        name: "rust",
+        grammar: Grammar::BuiltIn(|| tree_sitter_rust::LANGUAGE.into()),
+        highlights: &[tree_sitter_rust::HIGHLIGHTS_QUERY],
+        // Macro calls' and `macro_rules!` bodies are highlighted as Rust.
+        injections: tree_sitter_rust::INJECTIONS_QUERY,
         locals: "",
         indents: "",
     },
@@ -170,43 +216,6 @@ pub const LANGUAGES: &[LanguageDef] = &[
         indents: "",
     },
     LanguageDef {
-        name: "bash",
-        grammar: Grammar::BuiltIn(|| tree_sitter_bash::LANGUAGE.into()),
-        highlights: &[tree_sitter_bash::HIGHLIGHT_QUERY],
-        injections: "",
-        locals: "",
-        indents: "",
-    },
-    LanguageDef {
-        // Block structure only (headings, lists, code fences, quotes):
-        // emphasis and links are a second grammar reached by injection,
-        // which is off for now.
-        name: "markdown",
-        grammar: Grammar::BuiltIn(|| tree_sitter_md::LANGUAGE.into()),
-        highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
-        injections: MARKDOWN_INJECTIONS,
-        locals: "",
-        indents: "",
-    },
-    LanguageDef {
-        // Markdown's inline syntax (emphasis, links, code spans): a second
-        // grammar the block grammar injects into each paragraph.
-        name: "markdown_inline",
-        grammar: Grammar::BuiltIn(|| tree_sitter_md::INLINE_LANGUAGE.into()),
-        highlights: &[tree_sitter_md::HIGHLIGHT_QUERY_INLINE],
-        injections: tree_sitter_md::INJECTION_QUERY_INLINE,
-        locals: "",
-        indents: "",
-    },
-    LanguageDef {
-        name: "yaml",
-        grammar: Grammar::BuiltIn(|| tree_sitter_yaml::LANGUAGE.into()),
-        highlights: &[tree_sitter_yaml::HIGHLIGHTS_QUERY],
-        injections: "",
-        locals: "",
-        indents: "",
-    },
-    LanguageDef {
         name: "html",
         grammar: Grammar::BuiltIn(|| tree_sitter_html::LANGUAGE.into()),
         highlights: &[tree_sitter_html::HIGHLIGHTS_QUERY],
@@ -223,6 +232,15 @@ pub const LANGUAGES: &[LanguageDef] = &[
         indents: "",
     },
 ];
+
+/// The built-in languages (with the moved ones when testing).
+pub static LANGUAGES: std::sync::LazyLock<Vec<&'static LanguageDef>> =
+    std::sync::LazyLock::new(|| {
+        let languages = CORE.iter();
+        #[cfg(feature = "test-languages")]
+        let languages = languages.chain(MOVED.iter());
+        languages.collect()
+    });
 
 /// Languages only ever reached by injection from another one, so they have
 /// no `[languages]` entry.
@@ -255,6 +273,7 @@ pub fn count() -> usize {
 pub fn get(index: usize) -> Option<&'static LanguageDef> {
     LANGUAGES
         .get(index)
+        .copied()
         .or_else(|| added().get(index - LANGUAGES.len()).copied())
 }
 

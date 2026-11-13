@@ -36,6 +36,7 @@ use super::languages::LANGUAGES;
 use crate::core::Buffer;
 use crate::core::columns::display_width;
 
+#[cfg(feature = "test-languages")]
 const RUST: &str = r#"
 [
   (block) (declaration_list) (field_declaration_list) (enum_variant_list)
@@ -59,6 +60,7 @@ const TOML: &str = r#"
 "#;
 
 /// JavaScript, and the base of TypeScript's.
+#[cfg(feature = "test-languages")]
 const JAVASCRIPT: &str = r#"
 [
   (statement_block) (class_body) (object) (array) (arguments)
@@ -70,15 +72,18 @@ const JAVASCRIPT: &str = r#"
 "#;
 
 /// JSX, in JavaScript and TSX.
+#[cfg(feature = "test-languages")]
 const JSX: &str = r#"
 [(jsx_element) (jsx_opening_element) (jsx_self_closing_element)] @indent
 [(jsx_closing_element) ">" "/>"] @outdent
 "#;
 
+#[cfg(feature = "test-languages")]
 const TYPESCRIPT_EXTRA: &str = r#"
 [(interface_body) (enum_body) (object_type) (type_arguments) (type_parameters)] @indent
 "#;
 
+#[cfg(feature = "test-languages")]
 const GO: &str = r#"
 [
   (block) (literal_value) (argument_list) (parameter_list)
@@ -90,6 +95,7 @@ const GO: &str = r#"
 "#;
 
 /// C, and the base of C++'s.
+#[cfg(feature = "test-languages")]
 const C: &str = r#"
 [
   (compound_statement) (field_declaration_list) (enumerator_list)
@@ -99,6 +105,7 @@ const C: &str = r#"
 ["}" ")" "]"] @outdent
 "#;
 
+#[cfg(feature = "test-languages")]
 const CPP_EXTRA: &str = r#"
 [(template_parameter_list) (template_argument_list) (lambda_expression)] @indent
 "#;
@@ -111,11 +118,13 @@ const BASH: &str = r#"
 ["}" ")" "fi" "done" "esac" "else" "elif" "then" (elif_clause) (else_clause)] @outdent
 "#;
 
+#[cfg(feature = "test-languages")]
 const HTML: &str = r#"
 [(element) (start_tag) (self_closing_tag)] @indent
 [(end_tag) ">" "/>"] @outdent
 "#;
 
+#[cfg(feature = "test-languages")]
 const CSS: &str = r#"
 [(block) (keyframe_block_list) (arguments)] @indent
 ["}" ")"] @outdent
@@ -166,17 +175,26 @@ pub fn closes_tags(language: &str) -> bool {
 /// The rules for a language, by name: its query sources, joined.
 fn rules_source(language: &str) -> Option<String> {
     Some(match language {
+        #[cfg(feature = "test-languages")]
         "rust" => RUST.into(),
         "json" => JSON.into(),
         "toml" => TOML.into(),
+        #[cfg(feature = "test-languages")]
         "javascript" => format!("{JAVASCRIPT}\n{JSX}"),
+        #[cfg(feature = "test-languages")]
         "typescript" => format!("{JAVASCRIPT}\n{TYPESCRIPT_EXTRA}"),
+        #[cfg(feature = "test-languages")]
         "tsx" => format!("{JAVASCRIPT}\n{TYPESCRIPT_EXTRA}\n{JSX}"),
+        #[cfg(feature = "test-languages")]
         "go" => GO.into(),
+        #[cfg(feature = "test-languages")]
         "c" => C.into(),
+        #[cfg(feature = "test-languages")]
         "cpp" => format!("{C}\n{CPP_EXTRA}"),
         "bash" => BASH.into(),
+        #[cfg(feature = "test-languages")]
         "html" => HTML.into(),
+        #[cfg(feature = "test-languages")]
         "css" => CSS.into(),
         _ => return None,
     })
@@ -811,7 +829,7 @@ done",
 
     #[test]
     fn every_languages_rules_compile() {
-        for def in LANGUAGES {
+        for def in LANGUAGES.iter() {
             if let Some(source) = rules_source(def.name) {
                 Query::new(&def.grammar(), &source).unwrap_or_else(|e| panic!("{}: {e}", def.name));
             }

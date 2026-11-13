@@ -514,11 +514,22 @@ merging, or before `merge --abort` while a merge is going on.
 `syntax/` wraps tree-sitter:
 
 - `languages.rs` lists each built-in language by name: its grammar and
-  queries. `indent.rs` holds the indentation rules (see
-  [Indentation](#indentation)). A language built on another (TypeScript on JavaScript, C++ on C)
-  lists its own highlight query first and the base one after, joined, so its
-  patterns win. Adding a language is one entry, its grammar crate, and a
-  `[languages.name]` table in the default config.
+  queries. Only a core is built in (Markdown and its inline grammar, TOML,
+  JSON, YAML, Bash): ferra's own files and the ones met everywhere. Every
+  other language is a language pack (see [Plugin packages](#plugin-packages)),
+  which keeps the binary small: moving Rust, Python, JavaScript,
+  TypeScript/TSX, Go, C, C++, HTML and CSS out took the release binary
+  from 21 MB to 12 MB. `indent.rs` holds the core's indentation rules (see
+  [Indentation](#indentation)). A language built on another lists its own
+  highlight query first and the base one after, joined, so its patterns
+  win (the packs do the same in their `highlights.scm`).
+- The moved languages are still ferra's test languages: the
+  `test-languages` cargo feature compiles their grammars, rules
+  (`indent.rs`) and `[languages]` entries (`config/test_languages.toml`)
+  back in, and ferra's dev-dependency on itself turns it on for tests,
+  so tests can use Rust, JavaScript and the rest without installing packs.
+  The packs are the same grammar versions, queries and rules, so what's
+  tested is what users get.
 - Which file is in which language is config, not code:
   `config::Languages` (the `[languages]` table, shaped like Helix's
   `languages.toml`) matches the exact file name, then the extension, then
@@ -1495,9 +1506,12 @@ whose action is `plugin_install <repo>`, so choosing goes through the same
 confirm popup.
 
 A manifest's `[languages.<name>]` tables are `config::FileType`s.
-`App::load_package` adds them with `Languages::add` (which refuses a name
-already known and checks per-language options as the config does) before
-running the plugin's Lua, then refreshes options; since a buffer's
+`App::load_package` adds them with `Languages::add`, which refuses a name
+from ferra's default config, lays the pack's settings under the user's
+config where that already has the language (field by field: the config
+wins, so `[languages.rust] options = ...` in config.toml just works), and
+checks per-language options as the config does. That happens before
+the plugin's Lua runs, and options are refreshed after; since a buffer's
 language is detected when asked (`Editor::language_of`) and the language
 servers are matched to open buffers on every update, open files take the
 new language at once. `main` is optional: a pack with languages needs no
@@ -2168,9 +2182,6 @@ not. The answer is dropped unless the editor is still where it was asked
   cost), so they get no highlighting and heuristic indentation; and
   combined injections (JavaScript's `css\`...\``) only gather the matches
   in the rows being drawn.
-- Loading grammars and queries at runtime, Helix-style, instead of
-  compiling them in (each adds to the binary: 15 languages make it about
-  17 MB in release, up from 8 MB with 5).
 - `.` and macros replay keys without timing, so a short binding that ran
   because the key timeout passed (`g` alongside `gg`) replays as waiting
   for the longer one. Text typed by a timeout in insert mode replays fine.

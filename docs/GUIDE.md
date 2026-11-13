@@ -694,9 +694,15 @@ to a line.
 
 ## Syntax highlighting
 
-These languages are highlighted with tree-sitter, out of the box: Rust,
-Python, JavaScript (with JSX), TypeScript, TSX, Go, C, C++, Bash, TOML,
-JSON, YAML, HTML, CSS and Markdown. The status line shows the language.
+Markdown, TOML, JSON, YAML and Bash are highlighted with tree-sitter out
+of the box. Every other language is a language pack from the [plugin
+directory](https://github.com/JonWatkins/ferra-plugins): Rust, Python,
+JavaScript (with JSX), TypeScript and TSX, Go, C, C++, HTML, CSS, Ruby,
+Java, PHP, Elixir, Lua, Zig, Nix and Dockerfile so far. Open a file of one
+of those and ferra offers its pack (`y` installs it, see [Installing
+plugins](#installing-plugins)); or `:plugin_install rust`. A pack brings
+the language's highlighting, indentation, comments and language server
+settings. The status line shows the language.
 
 Languages inside other languages are highlighted too: Markdown's bold,
 italics, links and code spans, fenced code blocks in their own language
@@ -752,7 +758,9 @@ to show and go to what the cursor is on. It
 doesn't install them: each language names its server in the `[languages]`
 table, and ferra starts it when you open a file in that language, in the
 project's root (the nearest folder with one of the server's `roots`, such
-as `Cargo.toml`, else the one with `.git`).
+as `Cargo.toml`, else the one with `.git`). The servers the built-in
+languages and the language packs use (most of these languages are packs:
+see [Syntax highlighting](#syntax-highlighting)):
 
 | Language | Server | Install |
 |----------|--------|---------|

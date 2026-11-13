@@ -21,24 +21,40 @@ similar = "3.2.1"
 toml = "1.2.0"
 tree-sitter = "0.27.1"
 tree-sitter-bash = "0.25.1"
-tree-sitter-c = "0.24.2"
-tree-sitter-cpp = "0.23.4"
-tree-sitter-css = "0.25.0"
-tree-sitter-go = "0.25.0"
-tree-sitter-html = "0.23.2"
-tree-sitter-javascript = "0.25.0"
+tree-sitter-c = { version = "0.24.2", optional = true }
+tree-sitter-cpp = { version = "0.23.4", optional = true }
+tree-sitter-css = { version = "0.25.0", optional = true }
+tree-sitter-go = { version = "0.25.0", optional = true }
+tree-sitter-html = { version = "0.23.2", optional = true }
+tree-sitter-javascript = { version = "0.25.0", optional = true }
 tree-sitter-json = "0.24.8"
 tree-sitter-language = "0.1.9"
 tree-sitter-md = "0.5.4"
-tree-sitter-python = "0.25.0"
-tree-sitter-rust = "0.24.2"
+tree-sitter-python = { version = "0.25.0", optional = true }
+tree-sitter-rust = { version = "0.24.2", optional = true }
 tree-sitter-toml-ng = "0.7.0"
-tree-sitter-typescript = "0.23.2"
+tree-sitter-typescript = { version = "0.23.2", optional = true }
 tree-sitter-yaml = "0.7.2"
 unicode-width = "0.2.3"
 vt100 = "0.18.1"
 
+[features]
+# The grammars that used to be built in, now language packs: ferra's own
+# tests still use them (turned on for tests by the dev-dependency below).
+test-languages = [
+    "dep:tree-sitter-rust",
+    "dep:tree-sitter-python",
+    "dep:tree-sitter-javascript",
+    "dep:tree-sitter-typescript",
+    "dep:tree-sitter-go",
+    "dep:tree-sitter-c",
+    "dep:tree-sitter-cpp",
+    "dep:tree-sitter-html",
+    "dep:tree-sitter-css",
+]
+
 [dev-dependencies]
+ferra = { path = ".", features = ["test-languages"] }
 tempfile = "3.27.0"
 # The reference the highlighter is checked against.
 tree-sitter-highlight = "0.27.1"

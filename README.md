@@ -20,8 +20,10 @@
 - **Language servers:** diagnostics, completion, hover, go to definition
   and references, rename, code actions, formatting, signature help,
   symbols and inlay hints.
-- **Syntax highlighting and indentation** with tree-sitter, for Rust,
-  Python, JavaScript and TypeScript, Go, C and C++, and more.
+- **Syntax highlighting and indentation** with tree-sitter. Markdown,
+  TOML, JSON, YAML and Bash are built in; Rust, Python, JavaScript and
+  TypeScript, Go, C and C++, HTML, CSS, Ruby, Java, Lua, Zig and more are
+  language packs, offered when you open one of their files.
 - **An interface like VS Code's:** a sidebar with the file tree, a find and
   replace box, a terminal panel, pickers for files and commands, split
   windows, and the mouse.

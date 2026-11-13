@@ -175,19 +175,26 @@ impl Languages {
         })
     }
 
-    /// Adds a plugin's language. Languages already known (built in or in
-    /// the config) can't be replaced: the config is where they change.
+    /// Adds a plugin's language. One of ferra's own (in its default
+    /// config) can't be replaced: the config is where they change. One the
+    /// user's config already has (to set its options, say) takes the
+    /// plugin's settings under the config's: the config wins, field by
+    /// field.
     pub fn add(
         &mut self,
         name: &str,
         file_type: FileType,
         editor: &super::EditorOptions,
     ) -> Result<(), String> {
-        if self.0.contains_key(name) {
+        if is_default(name) {
             return Err(format!(
                 "{name} is already a language (change it in config.toml's [languages.{name}])"
             ));
         }
+        let file_type = match self.0.get(name) {
+            Some(config) => under(file_type, config),
+            None => file_type,
+        };
         let one = Languages(BTreeMap::from([(name.to_string(), file_type)]));
         one.check_options(editor)?;
         self.0.extend(one.0);
@@ -197,6 +204,63 @@ impl Languages {
     /// Every configured language name.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.0.keys().map(String::as_str)
+    }
+}
+
+/// Whether `name` is one of the languages in ferra's default config.
+fn is_default(name: &str) -> bool {
+    static NAMES: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+        super::DEFAULT_CONFIG
+            .parse::<toml::Table>()
+            .ok()
+            .and_then(|t| {
+                t.get("languages")?
+                    .as_table()
+                    .map(|l| l.keys().cloned().collect())
+            })
+            .unwrap_or_default()
+    });
+    NAMES.iter().any(|n| n == name)
+}
+
+/// A plugin's `pack` settings with the user's `config` ones over them:
+/// each list, comment and server field the config sets wins; options merge.
+fn under(pack: FileType, config: &FileType) -> FileType {
+    let list = |config: &Vec<String>, pack: Vec<String>| {
+        if config.is_empty() {
+            pack
+        } else {
+            config.clone()
+        }
+    };
+    let mut options = pack.options;
+    options.extend(config.options.clone());
+    let language_server = match (pack.language_server, &config.language_server) {
+        (Some(mut server), Some(own)) => {
+            if !own.command.is_empty() {
+                server.command = own.command.clone();
+                server.args = own.args.clone();
+            }
+            if !own.roots.is_empty() {
+                server.roots = own.roots.clone();
+            }
+            if own.language_id.is_some() {
+                server.language_id = own.language_id.clone();
+            }
+            server.settings.extend(own.settings.clone());
+            server.enabled = own.enabled;
+            Some(server)
+        }
+        (pack, own) => own.clone().or(pack),
+    };
+    FileType {
+        extensions: list(&config.extensions, pack.extensions),
+        file_names: list(&config.file_names, pack.file_names),
+        shebangs: list(&config.shebangs, pack.shebangs),
+        comment: config.comment.clone().or(pack.comment),
+        block_comment: config.block_comment.clone().or(pack.block_comment),
+        options,
+        language_server,
     }
 }
 
@@ -287,5 +351,33 @@ mod tests {
         );
         assert_eq!(shebang_interpreter("#!"), None);
         assert_eq!(shebang_interpreter("bash"), None);
+    }
+
+    #[test]
+    fn a_pack_is_laid_under_the_config() {
+        let pack: FileType = toml::from_str(
+            r##"
+            extensions = ["zz"]
+            comment = "#"
+            options = { tab-width = 8, expand-tab = true }
+            language-server = { command = "zzls", args = ["--stdio"] }
+            "##,
+        )
+        .unwrap();
+        let config: FileType = toml::from_str(
+            r##"
+            options = { tab-width = 2 }
+            language-server = { enabled = false }
+            "##,
+        )
+        .unwrap();
+        let merged = under(pack, &config);
+        assert_eq!(merged.extensions, ["zz"]);
+        assert_eq!(merged.comment.as_deref(), Some("#"));
+        assert_eq!(merged.options["tab-width"].as_integer(), Some(2));
+        assert_eq!(merged.options["expand-tab"].as_bool(), Some(true));
+        let server = merged.language_server.unwrap();
+        assert_eq!((server.command.as_str(), server.enabled), ("zzls", false));
+        assert_eq!(server.args, ["--stdio"]);
     }
 }

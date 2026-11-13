@@ -175,8 +175,11 @@ replace = "underline"
 #   [languages.python]
 #   options = { tab-width = 4, text-width = 88 }
 #
-# A language without a built-in grammar (make, git-commit) isn't
-# highlighted, but is still recognised for comments and options.
+# Most languages come from language packs (:plugin_browse; opening a file of
+# a type ferra doesn't know offers its pack). Settings for them go here the
+# same way, and win over the pack's. A language without a grammar (make,
+# git-commit) isn't highlighted, but is still recognised for comments and
+# options.
 #
 # `language-server` is the language server for its files: a command found on
 # PATH, its arguments, and the files that mark a project's root (the nearest
@@ -184,10 +187,6 @@ replace = "underline"
 # for you: one that isn't found is reported once, and :lsp lists them all.
 # `settings` are the server's own settings, sent as it starts. Turn one off
 # with `language-server = { enabled = false }`.
-[languages.rust]
-extensions = ["rs"]
-comment = "//"
-language-server = { command = "rust-analyzer", roots = ["Cargo.toml"] }
 
 [languages.toml]
 extensions = ["toml"]
@@ -200,35 +199,6 @@ extensions = ["json", "jsonc"]
 file-names = [".prettierrc", ".eslintrc"]
 language-server = { command = "vscode-json-language-server", args = ["--stdio"], settings = { json = { validate = { enable = true } } } }
 
-[languages.python]
-extensions = ["py", "pyi"]
-shebangs = ["python"]
-comment = "#"
-language-server = { command = "pyright-langserver", args = ["--stdio"], roots = ["pyproject.toml", "setup.py", "requirements.txt"] }
-
-[languages.javascript]
-extensions = ["js", "mjs", "cjs", "jsx"]
-shebangs = ["node"]
-comment = "//"
-language-server = { command = "typescript-language-server", args = ["--stdio"], roots = ["package.json", "tsconfig.json", "jsconfig.json"] }
-
-[languages.typescript]
-extensions = ["ts", "mts", "cts"]
-shebangs = ["deno", "ts-node"]
-comment = "//"
-language-server = { command = "typescript-language-server", args = ["--stdio"], roots = ["package.json", "tsconfig.json"] }
-
-[languages.tsx]
-extensions = ["tsx"]
-comment = "//"
-language-server = { command = "typescript-language-server", args = ["--stdio"], roots = ["package.json", "tsconfig.json"], language-id = "typescriptreact" }
-
-[languages.go]
-extensions = ["go"]
-comment = "//"
-options = { expand-tab = false }
-language-server = { command = "gopls", roots = ["go.mod", "go.work"] }
-
 [languages.make]
 extensions = ["mk"]
 file-names = ["Makefile", "makefile", "GNUmakefile"]
@@ -240,16 +210,6 @@ options = { expand-tab = false }
 file-names = ["COMMIT_EDITMSG", "MERGE_MSG", "TAG_EDITMSG"]
 comment = "#"
 options = { text-width = 72, auto-wrap = "all" }
-
-[languages.c]
-extensions = ["c", "h"]
-comment = "//"
-language-server = { command = "clangd", roots = ["compile_commands.json", "CMakeLists.txt", ".clangd"] }
-
-[languages.cpp]
-extensions = ["cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++"]
-comment = "//"
-language-server = { command = "clangd", roots = ["compile_commands.json", "CMakeLists.txt", ".clangd"] }
 
 [languages.bash]
 extensions = ["sh", "bash", "zsh"]
@@ -268,16 +228,6 @@ extensions = ["yaml", "yml"]
 file-names = [".clang-format"]
 comment = "#"
 language-server = { command = "yaml-language-server", args = ["--stdio"] }
-
-[languages.html]
-extensions = ["html", "htm"]
-block-comment = ["<!--", "-->"]
-language-server = { command = "vscode-html-language-server", args = ["--stdio"] }
-
-[languages.css]
-extensions = ["css"]
-block-comment = ["/*", "*/"]
-language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 
 # Theme styles are keyed by scope. Lookups fall back to the parent scope, so
 # "ui.linenr.selected" falls back to "ui.linenr".

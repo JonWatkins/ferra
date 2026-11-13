@@ -1,0 +1,57 @@
+# The languages that were built into ferra and are language packs now
+# (ferra-plugins/languages/<name>), as they were. ferra's tests use them
+# (the `test-languages` feature); they're not in a normal build.
+
+[languages.rust]
+extensions = ["rs"]
+comment = "//"
+language-server = { command = "rust-analyzer", roots = ["Cargo.toml"] }
+
+[languages.python]
+extensions = ["py", "pyi"]
+shebangs = ["python"]
+comment = "#"
+language-server = { command = "pyright-langserver", args = ["--stdio"], roots = ["pyproject.toml", "setup.py", "requirements.txt"] }
+
+[languages.javascript]
+extensions = ["js", "mjs", "cjs", "jsx"]
+shebangs = ["node"]
+comment = "//"
+language-server = { command = "typescript-language-server", args = ["--stdio"], roots = ["package.json", "tsconfig.json", "jsconfig.json"] }
+
+[languages.typescript]
+extensions = ["ts", "mts", "cts"]
+shebangs = ["deno", "ts-node"]
+comment = "//"
+language-server = { command = "typescript-language-server", args = ["--stdio"], roots = ["package.json", "tsconfig.json"] }
+
+[languages.tsx]
+extensions = ["tsx"]
+comment = "//"
+language-server = { command = "typescript-language-server", args = ["--stdio"], roots = ["package.json", "tsconfig.json"], language-id = "typescriptreact" }
+
+[languages.go]
+extensions = ["go"]
+comment = "//"
+options = { expand-tab = false }
+language-server = { command = "gopls", roots = ["go.mod", "go.work"] }
+
+[languages.c]
+extensions = ["c", "h"]
+comment = "//"
+language-server = { command = "clangd", roots = ["compile_commands.json", "CMakeLists.txt", ".clangd"] }
+
+[languages.cpp]
+extensions = ["cpp", "cc", "cxx", "c++", "hpp", "hh", "hxx", "h++"]
+comment = "//"
+language-server = { command = "clangd", roots = ["compile_commands.json", "CMakeLists.txt", ".clangd"] }
+
+[languages.html]
+extensions = ["html", "htm"]
+block-comment = ["<!--", "-->"]
+language-server = { command = "vscode-html-language-server", args = ["--stdio"] }
+
+[languages.css]
+extensions = ["css"]
+block-comment = ["/*", "*/"]
+language-server = { command = "vscode-css-language-server", args = ["--stdio"] }

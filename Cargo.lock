@@ -596,6 +596,7 @@ dependencies = [
  "color-eyre",
  "crossterm",
  "encoding_rs",
+ "ferra",
  "ignore",
  "libloading",
  "mlua",
