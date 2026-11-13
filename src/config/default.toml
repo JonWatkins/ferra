@@ -38,9 +38,14 @@ wrap-indent = true
 wrap-marker = "↪ "
 # Highlight the line the cursor is on.
 cursorline = true
+# "global": one status bar along the bottom of the screen, as VS Code's.
 # "windows": a status line under every window, the active one highlighted
-# (Neovim's default). "global": one status line at the bottom.
-statusline = "windows"
+# (Neovim's default).
+statusline = "global"
+# How the status line looks: "vscode" (a coloured bar: Ln 12, Col 4,
+# Spaces: 4, UTF-8, the language's name, errors and warnings always shown)
+# or "classic" (12:4, only what's unusual).
+statusline-style = "vscode"
 # Minimum lines kept visible above/below the cursor when scrolling.
 scroll-off = 5
 # Show git changes: bars in the gutter for added, changed and removed lines
@@ -131,9 +136,9 @@ watch-files = true
 # language server is busy with: "rust-analyzer: Indexing 45%"),
 # pending-keys, recording, separator, spacer.
 [editor.statusline-layout]
-left = ["mode", "file-name", "modified"]
+left = ["mode", "git", "diagnostics", "file-name", "modified"]
 center = []
-right = ["recording", "pending-keys", "lsp-progress", "diagnostics", "git", "file-encoding", "file-type", "position"]
+right = ["recording", "pending-keys", "lsp-progress", "position", "indent", "file-encoding", "file-line-ending", "file-type"]
 
 [editor.search]
 # "smart" (case-insensitive unless the pattern has a capital), "sensitive"
@@ -305,6 +310,9 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.gutter.added" = "#9ece6a"
 "ui.gutter.changed" = "#7aa2f7"
 "ui.gutter.removed" = "#f7768e"
+# The status bar (statusline-style = "vscode"): its colour, and the text
+# on it.
+"ui.statusbar" = { fg = "#e6e9f5", bg = "#3d59a1" }
 # The activity bar down the left: its icons, the shown view's, and the mark
 # beside that.
 "ui.activitybar" = { fg = "#6b7280", bg = "#16181d" }

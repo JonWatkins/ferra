@@ -5,8 +5,9 @@ use ferra::{App, Config, input::parse_keys};
 use ratatui::{Terminal, backend::TestBackend};
 
 /// The screen most tests check positions on: the editor without the
-/// activity bar down the left (its own tests turn it on). Tests of what's
-/// in the windows needn't move with the chrome around them.
+/// activity bar down the left, with the classic status line under each
+/// window (their own tests check the new chrome). Tests of what's in the
+/// windows needn't move with the chrome around them.
 fn with_classic_chrome(toml: &str) -> String {
     let mut table: toml::Table = toml.parse().expect("test config should be valid TOML");
     let editor = table
@@ -17,6 +18,23 @@ fn with_classic_chrome(toml: &str) -> String {
     editor
         .entry("activity-bar")
         .or_insert(toml::Value::Boolean(false));
+    // The classic status line: one per window, worded tersely, laid out as
+    // it was.
+    for (key, value) in [("statusline", "windows"), ("statusline-style", "classic")] {
+        editor
+            .entry(key)
+            .or_insert(toml::Value::String(value.into()));
+    }
+    if !editor.contains_key("statusline-layout") {
+        let layout: toml::Table = r#"
+            left = ["mode", "file-name", "modified"]
+            center = []
+            right = ["recording", "pending-keys", "lsp-progress", "diagnostics", "git", "file-encoding", "file-type", "position"]
+        "#
+        .parse()
+        .expect("valid");
+        editor.insert("statusline-layout".into(), toml::Value::Table(layout));
+    }
     toml::to_string(&table).expect("serializes")
 }
 

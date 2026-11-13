@@ -13,6 +13,7 @@ pub use languages::{CommentTokens, FileType, Languages, ServerConfig};
 pub use options::{
     AutoWrap, CursorShape, CursorShapes, EditorOptions, FallbackEncoding, FilePickerOptions, Icons,
     LineNumbers, SearchCase, SearchOptions, StatusElement, StatuslineLayout, StatuslineMode,
+    StatuslineStyle,
 };
 pub use theme::{StyleSpec, Theme};
 

@@ -641,15 +641,30 @@ Each window has its own cursor and scroll position, so two windows can show
 different parts of the same file. Edits show up in every window on that
 buffer.
 
-Like Neovim, every window has its own status line: the active one shows
-the mode and is highlighted, the others show their file and cursor
-position, dimmed. Between stacked windows the status line takes the place
-of the separator, so it costs no space. `statusline = "global"` under
-`[editor]` gives one status line for the whole screen instead (Neovim's
-`laststatus=3`).
+Along the bottom of the screen is the status bar, as in VS Code: one
+coloured bar the full width, under the activity bar and the sidebar too.
+On the left, the mode, the git branch, the file's errors and warnings and
+its name (`●` when it has unsaved changes); on the right, the cursor's
+line and column, the indentation, the encoding, the line endings and the
+language:
 
-What the active status line shows is up to you, as in Helix: list elements
-for its left, center and right.
+```text
+ NORMAL  ⎇ main  ⊗ 0  ⚠ 1  src/main.rs ●    Ln 12, Col 5  Spaces: 4  UTF-8  LF  Rust
+```
+
+With `icons = "nerd"` its icons are VS Code's own. Its colour is the
+`ui.statusbar` scope.
+
+`statusline-style = "classic"` words it tersely instead (`12:5`, the
+encoding only when it isn't UTF-8, errors as `E1 W2` only when there are
+some), in the `ui.statusline.*` colours. And `statusline = "windows"` gives
+every window its own status line, as Neovim does: the active one shows the
+mode and is highlighted, the others show their file and cursor position,
+dimmed. Between stacked windows the status line takes the place of the
+separator, so it costs no space.
+
+What the status bar (or the active window's status line) shows is up to
+you, as in Helix: list elements for its left, center and right.
 
 ```toml
 [editor.statusline-layout]
@@ -660,8 +675,10 @@ right = ["file-line-ending", "separator", "position-percentage", "position"]
 
 Elements: `mode`, `file-name` (shortened from the left to fit),
 `file-base-name`, `modified`, `position`, `position-percentage`,
-`total-lines`, `file-type`, `file-encoding` (only when not plain UTF-8),
-`file-line-ending`, `indent` (`2 spaces`, `tabs`), `pending-keys`,
+`total-lines`, `file-type`, `file-encoding` (in the classic style, only
+when not plain UTF-8), `file-line-ending`, `indent` (`Spaces: 2`, or
+`2 spaces` in the classic style), `diagnostics`, `git`, `lsp-progress`,
+`pending-keys`,
 `recording`, `separator`, `spacer`, and `plugin:<name>` for what a Lua
 plugin's `editor.status` function returns (see [Lua plugins](#lua-plugins)).
 Elements with nothing to show take no space.
@@ -927,7 +944,7 @@ text-width = 72             # the width gq and gw reflow to
 auto-wrap = "comments"      # break lines typed past text-width: "off", "comments", "all"
 line-numbers = "absolute"   # "absolute" | "relative" | "none"
 scroll-off = 8
-statusline = "global"       # one status line, not one per window
+statusline = "windows"      # a status line under each window, not one bar
 key-timeout = 500           # ms to wait for the rest of a sequence (j of jk)
 
 [editor.cursor-shape]

@@ -35,6 +35,8 @@ pub struct EditorOptions {
     pub cursorline: bool,
     /// A status line under every window, or one for the whole screen.
     pub statusline: StatuslineMode,
+    /// How the status line looks.
+    pub statusline_style: StatuslineStyle,
     /// What the active window's status line shows, and where.
     pub statusline_layout: StatuslineLayout,
     pub scroll_off: usize,
@@ -301,6 +303,17 @@ pub enum StatuslineMode {
     Windows,
     /// One line at the bottom for the active window (`laststatus=3`).
     Global,
+}
+
+/// How the status line looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatuslineStyle {
+    /// A coloured bar with VS Code's wording (`Ln 12, Col 4`, `Spaces: 4`,
+    /// `UTF-8`, `Rust`), errors and warnings always shown.
+    Vscode,
+    /// `12:4`, and only what's unusual (an encoding that isn't UTF-8).
+    Classic,
 }
 
 /// What icons are drawn with.

@@ -12,7 +12,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::text::truncate_start;
-use crate::config::{StatusElement, Theme};
+use crate::config::{Icons, StatusElement, StatuslineStyle, Theme};
 use crate::core::{LineEnding, Position};
 use crate::editor::{Document, Editor, Mode, SelectionKind};
 
@@ -94,7 +94,12 @@ struct Active<'a> {
 
 impl Active<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        buf.set_style(area, self.theme.get("ui.statusline"));
+        let bar = if self.vscode() {
+            "ui.statusbar"
+        } else {
+            "ui.statusline"
+        };
+        buf.set_style(area, self.theme.get(bar));
         let layout = &self.editor.options.statusline_layout;
         let sections = [&layout.left, &layout.center, &layout.right];
 
@@ -137,13 +142,38 @@ impl Active<'_> {
         }
     }
 
+    fn vscode(&self) -> bool {
+        self.editor.options.statusline_style == StatuslineStyle::Vscode
+    }
+
+    /// An icon: the Nerd Font one (a VS Code codicon) with `icons =
+    /// "nerd"`, else the plain one.
+    fn icon(&self, plain: &'static str, codicon: &'static str) -> &'static str {
+        if self.editor.options.icons == Icons::Nerd {
+            codicon
+        } else {
+            plain
+        }
+    }
+
     /// One element's text and style. `name_budget` is the room for the
     /// file name's text.
     fn element(&self, element: &StatusElement, name_budget: usize) -> Span<'static> {
         let editor = self.editor;
         let document = &editor.document;
         let cursor = document.cursor();
-        let styled = |text: String, scope: &str| Span::styled(text, self.theme.get(scope));
+        // On VS Code's bar everything is the bar's colours (but the mode).
+        let vscode = self.vscode();
+        let styled = |text: String, scope: &str| {
+            if vscode {
+                Span::raw(text)
+            } else {
+                Span::styled(text, self.theme.get(scope))
+            }
+        };
+        if vscode && let Some(span) = self.vscode_element(element) {
+            return span;
+        }
         match element {
             StatusElement::Mode => {
                 let mode = editor.mode();
@@ -161,7 +191,10 @@ impl Active<'_> {
                 } else {
                     mode.id()
                 };
-                styled(format!(" {label} "), &format!("ui.statusline.{scope}"))
+                Span::styled(
+                    format!(" {label} "),
+                    self.theme.get(&format!("ui.statusline.{scope}")),
+                )
             }
             StatusElement::FileName => Span::raw(format!(
                 " {} ",
@@ -297,6 +330,105 @@ impl Active<'_> {
             StatusElement::Spacer => Span::raw(" "),
         }
     }
+
+    /// The elements VS Code's bar words its own way; `None` for the rest.
+    fn vscode_element(&self, element: &StatusElement) -> Option<Span<'static>> {
+        let editor = self.editor;
+        let document = &editor.document;
+        let cursor = document.cursor();
+        let text = match element {
+            StatusElement::Position => {
+                format!(" Ln {}, Col {} ", cursor.row + 1, cursor.col + 1)
+            }
+            StatusElement::Indent => match editor.indent_style() {
+                crate::core::IndentUnit::Spaces(n) => format!(" Spaces: {n} "),
+                crate::core::IndentUnit::Tabs => {
+                    format!(" Tab Size: {} ", editor.options.tab_width)
+                }
+            },
+            StatusElement::FileEncoding => {
+                let encoding = document.format().encoding;
+                if encoding.is_plain_utf8() {
+                    " UTF-8 ".to_string()
+                } else {
+                    format!(" {} ", encoding.name())
+                }
+            }
+            StatusElement::FileLineEnding => match document.format().line_ending {
+                LineEnding::Lf => " LF ".to_string(),
+                LineEnding::Crlf => " CRLF ".to_string(),
+            },
+            StatusElement::FileType => match editor.language_of(document) {
+                Some(name) => format!(" {} ", display_name(name)),
+                None => " Plain Text ".to_string(),
+            },
+            StatusElement::Modified => {
+                if document.is_modified() {
+                    "● ".to_string()
+                } else {
+                    String::new()
+                }
+            }
+            StatusElement::Diagnostics => {
+                use crate::editor::diagnostics::Severity;
+                let all = editor.diagnostics(document.id());
+                let count = |s: Severity| all.iter().filter(|d| d.severity == s).count();
+                format!(
+                    " {} {}  {} {} ",
+                    self.icon("⊗", "\u{ea87}"),
+                    count(Severity::Error),
+                    self.icon("⚠", "\u{ea6c}"),
+                    count(Severity::Warning)
+                )
+            }
+            StatusElement::Git => {
+                let branch = editor.git_branch()?;
+                let mut text = format!(" {} {branch}", self.icon("⎇", "\u{ea68}"));
+                if let Some((ahead, behind)) = editor.git_ahead_behind()
+                    && ahead + behind > 0
+                {
+                    text.push_str(&format!(" {behind}↓ {ahead}↑"));
+                }
+                if editor.git_merging().is_some() {
+                    text.push_str(" (merging)");
+                }
+                let conflicts = editor.git_conflicts(editor.document.id()).len();
+                if conflicts > 0 {
+                    text.push_str(&format!(" !{conflicts}"));
+                }
+                text.push(' ');
+                text
+            }
+            _ => return None,
+        };
+        Some(Span::raw(text))
+    }
+}
+
+/// How VS Code names a language (`TypeScript`, `C++`), from ferra's name.
+fn display_name(language: &str) -> String {
+    match language {
+        "javascript" => "JavaScript".into(),
+        "typescript" => "TypeScript".into(),
+        "tsx" => "TypeScript JSX".into(),
+        "cpp" => "C++".into(),
+        "csharp" | "c-sharp" => "C#".into(),
+        "html" | "css" | "json" | "toml" | "yaml" | "php" | "sql" => language.to_uppercase(),
+        "markdown" => "Markdown".into(),
+        "git-commit" => "Git Commit Message".into(),
+        "make" => "Makefile".into(),
+        "bash" => "Shell Script".into(),
+        "dockerfile" => "Dockerfile".into(),
+        _ => {
+            let mut chars = language.chars();
+            chars.next().map_or_else(String::new, |c| {
+                c.to_uppercase()
+                    .chain(chars)
+                    .collect::<String>()
+                    .replace('-', " ")
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -304,6 +436,23 @@ mod tests {
     use super::*;
     use crate::core::Position;
     use crate::editor::{Document, Mode};
+
+    /// The classic style and layout these tests check.
+    fn classic_editor(mut editor: Editor) -> Editor {
+        editor.options.statusline_style = StatuslineStyle::Classic;
+        editor.options.statusline_layout = toml::Value::Table(
+            r#"
+            left = ["mode", "file-name", "modified"]
+            center = []
+            right = ["recording", "pending-keys", "lsp-progress", "diagnostics", "git", "file-encoding", "file-type", "position"]
+            "#
+            .parse()
+            .unwrap(),
+        )
+        .try_into()
+        .unwrap();
+        editor
+    }
 
     fn render(editor: &Editor, pending: &str) -> String {
         let area = Rect::new(0, 0, 40, 1);
@@ -314,7 +463,7 @@ mod tests {
 
     #[test]
     fn shows_mode_name_and_position() {
-        let mut editor = Editor::with_document(Document::with_text("abc\ndef"));
+        let mut editor = classic_editor(Editor::with_document(Document::with_text("abc\ndef")));
         editor.document.set_cursor(Position::new(1, 2));
         let text = render(&editor, "");
         assert!(text.starts_with(" NORMAL  [scratch]"), "{text:?}");
@@ -323,14 +472,14 @@ mod tests {
 
     #[test]
     fn shows_current_mode() {
-        let mut editor = Editor::default();
+        let mut editor = classic_editor(Editor::default());
         editor.set_mode(Mode::Insert);
         assert!(render(&editor, "").starts_with(" INSERT "));
     }
 
     #[test]
     fn shows_modified_marker() {
-        let mut editor = Editor::default();
+        let mut editor = classic_editor(Editor::default());
         assert!(!render(&editor, "").contains("[+]"));
         editor.document.insert_str("x");
         assert!(render(&editor, "").contains(" [scratch] [+] "));
@@ -341,7 +490,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("deeply/nested/directory/structure/file.rs");
         let (document, _) = Document::open(&path).unwrap();
-        let mut editor = Editor::with_document(document);
+        let mut editor = classic_editor(Editor::with_document(document));
         editor.document.insert_str("x");
 
         let text = render(&editor, "");
@@ -353,7 +502,7 @@ mod tests {
 
     #[test]
     fn shows_visual_and_visual_line() {
-        let mut editor = Editor::default();
+        let mut editor = classic_editor(Editor::default());
         editor.toggle_visual(SelectionKind::Char);
         assert!(render(&editor, "").starts_with(" VISUAL "));
         editor.toggle_visual(SelectionKind::Line);
@@ -362,21 +511,21 @@ mod tests {
 
     #[test]
     fn shows_search_label() {
-        let mut editor = Editor::default();
+        let mut editor = classic_editor(Editor::default());
         editor.open_search(true);
         assert!(render(&editor, "").starts_with(" SEARCH "));
     }
 
     #[test]
     fn shows_macro_recording() {
-        let mut editor = Editor::default();
+        let mut editor = classic_editor(Editor::default());
         editor.set_recording_macro(Some('q'));
         assert!(render(&editor, "").contains("recording @q"));
     }
 
     #[test]
     fn shows_pending_keys() {
-        let text = render(&Editor::default(), "3g");
+        let text = render(&classic_editor(Editor::default()), "3g");
         assert!(text.contains("3g"), "{text:?}");
     }
 
@@ -395,7 +544,7 @@ mod tests {
     #[test]
     fn a_custom_layout_shows_its_elements_in_order() {
         use StatusElement::*;
-        let mut editor = Editor::with_document(Document::with_text("a\nb\nc\nd"));
+        let mut editor = classic_editor(Editor::with_document(Document::with_text("a\nb\nc\nd")));
         editor.document.set_cursor(crate::core::Position::new(1, 0));
         editor.options.statusline_layout = layout(
             &[FileLineEnding, Separator, TotalLines],
@@ -410,7 +559,7 @@ mod tests {
     #[test]
     fn indent_shows_the_buffers_indent_style() {
         use StatusElement::*;
-        let mut editor = Editor::default();
+        let mut editor = classic_editor(Editor::default());
         editor.options.statusline_layout = layout(&[Indent], &[], &[]);
         assert!(render(&editor, "").starts_with(" 4 spaces "));
         editor
@@ -422,7 +571,7 @@ mod tests {
     #[test]
     fn the_center_is_centered_and_long_names_make_room_for_it() {
         use StatusElement::*;
-        let mut editor = Editor::default();
+        let mut editor = classic_editor(Editor::default());
         editor.options.statusline_layout = layout(&[Mode], &[FileBaseName], &[Position]);
         let text = render(&editor, "");
         let center = text.find("[scratch]").unwrap();
@@ -431,7 +580,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a/very/long/path/that/fills/the/line.rs");
         let (document, _) = Document::open(&path).unwrap();
-        let mut editor = Editor::with_document(document);
+        let mut editor = classic_editor(Editor::with_document(document));
         editor.options.statusline_layout = layout(&[FileName], &[Mode], &[Position]);
         let text = render(&editor, "");
         assert!(
@@ -442,7 +591,7 @@ mod tests {
 
     #[test]
     fn an_empty_layout_is_a_blank_line() {
-        let mut editor = Editor::default();
+        let mut editor = classic_editor(Editor::default());
         editor.options.statusline_layout = layout(&[], &[], &[]);
         assert_eq!(render(&editor, "").trim(), "");
     }

@@ -9,7 +9,7 @@ use ferra::App;
 use ferra::editor::Mode;
 
 const W: u16 = 60;
-const H: u16 = 16;
+const H: u16 = 20;
 
 fn click(app: &mut App, x: u16, y: u16) {
     for kind in [
