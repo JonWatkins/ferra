@@ -619,7 +619,11 @@ impl<'a> GitGuiView<'a> {
         if gui.blame.is_some() {
             return " j/k lines  ⏎ open the commit  H history  ⌃d/⌃u page  Esc back  q close";
         }
+        let merging = self.editor.git_merging().is_some();
         match (gui.panel, &gui.diff_of) {
+            (GitPanel::Files, _) if merging => {
+                " ⏎ open at the conflict  s stage when resolved  c commit the merge  M abort the merge  q close"
+            }
             (GitPanel::Files, _) => {
                 " s stage/unstage  ⏎ hunks  H history  a stage all  x discard  c commit  Tab panels  q close"
             }
@@ -633,7 +637,7 @@ impl<'a> GitGuiView<'a> {
                 " j/k commits  ⏎ into the diff  ⌃d/⌃u scroll  H/Esc whole log  q close"
             }
             (GitPanel::Branches, _) => {
-                " ⏎ switch  n new  d delete  f fetch  p pull  P push  Tab panels  q close"
+                " ⏎ switch  n new  M merge in  d delete  f fetch  p pull  P push  Tab panels  q close"
             }
             _ => " j/k move  ⌃d/⌃u scroll the diff  f fetch  p pull  P push  c commit  q close",
         }
@@ -693,7 +697,10 @@ impl Widget for GitGuiView<'_> {
         for (rect, panel) in panels {
             let focused = gui.panel == panel;
             let title = match panel {
-                GitPanel::Files => " [1] Files ".to_string(),
+                GitPanel::Files => match self.editor.git_merging() {
+                    Some(_) => " [1] Files (merging) ".to_string(),
+                    None => " [1] Files ".to_string(),
+                },
                 GitPanel::Branches => format!(" [2] Branches ({}) ", gui.branches.len()),
                 GitPanel::Commits => match &gui.history {
                     Some(path) => {

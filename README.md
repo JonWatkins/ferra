@@ -26,9 +26,9 @@
   replace box, a terminal panel, pickers for files and commands, split
   windows, and the mouse.
 - **Git:** changes in the gutter, Source Control in the sidebar, a
-  full-screen git view (stage single hunks, commit, switch branches, push
-  and pull, a file's history and blame), and blame for the cursor's
-  line.
+  full-screen git view (stage single hunks, commit, switch and merge
+  branches, push and pull, a file's history and blame), merge conflicts
+  resolved in the editor, and blame for the cursor's line.
 - **Lua plugins:** commands, keys, hooks, status line items, popups,
   sidebar views, pickers, input boxes and decorations.
 - **Configurable:** every key, option and colour, in one TOML file.

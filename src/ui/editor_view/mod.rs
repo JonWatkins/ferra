@@ -131,6 +131,8 @@ pub struct EditorView<'a> {
     current_match: Option<Match>,
     /// Git changes, for marks in the gutter.
     git: &'a [crate::git::Hunk],
+    /// Merge conflicts, tinted.
+    conflicts: &'a [crate::git::Conflict],
     /// The cursor's a caret between chars (insert mode): beside virtual
     /// text it goes before it, where typing goes.
     caret: bool,
@@ -156,6 +158,7 @@ impl<'a> EditorView<'a> {
             search: None,
             current_match: None,
             git: &[],
+            conflicts: &[],
             caret: false,
             references: &[],
             syntax: None,
@@ -202,6 +205,28 @@ impl<'a> EditorView<'a> {
     pub fn git_changes(mut self, hunks: &'a [crate::git::Hunk]) -> Self {
         self.git = hunks;
         self
+    }
+
+    /// Tints merge conflicts: each side's rows and the markers.
+    pub fn conflicts(mut self, conflicts: &'a [crate::git::Conflict]) -> Self {
+        self.conflicts = conflicts;
+        self
+    }
+
+    /// The theme scope a row of a conflict is tinted with, if it's in one.
+    fn conflict_scope(&self, row: usize) -> Option<&'static str> {
+        let c = self.conflicts.iter().find(|c| c.contains(row))?;
+        Some(
+            if row == c.start || row == c.middle || row == c.end || c.base == Some(row) {
+                "ui.conflict.marker"
+            } else if c.ours().contains(&row) {
+                "ui.conflict.ours"
+            } else if c.theirs().contains(&row) {
+                "ui.conflict.theirs"
+            } else {
+                "ui.conflict.base"
+            },
+        )
     }
 
     /// Highlights `found` apart from the other matches (the find box's).
@@ -527,11 +552,14 @@ impl EditorView<'_> {
         let width = text_area.width as usize;
         let is_cursor_row = row == cursor.row;
 
-        let row_style = if is_cursor_row && self.active && self.options.cursorline {
+        let mut row_style = if is_cursor_row && self.active && self.options.cursorline {
             self.theme.get("ui.cursorline")
         } else {
             Style::default()
         };
+        if let Some(scope) = self.conflict_scope(row) {
+            row_style = row_style.patch(self.theme.get(scope));
+        }
         buf.set_style(Rect::new(area.x, y, area.width, 1), row_style);
 
         let gutter_scope = if is_cursor_row {

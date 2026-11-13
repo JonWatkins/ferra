@@ -484,6 +484,25 @@ commits, in quarters; the code is highlighted from a scratch `Document`
 if it's older than the log goes). Opened from a buffer, `<Esc>` closes
 the whole view.
 
+Merge conflicts: `git::conflicts` finds complete conflicts in a file's
+lines (`<<<<<<<`, an optional diff3 `|||||||`, `=======`, `>>>>>>>`, each
+seven characters then the end of the line or a space; a stray marker
+isn't one). `update_git_changes` finds them along with the hunks, so the
+editor pane can tint each side's rows (`EditorView::conflicts`,
+`ui.conflict.*`) and the markers get end-of-line virtual text (source
+`"conflicts"`) naming the keys. `editor/conflicts.rs` reads them afresh
+from the buffer for `]x`/`[x` and for keeping a side: the conflict's rows
+are deleted and the kept lines inserted in their place, in one command,
+so one undo step. `git::merge` is `merge --no-edit`; when it fails with
+`MERGE_HEAD` there, it stopped on conflicts. `git::merging` reads
+`MERGE_MSG` (without git's comment lines) while there's a `MERGE_HEAD`;
+the editor reads it with the status. Conflicted files (`FileStatus::
+conflicted`, `!`) get their own section first in `git_rows`; staging one
+(`git_check_resolved`) is refused while its buffer's unsaved or the
+file still has markers, and the commit box is allowed with nothing
+staged during a merge and starts with its message. `M` asks before
+merging, or before `merge --abort` while a merge is going on.
+
 ## Syntax highlighting
 
 `syntax/` wraps tree-sitter:
@@ -1574,8 +1593,9 @@ Started: changes in the gutter, `]c`/`[c`, the branch, the file tree's
 marks, Source Control in the sidebar, and the full-screen git view with
 diffs and staging hunks, branches, and fetch, pull and push in the
 background, amending and stashes, a file's history and its blame, and a
-read-only side-by-side diff (see [Git](#git)). Next: merge conflicts,
-staging single lines, and making the side-by-side diff editable.
+read-only side-by-side diff, and merging with conflicts resolved in the
+editor (see [Git](#git)). Next: staging single lines, and making the
+side-by-side diff editable.
 
 The everyday Git features, without leaving the editor:
 
@@ -1600,7 +1620,8 @@ The everyday Git features, without leaving the editor:
 - **History**: the log of a file (done) or a line range, opening any
   version.
 - **Conflicts**: jumping between conflict markers and keeping ours, theirs
-  or both, as one undo step each.
+  or both, as one undo step each (done, with merging and aborting a
+  merge from the git view).
 
 Reading (diffs against the index and `HEAD`, blame, status) can use a Git
 library in-process (`gix`, pure Rust, or `git2`), with the line diff from a
@@ -1859,8 +1880,9 @@ not. The answer is dropped unless the editor is still where it was asked
   count columns without them.
 
 - Git: the gutter compares with what's staged only (not `HEAD`); no
-  staging single lines (only hunks), a whole-file blame view, rebasing,
-  merging, or resolving conflicts yet; one fetch, pull or push at a time,
+  staging single lines (only hunks), rebasing, or continuing a rebase
+  or cherry-pick stopped on conflicts (their markers are resolved the
+  same way, but the merge state shown is a merge's only); one fetch, pull or push at a time,
   with no way to cancel one, and none that needs a password typed; the git view's diffs aren't syntax
   coloured, and huge commits are read whole; the file
   tree's marks are for the repository the current file is in; no marks with `line-numbers =

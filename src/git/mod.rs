@@ -124,6 +124,17 @@ impl RepoStatus {
     pub fn unstaged(&self) -> impl Iterator<Item = &FileStatus> {
         self.files.iter().filter(|f| f.unstaged.is_some())
     }
+
+    /// The files in conflict (from a merge), to resolve and stage.
+    pub fn conflicted(&self) -> impl Iterator<Item = &FileStatus> {
+        self.files.iter().filter(|f| f.conflicted())
+    }
+}
+
+impl FileStatus {
+    pub fn conflicted(&self) -> bool {
+        self.unstaged == Some('!')
+    }
 }
 
 /// The changes in the repository `dir` is in (untracked files listed one by
@@ -476,6 +487,115 @@ pub fn stashes(root: &Path) -> Vec<Stash> {
 /// Puts stash `name`'s changes back and drops it.
 pub fn stash_pop(root: &Path, name: &str) -> Result<(), String> {
     run(root, &["stash", "pop", "--quiet", name]).map(drop)
+}
+
+/// A merge conflict in a file's text: the rows of its markers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Conflict {
+    /// `<<<<<<< ours`.
+    pub start: usize,
+    /// `||||||| base` (with `merge.conflictStyle = diff3`), if there is one.
+    pub base: Option<usize>,
+    /// `=======`.
+    pub middle: usize,
+    /// `>>>>>>> theirs`.
+    pub end: usize,
+}
+
+impl Conflict {
+    /// The rows of our side (the current branch's).
+    pub fn ours(&self) -> std::ops::Range<usize> {
+        self.start + 1..self.base.unwrap_or(self.middle)
+    }
+
+    /// The rows of their side (what's being merged in).
+    pub fn theirs(&self) -> std::ops::Range<usize> {
+        self.middle + 1..self.end
+    }
+
+    /// The rows of the common ancestor's version, if it's shown.
+    pub fn base_rows(&self) -> std::ops::Range<usize> {
+        self.base.map_or(0..0, |b| b + 1..self.middle)
+    }
+
+    pub fn contains(&self, row: usize) -> bool {
+        (self.start..=self.end).contains(&row)
+    }
+}
+
+/// Whether `line` is a conflict marker of `c`s (seven of them, then the
+/// end of the line or a space).
+fn is_marker(line: &str, c: char) -> bool {
+    let line = line.trim_end_matches(['\r', '\n']);
+    let rest = line.trim_start_matches(c);
+    line.len() - rest.len() == 7 && (rest.is_empty() || rest.starts_with(' '))
+}
+
+/// The complete conflicts in a file's lines, in order (a stray or half
+/// marker isn't one).
+pub fn conflicts<'a>(lines: impl IntoIterator<Item = &'a str>) -> Vec<Conflict> {
+    let mut found = Vec::new();
+    let (mut start, mut base, mut middle) = (None, None, None);
+    for (row, line) in lines.into_iter().enumerate() {
+        if is_marker(line, '<') {
+            (start, base, middle) = (Some(row), None, None);
+        } else if start.is_some() && middle.is_none() && base.is_none() && is_marker(line, '|') {
+            base = Some(row);
+        } else if start.is_some() && middle.is_none() && is_marker(line, '=') {
+            middle = Some(row);
+        } else if let (Some(s), Some(m)) = (start, middle)
+            && is_marker(line, '>')
+        {
+            found.push(Conflict {
+                start: s,
+                base,
+                middle: m,
+                end: row,
+            });
+            (start, base, middle) = (None, None, None);
+        }
+    }
+    found
+}
+
+/// What merging did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeOutcome {
+    /// Done (git's first line: `Fast-forward`, `Already up to date.`...).
+    Merged(String),
+    /// Stopped with files in conflict, to resolve and commit.
+    Conflicts,
+}
+
+/// Merges `branch` into the current one.
+pub fn merge(root: &Path, branch: &str) -> Result<MergeOutcome, String> {
+    match run(root, &["merge", "--no-edit", branch]) {
+        Ok(out) => Ok(MergeOutcome::Merged(
+            out.lines()
+                .map(str::trim)
+                .rfind(|l| !l.is_empty() && !l.starts_with("Updating"))
+                .unwrap_or("Merged")
+                .to_string(),
+        )),
+        Err(_) if merging(root).is_some() => Ok(MergeOutcome::Conflicts),
+        Err(error) => Err(error),
+    }
+}
+
+/// A merge stopped for conflicts: its message (`Merge branch 'x'`, git's
+/// comment lines left out), or `None` if no merge is going on.
+pub fn merging(root: &Path) -> Option<String> {
+    git(root, &["rev-parse", "-q", "--verify", "MERGE_HEAD"])?;
+    let path = git(root, &["rev-parse", "--git-path", "MERGE_MSG"])?;
+    let path = root.join(String::from_utf8_lossy(&path).trim());
+    let message = std::fs::read_to_string(path).unwrap_or_default();
+    let message: Vec<&str> = message.lines().filter(|l| !l.starts_with('#')).collect();
+    Some(message.join("\n").trim().to_string())
+}
+
+/// Gives up on the merge going on, back to how things were before it.
+pub fn merge_abort(root: &Path) -> Result<(), String> {
+    run(root, &["merge", "--abort"]).map(drop)
 }
 
 /// Who last changed a line, and in which commit.
@@ -1549,6 +1669,70 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("a.txt"), "x").unwrap();
         assert_eq!(staged_text(&outside.path().join("a.txt")), None);
+    }
+
+    #[test]
+    fn finds_whole_conflicts_only() {
+        let text = "a\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\nb\n\
+                    <<<<<<< HEAD\nx\n||||||| base\ny\n=======\n>>>>>>> other\n\
+                    ======= not one\n<<<<<<< half\n";
+        let found = conflicts(text.lines());
+        assert_eq!(
+            found,
+            [
+                Conflict {
+                    start: 1,
+                    base: None,
+                    middle: 3,
+                    end: 5
+                },
+                Conflict {
+                    start: 7,
+                    base: Some(9),
+                    middle: 11,
+                    end: 12
+                },
+            ]
+        );
+        assert_eq!(found[0].ours(), 2..3);
+        assert_eq!(found[0].theirs(), 4..5);
+        assert_eq!(found[1].ours(), 8..9);
+        assert_eq!(found[1].base_rows(), 10..11);
+        assert!(found[1].theirs().is_empty());
+        assert!(conflicts("<<<<<<<< eight\n=======\n>>>>>>> x\n".lines()).is_empty());
+    }
+
+    #[test]
+    fn a_merge_that_conflicts_waits_to_be_resolved_or_aborted() {
+        let Some(dir) = tests_support::repo() else {
+            return;
+        };
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let config = |k: &str, v: &str| run(&root, &["config", k, v]).unwrap();
+        config("user.name", "t");
+        config("user.email", "t@t");
+        run(&root, &["switch", "-q", "-c", "feature"]).unwrap();
+        std::fs::write(root.join("file.txt"), "one\ntheirs\n").unwrap();
+        stage(&root, &["file.txt"]).unwrap();
+        commit(&root, "theirs").unwrap();
+        run(&root, &["switch", "-q", "main"]).unwrap();
+        std::fs::write(root.join("file.txt"), "one\nours\n").unwrap();
+        stage(&root, &["file.txt"]).unwrap();
+        commit(&root, "ours").unwrap();
+        assert_eq!(merging(&root), None);
+
+        assert_eq!(merge(&root, "feature"), Ok(MergeOutcome::Conflicts));
+        assert_eq!(merging(&root).as_deref(), Some("Merge branch 'feature'"));
+        let text = std::fs::read_to_string(root.join("file.txt")).unwrap();
+        assert_eq!(conflicts(text.lines()).len(), 1, "{text}");
+        let status = status(&root).unwrap();
+        assert_eq!(status.files[0].unstaged, Some('!'));
+
+        merge_abort(&root).unwrap();
+        assert_eq!(merging(&root), None);
+        let text = std::fs::read_to_string(root.join("file.txt")).unwrap();
+        assert_eq!(text, "one\nours\n");
+        assert!(merge(&root, "nope").is_err());
     }
 
     #[test]

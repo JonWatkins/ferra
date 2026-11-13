@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use super::{DocumentId, Editor, Message, Mode, VirtualText};
 use crate::events::Event;
-use crate::git::{self, ChangeCounts, FileStatus, Hunk, RepoStatus};
+use crate::git::{self, ChangeCounts, Conflict, FileStatus, Hunk, RepoStatus};
 
 #[derive(Debug, Default)]
 pub struct GitState {
@@ -27,6 +27,10 @@ pub struct GitState {
     discarding: Option<FileStatus>,
     /// The branch `d` asked to delete (and whether forcing), waiting.
     deleting: Option<(String, bool)>,
+    /// The branch `M` asked to merge in, waiting for a yes.
+    merging_in: Option<String>,
+    /// A merge stopped for conflicts: its message.
+    merging: Option<String>,
     /// How far the current branch is ahead of and behind its upstream.
     ahead_behind: Option<(usize, usize)>,
     /// A fetch, pull or push running in the background.
@@ -80,6 +84,8 @@ struct GitFile {
     /// The staged text (`None`: not in a repository, or untracked).
     base: Option<String>,
     hunks: Vec<Hunk>,
+    /// Merge conflicts in its text.
+    conflicts: Vec<Conflict>,
     /// The edit count the hunks were made at.
     made_at: Option<u64>,
 }
@@ -126,6 +132,7 @@ impl Editor {
             .status
             .as_ref()
             .and_then(|s| git::ahead_behind(&s.root));
+        self.git.merging = self.git.status.as_ref().and_then(|s| git::merging(&s.root));
         let rows = self.git_rows();
         let same = before.and_then(|(file, staged)| {
             rows.iter().position(|row| {
@@ -172,6 +179,17 @@ impl Editor {
             return Vec::new();
         };
         let mut rows = Vec::new();
+        let conflicted: Vec<&FileStatus> = status.conflicted().collect();
+        if !conflicted.is_empty() {
+            rows.push(GitRow::Header(format!(
+                "Merge conflicts ({})",
+                conflicted.len()
+            )));
+            rows.extend(conflicted.into_iter().map(|f| GitRow::File {
+                file: f.clone(),
+                staged: false,
+            }));
+        }
         let staged: Vec<&FileStatus> = status.staged().collect();
         if !staged.is_empty() {
             rows.push(GitRow::Header(format!("Staged ({})", staged.len())));
@@ -180,7 +198,7 @@ impl Editor {
                 staged: true,
             }));
         }
-        let changes: Vec<&FileStatus> = status.unstaged().collect();
+        let changes: Vec<&FileStatus> = status.unstaged().filter(|f| !f.conflicted()).collect();
         if !changes.is_empty() {
             rows.push(GitRow::Header(format!("Changes ({})", changes.len())));
             rows.extend(changes.into_iter().map(|f| GitRow::File {
@@ -268,8 +286,46 @@ impl Editor {
     pub fn git_stage_selected(&mut self) -> Result<(), String> {
         let root = self.git_root()?;
         let (file, _) = self.git_selected_file().ok_or("No file selected")?;
+        self.git_check_resolved(&root, &file)?;
         let result = git::stage(&root, &[&file.path]);
-        self.git_after_action(result)
+        self.git_after_action(result)?;
+        if file.conflicted() {
+            self.set_message(Message::info(format!("Resolved {}", file.path)));
+        }
+        Ok(())
+    }
+
+    /// A conflicted file can be staged once it's saved with no conflict
+    /// markers left.
+    fn git_check_resolved(&self, root: &std::path::Path, file: &FileStatus) -> Result<(), String> {
+        if !file.conflicted() {
+            return Ok(());
+        }
+        let path = root.join(&file.path);
+        let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let unsaved = self.buffers().iter().any(|b| {
+            self.document_by_id(b.id).is_some_and(|d| {
+                d.is_modified()
+                    && d.path()
+                        .and_then(|p| std::fs::canonicalize(p).ok())
+                        .is_some_and(|p| p == canonical)
+            })
+        });
+        if unsaved {
+            return Err(format!("Save {} first", file.path));
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        match git::conflicts(text.lines()).len() {
+            0 => Ok(()),
+            1 => Err(format!(
+                "{} still has a conflict (⏎ opens it there)",
+                file.path
+            )),
+            n => Err(format!(
+                "{} still has {n} conflicts (⏎ opens it at the first)",
+                file.path
+            )),
+        }
     }
 
     /// `u`: unstages the selected file.
@@ -287,6 +343,11 @@ impl Editor {
     pub fn git_stage_all(&mut self, stage: bool) -> Result<(), String> {
         let root = self.git_root()?;
         let status = self.git_status().cloned().unwrap_or_default();
+        if stage {
+            for file in status.conflicted() {
+                self.git_check_resolved(&root, file)?;
+            }
+        }
         let paths: Vec<&str> = if stage {
             status.unstaged().map(|f| f.path.as_str()).collect()
         } else {
@@ -381,15 +442,26 @@ impl Editor {
     pub fn git_ask_commit(&mut self) -> Result<(), String> {
         let status = self.git_status().ok_or("Not in a git repository")?;
         let staged = status.staged().count();
-        if staged == 0 {
+        let conflicted = status.conflicted().count();
+        let merging = self
+            .git_merging()
+            .map(|m| m.lines().next().unwrap_or("").to_string());
+        if conflicted > 0 {
+            let plural = if conflicted == 1 { "" } else { "s" };
+            return Err(format!(
+                "Resolve and stage the {conflicted} file{plural} in conflict first"
+            ));
+        }
+        // A merge commits even if it changed nothing (all ours).
+        if staged == 0 && merging.is_none() {
             return Err("Nothing staged to commit (s stages a file, S everything)".into());
         }
         let plural = if staged == 1 { "" } else { "s" };
-        let mut input = super::input_box::InputBox::new(
-            &format!("Commit {staged} file{plural}"),
-            "",
-            "git_commit_message",
-        );
+        let (title, message) = match &merging {
+            Some(message) => ("Commit the merge".to_string(), message.as_str()),
+            None => (format!("Commit {staged} file{plural}"), ""),
+        };
+        let mut input = super::input_box::InputBox::new(&title, message, "git_commit_message");
         input.placeholder = "Message".into();
         self.open_input_box(input);
         Ok(())
@@ -421,7 +493,121 @@ impl Editor {
             return Err(format!("{} was deleted", file.path));
         }
         self.set_mode(Mode::Normal);
-        self.open(&path).map_err(|e| e.to_string())
+        self.open(&path).map_err(|e| e.to_string())?;
+        if file.conflicted() {
+            self.goto_first_conflict();
+        }
+        Ok(())
+    }
+
+    /// `M` in the git view: asks before merging the selected branch into
+    /// the current one; while a merge is stopped for conflicts, asks
+    /// before aborting it instead.
+    pub fn git_ask_merge(&mut self) -> Result<(), String> {
+        if let Some(message) = self.git_merging() {
+            let what = format!(
+                "Abort \"{}\"? Everything goes back to how it was before the merge, \
+                 conflicts resolved so far too.",
+                message.lines().next().unwrap_or("the merge")
+            );
+            self.git_ask(
+                "Abort the merge",
+                &what,
+                "abort",
+                "git_merge_abort_confirmed",
+            );
+            return Ok(());
+        }
+        let gui = self.git_gui().ok_or("The git view isn't open")?;
+        if gui.panel != super::git_gui::GitPanel::Branches {
+            return Err("Choose a branch (in [2] Branches) to merge".into());
+        }
+        let branch = gui
+            .branches
+            .get(gui.branch)
+            .ok_or("No branch selected")?
+            .clone();
+        if branch.current {
+            return Err(format!("{} is the current branch", branch.name));
+        }
+        let into = self.git_branch().unwrap_or("HEAD").to_string();
+        let what = format!("Merge {} into {into}?", branch.name);
+        self.git.merging_in = Some(branch.name);
+        self.git_ask("Merge", &what, "merge", "git_merge_confirmed");
+        Ok(())
+    }
+
+    /// A yes-or-no popup for `command`.
+    fn git_ask(&mut self, title: &str, what: &str, yes: &str, command: &str) {
+        let span = |text: &str, style: Option<&str>| super::popup::PopupSpan {
+            text: text.to_string(),
+            style: style.map(str::to_string),
+        };
+        self.open_popup(super::popup::Popup {
+            name: format!("git-{command}"),
+            title: title.into(),
+            lines: vec![
+                vec![span(what, None)],
+                vec![],
+                vec![
+                    span("y", Some("ui.popup.title")),
+                    span(&format!(" {yes}   "), None),
+                    span("n", Some("ui.popup.title")),
+                    span(" cancel", None),
+                ],
+            ],
+            footer: String::new(),
+            keys: vec![
+                ("y".into(), command.into()),
+                ("n".into(), "popup_close".into()),
+            ],
+            focus: true,
+            ..super::popup::Popup::default()
+        });
+    }
+
+    /// `y` to merging: merges, and on conflicts lists them in the files.
+    pub fn git_merge_confirmed(&mut self) -> Result<(), String> {
+        self.close_popup();
+        let name = self.git.merging_in.take().ok_or("Nothing to merge")?;
+        let root = self.git_root()?;
+        let result = git::merge(&root, &name);
+        // Open buffers of the merged files show what's on disk now.
+        self.check_disk_changes();
+        let outcome = match result {
+            Ok(outcome) => outcome,
+            Err(error) => return self.git_after_action(Err(error)),
+        };
+        self.git_after_action(Ok(()))?;
+        let message = match outcome {
+            git::MergeOutcome::Merged(how) => format!("Merged {name}: {how}"),
+            git::MergeOutcome::Conflicts => {
+                let n = self.git_status().map_or(0, |s| s.conflicted().count());
+                if let Some(gui) = self.git_gui.as_mut() {
+                    gui.panel = super::git_gui::GitPanel::Files;
+                }
+                self.git.selected = 0;
+                self.git_select_file(0);
+                let plural = if n == 1 { "" } else { "s" };
+                format!(
+                    "Merging {name} stopped: {n} file{plural} in conflict. \
+                     ⏎ opens one at its first conflict, M aborts"
+                )
+            }
+        };
+        self.set_message(Message::info(message));
+        Ok(())
+    }
+
+    /// `y` to aborting the merge.
+    pub fn git_merge_abort_confirmed(&mut self) -> Result<(), String> {
+        self.close_popup();
+        let root = self.git_root()?;
+        let result = git::merge_abort(&root);
+        self.check_disk_changes();
+        self.git_after_action(result)?;
+        self.set_message(Message::info("Aborted the merge"));
+        Ok(())
     }
 
     /// Every open buffer's staged text, again.
@@ -477,13 +663,23 @@ impl Editor {
             if file.made_at == Some(edits) {
                 continue;
             }
+            let text = document.buffer().text();
             let hunks = match &file.base {
-                Some(base) => git::line_changes(base, &document.buffer().text()),
+                Some(base) => git::line_changes(base, &text),
                 None => Vec::new(),
             };
+            let conflicts = git::conflicts(text.lines());
+            let had = !file.conflicts.is_empty();
             let file = self.git.files.get_mut(&id).expect("just looked");
             file.hunks = hunks;
             file.made_at = Some(edits);
+            if had || !conflicts.is_empty() {
+                let hints = super::conflicts::conflict_hints(&conflicts);
+                if let Some(document) = self.document_by_id_mut(id) {
+                    document.set_virtual_text("conflicts", hints);
+                }
+            }
+            self.git.files.get_mut(&id).expect("just looked").conflicts = conflicts;
         }
     }
 
@@ -493,6 +689,22 @@ impl Editor {
             return &[];
         }
         self.git.files.get(&id).map_or(&[], |f| f.hunks.as_slice())
+    }
+
+    /// Buffer `id`'s merge conflicts (as of the last diff).
+    pub fn git_conflicts(&self, id: DocumentId) -> &[Conflict] {
+        if !self.options.git {
+            return &[];
+        }
+        self.git
+            .files
+            .get(&id)
+            .map_or(&[], |f| f.conflicts.as_slice())
+    }
+
+    /// The message of a merge stopped for conflicts, if one is.
+    pub fn git_merging(&self) -> Option<&str> {
+        self.git.merging.as_deref().filter(|_| self.options.git)
     }
 
     /// The current buffer's counts of changed lines, if it's in git.

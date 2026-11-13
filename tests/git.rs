@@ -6,7 +6,7 @@ mod common;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use common::{app, cursor, keys, render};
+use common::{app, cursor, keys, render, text};
 
 fn git(dir: &Path, args: &[&str]) -> bool {
     Command::new("git")
@@ -844,4 +844,87 @@ fn a_change_side_by_side_from_the_sidebar() {
     std::fs::write(&path, "one\ntwo\nthree\nfour\nfive\nsix\n").unwrap();
     keys(&mut app, ":e!<CR>:git_diff<CR>");
     assert_eq!(message(&app), "No changes in code.txt");
+}
+
+#[test]
+fn merging_a_branch_resolving_its_conflict_and_committing() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let path = dir.path().join("code.txt");
+    let local = |args: &[&str]| assert!(git(dir.path(), args), "git {args:?}");
+    local(&["config", "user.name", "t"]);
+    local(&["config", "user.email", "t@t"]);
+    local(&["switch", "-q", "-c", "feature"]);
+    std::fs::write(&path, "one\nTHEIRS\nthree\nfour\nfive\n").unwrap();
+    local(&["commit", "-q", "-am", "theirs"]);
+    local(&["switch", "-q", "main"]);
+    std::fs::write(&path, "one\nOURS\nthree\nfour\nfive\n").unwrap();
+    local(&["commit", "-q", "-am", "ours"]);
+
+    let mut app = app();
+    keys(&mut app, &format!(":e {}<CR><Space>g2jMy", path.display()));
+    assert!(
+        message(&app).starts_with("Merging feature stopped: 1 file in conflict"),
+        "{}",
+        message(&app)
+    );
+    let screen = render(&mut app, 120, 20).rows.join("\n");
+    assert!(screen.contains("MERGE CONFLICTS (1)"), "{screen}");
+    assert!(screen.contains("(merging)"), "{screen}");
+
+    // M again aborts it.
+    keys(&mut app, "My");
+    assert_eq!(message(&app), "Aborted the merge");
+    assert_eq!(app.editor().git_merging(), None);
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "one\nOURS\nthree\nfour\nfive\n"
+    );
+
+    // Again, and resolve it.
+    keys(&mut app, "2jMy");
+    assert!(app.editor().git_merging().is_some());
+    keys(&mut app, "1s");
+    assert_eq!(
+        message(&app),
+        "code.txt still has a conflict (⏎ opens it there)"
+    );
+    keys(&mut app, "<CR>");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
+    assert_eq!(cursor(&app), (1, 0), "at the conflict");
+    let screen = render(&mut app, 120, 12).rows.join("\n");
+    assert!(screen.contains("current change"), "the hint: {screen}");
+    assert!(screen.contains("incoming change"), "{screen}");
+    assert!(screen.contains("merging !1"), "the status line: {screen}");
+
+    keys(&mut app, "gg]x");
+    assert!(
+        message(&app).starts_with("Conflict 1 of 1"),
+        "{}",
+        message(&app)
+    );
+    keys(&mut app, "<Space>ct");
+    assert_eq!(text(&app), "one\nTHEIRS\nthree\nfour\nfive");
+    keys(&mut app, "u");
+    assert!(text(&app).contains("<<<<<<<"), "one undo step");
+    keys(&mut app, "<C-r><Space>gs");
+    assert_eq!(message(&app), "Save code.txt first");
+    keys(&mut app, "q:w<CR><Space>gs");
+    assert_eq!(message(&app), "Resolved code.txt");
+
+    // The commit's message is the merge's.
+    keys(&mut app, "c");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Input);
+    keys(&mut app, "<CR>");
+    assert!(
+        message(&app).ends_with("Merge branch 'feature'"),
+        "{}",
+        message(&app)
+    );
+    assert_eq!(app.editor().git_merging(), None);
+    assert!(
+        git(dir.path(), &["rev-parse", "-q", "--verify", "HEAD^2"]),
+        "a merge commit"
+    );
 }

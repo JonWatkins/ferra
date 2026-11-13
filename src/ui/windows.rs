@@ -137,6 +137,7 @@ pub fn draw_windows(
             .block(editor.selection_block().filter(|_| active))
             .search(editor.search_highlight())
             .git_changes(editor.git_hunks(document.id()))
+            .conflicts(editor.git_conflicts(document.id()))
             .caret(active && editor.mode() == crate::editor::Mode::Insert)
             .current_match(if active {
                 editor.find_current_match()

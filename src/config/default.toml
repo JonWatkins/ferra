@@ -332,6 +332,12 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.decoration.text" = { fg = "#6b7280", modifiers = ["italic"] }
 # Git blame for the cursor's line, after it.
 "ui.virtual.blame" = { fg = "#565f89", modifiers = ["italic"] }
+"ui.virtual.conflict" = { fg = "#7a88b8", modifiers = ["italic"] }
+# Merge conflicts in the text: each side's rows, and the marker lines.
+"ui.conflict.ours" = { bg = "#1f3a3a" }
+"ui.conflict.theirs" = { bg = "#1f2a4a" }
+"ui.conflict.base" = { bg = "#2a2a2a" }
+"ui.conflict.marker" = { fg = "#a9b1d6", bg = "#2b3047", modifiers = ["bold"] }
 # Git changes in the gutter (against what's staged).
 "ui.gutter.added" = "#9ece6a"
 "ui.gutter.changed" = "#7aa2f7"
@@ -602,6 +608,11 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>p" = "command_palette"
 "]c" = "git_next_change"
 "[c" = "git_prev_change"
+"]x" = "git_next_conflict"
+"[x" = "git_prev_conflict"
+"<Space>co" = "git_keep_ours"
+"<Space>ct" = "git_keep_theirs"
+"<Space>cb" = "git_keep_both"
 "<Space>e" = "sidebar_focus"
 "<Space>/" = "find_open"
 "<Space>h" = "find_replace_open"
@@ -970,6 +981,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "n" = "git_new_branch"
 "d" = "git_delete_branch"
 "D" = "git_force_delete_branch"
+"M" = "git_merge"
 "C" = "git_amend"
 "z" = "git_stash"
 "Z" = "git_stash_list"

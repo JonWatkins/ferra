@@ -246,6 +246,13 @@ impl Active<'_> {
                         }
                         _ => {}
                     }
+                    if editor.git_merging().is_some() {
+                        text.push_str(" merging");
+                    }
+                }
+                let conflicts = editor.git_conflicts(editor.document.id()).len();
+                if conflicts > 0 {
+                    text.push_str(&format!(" !{conflicts}"));
                 }
                 if let Some(counts) = editor.git_counts() {
                     for (n, sign) in [

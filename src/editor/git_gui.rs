@@ -649,11 +649,24 @@ impl Editor {
                     .clone();
                 self.git_switch_branch(&name)
             }
+            GitPanel::Files if self.git_selected_conflicted() => {
+                self.close_git_gui();
+                self.git_open_selected()
+            }
             _ => {
                 self.git_gui_focus(GitPanel::Diff);
                 Ok(())
             }
         }
+    }
+
+    /// Whether the selected file's in conflict (so it opens at its first
+    /// conflict rather than showing a diff).
+    fn git_selected_conflicted(&self) -> bool {
+        matches!(
+            self.git_rows().get(self.git_selected()),
+            Some(GitRow::File { file, .. }) if file.conflicted()
+        )
     }
 
     /// `<Esc>`: out of the diff, out of a file's history, or else closes
@@ -953,6 +966,10 @@ impl Editor {
         {
             self.git_gui_back();
             return Ok(());
+        }
+        if self.git_selected_conflicted() {
+            self.close_git_gui();
+            return self.git_open_selected();
         }
         match self.git_rows().get(self.git_selected()) {
             Some(GitRow::File { file, staged }) => {

@@ -506,6 +506,7 @@ or staged changes, a commit, or a branch's log.
 | `H` | The selected file's history, in place of the commits; `H` or `<Esc>` there goes back to the whole log |
 | `B` | The selected file's blame: who last changed each line |
 | `v` | The selected file's change side by side |
+| `M` | Merge the selected branch into the current one (asks first); while a merge has conflicts, abort it (asks first) |
 | `q` | Close |
 
 Fetching, pulling and pushing run in the background with git's progress
@@ -544,6 +545,41 @@ change is among the file's (brightest for the newest; `ui.git.blame.*`
 in the theme). The code is highlighted, the selected line's commit is
 picked out, and its hash, author and date are along the bottom. `<CR>` opens that commit's diff, `H` the
 file's history, and `<Esc>` goes back to where you were.
+
+### Merge conflicts
+
+When a merge (`M` on a branch, or a pull) stops on conflicts, the files
+in conflict are listed first, under **Merge conflicts**, in the git view
+and the sidebar's Git tab, the Files panel says `(merging)`, and the
+status line says `merging`. `<CR>` on one opens it at its first
+conflict. Each conflict is tinted, our side (the current branch's) and
+theirs (the one merged in) in different colours, with a note on its
+markers saying which keys keep which:
+
+```text
+   3 <<<<<<< HEAD          current change · <Space>co keep · <Space>cb keep both
+   4     let x = 3;
+   5 =======
+   6     let x = 2;
+   7 >>>>>>> feature       incoming change · <Space>ct keep
+```
+
+| Keys / command | Action |
+|----------------|--------|
+| `]x` `[x` | Next / previous conflict (with a count, that many on) |
+| `<Space>co` | Keep ours (the current change) |
+| `<Space>ct` | Keep theirs (the incoming change) |
+| `<Space>cb` | Keep both, ours first |
+
+Each is one undo step, and the cursor has to be in the conflict (on
+a marker or either side). The status line counts the conflicts left in
+the file (`merging !2`); you can also just edit the text and delete the
+markers yourself. Save, then stage the file (`s`): it's refused while
+markers are left or the buffer is unsaved. Once every file's staged,
+`c` commits the merge with git's message (`Merge branch 'feature'`) to
+edit. `M` aborts the merge instead, putting everything back as it was
+before it. A rebase's conflicts are marked and resolved the same way,
+though rebases aren't run or continued from ferra yet.
 
 `git = false` turns all of this off. ferra runs the `git` command, so it
 needs git installed; commits run your hooks, and their errors show as

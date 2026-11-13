@@ -24,6 +24,7 @@ pub use search::{SearchDone, SearchHit};
 mod block;
 mod comment;
 mod confirm;
+pub mod conflicts;
 pub mod diagnostics;
 pub mod explorer;
 pub mod find;

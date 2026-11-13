@@ -1,6 +1,7 @@
 //! Git commands (`editor/git.rs`).
 
 use crate::commands::CommandRegistry;
+use crate::editor::conflicts::Keep;
 
 pub fn register(r: &mut CommandRegistry) {
     r.register(
@@ -18,6 +19,57 @@ pub fn register(r: &mut CommandRegistry) {
             let n = cx.count();
             cx.editor.goto_git_change(false, n)
         },
+    );
+    r.register(
+        "git_next_conflict",
+        "To the next merge conflict in the file ([count] on) (]x)",
+        |cx| {
+            let n = cx.count();
+            cx.editor.goto_conflict(true, n)
+        },
+    );
+    r.register(
+        "git_prev_conflict",
+        "To the previous merge conflict in the file ([x)",
+        |cx| {
+            let n = cx.count();
+            cx.editor.goto_conflict(false, n)
+        },
+    );
+    for (name, keep, description) in [
+        (
+            "git_keep_ours",
+            Keep::Ours,
+            "Resolve the conflict at the cursor keeping ours, the current change (<Space>co)",
+        ),
+        (
+            "git_keep_theirs",
+            Keep::Theirs,
+            "Resolve the conflict at the cursor keeping theirs, the incoming change (<Space>ct)",
+        ),
+        (
+            "git_keep_both",
+            Keep::Both,
+            "Resolve the conflict at the cursor keeping both changes, ours first (<Space>cb)",
+        ),
+    ] {
+        r.register(name, description, move |cx| cx.editor.keep_conflict(keep));
+    }
+    r.register(
+        "git_merge",
+        "Git view: merge the selected branch into the current one, after asking; \
+         while a merge has conflicts, abort it (M)",
+        |cx| cx.editor.git_ask_merge(),
+    );
+    r.register(
+        "git_merge_confirmed",
+        "Merge the branch asked about (y in the question)",
+        |cx| cx.editor.git_merge_confirmed(),
+    );
+    r.register(
+        "git_merge_abort_confirmed",
+        "Abort the merge going on (y in the question)",
+        |cx| cx.editor.git_merge_abort_confirmed(),
     );
     r.register(
         "git_stage",
