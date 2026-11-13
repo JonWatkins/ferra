@@ -58,7 +58,7 @@ pub enum GitRow {
 }
 
 /// The Source Control view's keys (bound in the sidebar while it's shown).
-pub const GIT_VIEW_KEYS: [(&str, &str); 13] = [
+pub const GIT_VIEW_KEYS: [(&str, &str); 14] = [
     ("C", "git_amend"),
     ("z", "git_stash"),
     ("Z", "git_stash_list"),
@@ -71,7 +71,8 @@ pub const GIT_VIEW_KEYS: [(&str, &str); 13] = [
     ("c", "git_commit"),
     ("S", "git_stage_all"),
     ("U", "git_unstage_all"),
-    ("<CR>", "git_open"),
+    ("<CR>", "git_diff_selected"),
+    ("o", "git_open"),
 ];
 
 #[derive(Debug, Default)]

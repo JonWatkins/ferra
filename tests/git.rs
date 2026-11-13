@@ -745,3 +745,103 @@ fn blame_hash(app: &ferra::App, row: usize) -> String {
     let gui = app.editor().git_gui().unwrap();
     gui.blame.as_ref().unwrap().lines[row].hash.clone()
 }
+
+#[test]
+fn a_change_side_by_side_from_the_sidebar() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let path = dir.path().join("code.txt");
+    // Two changed, one added, one removed.
+    std::fs::write(&path, "one\nTWO\nthree\nnew\nFIVE\n").unwrap();
+    std::fs::write(&path, "one\nTWO\nthree\nfour and a bit\nnew\n").unwrap();
+    let mut app = app();
+    keys(&mut app, &format!(":e {}<CR>:git_view<CR>", path.display()));
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Sidebar);
+
+    // <CR> on the file: its unstaged change, the staged text on the left.
+    keys(&mut app, "<CR>");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Git);
+    let side = app.editor().git_gui().unwrap().side.as_ref().unwrap();
+    assert_eq!(
+        side.titles,
+        ["code.txt (staged)", "code.txt (working copy)"]
+    );
+    let pairs: Vec<(Option<usize>, Option<usize>)> =
+        side.rows.iter().map(|r| (r.left, r.right)).collect();
+    assert_eq!(
+        pairs,
+        [
+            (Some(0), Some(0)),
+            (Some(1), Some(1)),
+            (Some(2), Some(2)),
+            (Some(3), Some(3)),
+            (Some(4), Some(4)),
+        ],
+        "five lines each, level"
+    );
+    assert_eq!(side.changes(), [1, 3], "two runs of changes");
+    assert_eq!(side.row, 1, "at the first change");
+
+    let screen = render(&mut app, 100, 14).rows.join("\n");
+    assert!(screen.contains("code.txt (staged)"), "{screen}");
+    assert!(screen.contains("code.txt (working copy)"), "{screen}");
+    assert!(screen.contains("change 1 of 2"), "{screen}");
+    assert!(screen.contains("2 two"), "the old line: {screen}");
+    assert!(screen.contains("2 TWO"), "the new: {screen}");
+
+    keys(&mut app, "]c");
+    assert_eq!(
+        app.editor().git_gui().unwrap().side.as_ref().unwrap().row,
+        3
+    );
+    keys(&mut app, "]c");
+    assert_eq!(message(&app), "No more changes below");
+    keys(&mut app, "[c");
+    assert_eq!(
+        app.editor().git_gui().unwrap().side.as_ref().unwrap().row,
+        1
+    );
+
+    // Esc: back to the sidebar it came from.
+    keys(&mut app, "<Esc>");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Sidebar);
+    assert!(app.editor().git_gui().is_none());
+
+    // A line added: filler on the left. Staged, HEAD's on the left.
+    std::fs::write(&path, "one\ntwo\nthree\nfour\nfive\nsix\n").unwrap();
+    assert!(git(dir.path(), &["add", "code.txt"]));
+    keys(&mut app, ":e!<CR>:git_view<CR>R<CR>");
+    let side = app.editor().git_gui().unwrap().side.as_ref().unwrap();
+    assert_eq!(side.titles, ["code.txt (HEAD)", "code.txt (staged)"]);
+    assert_eq!(
+        side.rows.last().map(|r| (r.left, r.right)),
+        Some((None, Some(5)))
+    );
+    let screen = render(&mut app, 100, 14).rows.join("\n");
+    assert!(screen.contains("╱╱╱"), "filler: {screen}");
+
+    // <CR> in it: the file, at that line.
+    keys(&mut app, "<CR>");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
+    assert!(app.editor().git_gui().is_none());
+    assert_eq!(cursor(&app), (5, 0));
+
+    // From the git view: v, and back to its panels.
+    std::fs::write(&path, "one\ntwo\nthree\nfour\nfive\nsix\nseven\n").unwrap();
+    keys(&mut app, ":e!<CR><Space>g1v");
+    let gui = app.editor().git_gui().unwrap();
+    assert!(gui.side.is_some());
+    keys(&mut app, "<Esc>");
+    assert!(app.editor().git_gui().unwrap().side.is_none(), "the panels");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Git);
+
+    // :git_diff for the current file; none when nothing's changed.
+    keys(&mut app, "q:git_diff<CR>");
+    assert!(app.editor().git_gui().unwrap().side.is_some());
+    keys(&mut app, "<Esc>");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
+    std::fs::write(&path, "one\ntwo\nthree\nfour\nfive\nsix\n").unwrap();
+    keys(&mut app, ":e!<CR>:git_diff<CR>");
+    assert_eq!(message(&app), "No changes in code.txt");
+}

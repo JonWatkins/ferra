@@ -467,6 +467,16 @@ while it's there, and the view's movement keys act on it first. It's
 `blame --porcelain --contents -` (`git::blame_file`) given the buffer
 encoded as it would be saved (`TextFormat::encode`), so unchanged lines
 match what's committed; from the files panel it's the file on disk.
+A change side by side (`GitGui::side`, a `SideView`) is the same kind of
+page: `git::side_by_side` diffs the two texts with `similar` and lines
+them up into `SideRow`s (unchanged lines level, a changed run's removed
+and added lines paired, filler on the shorter side), the old text from
+`git show :path` or `HEAD:path` (`git::blob`), the new from the file or
+the index. Both sides are scratch documents (`SIDE_DOCUMENTS`)
+highlighted like the blame's. Opened from the sidebar (`<CR>` and clicks
+in the Git tab), `<Esc>` closes the view back to the sidebar
+(`return_to`).
+
 Each line's heat is its commit's rank by time among the file's
 commits, in quarters; the code is highlighted from a scratch `Document`
 (`BLAME_DOCUMENT`), as the hover's is. `<CR>` opens the line's commit
@@ -1563,9 +1573,9 @@ Control is a view in it, and plugins add their own.
 Started: changes in the gutter, `]c`/`[c`, the branch, the file tree's
 marks, Source Control in the sidebar, and the full-screen git view with
 diffs and staging hunks, branches, and fetch, pull and push in the
-background, amending and stashes, a file's history and its blame (see
-[Git](#git)). Next: side-by-side diffs, merge conflicts, and staging
-single lines.
+background, amending and stashes, a file's history and its blame, and a
+read-only side-by-side diff (see [Git](#git)). Next: merge conflicts,
+staging single lines, and making the side-by-side diff editable.
 
 The everyday Git features, without leaving the editor:
 
@@ -1576,7 +1586,11 @@ The everyday Git features, without leaving the editor:
   float, and stage, unstage or reset (undo) a hunk, or the whole file.
 - **Diff views**: the buffer side by side with the index, `HEAD` or any
   revision, scrolling together with matching lines aligned; also a diff of
-  the whole working tree to browse file by file.
+  the whole working tree to browse file by file. Done read-only (the git
+  view's side-by-side page). **Deferred: make it editable**, as VS Code's
+  is: the right side the real buffer in the editor area (a window pair
+  scrolling together, with filler rows in the window), the diff kept
+  up to date as you type, and staging or reverting a change from it.
 - **Blame**: the author and summary of the current line as virtual text
   (optional), and a blame view of the whole file that opens a commit's
   diff (both done).

@@ -329,23 +329,54 @@ pub fn draw(
     // The git view covers everything but the command line.
     if editor.git_gui().is_some() {
         let full = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
-        // The blame's code is highlighted around the selected line (as
-        // far as it could scroll either way).
-        let highlights = editor
-            .git_gui()
-            .and_then(|g| g.blame.as_ref())
-            .zip(syntax)
-            .and_then(|(blame, engine)| {
-                let reach = full.height as usize;
-                let rows = blame.row.saturating_sub(reach)..blame.row + reach;
-                engine.highlight_as(
+        // The blame's code (or each side's) is highlighted around the
+        // selected line, as far as it could scroll either way.
+        let mut highlights = [None, None];
+        if let (Some(gui), Some(engine)) = (editor.git_gui(), syntax) {
+            let reach = full.height as usize;
+            let around = |line: usize| line.saturating_sub(reach)..line + reach;
+            let mut wanted: Vec<(
+                usize,
+                &crate::editor::Document,
+                Option<&str>,
+                std::ops::Range<usize>,
+            )> = Vec::new();
+            if let Some(blame) = &gui.blame {
+                wanted.push((
+                    0,
                     &blame.document,
                     blame.language.as_deref(),
-                    &editor.languages,
-                    &editor.syntax_trees,
-                    rows,
-                )
-            });
+                    around(blame.row),
+                ));
+            }
+            if let Some(side) = &gui.side {
+                for i in 0..2 {
+                    // The nearest line this side has to the selected row.
+                    let line = side.rows[..=side.row.min(side.rows.len().saturating_sub(1))]
+                        .iter()
+                        .rev()
+                        .find_map(|r| if i == 0 { r.left } else { r.right })
+                        .unwrap_or(0);
+                    wanted.push((
+                        i,
+                        &side.documents[i],
+                        side.language.as_deref(),
+                        around(line),
+                    ));
+                }
+            }
+            for (i, document, language, rows) in wanted {
+                highlights[i] = engine
+                    .highlight_as(
+                        document,
+                        language,
+                        &editor.languages,
+                        &editor.syntax_trees,
+                        rows,
+                    )
+                    .cloned();
+            }
+        }
         frame.render_widget(git_gui::GitGuiView::new(editor, theme, highlights), full);
         map.git = Some(git_gui::GitGuiView::map(editor, full));
     }

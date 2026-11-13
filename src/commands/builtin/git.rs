@@ -301,6 +301,26 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "git_diff",
+        "The current file's changes side by side, in the git view",
+        |cx| cx.editor.git_diff_current(),
+    );
+    r.register(
+        "git_diff_selected",
+        "Source Control / git view: the selected file's change side by side (<CR>, v)",
+        |cx| cx.editor.git_side_selected(),
+    );
+    r.register(
+        "git_gui_next_change",
+        "Git view, side by side: the next change (]c)",
+        |cx| cx.editor.git_gui_change(true),
+    );
+    r.register(
+        "git_gui_prev_change",
+        "Git view, side by side: the previous change ([c)",
+        |cx| cx.editor.git_gui_change(false),
+    );
+    r.register(
         "git_blame_view",
         "Who last changed each line of the current file, in the git view (<Space>B)",
         |cx| cx.editor.git_blame_view(),

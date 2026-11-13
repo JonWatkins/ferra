@@ -411,6 +411,13 @@ impl App {
                 let Some(git) = map.git else {
                     return true;
                 };
+                if let Some((rows, first)) = git.side {
+                    if rows.contains(at) {
+                        self.editor
+                            .git_gui_side_select(first + (at.y - rows.y) as usize);
+                    }
+                    return true;
+                }
                 if let Some((rows, first)) = git.blame {
                     if rows.contains(at) {
                         self.editor
@@ -544,7 +551,7 @@ impl App {
                     .screen_map
                     .git
                     .as_ref()
-                    .is_some_and(|g| g.blame.is_some())
+                    .is_some_and(|g| g.blame.is_some() || g.side.is_some())
                 {
                     self.editor.git_gui_scroll(WHEEL_LINES as isize * sign);
                     return;

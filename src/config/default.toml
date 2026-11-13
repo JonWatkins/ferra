@@ -380,6 +380,11 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.git.blame.heat3" = "#3b4048"
 "ui.git.blame.uncommitted" = "#9ece6a"
 "ui.git.blame.summary" = "#c0caf5"
+# A change side by side (v): lines removed on the left, added on the
+# right, and the filler where a side has nothing.
+"ui.git.side.removed" = { bg = "#3b2228" }
+"ui.git.side.added" = { bg = "#23332a" }
+"ui.git.side.filler" = "#2a2e36"
 # The tabs at the top of the sidebar, when plugins add views.
 "ui.sidebar.tabs" = { bg = "#1f2229" }
 "ui.sidebar.tab" = { fg = "#6b7280", bg = "#1f2229" }
@@ -970,6 +975,9 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "Z" = "git_stash_list"
 "H" = "git_gui_history"
 "B" = "git_gui_blame"
+"v" = "git_diff_selected"
+"]c" = "git_gui_next_change"
+"[c" = "git_gui_prev_change"
 ":" = "command_mode"
 
 # A plugin's input box (ctx:input), while it has focus. Typing edits it.

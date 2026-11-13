@@ -32,7 +32,7 @@ use super::text::truncate_end;
 use crate::config::Theme;
 use crate::editor::git_gui::{DiffOf, GitPanel};
 use crate::editor::{Editor, GitRow};
-use crate::git::DiffLineKind;
+use crate::git::{DiffLineKind, SideKind};
 use crate::syntax::Highlights;
 
 /// Where the view's parts are, for drawing and the mouse.
@@ -44,13 +44,15 @@ pub struct GitGuiMap {
     pub lists: Vec<(Rect, GitPanel, usize)>,
     /// The blame's rows and the line on the first, while it's shown.
     pub blame: Option<(Rect, usize)>,
+    /// The side-by-side view's rows (both halves) and the row on the first.
+    pub side: Option<(Rect, usize)>,
 }
 
 pub struct GitGuiView<'a> {
     editor: &'a Editor,
     theme: &'a Theme,
-    /// The blame's code, highlighted.
-    highlights: Option<&'a Highlights>,
+    /// The blame's code (the first), or each side's, highlighted.
+    highlights: [Option<Highlights>; 2],
 }
 
 /// The panels' areas in `area`.
@@ -84,7 +86,7 @@ fn layout(area: Rect) -> (Vec<(Rect, GitPanel)>, Rect) {
 }
 
 impl<'a> GitGuiView<'a> {
-    pub fn new(editor: &'a Editor, theme: &'a Theme, highlights: Option<&'a Highlights>) -> Self {
+    pub fn new(editor: &'a Editor, theme: &'a Theme, highlights: [Option<Highlights>; 2]) -> Self {
         Self {
             editor,
             theme,
@@ -106,6 +108,17 @@ impl<'a> GitGuiView<'a> {
                 ..GitGuiMap::default()
             };
         }
+        if let Some(side) = &gui.side {
+            let body = Rect::new(area.x, area.y, area.width, hint.y - area.y);
+            let rows = Block::bordered().inner(side_halves(body)[0]);
+            return GitGuiMap {
+                side: Some((
+                    Rect::new(body.x, rows.y, body.width, rows.height),
+                    side.scroll.get(),
+                )),
+                ..GitGuiMap::default()
+            };
+        }
         let lists = panels
             .iter()
             .map(|&(rect, panel)| {
@@ -123,6 +136,7 @@ impl<'a> GitGuiView<'a> {
             panels,
             lists,
             blame: None,
+            side: None,
         }
     }
 
@@ -469,7 +483,9 @@ impl<'a> GitGuiView<'a> {
             let number = format!("{:>number_width$} ", index + 1);
             buf.set_stringn(x, y, &number, inner.right().saturating_sub(x) as usize, dim);
             x += number.len() as u16;
-            let spans = self.highlights.map_or(&[][..], |h| h.line(index));
+            let spans = self.highlights[0]
+                .as_ref()
+                .map_or(&[][..], |h| h.line(index));
             for (col, c) in line.text.chars().enumerate() {
                 let style = spans
                     .iter()
@@ -494,10 +510,112 @@ impl<'a> GitGuiView<'a> {
         }
     }
 
+    /// A file's change side by side: the old version on the left, the new
+    /// on the right, unchanged lines level and filler where a side has
+    /// nothing, the selected row across both.
+    fn draw_side(&self, body: Rect, buf: &mut Buffer) {
+        let theme = self.theme;
+        let Some(side) = self.editor.git_gui().and_then(|g| g.side.as_ref()) else {
+            return;
+        };
+        let halves = side_halves(body);
+        let changes = side.changes();
+        let at = changes.iter().filter(|&&c| c <= side.row).count();
+        let mut inners = [Rect::default(); 2];
+        for (i, half) in halves.iter().enumerate() {
+            let room = half.width.saturating_sub(6) as usize;
+            let mut block =
+                self.panel_block(format!(" {} ", truncate_end(&side.titles[i], room)), true);
+            if i == 1 {
+                let count = format!(" change {at} of {} ", changes.len());
+                block = block.title_bottom(Span::styled(count, theme.get("ui.git.title")));
+            }
+            inners[i] = block.inner(*half);
+            block.render(*half, buf);
+        }
+        let height = inners[0].height as usize;
+        let first = keep_in_view(&side.scroll, side.row, height, side.rows.len());
+        let number_width = side
+            .documents
+            .iter()
+            .map(|d| d.buffer().line_count().to_string().len())
+            .max()
+            .unwrap_or(1);
+        for (offset, (index, row)) in side
+            .rows
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(height)
+            .enumerate()
+        {
+            let line_of = [row.left, row.right];
+            for (i, inner) in inners.iter().enumerate() {
+                let y = inner.y + offset as u16;
+                let mut base = theme.get("ui.git");
+                if row.kind == SideKind::Changed && line_of[i].is_some() {
+                    base = base.patch(theme.get(if i == 0 {
+                        "ui.git.side.removed"
+                    } else {
+                        "ui.git.side.added"
+                    }));
+                }
+                if index == side.row {
+                    base = base.patch(self.selected_style(true));
+                }
+                buf.set_style(Rect::new(inner.x, y, inner.width, 1), base);
+                let Some(line) = line_of[i] else {
+                    let filler = "╱".repeat(inner.width as usize);
+                    buf.set_stringn(
+                        inner.x,
+                        y,
+                        filler,
+                        inner.width as usize,
+                        base.patch(theme.get("ui.git.side.filler")),
+                    );
+                    continue;
+                };
+                let dim = base.patch(theme.get("ui.git.dim"));
+                let number = format!(" {:>number_width$} ", line + 1);
+                let mut x = inner.x;
+                buf.set_stringn(x, y, &number, inner.width as usize, dim);
+                x += number.len() as u16;
+                let text = side.documents[i].buffer().line(line);
+                let spans = self.highlights[i]
+                    .as_ref()
+                    .map_or(&[][..], |h| h.line(line));
+                for (col, c) in text.chars().enumerate() {
+                    let style = spans
+                        .iter()
+                        .filter(|s| s.start <= col && col < s.end)
+                        .fold(base, |style, s| style.patch(theme.get(s.name())));
+                    let (shown, w) = match c {
+                        '\t' => ("    ".to_string(), 4),
+                        c => (
+                            c.to_string(),
+                            unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16,
+                        ),
+                    };
+                    if w == 0 {
+                        continue;
+                    }
+                    if x + w > inner.right() {
+                        break;
+                    }
+                    buf.set_string(x, y, shown, style);
+                    x += w;
+                }
+            }
+        }
+    }
+
     fn hint(&self) -> &'static str {
         let Some(gui) = self.editor.git_gui() else {
             return "";
         };
+        if gui.side.is_some() {
+            return " j/k lines  ]c/[c changes  ⏎ open the file there  ⌃d/⌃u page  Esc back  q close";
+        }
         if gui.blame.is_some() {
             return " j/k lines  ⏎ open the commit  H history  ⌃d/⌃u page  Esc back  q close";
         }
@@ -520,6 +638,15 @@ impl<'a> GitGuiView<'a> {
             _ => " j/k move  ⌃d/⌃u scroll the diff  f fetch  p pull  P push  c commit  q close",
         }
     }
+}
+
+/// The two halves of the side-by-side view.
+fn side_halves(body: Rect) -> [Rect; 2] {
+    let left = body.width / 2;
+    [
+        Rect::new(body.x, body.y, left, body.height),
+        Rect::new(body.x + left, body.y, body.width - left, body.height),
+    ]
 }
 
 /// The first row to show of a list `len` long in `height` rows, keeping
@@ -552,9 +679,13 @@ impl Widget for GitGuiView<'_> {
         Clear.render(area, buf);
         buf.set_style(area, self.theme.get("ui.git"));
         let (panels, hint) = layout(area);
-        if gui.blame.is_some() {
+        if gui.blame.is_some() || gui.side.is_some() {
             let body = Rect::new(area.x, area.y, area.width, hint.y - area.y);
-            self.draw_blame(body, buf);
+            if gui.side.is_some() {
+                self.draw_side(body, buf);
+            } else {
+                self.draw_blame(body, buf);
+            }
             let text = truncate_end(self.hint(), hint.width as usize);
             buf.set_string(hint.x, hint.y, text, self.theme.get("ui.git.hint"));
             return;
@@ -634,7 +765,7 @@ mod tests {
         assert!(highlights.is_some());
         let area = Rect::new(0, 0, 80, 10);
         let mut buf = Buffer::empty(area);
-        GitGuiView::new(&editor, &theme, highlights).render(area, &mut buf);
+        GitGuiView::new(&editor, &theme, [highlights.cloned(), None]).render(area, &mut buf);
         let row: String = (0..80).map(|x| buf[(x, 1)].symbol()).collect();
         let x = row.find("fn main").expect("the code");
         let x = row[..x].chars().count() as u16;

@@ -17,13 +17,21 @@
 //! the whole file with who last changed each line, over the panels;
 //! `<CR>` on a line opens its commit, `H` the file's history, `<Esc>`
 //! goes back.
+//!
+//! `<CR>` (or a click) on a file in the sidebar's Git tab, `v` on one
+//! here, or `:git_diff` in a buffer shows its change side by side, as VS
+//! Code does: the old version on the left, the new on the right, lines
+//! level, changes coloured. It's read-only for now; `]c`/`[c` jump
+//! between changes and `<CR>` opens the file at the line.
 
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 
 use super::{Document, DocumentId, Editor, GitRow, Message, Mode};
-use crate::git::{self, BlameLine, Branch, Commit, Diff};
+use crate::core::Position;
+use crate::git::{self, BlameLine, Branch, Commit, Diff, SideKind, SideRow};
 
 /// How many commits the commits panel lists.
 const LOG_LENGTH: usize = 300;
@@ -88,6 +96,46 @@ pub struct GitGui {
     diff_cache: HashMap<String, Diff>,
     /// A file's blame, shown over the panels.
     pub blame: Option<BlameView>,
+    /// A file's change side by side, shown over the panels.
+    pub side: Option<SideView>,
+}
+
+/// A file's change side by side (`v`).
+#[derive(Debug, Default)]
+pub struct SideView {
+    /// The file, relative to the repository.
+    pub path: String,
+    /// Its staged change (`HEAD` against what's staged), or else its
+    /// unstaged one (what's staged against the file).
+    pub staged: bool,
+    /// What each side's called.
+    pub titles: [String; 2],
+    pub rows: Vec<SideRow>,
+    /// The selected row.
+    pub row: usize,
+    /// The first row shown (set as it's drawn).
+    pub scroll: Cell<usize>,
+    /// Each side's text, for drawing and highlighting.
+    pub documents: [Document; 2],
+    pub language: Option<String>,
+    /// The mode to go back to on `<Esc>`, closing the view (it was
+    /// opened for this); `None` goes back to the panels.
+    return_to: Option<Mode>,
+}
+
+/// The side-by-side view's documents (never ones that are open).
+pub const SIDE_DOCUMENTS: [DocumentId; 2] = [DocumentId(u64::MAX - 2), DocumentId(u64::MAX - 3)];
+
+impl SideView {
+    /// Where each run of changed rows starts.
+    pub fn changes(&self) -> Vec<usize> {
+        (0..self.rows.len())
+            .filter(|&i| {
+                self.rows[i].kind == SideKind::Changed
+                    && (i == 0 || self.rows[i - 1].kind != SideKind::Changed)
+            })
+            .collect()
+    }
 }
 
 /// A whole file's blame (`B`).
@@ -420,6 +468,7 @@ impl Editor {
             return;
         };
         gui.blame = None;
+        gui.side = None;
         if panel == GitPanel::Diff {
             if gui.panel != GitPanel::Diff {
                 gui.from = gui.panel;
@@ -460,6 +509,10 @@ impl Editor {
         };
         if let Some(blame) = gui.blame.as_mut() {
             blame.row = step(blame.row, blame.lines.len());
+            return;
+        }
+        if let Some(side) = gui.side.as_mut() {
+            side.row = step(side.row, side.rows.len());
             return;
         }
         match gui.panel {
@@ -518,7 +571,11 @@ impl Editor {
 
     /// `<C-d>` / `<C-u>`, the wheel: scrolls the diff.
     pub fn git_gui_scroll(&mut self, lines: isize) {
-        if self.git_gui.as_ref().is_some_and(|g| g.blame.is_some()) {
+        if self
+            .git_gui
+            .as_ref()
+            .is_some_and(|g| g.blame.is_some() || g.side.is_some())
+        {
             self.git_gui_move(lines);
             return;
         }
@@ -549,6 +606,29 @@ impl Editor {
         let Some(gui) = self.git_gui.as_ref() else {
             return Ok(());
         };
+        if let Some(side) = &gui.side {
+            let row = side.rows.get(side.row).copied();
+            // The new side's line, or the next one there is.
+            let line = side.rows[side.row.min(side.rows.len().saturating_sub(1))..]
+                .iter()
+                .find_map(|r| r.right)
+                .or_else(|| row.and_then(|r| r.left))
+                .unwrap_or(0);
+            let root = self
+                .git_status()
+                .ok_or("Not in a git repository")?
+                .root
+                .clone();
+            let path = root.join(&side.path);
+            if !path.exists() {
+                return Err(format!("{} was deleted", side.path));
+            }
+            self.close_git_gui();
+            self.open(&path).map_err(|e| e.to_string())?;
+            let line = line.min(self.document.buffer().line_count().saturating_sub(1));
+            self.document.set_cursor(Position::new(line, 0));
+            return Ok(());
+        }
         if let Some(blame) = &gui.blame {
             let hash = blame
                 .commit()
@@ -579,6 +659,13 @@ impl Editor {
     /// `<Esc>`: out of the diff, out of a file's history, or else closes
     /// the view.
     pub fn git_gui_back(&mut self) {
+        if let Some(side) = self.git_gui.as_mut().and_then(|g| g.side.take()) {
+            if let Some(mode) = side.return_to {
+                self.close_git_gui();
+                self.set_mode(mode);
+            }
+            return;
+        }
         if let Some(blame) = self.git_gui.as_mut().and_then(|g| g.blame.take()) {
             if blame.close_view {
                 self.close_git_gui();
@@ -635,21 +722,7 @@ impl Editor {
         if !self.options.git {
             return Err("git is turned off (git = false)".into());
         }
-        let path = self
-            .document
-            .path()
-            .and_then(|p| std::fs::canonicalize(p).ok())
-            .ok_or("This buffer isn't a file")?;
-        let root = path
-            .parent()
-            .and_then(git::repo_root)
-            .and_then(|r| std::fs::canonicalize(r).ok())
-            .ok_or("This file isn't in a git repository")?;
-        let relative = path
-            .strip_prefix(&root)
-            .map_err(|_| "This file isn't in the repository")?
-            .to_string_lossy()
-            .replace('\\', "/");
+        let (_, root, relative) = self.git_current_file()?;
         // Before opening the view, so there's nothing to back out of.
         if git::file_log(&root, &relative, 1).is_empty() {
             return Err(format!("No commits have changed {relative} yet"));
@@ -763,21 +836,7 @@ impl Editor {
         if !self.options.git {
             return Err("git is turned off (git = false)".into());
         }
-        let path = self
-            .document
-            .path()
-            .and_then(|p| std::fs::canonicalize(p).ok())
-            .ok_or("This buffer isn't a file")?;
-        let root = path
-            .parent()
-            .and_then(git::repo_root)
-            .and_then(|r| std::fs::canonicalize(r).ok())
-            .ok_or("This file isn't in a git repository")?;
-        let relative = path
-            .strip_prefix(&root)
-            .map_err(|_| "This file isn't in the repository")?
-            .to_string_lossy()
-            .replace('\\', "/");
+        let (path, _, relative) = self.git_current_file()?;
         // As it'd be saved (line endings, the last line break), so lines
         // not changed match what's committed.
         let contents = self
@@ -813,12 +872,161 @@ impl Editor {
         self.git_show_blame(&path, relative, &contents, 0)
     }
 
+    /// Shows `relative`'s staged or unstaged change side by side, opening
+    /// the git view if it isn't (and closing it again on `<Esc>`).
+    pub fn git_show_side(&mut self, relative: &str, staged: bool) -> Result<(), String> {
+        let root = self
+            .git_status()
+            .ok_or("Not in a git repository")?
+            .root
+            .clone();
+        let untracked = self
+            .git_status()
+            .and_then(|s| s.files.iter().find(|f| f.path == relative))
+            .is_some_and(|f| f.unstaged == Some('U'));
+        let staged_text = || git::blob(&root, &format!(":{relative}")).unwrap_or_default();
+        let (old, new, titles) = if staged {
+            (
+                git::blob(&root, &format!("HEAD:{relative}")).unwrap_or_default(),
+                staged_text(),
+                ["HEAD".to_string(), "staged".to_string()],
+            )
+        } else {
+            let old = if untracked {
+                String::new()
+            } else {
+                staged_text()
+            };
+            let new = std::fs::read_to_string(root.join(relative)).unwrap_or_default();
+            (old, new, ["staged".to_string(), "working copy".to_string()])
+        };
+        let rows = git::side_by_side(&old, &new);
+        if rows.iter().all(|r| r.kind == SideKind::Same) {
+            return Err(format!("No changes in {relative}"));
+        }
+        let return_to = match self.git_gui {
+            Some(_) => None,
+            None => {
+                let mode = match self.mode() {
+                    Mode::Sidebar => Mode::Sidebar,
+                    _ => Mode::Normal,
+                };
+                self.open_git_gui()?;
+                Some(mode)
+            }
+        };
+        let text = |t: &str| t.strip_suffix('\n').unwrap_or(t).replace("\r\n", "\n");
+        let mut documents = [
+            Document::with_text(&text(&old)),
+            Document::with_text(&text(&new)),
+        ];
+        for (document, id) in documents.iter_mut().zip(SIDE_DOCUMENTS) {
+            document.set_id(id);
+        }
+        let first_line = new.lines().next().or(old.lines().next()).unwrap_or("");
+        let language = self
+            .languages
+            .detect(Some(&root.join(relative)), first_line)
+            .map(str::to_string);
+        let mut view = SideView {
+            path: relative.to_string(),
+            staged,
+            titles: titles.map(|t| format!("{relative} ({t})")),
+            rows,
+            documents,
+            language,
+            return_to,
+            ..SideView::default()
+        };
+        view.row = view.changes().first().copied().unwrap_or(0);
+        let gui = self.git_gui.as_mut().ok_or("The git view isn't open")?;
+        gui.blame = None;
+        gui.side = Some(view);
+        Ok(())
+    }
+
+    /// `<CR>` on a file in the sidebar's Git tab, `v` in the git view:
+    /// the selected file's change side by side.
+    pub fn git_side_selected(&mut self) -> Result<(), String> {
+        if let Some(gui) = &self.git_gui
+            && gui.side.is_some()
+        {
+            self.git_gui_back();
+            return Ok(());
+        }
+        match self.git_rows().get(self.git_selected()) {
+            Some(GitRow::File { file, staged }) => {
+                let (path, staged) = (file.path.clone(), *staged);
+                self.git_show_side(&path, staged)
+            }
+            _ => Err("Choose a changed file".into()),
+        }
+    }
+
+    /// `:git_diff`: the current file's unstaged change side by side.
+    pub fn git_diff_current(&mut self) -> Result<(), String> {
+        let (_, _, relative) = self.git_current_file()?;
+        self.git_refresh_status();
+        self.git_show_side(&relative, false)
+    }
+
+    /// The current buffer's file, its repository's root, and its path
+    /// there (with `/`).
+    fn git_current_file(&self) -> Result<(PathBuf, PathBuf, String), String> {
+        let path = self
+            .document
+            .path()
+            .and_then(|p| std::fs::canonicalize(p).ok())
+            .ok_or("This buffer isn't a file")?;
+        let root = path
+            .parent()
+            .and_then(git::repo_root)
+            .and_then(|r| std::fs::canonicalize(r).ok())
+            .ok_or("This file isn't in a git repository")?;
+        let relative = path
+            .strip_prefix(&root)
+            .map_err(|_| "This file isn't in the repository")?
+            .to_string_lossy()
+            .replace('\\', "/");
+        Ok((path, root, relative))
+    }
+
+    /// `]c` / `[c` in the side-by-side view: the next or previous change.
+    pub fn git_gui_change(&mut self, forward: bool) -> Result<(), String> {
+        let side = self
+            .git_gui
+            .as_mut()
+            .and_then(|g| g.side.as_mut())
+            .ok_or("]c and [c move between changes side by side (v on a file)")?;
+        let changes = side.changes();
+        let next = if forward {
+            changes.iter().find(|&&c| c > side.row)
+        } else {
+            changes.iter().rev().find(|&&c| c < side.row)
+        };
+        side.row = *next.ok_or(if forward {
+            "No more changes below"
+        } else {
+            "No more changes above"
+        })?;
+        Ok(())
+    }
+
+    /// A click on the side-by-side view's row `index`.
+    pub fn git_gui_side_select(&mut self, index: usize) {
+        if let Some(side) = self.git_gui.as_mut().and_then(|g| g.side.as_mut())
+            && index < side.rows.len()
+        {
+            side.row = index;
+        }
+    }
+
     /// `s` (and `u`): in the files, stages (or unstages) the file; in a
     /// file's diff, the selected hunk.
     pub fn git_gui_stage(&mut self, stage: bool) -> Result<(), String> {
         let gui = self.git_gui.as_ref().ok_or("The git view isn't open")?;
-        if gui.blame.is_some() {
-            return Err("Esc leaves the blame first".into());
+        if gui.blame.is_some() || gui.side.is_some() {
+            return Err("Esc goes back to the panels first".into());
         }
         match (gui.panel, &gui.diff_of) {
             // Space on a branch switches to it, as in lazygit.

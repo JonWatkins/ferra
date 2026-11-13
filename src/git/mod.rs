@@ -604,6 +604,92 @@ pub fn blame_line(path: &Path, row: usize, contents: &str) -> Option<Blame> {
     Some(blame)
 }
 
+/// What a side of a side-by-side row shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SideKind {
+    /// The same on both sides.
+    Same,
+    /// Changed: removed from the left, or added on the right.
+    Changed,
+}
+
+/// A row of a side-by-side diff: the left (old) and right (new) line
+/// numbers shown on it, either missing where the other side has lines
+/// this one hasn't (a filler row).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SideRow {
+    pub left: Option<usize>,
+    pub right: Option<usize>,
+    pub kind: SideKind,
+}
+
+/// `old` and `new` lined up side by side: unchanged lines level, a
+/// changed run's old and new lines next to each other, and filler rows
+/// on the side that has fewer.
+pub fn side_by_side(old: &str, new: &str) -> Vec<SideRow> {
+    let old = lines(old);
+    let new = lines(new);
+    let deadline = Instant::now() + Duration::from_millis(500);
+    let ops = capture_diff_slices_deadline(Algorithm::Myers, &old, &new, Some(deadline));
+    let mut rows = Vec::new();
+    // Removed lines waiting for added ones to sit beside.
+    let mut removed: Vec<usize> = Vec::new();
+    let flush = |rows: &mut Vec<SideRow>, removed: &mut Vec<usize>, added: &[usize]| {
+        let n = removed.len().max(added.len());
+        for i in 0..n {
+            rows.push(SideRow {
+                left: removed.get(i).copied(),
+                right: added.get(i).copied(),
+                kind: SideKind::Changed,
+            });
+        }
+        removed.clear();
+    };
+    for op in ops {
+        match op {
+            DiffOp::Equal {
+                old_index,
+                new_index,
+                len,
+            } => {
+                flush(&mut rows, &mut removed, &[]);
+                rows.extend((0..len).map(|i| SideRow {
+                    left: Some(old_index + i),
+                    right: Some(new_index + i),
+                    kind: SideKind::Same,
+                }));
+            }
+            DiffOp::Delete {
+                old_index, old_len, ..
+            } => removed.extend(old_index..old_index + old_len),
+            DiffOp::Insert {
+                new_index, new_len, ..
+            } => {
+                let added: Vec<usize> = (new_index..new_index + new_len).collect();
+                flush(&mut rows, &mut removed, &added);
+            }
+            DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } => {
+                removed.extend(old_index..old_index + old_len);
+                let added: Vec<usize> = (new_index..new_index + new_len).collect();
+                flush(&mut rows, &mut removed, &added);
+            }
+        }
+    }
+    flush(&mut rows, &mut removed, &[]);
+    rows
+}
+
+/// A file's text at `spec` (`HEAD:src/main.rs`, `:src/main.rs` for the
+/// staged one), if it's there.
+pub fn blob(root: &Path, spec: &str) -> Option<String> {
+    git(root, &["show", spec]).map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
 /// One line of a whole file's blame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlameLine {
@@ -1463,6 +1549,32 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("a.txt"), "x").unwrap();
         assert_eq!(staged_text(&outside.path().join("a.txt")), None);
+    }
+
+    #[test]
+    fn lines_up_two_versions_side_by_side() {
+        let rows = side_by_side("a\nb\nc\nd\n", "a\nB\nc\nnew\nd\n");
+        let pairs: Vec<(Option<usize>, Option<usize>, SideKind)> =
+            rows.iter().map(|r| (r.left, r.right, r.kind)).collect();
+        use SideKind::*;
+        assert_eq!(
+            pairs,
+            [
+                (Some(0), Some(0), Same),
+                (Some(1), Some(1), Changed),
+                (Some(2), Some(2), Same),
+                (None, Some(3), Changed),
+                (Some(3), Some(4), Same),
+            ]
+        );
+        let rows = side_by_side("a\nb\nc\n", "a\n");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            (rows[1].left, rows[1].right),
+            (Some(1), None),
+            "filler on the right"
+        );
+        assert_eq!(side_by_side("", "x\n").len(), 1, "a new file");
     }
 
     #[test]

@@ -449,8 +449,9 @@ changes inside. The sidebar's **Git** tab (`<Tab>` in the sidebar, or
 
 | Keys (in the Git tab) | Action |
 |-----------------------|--------|
-| `j` `k`, click | Select a file |
-| `<CR>`, double click | Open it |
+| `j` `k` | Select a file |
+| `<CR>`, click | Its change side by side (see below) |
+| `o` | Open the file |
 | `s` / `u` | Stage / unstage it |
 | `S` / `U` | Stage / unstage everything |
 | `x` | Throw away its unstaged changes (asks first; an untracked file is deleted) |
@@ -504,6 +505,7 @@ or staged changes, a commit, or a branch's log.
 | `Z` | Pick a stash to put back (it's dropped once it's back) |
 | `H` | The selected file's history, in place of the commits; `H` or `<Esc>` there goes back to the whole log |
 | `B` | The selected file's blame: who last changed each line |
+| `v` | The selected file's change side by side |
 | `q` | Close |
 
 Fetching, pulling and pushing run in the background with git's progress
@@ -524,6 +526,15 @@ following it back through renames, and each shows only what it did to
 that file (a rename as one). `<Space>l` (or `:git_history`) opens it for
 the file you're editing; `:git_history path` for any file in the
 repository.
+
+A file's change side by side, as VS Code shows it (`<CR>` or a click
+in the Git tab, `v` here, `:git_diff` for the file you're editing): the
+version before on the left and after on the right (what's staged and
+your working copy, or for a staged change `HEAD` and what's staged),
+unchanged lines level, changed ones coloured, and `╱` filler where one
+side has lines the other hasn't. Both sides are highlighted. `]c` and
+`[c` jump between changes, `<CR>` opens the file at that line, and
+`<Esc>` goes back. It's read-only for now.
 
 `<Space>B` (or `:git_blame_view`) shows the whole file you're editing
 with who last changed each line, as it is now (lines you've changed say

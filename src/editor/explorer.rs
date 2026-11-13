@@ -336,7 +336,7 @@ impl Editor {
     /// goes to it).
     pub fn sidebar_choose(&mut self) -> Result<(), String> {
         if self.git_view_shown() {
-            return self.git_open_selected();
+            return self.git_side_selected();
         }
         if self.plugin_view().is_some() {
             return Ok(());
@@ -379,15 +379,18 @@ impl Editor {
         self.sidebar_click_times(row, 1)
     }
 
-    /// A click (`clicks` 2 for a double click) on the sidebar's list. In
-    /// Source Control a click selects the file and a double click opens it.
-    pub fn sidebar_click_times(&mut self, row: usize, clicks: u8) -> Result<(), String> {
+    /// A click on the sidebar's list (`_clicks` 2 for a double click; a
+    /// single one does). In Source Control a click selects the file and
+    /// shows its change side by side, as VS Code does.
+    pub fn sidebar_click_times(&mut self, row: usize, _clicks: u8) -> Result<(), String> {
         self.set_mode(Mode::Sidebar);
         if self.git_view_shown() {
             let index = self.git.scroll.get() + row;
             self.git_select_row(index);
-            if clicks >= 2 && self.git_selected() == index {
-                return self.git_open_selected();
+            if self.git_selected() == index
+                && matches!(self.git_rows().get(index), Some(super::GitRow::File { .. }))
+            {
+                return self.git_side_selected();
             }
             return Ok(());
         }
