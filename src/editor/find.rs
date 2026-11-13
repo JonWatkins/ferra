@@ -86,7 +86,7 @@ impl FindState {
     }
 
     /// Compiles what's typed, with the toggles.
-    fn rebuild(&mut self) {
+    pub(super) fn rebuild(&mut self) {
         *self.counted.get_mut() = None;
         let text = self.find.text();
         if text.is_empty() {
@@ -276,6 +276,10 @@ impl Editor {
     /// highlights cleared. Its search becomes the last one, for `n` and
     /// `N` (which highlight it again).
     pub fn close_find(&mut self) {
+        if self.project_search.typing {
+            self.search_leave();
+            return;
+        }
         if let Some(pattern) = self.find.pattern().cloned() {
             self.set_last_search(pattern);
         }
@@ -287,7 +291,7 @@ impl Editor {
     /// The match the cursor's on, while the box has focus (drawn apart
     /// from the others).
     pub fn find_current_match(&self) -> Option<Match> {
-        if self.mode() != Mode::Find {
+        if self.mode() != Mode::Find || self.project_search.typing {
             return None;
         }
         let pattern = self.find.pattern()?;
@@ -323,6 +327,11 @@ impl Editor {
     /// Edits the field with focus (`edit` is one of `TextField`'s), finding
     /// again if it's the find field.
     pub fn find_edit(&mut self, edit: impl FnOnce(&mut TextField)) {
+        if self.project_search.typing {
+            edit(self.project_search.fields.field());
+            self.search_changed();
+            return;
+        }
         edit(self.find.field());
         if self.find.focus == FindField::Find {
             self.find_as_typed();
@@ -341,6 +350,10 @@ impl Editor {
     /// `<Tab>`: between the find and replace fields (showing the replace
     /// field).
     pub fn find_switch_field(&mut self) {
+        if self.project_search.typing {
+            self.search_focus_results();
+            return;
+        }
         self.find.replacing = true;
         self.find.focus = match self.find.focus {
             FindField::Find => FindField::Replace,
@@ -350,6 +363,11 @@ impl Editor {
 
     /// `<A-c>`, `<A-w>`, `<A-r>`: flips match case, whole word or regex.
     pub fn find_toggle(&mut self, toggle: impl FnOnce(&mut FindState)) {
+        if self.project_search.typing {
+            toggle(&mut self.project_search.fields);
+            self.search_changed();
+            return;
+        }
         toggle(&mut self.find);
         self.find_as_typed();
     }
@@ -357,6 +375,10 @@ impl Editor {
     /// `<CR>` / `<Down>` (or `<S-CR>` / `<Up>`): the next (or previous)
     /// match; finding as you type carries on from there.
     pub fn find_step(&mut self, forward: bool) -> Result<(), String> {
+        if self.project_search.typing {
+            self.search_focus_results();
+            return Ok(());
+        }
         let pattern = self.find_pattern()?;
         let cursor = self.document.cursor();
         let found = find_match(&pattern, self.document.buffer(), cursor, forward, false)
@@ -379,6 +401,9 @@ impl Editor {
     /// goes to the next; if the cursor isn't on one, goes to the next first
     /// (as VS Code does).
     pub fn find_replace_one(&mut self) -> Result<(), String> {
+        if self.project_search.typing {
+            return self.search_replace_unsupported();
+        }
         let pattern = self.find_pattern()?;
         let Some(current) = self.find_current_match() else {
             return self.find_step(true);
@@ -403,6 +428,9 @@ impl Editor {
 
     /// `<A-a>`: replaces every match in the buffer, as one undo step.
     pub fn find_replace_all(&mut self) -> Result<(), String> {
+        if self.project_search.typing {
+            return self.search_replace_unsupported();
+        }
         let pattern = self.find_pattern()?;
         let replacement = self.find.literal_replacement();
         let mut replaced = 0;

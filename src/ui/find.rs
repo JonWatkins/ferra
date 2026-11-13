@@ -172,7 +172,7 @@ impl Parts {
 }
 
 /// The first char shown of a field `width` wide, so its cursor is in view.
-fn field_scroll(field: &TextField, width: u16) -> usize {
+pub(super) fn field_scroll(field: &TextField, width: u16) -> usize {
     field
         .cursor()
         .saturating_sub(width.saturating_sub(1) as usize)

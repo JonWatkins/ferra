@@ -83,6 +83,8 @@ impl PluginView {
 #[derive(Debug, Clone, Copy)]
 pub enum SidebarShows<'a> {
     Files,
+    /// Finding in the project's files (`project_search.rs`).
+    Search,
     /// Source Control (git), built in when `git` is on.
     Git,
     Plugin(&'a PluginView),
@@ -118,38 +120,47 @@ impl Editor {
         }
     }
 
-    /// How many views are built in: the files, and Source Control when
-    /// `git` is on. Plugins' views come after them.
-    fn builtin_views(&self) -> usize {
-        if self.options.git { 2 } else { 1 }
+    /// The built-in views, by name and title: the files, the Search view,
+    /// and Source Control when `git` is on. Plugins' views come after them.
+    fn builtin_view_list(&self) -> &'static [(&'static str, &'static str)] {
+        const WITH_GIT: &[(&str, &str)] =
+            &[("files", "Files"), ("search", "Search"), ("git", "Git")];
+        const WITHOUT: &[(&str, &str)] = &[("files", "Files"), ("search", "Search")];
+        if self.options.git { WITH_GIT } else { WITHOUT }
     }
 
-    /// The views' names: `files`, `git`, then the plugins'.
+    fn builtin_views(&self) -> usize {
+        self.builtin_view_list().len()
+    }
+
+    /// The views' names: `files`, `search`, `git`, then the plugins'.
     pub fn sidebar_view_names(&self) -> Vec<&str> {
-        ["files", "git"]
-            .into_iter()
-            .take(self.builtin_views())
+        self.builtin_view_list()
+            .iter()
+            .map(|(name, _)| *name)
             .chain(self.sidebar_views.iter().map(|v| v.spec.name.as_str()))
             .collect()
     }
 
     /// The views' titles, for the tabs, and which is shown.
     pub fn sidebar_tabs(&self) -> (Vec<&str>, usize) {
-        let titles = ["Files", "Git"]
-            .into_iter()
-            .take(self.builtin_views())
+        let titles = self
+            .builtin_view_list()
+            .iter()
+            .map(|(_, title)| *title)
             .chain(self.sidebar_views.iter().map(|v| v.spec.title.as_str()))
             .collect();
         (titles, self.sidebar_view)
     }
 
     pub fn sidebar_shows(&self) -> SidebarShows<'_> {
-        match self.sidebar_view {
-            0 => SidebarShows::Files,
-            1 if self.options.git => SidebarShows::Git,
-            n => self
+        match self.builtin_view_list().get(self.sidebar_view) {
+            Some(("files", _)) => SidebarShows::Files,
+            Some(("search", _)) => SidebarShows::Search,
+            Some(("git", _)) => SidebarShows::Git,
+            _ => self
                 .sidebar_views
-                .get(n - self.builtin_views())
+                .get(self.sidebar_view.saturating_sub(self.builtin_views()))
                 .map_or(SidebarShows::Files, SidebarShows::Plugin),
         }
     }
@@ -210,6 +221,7 @@ impl Editor {
             .map(|(name, title)| {
                 let icon = match name {
                     "files" => icon("☰", "\u{eaf0}"),
+                    "search" => icon("⌕", "\u{ea6d}"),
                     "git" => icon("⎇", "\u{ea68}"),
                     _ => self
                         .sidebar_views
@@ -400,7 +412,7 @@ mod tests {
         editor.add_sidebar_views(vec![spec("todos"), spec("outline")]);
         assert_eq!(
             editor.sidebar_view_names(),
-            ["files", "git", "todos", "outline"]
+            ["files", "search", "git", "todos", "outline"]
         );
         assert_eq!(editor.plugin_view_to_make(), None, "the sidebar's closed");
 
@@ -442,7 +454,7 @@ mod tests {
             editor
                 .open_sidebar_view("nope")
                 .unwrap_err()
-                .contains("files, git, todos, outline")
+                .contains("files, search, git, todos, outline")
         );
     }
 }

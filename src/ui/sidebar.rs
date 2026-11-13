@@ -254,15 +254,39 @@ pub struct SidebarTabs<'a> {
 }
 
 /// Where each tab is drawn in a row starting at `x`: its columns.
-pub fn tab_spans(titles: &[&str], x: u16) -> Vec<(u16, u16)> {
+pub fn tab_spans(titles: &[&str], shown: usize, x: u16, width: u16) -> Vec<(u16, u16)> {
     let mut x = x + 1;
-    titles
+    tab_labels(titles, shown, width)
         .iter()
-        .map(|title| {
-            let width = title.width() as u16 + 2;
+        .map(|label| {
+            let width = label.width() as u16;
             let span = (x, x + width);
             x += width + 1;
             span
+        })
+        .collect()
+}
+
+/// Each tab's label (` Files `): all of each title if they fit in
+/// `width`, else the shown one's in full and the others' first letters.
+fn tab_labels(titles: &[&str], shown: usize, width: u16) -> Vec<String> {
+    // A space, then each ` title ` and a space (the last one's spaces can
+    // run off the edge).
+    let full = titles
+        .iter()
+        .map(|t| t.width() + 3)
+        .sum::<usize>()
+        .saturating_sub(1);
+    titles
+        .iter()
+        .enumerate()
+        .map(|(i, title)| {
+            if full <= width as usize || i == shown {
+                format!(" {title} ")
+            } else {
+                let first: String = title.chars().take(1).collect();
+                format!(" {first} ")
+            }
         })
         .collect()
 }
@@ -294,18 +318,18 @@ impl Widget for SidebarTabs<'_> {
             theme.get("ui.sidebar.tabs"),
         );
         let mut x = area.x + 1;
-        for (i, title) in self.titles.iter().enumerate() {
+        let labels = tab_labels(self.titles, self.shown, area.width);
+        for (i, label) in labels.iter().enumerate() {
             let style = match (i == self.shown, self.focused) {
                 (true, true) => theme.get("ui.sidebar.tab.active"),
                 (true, false) => theme.get("ui.sidebar.tab.shown"),
                 _ => theme.get("ui.sidebar.tab"),
             };
-            let label = format!(" {title} ");
             if x >= area.right() {
                 break;
             }
             let room = (area.right() - x) as usize;
-            x = buf.set_stringn(x, area.y, &label, room, style).0 + 1;
+            x = buf.set_stringn(x, area.y, label, room, style).0 + 1;
         }
     }
 }
@@ -676,9 +700,9 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 30, 1));
         SidebarTabs::new(&titles, shown, true, &theme).render(Rect::new(0, 0, 30, 1), &mut buf);
         let tabs: String = (0..30).map(|x| buf[(x, 0)].symbol()).collect();
-        assert_eq!(tabs.trim_end(), "  Files   Git   Todos");
+        assert_eq!(tabs.trim_end(), "  Files   Search   Git   Todos");
         assert_eq!(
-            buf[(16, 0)].fg,
+            buf[(26, 0)].fg,
             theme.get("ui.sidebar.tab.active").fg.unwrap()
         );
     }

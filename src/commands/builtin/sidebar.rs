@@ -76,6 +76,22 @@ pub fn register(r: &mut CommandRegistry) {
         Ok(())
     });
     r.register(
+        "project_search",
+        "Search: find in every file of the project (the Search view)",
+        |cx| cx.editor.open_project_search(),
+    );
+    r.register(
+        "search_query",
+        "In the Search view: back to its query field",
+        |cx| {
+            if !cx.editor.search_view_shown() {
+                return Err("The Search view isn't shown".into());
+            }
+            cx.editor.search_focus_query();
+            Ok(())
+        },
+    );
+    r.register(
         "activity",
         "The activity bar: show a sidebar view (or hide the sidebar if it's shown); settings opens the config",
         |cx| {

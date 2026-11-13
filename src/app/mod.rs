@@ -1252,6 +1252,8 @@ impl App {
                 Outcome::Pending | Outcome::Unbound => {}
             }
         }
+        // Typing can ask for work too (the Search view searches as you type).
+        self.start_background_requests();
 
         // A `:s///c` question answered with a key that isn't a character
         // (`<Esc>`) ends the session.

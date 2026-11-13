@@ -36,6 +36,7 @@ pub mod lsp;
 mod plugin_packages;
 pub use plugin_packages::{PackageJob, PackageRequest};
 pub mod popup;
+pub mod project_search;
 mod selection;
 pub mod sidebar_views;
 mod terminal_panel;
@@ -159,6 +160,8 @@ pub struct Editor {
     pending_operator: Option<PendingOperator>,
     selection: Option<Selection>,
     search: search::SearchState,
+    /// The Search view: finding in every file of the project.
+    project_search: project_search::ProjectSearch,
     windows: Windows,
     /// The open picker popup, in picker mode.
     picker: Option<picker::Picker>,

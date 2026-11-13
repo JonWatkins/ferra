@@ -136,7 +136,7 @@ fn source_control_lists_stages_commits_and_discards() {
     keys(&mut app, &format!(":e {}<CR>", path.display()));
     keys(&mut app, "ccONE<Esc>:w<CR>:git_view<CR>");
     let shown = sidebar_text(&mut app);
-    assert!(shown.contains("Files   Git"), "{shown}");
+    assert!(shown.contains("Files   Search   Git"), "{shown}");
     assert!(shown.contains("SOURCE CONTROL"), "{shown}");
     assert!(shown.contains("CHANGES (2)"), "{shown}");
     assert!(shown.contains("M code.txt"), "{shown}");

@@ -331,6 +331,12 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.sidebar.selected" = { bg = "#33467c" }
 "ui.sidebar.modified" = "#e0af68"
 "ui.sidebar.empty" = { fg = "#6b7280", modifiers = ["italic"] }
+# The Search view: its files' names, the matching lines, what matched in
+# them, and each file's count.
+"ui.sidebar.search.file" = { fg = "#c0caf5", modifiers = ["bold"] }
+"ui.sidebar.search.line" = "#8c93ad"
+"ui.sidebar.search.match" = { fg = "#ffc777", bg = "#3a3324", modifiers = ["bold"] }
+"ui.sidebar.search.count" = { fg = "#c0caf5", bg = "#3b4048" }
 # Git in the sidebar: the file tree's names and letters, and Source Control.
 "ui.sidebar.git.modified" = "#e0af68"
 "ui.sidebar.git.added" = "#9ece6a"
@@ -601,6 +607,7 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "<Space>B" = "git_blame_view"
 "<C-`>" = "terminal_toggle"
 "<Space>f" = "file_picker"
+"<Space>F" = "project_search"
 "<Space>r" = "register_picker"
 "<C-w>s" = "split_horizontal"
 "<C-w>v" = "split_vertical"
@@ -891,6 +898,7 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "<Left>" = "sidebar_collapse"
 "zM" = "sidebar_collapse_all"
 "R" = "sidebar_refresh"
+"/" = "search_query"
 "<Tab>" = "sidebar_next_view"
 "<S-Tab>" = "sidebar_prev_view"
 "q" = "sidebar_toggle"

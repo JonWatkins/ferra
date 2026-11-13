@@ -36,6 +36,13 @@ pub(super) enum Update {
     },
     /// A plugin job finished.
     Plugins(Box<PackageDone>),
+    /// A file's matches, from the Search view's search `job`.
+    SearchFound {
+        job: u64,
+        file: crate::editor::project_search::FileMatches,
+    },
+    /// Search `job` ended (finished, cut short, or cancelled).
+    SearchDone { job: u64, truncated: bool },
 }
 
 /// One plugin updated.
@@ -65,6 +72,8 @@ pub(super) struct Background {
     running: usize,
     /// The file listing in progress, and the flag that stops it.
     file_job: Option<(u64, Arc<AtomicBool>)>,
+    /// The Search view's search in progress, and the flag that stops it.
+    search_job: Option<Arc<AtomicBool>>,
 }
 
 impl Default for Background {
@@ -75,6 +84,7 @@ impl Default for Background {
             receiver,
             running: 0,
             file_job: None,
+            search_job: None,
         }
     }
 }
@@ -112,6 +122,31 @@ impl Background {
                 truncated,
                 max_files: options.max_files,
             });
+        });
+    }
+
+    /// Searches the project's files on a new thread, stopping the search
+    /// already running.
+    fn project_search(&mut self, request: crate::editor::project_search::SearchRequest) {
+        if let Some(cancel) = self.search_job.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.search_job = Some(Arc::clone(&cancel));
+        self.running += 1;
+        let sender = self.sender.clone();
+        thread::spawn(move || {
+            let job = request.job;
+            let truncated = crate::editor::project_search::search_files(
+                &request.root,
+                &request.pattern,
+                &request.options,
+                &cancel,
+                |file| {
+                    let _ = sender.send(Update::SearchFound { job, file });
+                },
+            );
+            let _ = sender.send(Update::SearchDone { job, truncated });
         });
     }
 
@@ -171,6 +206,9 @@ impl App {
         if let Some(request) = self.editor.take_file_list_request() {
             self.background.list_files(request);
         }
+        if let Some(request) = self.editor.take_search_request() {
+            self.background.project_search(request);
+        }
         if let Some(request) = self.editor.take_plugin_request() {
             self.background.plugin_job(request);
         }
@@ -209,6 +247,11 @@ impl App {
 
     fn apply_update(&mut self, update: Update) {
         match update {
+            Update::SearchFound { job, file } => self.editor.search_found(job, file),
+            Update::SearchDone { job, truncated } => {
+                self.background.running -= 1;
+                self.editor.search_done(job, truncated);
+            }
             Update::Plugins(done) => {
                 self.background.running -= 1;
                 self.editor.plugin_job_done();

@@ -45,7 +45,8 @@ fn the_bar_shows_the_views_and_the_settings() {
     // the icon in the middle; the settings at the bottom (above the status
     // line and command line).
     assert_eq!(icon_at(&mut app, "☰"), (2, 1));
-    assert_eq!(icon_at(&mut app, "⎇"), (2, 4));
+    assert_eq!(icon_at(&mut app, "⌕"), (2, 4), "Search");
+    assert_eq!(icon_at(&mut app, "⎇"), (2, 7));
     let (_, gear) = icon_at(&mut app, "⚙");
     assert!(gear >= H - 6, "{gear}: {:?}", screen.rows);
     // The windows start after it.
@@ -118,6 +119,7 @@ fn the_bar_can_be_turned_off() {
 fn nerd_icons_are_vs_codes_codicons() {
     let mut app = common::app_with_config("[editor]\nactivity-bar = true\nicons = \"nerd\"\n");
     icon_at(&mut app, "\u{eaf0}");
+    icon_at(&mut app, "\u{ea6d}");
     icon_at(&mut app, "\u{ea68}");
     icon_at(&mut app, "\u{eb51}");
 }

@@ -26,6 +26,7 @@ pub mod icons;
 mod input_box;
 mod picker;
 mod popup;
+mod search;
 mod sidebar;
 mod signature;
 mod splash;
@@ -111,6 +112,8 @@ pub struct SidebarMap {
     pub list: Rect,
     /// The line between it and the windows (dragged to resize it).
     pub edge: Rect,
+    /// The Search view's field and toggles, when it's shown.
+    pub search: Option<search::SearchHits>,
 }
 
 /// Draws the whole screen and positions the terminal cursor. Returns where
@@ -139,6 +142,8 @@ pub fn draw(
     .areas(area);
 
     let screen_main = main;
+    // Where the Search view's query cursor goes, while it's typed in.
+    let mut search_cursor: Option<(u16, u16)> = None;
     // The activity bar takes the screen's left edge, as the sidebar does
     // (below), from the top down to the status line or the command line.
     let activity_bar = editor.options.activity_bar && main.width >= 30;
@@ -205,15 +210,24 @@ pub fn draw(
             };
             let plugin_view = editor.plugin_view();
             let git_view = editor.git_view_shown();
+            let search_view = editor.search_view_shown();
             map.sidebar = Some(SidebarMap {
                 area: side,
-                tabs: tabs.then(|| (side.y, sidebar::tab_spans(&titles, side.x))),
+                tabs: tabs.then(|| {
+                    (
+                        side.y,
+                        sidebar::tab_spans(&titles, shown, side.x, side.width),
+                    )
+                }),
                 list: if git_view {
                     GitViewWidget::list(content)
+                } else if search_view {
+                    search::SearchViewWidget::list(content)
                 } else {
                     sidebar::list_rows(content)
                 },
                 edge: separator,
+                search: search_view.then(|| search::SearchViewWidget::hits(editor, content)),
             });
             match plugin_view {
                 Some(view) => {
@@ -221,6 +235,15 @@ pub fn draw(
                 }
                 None if git_view => {
                     frame.render_widget(GitViewWidget::new(editor, focused, theme), content);
+                }
+                None if search_view => {
+                    frame.render_widget(
+                        search::SearchViewWidget::new(editor, focused, theme),
+                        content,
+                    );
+                    if editor.search_typing() {
+                        search_cursor = search::SearchViewWidget::cursor_position(editor, content);
+                    }
                 }
                 None => {
                     let mut view = SidebarView::new(explorer, theme)
@@ -357,6 +380,7 @@ pub fn draw(
     // The find box floats at the top right of the active window.
     let mut find_cursor = None;
     if editor.mode() == Mode::Find
+        && !editor.search_typing()
         && let Some(window) = drawn.active
     {
         let view = FindView::new(editor.find_state(), editor.find_count(), find_keys, theme);
@@ -468,6 +492,9 @@ pub fn draw(
         (Mode::Command, _) => Some(CommandLineView::cursor_position(editor, command)),
         // The selected row's highlight shows where it is (as in VS Code).
         (Mode::Sidebar, _) => None,
+        (Mode::Find, _) if editor.search_typing() => {
+            search_cursor.map(|(x, y)| ratatui::layout::Position::new(x, y))
+        }
         (Mode::Find, _) => find_cursor,
         (Mode::Terminal, _) => terminal_cursor,
         // The selection shows where it is.

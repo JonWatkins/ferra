@@ -63,6 +63,10 @@ enum Hit {
     Activity(String),
     /// The activity bar between its icons.
     ActivityBar,
+    /// The Search view's query field.
+    SearchField,
+    /// One of the Search view's toggles: match case, whole word, regex.
+    SearchToggle(usize),
     SidebarTab(usize),
     /// A line of the sidebar's list, rows down from its top.
     SidebarLine(usize),
@@ -145,7 +149,8 @@ impl App {
             };
         }
         match self.hit(at) {
-            Hit::SidebarTab(_) | Hit::Activity(_) => "pointer",
+            Hit::SidebarTab(_) | Hit::Activity(_) | Hit::SearchToggle(_) => "pointer",
+            Hit::SearchField => "text",
             Hit::SidebarLine(row) if self.sidebar_line_exists(row) => "pointer",
             Hit::Window(_) | Hit::Terminal => "text",
             _ => "default",
@@ -190,6 +195,14 @@ impl App {
                     .iter()
                     .position(|&(from, to)| (from..to).contains(&at.x))
                     .map_or(Hit::Sidebar, Hit::SidebarTab);
+            }
+            if let Some(search) = &sidebar.search {
+                if search.field.contains(at) {
+                    return Hit::SearchField;
+                }
+                if let Some(i) = search.toggles.iter().position(|t| t.contains(at)) {
+                    return Hit::SearchToggle(i);
+                }
             }
             if sidebar.list.contains(at) {
                 return Hit::SidebarLine((at.y - sidebar.list.y) as usize);
@@ -287,6 +300,13 @@ impl App {
                 }
             }
             Hit::ActivityBar => {}
+            Hit::SearchField => self.editor.search_focus_query(),
+            Hit::SearchToggle(i) => {
+                // Toggled as the keys do, from the query field.
+                self.editor.search_focus_query();
+                let command = ["find_toggle_case", "find_toggle_word", "find_toggle_regex"][i];
+                self.execute(command, Invocation::default());
+            }
             Hit::SidebarTab(index) => {
                 let names: Vec<String> = self
                     .editor
@@ -399,6 +419,12 @@ impl App {
                     }
                 }
                 true
+            }
+            Mode::Find if self.editor.search_typing() => {
+                // Typing in the Search view's field: a click anywhere
+                // leaves it and goes on (back into it, if it's on it).
+                self.editor.search_stop_typing();
+                false
             }
             Mode::Find => {
                 let Some(find) = map.find else {
@@ -615,11 +641,20 @@ impl App {
                 };
                 self.execute(command, invocation);
             }
+            Hit::SidebarLine(_) | Hit::Sidebar | Hit::SidebarTab(_)
+                if self.editor.search_view_shown() =>
+            {
+                self.editor.search_scroll(lines);
+            }
             Hit::SidebarLine(_) | Hit::Sidebar | Hit::SidebarTab(_) => {
                 self.editor.sidebar_move(lines);
             }
             Hit::Terminal => self.editor.terminal_scroll_rows(-lines),
-            Hit::Activity(_) | Hit::ActivityBar | Hit::Nothing => {}
+            Hit::Activity(_)
+            | Hit::ActivityBar
+            | Hit::SearchField
+            | Hit::SearchToggle(_)
+            | Hit::Nothing => {}
         }
     }
 }

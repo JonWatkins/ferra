@@ -379,8 +379,8 @@ colours are the `ui.sidebar.*` theme scopes.
 ### The activity bar
 
 Down the left edge, always there, is the activity bar, as in VS Code: an
-icon for each of the sidebar's views (the files, Source Control, and any
-plugins add), with the gear for the settings at the bottom. Clicking an
+icon for each of the sidebar's views (the files, Search, Source Control,
+and any plugins add), with the gear for the settings at the bottom. Clicking an
 icon shows its view (opening the sidebar, with focus); clicking the one
 shown hides the sidebar. The gear opens `config.toml` (`:open_config`).
 
@@ -402,6 +402,36 @@ place of `▸` and `▾`. A plugin's view can name its icon
 letter of its title. `activity-bar = false` turns the bar off, and the
 sidebar shows a row of tabs for its views instead. The colours are the
 `ui.activitybar.*` scopes.
+
+### Search
+
+`<Space>F` (or the activity bar's search icon) finds in every file of the
+project, as VS Code's search does: type in the Search view's field and the
+results come in as you type, grouped by file, with each file's count.
+
+```text
+ SEARCH
+  alpha               Aa  W  .*
+ 3 results in 2 files
+ ▾ notes.txt                 1
+    Alpha is first
+ ▾ main.rs src               2
+    alpha();
+    fn alpha() {}
+```
+
+The field takes the find box's keys: `<C-a>` match case, `<C-w>` whole
+words, `<C-r>` a regex (or click the toggles). `<CR>`, `<Down>` or `<Tab>`
+go to the results, where `j`/`k` move, `<CR>` opens the match (or folds a
+file's matches away), and `/` goes back to the field; `<Esc>` goes back to
+the editor, the view left open. Opening a match makes the search the last
+one, so `n` and `N` carry on in the file. `R` searches again.
+
+It searches the folder ferra started in, leaving out what `.gitignore`
+ignores (and hidden files, as the file picker does: `[editor.file-picker]`
+sets both), binary files and files over 4 MB, and stops at 10,000 matches.
+It reads the files on disk, so unsaved changes aren't searched yet; and
+replacing across files comes next.
 
 ## The terminal panel
 

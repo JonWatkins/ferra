@@ -352,6 +352,22 @@ draws a file's icon, or a folder's open or closed one, in the two columns
 the folder marker takes, so names don't move; the picker draws one before
 items that open a file.
 
+The Search view (`editor/project_search.rs`, drawn by `ui/search.rs`) is a
+built-in sidebar view between the files and Source Control (the built-in
+views are named, `builtin_view_list`, not counted). Its query field reuses
+the find box: its fields and toggles are a `FindState`, typed in
+`Mode::Find` with `[keys.find]`, and while it has focus
+(`ProjectSearch::typing`) the find box's commands (`find.rs`) edit it
+instead and start a search. A search is a `SearchRequest` the app runs on
+a thread (`search_files`: `walk_files`, as the file picker lists, then
+each file's lines against the `SearchPattern`), sending each file's
+matches as an update; a new search sets the old one's cancel flag, and
+updates from an older job are dropped. Results are files with their
+matching lines, flattened into rows for the list; the sidebar's
+`sidebar_*` commands drive the list when the view is shown. Typed
+characters can start background work now, so the app starts requests
+after every key's outcomes, not only after commands.
+
 `ui/sidebar.rs` draws it. `ui::draw` takes the sidebar's columns (plus a
 `│`) from the left before the windows are laid out, so splits, resizing and
 per-window status lines work within what's left. With per-window status
