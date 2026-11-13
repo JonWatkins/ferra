@@ -1685,6 +1685,36 @@ panel](#the-terminal-panel), plugin popups and views, and [The
 mouse](#the-mouse)). The sidebar holds more than files: Git's Source
 Control is a view in it, and plugins add their own.
 
+Next, in the spirit of [Fresh](https://getfresh.dev/), a terminal IDE
+built for people coming from VS Code:
+
+1. **An activity bar**: a narrow column of icons down the left that
+   stays put (Files, Search, Git, plugins' views). Clicking one shows
+   its view; clicking the one shown hides the sidebar. It replaces the
+   sidebar's row of tabs.
+2. **A menu bar** along the top (File, Edit, Selection, View, Go, Git,
+   Terminal, Help) whose entries run commands, opened with a click, F10
+   or Alt/⌥ and a letter.
+3. **A settings editor**: the options by category, with each one's
+   description and default, edited by toggling, typing or picking, and
+   saved to `config.toml` (as `:set` checks them). A keybinding editor
+   beside it: a searchable table of keys, commands and modes, finding a
+   binding by pressing its key, warning about conflicts.
+4. **A modeless keymap**: a `vscode` preset where you're always typing
+   (Ctrl+S, Ctrl+Z, Ctrl+C/X/V, Shift+arrows to select, Ctrl+D for the
+   next match, Ctrl+P), alongside the Vim keys. The largest: selection,
+   copying and undo steps assume modes today.
+
+**Option on macOS, Alt elsewhere, with no configuration.** Key labels
+show ⌥F on macOS and Alt+F elsewhere. A Mac terminal sends Option+F as
+the character it types (`ƒ`) unless it's set to send Option as Alt, so
+ferra reads those characters as ⌥ keys where they can't be text (menus,
+the sidebar, popups, normal mode) and the key is bound, for US and UK
+layouts. ⌥E, ⌥U, ⌥I, ⌥N and ⌥\` are accent keys the Mac holds back, so
+menus avoid those letters. The first time ferra sees such a character it
+says once how to send Option as Alt (iTerm2: Left Option key → Esc+,
+keeping the right one for `#` and `€` on UK keyboards).
+
 ### Git support
 
 Started: changes in the gutter, `]c`/`[c`, the branch, the file tree's
