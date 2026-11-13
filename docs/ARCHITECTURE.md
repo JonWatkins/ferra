@@ -1521,6 +1521,23 @@ queries point into it), checks the ABI version, compiles the queries
 before registering, and remembers what it registered by library and query
 text, so `:plugin_reload` reuses it.
 
+A grammar can come from its own repository (`git` + `rev`, as Helix's
+do): `grammars::grammar_root` fetches that commit into
+`.ferra-build/src/<lang>-<rev>` (a shallow fetch of the commit, else a
+full clone), so a pack is only settings and queries. Each query file is
+the pack's own, else the grammar repository's; either way it's read
+through `syntax::compat::adapt`, which turns `#lua-match?` into `#match?`
+(Lua patterns to regexes) and Neovim's indent captures into `@indent`
+and `@outdent`, while `highlight::recognise` maps older capture names
+(`ALIASES`). Indentation while typing leans on `ERROR` nodes:
+`indent::loose_brackets` keeps a stack of openers in each (the built-in
+brackets, and the language's `@open` tokens), closed by its `@outdent`
+tokens or by a clause the parser did make that begins with one (Lua's
+`else_statement`); a closed one becomes an indent node up to its closer,
+with a made-up id the closer outdents against. A plugin language's
+re-indenting words are the quoted words of its rules
+(`indent::keywords`).
+
 `:plugin_reload` doesn't unregister piece by piece: `App::reload_plugins`
 drops the `PluginHost` (so `require`'s cache goes too), rebuilds the
 registry from the built-ins and the config's hooks (`base_commands`),

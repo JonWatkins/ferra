@@ -187,10 +187,45 @@ impl LanguageConfig {
     }
 }
 
+/// Older or other editors' capture names, as the ones ferra knows: many
+/// grammars' own queries use them (Neovim's `@conditional`, `@method`,
+/// Helix's `@markup.heading`).
+const ALIASES: &[(&str, &str)] = &[
+    ("conditional", "keyword"),
+    ("repeat", "keyword"),
+    ("include", "keyword"),
+    ("exception", "keyword"),
+    ("storageclass", "keyword"),
+    ("preproc", "keyword"),
+    ("define", "function.macro"),
+    ("method", "function.method"),
+    ("parameter", "variable.parameter"),
+    ("field", "property"),
+    ("namespace", "module"),
+    ("character", "string"),
+    ("float", "number"),
+    ("symbol", "string.special"),
+    ("markup", "text"),
+    ("heading", "title"),
+    ("bold", "strong"),
+    ("italic", "emphasis"),
+    ("raw", "literal"),
+    ("url", "uri"),
+];
+
 /// The entry in `HIGHLIGHT_NAMES` with the most parts that are all in the
-/// capture `name`'s parts.
+/// capture `name`'s parts (after [`ALIASES`]).
 fn recognise(name: &str) -> Option<usize> {
-    let parts: Vec<&str> = name.split('.').collect();
+    let parts: Vec<&str> = name
+        .split('.')
+        .flat_map(|part| {
+            ALIASES
+                .iter()
+                .find(|(from, _)| *from == part)
+                .map_or(part, |(_, to)| to)
+                .split('.')
+        })
+        .collect();
     let mut best = None;
     let mut best_len = 0;
     for (i, known) in HIGHLIGHT_NAMES.iter().enumerate() {
@@ -676,4 +711,27 @@ fn spans_by_line(
         lines.push(spans);
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn name(capture: &str) -> Option<&'static str> {
+        recognise(capture).map(|i| HIGHLIGHT_NAMES[i])
+    }
+
+    #[test]
+    fn captures_are_recognised_by_their_parts_and_aliases() {
+        assert_eq!(name("function.call"), Some("function"));
+        assert_eq!(name("string.escape"), Some("escape"));
+        assert_eq!(name("conditional"), Some("keyword"));
+        assert_eq!(name("repeat"), Some("keyword"));
+        assert_eq!(name("method.call"), Some("function.method"));
+        assert_eq!(name("parameter"), Some("variable.parameter"));
+        assert_eq!(name("field"), Some("property"));
+        assert_eq!(name("markup.heading.1"), Some("text.title"));
+        assert_eq!(name("markup.link.url"), Some("text.uri"));
+        assert_eq!(name("spell"), None);
+    }
 }

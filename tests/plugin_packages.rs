@@ -1224,3 +1224,92 @@ fn grammars_build_for_plugins_in_folders() {
     app.open(&file);
     assert_eq!(string_cells(&mut app, 0), vec![6, 7, 8, 9, 10]);
 }
+
+/// The test grammar as a grammar repository of its own, with its queries.
+fn grammar_repo(root: &Path) -> (String, String) {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/grammar-json");
+    let read = |p: &str| fs::read_to_string(fixture.join(p)).unwrap();
+    let dir = repo(
+        root,
+        "tree-sitter-data",
+        &[
+            ("src/parser.c", &read("src/parser.c")),
+            (
+                "src/tree_sitter/parser.h",
+                &read("src/tree_sitter/parser.h"),
+            ),
+            ("src/tree_sitter/alloc.h", &read("src/tree_sitter/alloc.h")),
+            ("src/tree_sitter/array.h", &read("src/tree_sitter/array.h")),
+            ("queries/highlights.scm", &read("queries/highlights.scm")),
+        ],
+    );
+    let rev = git(Path::new(&dir), &["rev-parse", "HEAD"]);
+    (dir, rev)
+}
+
+#[test]
+fn grammars_are_fetched_from_their_repository_at_a_commit() {
+    if !have_cc() {
+        eprintln!("no C compiler: skipped");
+        return;
+    }
+    let s = setup();
+    let (grammar, rev) = grammar_repo(s.temp.path());
+    // Later commits to the grammar don't matter: the pack names its rev.
+    commit(&grammar, &[("src/parser.c", "this is not C")], "Break it");
+    let pack = repo(
+        s.temp.path(),
+        "pack",
+        &[(
+            "ferra-plugin.toml",
+            &format!(
+                "name = \"data\"\nversion = \"0.1.0\"\n[languages.data]\nextensions = [\"data\"]\n\
+                 [grammars.data]\ngit = \"{grammar}\"\nrev = \"{rev}\"\nsymbol = \"tree_sitter_json\"\n"
+            ),
+        )],
+    );
+    let mut app = app_with(&s.paths);
+    install(&mut app, &pack);
+    assert!(
+        message(&app).starts_with("Installed data"),
+        "{}",
+        message(&app)
+    );
+    let sources = s.paths.data.join("data/.ferra-build/src");
+    assert!(
+        sources
+            .join(format!("data-{}", &rev[..12]))
+            .join("src/parser.c")
+            .is_file()
+    );
+
+    // The pack has no queries: the grammar's own are used.
+    let file = s.temp.path().join("q.data");
+    fs::write(&file, "{\"key\": 12}\n").unwrap();
+    app.open(&file);
+    assert_eq!(string_cells(&mut app, 0), vec![6, 7, 8, 9, 10]);
+    assert_eq!(
+        git(&s.paths.data.join("data"), &["status", "--porcelain"]),
+        ""
+    );
+}
+
+#[test]
+fn a_grammar_from_git_needs_its_commit() {
+    let s = setup();
+    let pack = repo(
+        s.temp.path(),
+        "norev",
+        &[(
+            "ferra-plugin.toml",
+            "name = \"norev\"\nversion = \"0.1.0\"\n[languages.norev]\nextensions = [\"nr\"]\n[grammars.norev]\ngit = \"o/r\"\n",
+        )],
+    );
+    let mut app = app_with(&s.paths);
+    install(&mut app, &pack);
+    assert!(
+        message(&app).contains("git needs a rev"),
+        "{}",
+        message(&app)
+    );
+}

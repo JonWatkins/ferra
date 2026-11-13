@@ -1271,18 +1271,33 @@ Open files in the language pick it up as soon as it's installed. A pack
 can't change a language ferra already has (built in or in your config):
 change those in your own `[languages]`.
 
-For highlighting, a pack carries the language's tree-sitter grammar as C
-source (the generated `src/parser.c`, and `src/scanner.c` if it has one),
-which ferra compiles with your C compiler when the pack is installed or
-updated, and its queries:
+For highlighting, a pack names the language's tree-sitter grammar: its
+repository and the commit to build, as Helix does. ferra fetches that
+commit and compiles it with your C compiler when the pack is installed or
+updated:
 
 ```toml
 # ferra-plugin.toml
 [grammars.zig]
-path = "tree-sitter-zig"      # the folder with src/parser.c ("." if left out)
-symbol = "tree_sitter_zig"    # the grammar's function (this is the default)
-queries = "queries/zig"       # highlights, injections, locals and indents .scm (the default)
+git = "https://github.com/tree-sitter-grammars/tree-sitter-zig"
+rev = "6479aa13f32f701c383083d8b28360ebd682fb7d"   # a full commit hash
+path = "."                    # the folder with src/parser.c in that repository (the default)
+symbol = "tree_sitter_zig"    # the grammar's function (the default)
+queries = "queries/zig"       # the pack's own queries (the default)
 ```
+
+Without `git`, `path` is a folder of the pack itself, holding the
+grammar's generated source.
+
+Each query (`highlights.scm`, `injections.scm`, `locals.scm`,
+`indents.scm`) is the pack's own if it has one, else the one the
+grammar's repository ships. Those are usually written for Neovim, and
+ferra reads them as they are: older capture names (`@conditional`,
+`@method`, `@parameter`, Helix's `@markup.heading`...) map to ferra's,
+`#lua-match?` filters are turned into regexes, and Neovim's
+`@indent.begin` / `@indent.end` / `@indent.branch` become ferra's
+indentation rules. So a pack can be just a few lines, adding queries only
+where the grammar's need help.
 
 Building needs a C compiler (`cc`, or `$CC`; on macOS
 `xcode-select --install`). Without one the pack still installs, and the
@@ -1293,11 +1308,16 @@ can't replace one ferra has built in.
 `indents.scm` gives the language ferra's indentation, from the syntax
 tree: `@indent` marks a node whose lines after its first go one level in
 (a block, a list), `@outdent` a token that, starting a line, puts it back
-(`}`, `end`):
+(`}`, `end`). While a block is being typed and isn't finished yet, the
+parser can't see it as a block: `@open` marks the tokens that open one
+then (`then`, `do`, `function`). A token that's both closes one block and
+opens the next (`else`), and typing a quoted word of the rules as the
+first word on a line re-indents it:
 
 ```scheme
-[(block) (array) (arguments)] @indent
-["}" "]" ")"] @outdent
+[(block) (if_statement) (else_statement) (table_constructor)] @indent
+["end" "else" "}"] @outdent
+["function" "then" "do" "else"] @open
 ```
 
 Without one, a new line follows the line above (one level in after a

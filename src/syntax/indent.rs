@@ -5,7 +5,9 @@
 //! - `@indent` marks a node whose lines after its first are one level in
 //!   (a block, an argument list, an HTML element).
 //! - `@outdent` marks a token that, starting a line, puts that line back at
-//!   the level of the node it closes (`}`, `)`, `fi`, `else`, `</div>`).
+//!   the level of the node it closes (`}`, `)`, `fi`, `else`, `</div>`):
+//!   the token's parent, or, for a token that begins its parent (`else`
+//!   beginning an `else` clause), the node around that.
 //!
 //! A line's indentation is *relative*: the indentation of the line where
 //! its innermost enclosing `@indent` node starts, plus one level (or plus
@@ -125,8 +127,34 @@ const CSS: &str = r#"
 pub fn keywords(language: &str) -> &'static [&'static str] {
     match language {
         "bash" => &["fi", "done", "esac", "else", "elif", "then", "do"],
-        _ => &[],
+        _ if LANGUAGES.iter().any(|l| l.name == language) => &[],
+        _ => plugin_keywords(language),
     }
+}
+
+/// A plugin language's keywords: the quoted words in its rules (`"end"`,
+/// `"else"`), which are the tokens they open or close blocks with.
+fn plugin_keywords(language: &str) -> &'static [&'static str] {
+    type Cache = HashMap<usize, &'static [&'static str]>;
+    static WORDS: Mutex<Option<Cache>> = Mutex::new(None);
+    let Some(definition) = super::language(language) else {
+        return &[];
+    };
+    let mut cache = WORDS.lock().unwrap_or_else(|e| e.into_inner());
+    cache
+        .get_or_insert_with(HashMap::new)
+        .entry(std::ptr::from_ref(definition) as usize)
+        .or_insert_with(|| {
+            let mut words: Vec<&'static str> = Vec::new();
+            for piece in definition.indents.split('"').skip(1).step_by(2) {
+                let word =
+                    !piece.is_empty() && piece.chars().all(|c| c.is_alphanumeric() || c == '_');
+                if word && !words.contains(&piece) {
+                    words.push(piece);
+                }
+            }
+            Box::leak(words.into_boxed_slice())
+        })
 }
 
 /// Whether typing `>` to finish a closing tag (`</div>`) first on a line
@@ -233,7 +261,7 @@ pub fn compute(
             let open = around.indents.into_iter().filter(|n| n.unterminated);
             structure.indents.extend(open);
         }
-        loose_brackets(tree.root_node(), &mut structure.indents);
+        loose_brackets(query, tree.root_node(), buffer, &mut structure);
     }
     let innermost = structure.innermost_by_row(&rows);
 
@@ -273,11 +301,14 @@ struct Structure {
     indents: Vec<IndentNode>,
     /// Where each starts (row, column), and its parent node's id.
     outdents: HashSet<(usize, usize, usize)>,
+    /// Loose brackets' made-up ids handed out.
+    loose: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct IndentNode {
-    /// The tree node's id; none for a loose bracket in an `ERROR`.
+    /// The tree node's id (a made-up one for a loose bracket in an
+    /// `ERROR`).
     id: Option<usize>,
     start_row: usize,
     start_byte: usize,
@@ -314,12 +345,24 @@ impl Structure {
                     if let Some(parent) = node.parent() {
                         let start = node.start_position();
                         outdents.insert((start.row, start.column, parent.id()));
+                        // A token that begins its node (`else` beginning
+                        // Lua's `else_statement`) also closes the node
+                        // around that one (the `if`).
+                        if parent.start_byte() == node.start_byte()
+                            && let Some(grandparent) = parent.parent()
+                        {
+                            outdents.insert((start.row, start.column, grandparent.id()));
+                        }
                     }
                 }
                 _ => {}
             }
         }
-        Structure { indents, outdents }
+        Structure {
+            indents,
+            outdents,
+            loose: 0,
+        }
     }
 
     /// For each row of `rows`, the innermost `@indent` node that started
@@ -355,45 +398,121 @@ impl Structure {
     }
 }
 
-/// Adds the brackets (and HTML start tags, and Bash's `then` and `do`) left
-/// open inside `ERROR` nodes under `node`, as indent nodes open to the end
-/// of the text.
-fn loose_brackets(node: Node, indents: &mut Vec<IndentNode>) {
+/// Adds the brackets (and HTML start tags, and Bash's `then` and `do`)
+/// inside `ERROR` nodes under `node` as indent nodes: open to the end of
+/// the text if nothing closes them, else up to their closer, which then
+/// outdents. A language adds its own: tokens its rules capture as `@open`
+/// open, its `@outdent` tokens close, and a token that's both (Lua's
+/// `else`) closes one and opens the next.
+fn loose_brackets(query: &Query, node: Node, buffer: &Buffer, structure: &mut Structure) {
     if node.is_error() {
-        let mut open: Vec<Node> = Vec::new();
+        let (opens, closes) = captured_tokens(query, node, buffer);
+        let mut open: Vec<(Node, usize)> = Vec::new();
+        let close = |open: &mut Vec<(Node, usize)>, at: Node, structure: &mut Structure| {
+            if let Some((bracket, id)) = open.pop() {
+                let point = at.start_position();
+                structure.outdents.insert((point.row, point.column, id));
+                structure.indents.push(IndentNode {
+                    id: Some(id),
+                    start_row: bracket.start_position().row,
+                    start_byte: bracket.start_byte(),
+                    end: point,
+                    unterminated: false,
+                });
+            }
+        };
         for i in 0..node.child_count() {
             let Some(child) = node.child(i) else {
                 continue;
             };
-            // Bash's blocks open with keywords: `then` and `do` (on the
-            // `if` or `for` line, usually), closed by `fi` and `done`.
-            match child.kind() {
-                "{" | "(" | "[" | "start_tag" | "then" | "do" => open.push(child),
-                "}" | ")" | "]" | "end_tag" | "fi" | "done" => {
-                    open.pop();
-                }
-                "else" | "elif" => {
-                    open.pop();
-                    open.push(child);
-                }
-                _ => {}
+            // A clause the parser did make (Lua's `else_statement`) counts
+            // as the token it begins with, but only to close: a finished
+            // `{...}` begins with `{` and isn't left open.
+            let leaf = child.child_count() == 0;
+            let token = if leaf {
+                child
+            } else {
+                child.child(0).unwrap_or(child)
+            };
+            // The built-in openers and closers (HTML's tags are nodes).
+            let opener = matches!(child.kind(), "{" | "(" | "[" | "start_tag" | "then" | "do")
+                || (leaf && opens.contains(&child.id()));
+            let closer = matches!(child.kind(), "}" | ")" | "]" | "end_tag" | "fi" | "done")
+                || closes.contains(&token.id());
+            let middle = matches!(token.kind(), "else" | "elif")
+                || (opens.contains(&token.id()) && closes.contains(&token.id()));
+            if middle {
+                close(&mut open, token, structure);
+                open.push((token, loose_id(structure)));
+            } else if opener {
+                open.push((child, loose_id(structure)));
+            } else if closer {
+                close(&mut open, token, structure);
             }
         }
-        indents.extend(open.into_iter().map(|bracket| IndentNode {
-            id: None,
-            start_row: bracket.start_position().row,
-            start_byte: bracket.start_byte(),
-            end: bracket.end_position(),
-            unterminated: true,
-        }));
+        structure
+            .indents
+            .extend(open.into_iter().map(|(bracket, id)| IndentNode {
+                id: Some(id),
+                start_row: bracket.start_position().row,
+                start_byte: bracket.start_byte(),
+                end: bracket.end_position(),
+                unterminated: true,
+            }));
     }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i)
             && child.has_error()
         {
-            loose_brackets(child, indents);
+            loose_brackets(query, child, buffer, structure);
         }
     }
+}
+
+/// An id for a loose bracket's indent node that no tree node has (counting
+/// down from the top: tree nodes' ids are addresses).
+fn loose_id(structure: &mut Structure) -> usize {
+    structure.loose += 1;
+    usize::MAX - structure.loose
+}
+
+/// The ids of the tokens directly in `error` (or beginning a node that is)
+/// that the rules capture as `@open`, and as `@outdent`.
+fn captured_tokens(
+    query: &Query,
+    error: Node,
+    buffer: &Buffer,
+) -> (HashSet<usize>, HashSet<usize>) {
+    let names = query.capture_names();
+    let (mut opens, mut closes) = (HashSet::new(), HashSet::new());
+    if !names.contains(&"open") {
+        return (opens, closes);
+    }
+    let mut cursor = QueryCursor::new();
+    cursor.set_byte_range(error.byte_range());
+    let text = |node: Node| buffer.byte_chunks(node.byte_range());
+    let mut captures = cursor.captures(query, error, text);
+    while let Some((m, index)) = captures.next() {
+        let capture = m.captures()[*index];
+        let node = capture.node;
+        let direct = node.parent().is_some_and(|p| p.id() == error.id());
+        let leading = node.parent().is_some_and(|p| {
+            p.start_byte() == node.start_byte() && p.parent().is_some_and(|g| g.id() == error.id())
+        });
+        if !direct && !leading {
+            continue;
+        }
+        match names[capture.index as usize] {
+            "open" => {
+                opens.insert(capture.node.id());
+            }
+            "outdent" => {
+                closes.insert(capture.node.id());
+            }
+            _ => {}
+        }
+    }
+    (opens, closes)
 }
 
 /// The positions of the tokens made up by error recovery (`MISSING`)

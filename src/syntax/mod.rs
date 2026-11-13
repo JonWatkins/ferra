@@ -8,6 +8,7 @@
 //! a window shows (see `highlight.rs`), cached until the text changes. The UI styles each [`Span`] with the
 //! theme scope named by its highlight (`keyword`, `function.method`, ...).
 
+pub mod compat;
 mod highlight;
 pub mod indent;
 mod languages;

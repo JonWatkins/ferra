@@ -5,10 +5,18 @@
 //! ```toml
 //! # ferra-plugin.toml
 //! [grammars.zig]
-//! path = "tree-sitter-zig"      # the folder with src/parser.c ("." if left out)
+//! git = "https://github.com/tree-sitter-grammars/tree-sitter-zig"
+//! rev = "6479aa13f32f701c383083d8b28360ebd682fb7d"  # the commit to build
+//! path = "."                    # the folder with src/parser.c, in the grammar's repo
 //! symbol = "tree_sitter_zig"    # (the default: tree_sitter_<language>)
 //! queries = "queries/zig"       # highlights, injections, locals, indents (.scm)
 //! ```
+//!
+//! With `git` and `rev` (as Helix's grammars are given), the grammar's
+//! source is fetched at that commit when it's built, into
+//! `.ferra-build/src/`, so a pack is only its settings and queries; without
+//! them, `path` is a folder of the plugin itself. Queries come from the
+//! plugin's `queries/<language>/`, else from the grammar's own `queries/`.
 //!
 //! A build goes in the clone's `.ferra-build/`, named after the language
 //! and the commit (`zig-4f1c2a…​.dylib`), so an updated plugin's grammar is
@@ -34,8 +42,15 @@ const BUILD_DIR: &str = ".ferra-build";
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GrammarSpec {
-    /// The folder holding the grammar's `src/parser.c`, from the plugin's
-    /// root.
+    /// The grammar's repository, fetched at `rev` when it's built.
+    #[serde(default)]
+    pub git: Option<String>,
+    /// The commit of `git` to build (a full hash, so a build can't change
+    /// under you).
+    #[serde(default)]
+    pub rev: Option<String>,
+    /// The folder holding the grammar's `src/parser.c`: in its repository
+    /// (`git`), else in the plugin.
     #[serde(default = "here")]
     pub path: String,
     /// The C function returning the language (`tree_sitter_<language>`).
@@ -65,6 +80,25 @@ impl GrammarSpec {
                     "grammars.{language}: {path} should be a folder inside the plugin"
                 ));
             }
+        }
+        match (&self.git, &self.rev) {
+            (Some(git), Some(rev)) => {
+                let ok = |s: &str| {
+                    !s.is_empty() && !s.starts_with('-') && !s.contains(char::is_whitespace)
+                };
+                if !ok(git) || !ok(rev) {
+                    return Err(format!("grammars.{language}: invalid git or rev"));
+                }
+            }
+            (Some(_), None) => {
+                return Err(format!(
+                    "grammars.{language}: git needs a rev (the commit to build)"
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(format!("grammars.{language}: rev needs a git repository"));
+            }
+            (None, None) => {}
         }
         if let Some(symbol) = &self.symbol
             && !symbol
@@ -141,7 +175,12 @@ pub fn build(dir: &Path, language: &str, spec: &GrammarSpec) -> Result<PathBuf, 
     if library.is_file() {
         return Ok(library);
     }
-    let src = dir.join(&spec.path).join("src");
+    let build = dir.join(BUILD_DIR);
+    std::fs::create_dir_all(&build).map_err(|e| format!("{}: {e}", build.display()))?;
+    keep_out_of_git(dir);
+    let src = grammar_root(dir, language, spec)?
+        .join(&spec.path)
+        .join("src");
     let parser = src.join("parser.c");
     if !parser.is_file() {
         return Err(format!(
@@ -149,9 +188,6 @@ pub fn build(dir: &Path, language: &str, spec: &GrammarSpec) -> Result<PathBuf, 
             Path::new(&spec.path).join("src/parser.c").display()
         ));
     }
-    let build = dir.join(BUILD_DIR);
-    std::fs::create_dir_all(&build).map_err(|e| format!("{}: {e}", build.display()))?;
-    keep_out_of_git(dir);
     // Older builds of this grammar aren't needed (a library already loaded
     // stays usable after its file is gone).
     if let Ok(entries) = std::fs::read_dir(&build) {
@@ -205,6 +241,87 @@ pub fn build(dir: &Path, language: &str, spec: &GrammarSpec) -> Result<PathBuf, 
     linked?;
     std::fs::rename(&temp, &library).map_err(|e| format!("{}: {e}", library.display()))?;
     Ok(library)
+}
+
+/// Where the grammar's repository is: the plugin itself, or (with `git`)
+/// a checkout of `rev`, fetched now if it isn't there.
+fn grammar_root(dir: &Path, language: &str, spec: &GrammarSpec) -> Result<PathBuf, String> {
+    let (Some(git), Some(rev)) = (&spec.git, &spec.rev) else {
+        return Ok(dir.to_path_buf());
+    };
+    let checkout = source_checkout(dir, language, spec).expect("has git and rev");
+    if checkout.join(".git").is_dir() {
+        return Ok(checkout);
+    }
+    // Other revisions' sources aren't needed now.
+    let sources = dir.join(BUILD_DIR).join("src");
+    if let Ok(entries) = std::fs::read_dir(&sources) {
+        let prefix = format!("{language}-");
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    let temp = sources.join(format!("{language}.fetching"));
+    let _ = std::fs::remove_dir_all(&temp);
+    std::fs::create_dir_all(&temp).map_err(|e| format!("{}: {e}", temp.display()))?;
+    // Just that commit if the server allows it (GitHub does), else all
+    // of it.
+    let shallow = git_in(&temp, &["init", "--quiet"])
+        .and_then(|_| git_in(&temp, &["fetch", "--quiet", "--depth", "1", "--", git, rev]))
+        .and_then(|_| git_in(&temp, &["checkout", "--quiet", "FETCH_HEAD"]));
+    if shallow.is_err() {
+        let _ = std::fs::remove_dir_all(&temp);
+        let temp_arg = temp.to_string_lossy().into_owned();
+        git_in(&sources, &["clone", "--quiet", "--", git, &temp_arg])
+            .and_then(|_| git_in(&temp, &["checkout", "--quiet", rev]))
+            .map_err(|e| {
+                let _ = std::fs::remove_dir_all(&temp);
+                format!("grammar {language}: couldn't get {git} at {rev}: {e}")
+            })?;
+    }
+    std::fs::rename(&temp, &checkout).map_err(|e| format!("{}: {e}", checkout.display()))?;
+    Ok(checkout)
+}
+
+/// Where a `git` grammar's source is checked out, by its revision.
+fn source_checkout(dir: &Path, language: &str, spec: &GrammarSpec) -> Option<PathBuf> {
+    spec.git.as_ref()?;
+    let rev = spec.rev.as_ref()?;
+    let short: String = rev
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(12)
+        .collect();
+    Some(
+        dir.join(BUILD_DIR)
+            .join("src")
+            .join(format!("{language}-{short}")),
+    )
+}
+
+/// Runs git in `dir`, without prompts. Its last error line on failure.
+fn git_in(dir: &Path, args: &[&str]) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdin(Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|e| format!("git: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let errors = String::from_utf8_lossy(&output.stderr);
+    Err(errors
+        .lines()
+        .rfind(|l| !l.trim().is_empty())
+        .unwrap_or("git failed")
+        .trim()
+        .trim_start_matches("fatal: ")
+        .to_string())
 }
 
 /// `$CC` (or `cc`), or for C++ `$CXX` (or `c++`).
@@ -299,9 +416,21 @@ pub fn load(dir: &Path, language: &str, spec: &GrammarSpec) -> Result<(), String
         ));
     }
     let library = build(dir, language, spec)?;
+    // Each query from the plugin if it has it, else the grammar's own
+    // (beside the grammar, or at the top of its repository, which can
+    // hold several grammars).
+    let mut folders = vec![dir.join(spec.queries(language))];
+    if let Some(checkout) = source_checkout(dir, language, spec) {
+        folders.push(checkout.join(&spec.path).join("queries"));
+        folders.push(checkout.join("queries"));
+    }
+    // Written for another editor, most likely: see `syntax::compat`.
     let read = |name: &str| {
-        let path = dir.join(spec.queries(language)).join(name);
-        std::fs::read_to_string(path).unwrap_or_default()
+        let text = folders
+            .iter()
+            .find_map(|folder| std::fs::read_to_string(folder.join(name)).ok())
+            .unwrap_or_default();
+        syntax::compat::adapt(&text)
     };
     let key = (
         library.clone(),
