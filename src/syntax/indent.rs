@@ -443,7 +443,15 @@ fn loose_brackets(query: &Query, node: Node, buffer: &Buffer, structure: &mut St
                 || (opens.contains(&token.id()) && closes.contains(&token.id()));
             if middle {
                 close(&mut open, token, structure);
-                open.push((token, loose_id(structure)));
+                // A clause the parser made keeps its own id, so tokens
+                // inside it that close it (Ruby's `else` within `elsif`)
+                // agree on which node they close.
+                let id = if leaf {
+                    loose_id(structure)
+                } else {
+                    child.id()
+                };
+                open.push((token, id));
             } else if opener {
                 open.push((child, loose_id(structure)));
             } else if closer {

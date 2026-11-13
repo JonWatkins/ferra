@@ -28,6 +28,14 @@ pub struct PackageState {
     /// `:plugin_reload` (or a change that needs one), for the app, and
     /// whether to say it's done.
     reload: Option<bool>,
+    /// Packs offered this session (each is offered once).
+    offered: Vec<String>,
+    /// A file to offer a pack for once the directory's been fetched.
+    offer_after_refresh: Option<std::path::PathBuf>,
+    /// The directory was fetched (or tried) this session.
+    refreshed: bool,
+    /// The pack the open offer is about, for `d`.
+    declining: Option<String>,
 }
 
 /// Work on plugin packages, for the app to run on a thread.
@@ -43,6 +51,8 @@ pub enum PackageJob {
     Restore(Vec<String>),
     /// Fetch the plugin directory's index.
     Browse(Source),
+    /// Fetch it quietly, to offer language packs from.
+    Refresh(Source),
 }
 
 #[derive(Debug, Clone)]
@@ -72,7 +82,16 @@ fn answers(yes: &str) -> PopupLine {
     ]
 }
 
-const POPUPS: [&str; 3] = ["plugin-install", "plugin-update", "plugin-restore"];
+const POPUPS: [&str; 4] = [
+    "plugin-install",
+    "plugin-update",
+    "plugin-restore",
+    "plugin-suggest",
+];
+
+/// How old the copy of the plugin directory can be before it's fetched
+/// again for offering language packs.
+const INDEX_FRESH: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 impl Editor {
     pub fn set_plugin_paths(&mut self, paths: PluginPaths) {
@@ -123,7 +142,7 @@ impl Editor {
         if spec.trim().is_empty() {
             return self.plugin_ask_restore(&paths);
         }
-        let source = Source::parse(spec)?;
+        let source = self.by_name_in_directory(&paths, spec.trim())?;
         let wanted = packages::wanted(&paths)?;
         if let Some((name, _)) = wanted.iter().find(|(_, w)| source.same_as(w)) {
             let what = match &source.path {
@@ -155,6 +174,152 @@ impl Editor {
             lines,
             PackageJob::Install { source, taken },
         );
+        Ok(())
+    }
+
+    /// `spec` as a source: a plugin directory entry's name (`zig`), else
+    /// a repository (`owner/repo`, a URL or a path).
+    fn by_name_in_directory(&self, paths: &PluginPaths, spec: &str) -> Result<Source, String> {
+        if spec.contains(['/', ':', '@']) || packages::check_name(spec).is_err() {
+            return Source::parse(spec);
+        }
+        let directory =
+            Source::parse(&self.options.plugin_index).map_err(|e| format!("plugin-index: {e}"))?;
+        match packages::find_in_index(paths, &directory, spec) {
+            Some(entry) => Source::parse(&entry.source(&directory)),
+            None => Err(format!(
+                "No plugin named {spec} in the plugin directory (:plugin_browse lists them)"
+            )),
+        }
+    }
+
+    /// After a file opens: if ferra has no language for it, offers the
+    /// plugin directory's language pack for it (fetching the directory in
+    /// the background first, when there's no recent copy).
+    pub fn plugin_saw(&mut self, event: &crate::events::Event) {
+        let crate::events::Event::Opened { path } = event else {
+            return;
+        };
+        if !self.options.plugin_suggestions || self.language_of(&self.document).is_some() {
+            return;
+        }
+        if self.document.path().is_none_or(|p| p != path.as_path()) {
+            return;
+        }
+        let Some(paths) = self.packages.paths.clone() else {
+            return;
+        };
+        let Ok(directory) = Source::parse(&self.options.plugin_index) else {
+            return;
+        };
+        let cached = packages::cached_index(&paths, &directory);
+        let fresh = cached.as_ref().is_some_and(|(_, age)| *age < INDEX_FRESH);
+        if !fresh && !self.packages.refreshed && self.packages.running.is_none() {
+            self.packages.refreshed = true;
+            self.packages.offer_after_refresh = Some(path.clone());
+            self.start_plugin_job(PackageJob::Refresh(directory.clone()));
+        }
+        if let Some((entries, _)) = cached {
+            self.offer_language_pack(&paths, &directory, &entries, path);
+        }
+    }
+
+    /// The directory was fetched quietly: offers a pack for the file that
+    /// asked, if it's still the one shown.
+    pub fn plugin_index_refreshed(&mut self, index: Option<packages::Index>) {
+        let Some(path) = self.packages.offer_after_refresh.take() else {
+            return;
+        };
+        let (Some(index), Some(paths)) = (index, self.packages.paths.clone()) else {
+            return;
+        };
+        let Ok(directory) = Source::parse(&self.options.plugin_index) else {
+            return;
+        };
+        let shown = self.document.path().is_some_and(|p| p == path.as_path());
+        if shown && self.language_of(&self.document).is_none() {
+            self.offer_language_pack(&paths, &directory, &index.entries, &path);
+        }
+    }
+
+    fn offer_language_pack(
+        &mut self,
+        paths: &PluginPaths,
+        directory: &Source,
+        entries: &[packages::IndexEntry],
+        path: &std::path::Path,
+    ) {
+        if self.popup().is_some() || self.packages.running.is_some() {
+            return;
+        }
+        let mut skip = packages::declined(paths);
+        skip.extend(self.packages.offered.iter().cloned());
+        if let Ok(wanted) = packages::wanted(paths) {
+            skip.extend(wanted.into_keys());
+        }
+        let first_line = self.document.buffer().line(0);
+        let Some(offer) = packages::suggest(paths, directory, entries, path, &first_line, &skip)
+        else {
+            return;
+        };
+        let Ok(source) = Source::parse(&offer.source) else {
+            return;
+        };
+        self.packages.offered.push(offer.name.clone());
+        let file = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let mut lines = vec![
+            vec![
+                span(&file, Some("ui.popup.title")),
+                span(" is ", None),
+                span(&offer.language, Some("ui.popup.title")),
+                span(". The plugin directory's language pack for it:", None),
+            ],
+            vec![],
+            vec![
+                span(&format!("  {}  ", offer.name), Some("ui.popup.title")),
+                span(&offer.description, None),
+            ],
+            vec![span(&format!("  {}", source), Some("comment"))],
+        ];
+        lines.extend(trust_warning());
+        lines.push(vec![
+            span("y", Some("ui.popup.title")),
+            span(" install   ", None),
+            span("n", Some("ui.popup.title")),
+            span(" not now   ", None),
+            span("d", Some("ui.popup.title")),
+            span(&format!(" don't ask about {}", offer.name), None),
+        ]);
+        let taken = packages::wanted(paths)
+            .map(|w| w.into_keys().collect())
+            .unwrap_or_default();
+        self.packages.declining = Some(offer.name.clone());
+        self.ask(
+            "plugin-suggest",
+            &format!("Install {}?", offer.name),
+            lines,
+            PackageJob::Install { source, taken },
+        );
+        if let Some(popup) = self.popup_mut() {
+            popup.keys.push(("d".into(), "plugin_decline".into()));
+        }
+    }
+
+    /// `d` when a language pack is offered: don't offer it again.
+    pub fn plugin_decline(&mut self) -> Result<(), String> {
+        if self.popup().is_none_or(|p| p.name != "plugin-suggest") {
+            return Err("Nothing to decline".into());
+        }
+        self.close_popup();
+        self.packages.asking = None;
+        let name = self.packages.declining.take().ok_or("Nothing to decline")?;
+        let paths = self.require_plugin_paths()?;
+        packages::decline(&paths, &name)?;
+        self.set_message(Message::info(format!(
+            "Won't offer {name} again (:plugin_install {name} installs it)"
+        )));
         Ok(())
     }
 
@@ -356,8 +521,11 @@ impl Editor {
             ),
             PackageJob::Restore(names) => format!("Installing {}", names.join(", ")),
             PackageJob::Browse(_) => "Getting the plugin directory".into(),
+            PackageJob::Refresh(_) => "Updating the plugin directory".into(),
         };
-        self.set_message(Message::info(format!("{doing}…")));
+        if !matches!(job, PackageJob::Refresh(_)) {
+            self.set_message(Message::info(format!("{doing}…")));
+        }
         self.packages.running = Some(doing);
         self.packages.request = Some(job);
     }

@@ -83,6 +83,11 @@ impl Default for Languages {
 }
 
 impl Languages {
+    /// A table of these languages (a language pack's).
+    pub fn from_map(languages: BTreeMap<String, FileType>) -> Self {
+        Self(languages)
+    }
+
     /// The language of a file at `path` whose first line is `first_line`:
     /// by exact file name, then extension, then `#!` interpreter.
     pub fn detect(&self, path: Option<&Path>, first_line: &str) -> Option<&str> {

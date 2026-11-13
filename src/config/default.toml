@@ -65,6 +65,9 @@ shell = ""
 # The plugin directory :plugin_browse lists: a git repository with an
 # index.toml (owner/repo on GitHub, or any git URL or path).
 plugin-index = "JonWatkins/ferra-plugins"
+# Opening a file ferra has no language for offers to install the plugin
+# directory's language pack for it, if it has one.
+plugin-suggestions = true
 # Colour code with tree-sitter (the languages in [languages] below).
 syntax-highlighting = true
 # Ask the terminal for the kitty keyboard protocol where it has it (kitty,

@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::{app, keys, text};
+use common::{keys, text};
 use ferra::App;
 use ferra::plugins::packages::PluginPaths;
 use tempfile::TempDir;
@@ -92,7 +92,8 @@ fn setup() -> Setup {
 }
 
 fn app_with(paths: &PluginPaths) -> App {
-    let mut app = app();
+    // No offers of language packs (from GitHub) unless a test asks.
+    let mut app = common::app_with_config("[editor]\nplugin-suggestions = false\n");
     app.set_plugin_paths(paths.clone());
     app
 }
@@ -330,8 +331,19 @@ fn bad_sources_are_refused_before_asking() {
     let mut app = app_with(&s.paths);
     keys(&mut app, ":plugin_install<CR>");
     assert!(message(&app).starts_with("Usage: :plugin_install"));
+    // A bare name is looked up in the plugin directory.
     keys(&mut app, ":plugin_install justaname<CR>");
-    assert!(message(&app).starts_with("Not a plugin to install"));
+    assert!(
+        message(&app).starts_with("No plugin named justaname in the plugin directory"),
+        "{}",
+        message(&app)
+    );
+    keys(&mut app, ":plugin_install has space/x<CR>");
+    assert!(
+        message(&app).starts_with("Not a plugin to install"),
+        "{}",
+        message(&app)
+    );
     assert!(app.editor().popup().is_none());
 }
 
@@ -596,7 +608,9 @@ fn a_popup_opened_by_background_results_takes_its_keys_at_once() {
 
 /// An app whose plugin directory is `index` (a local repository).
 fn app_browsing(paths: &PluginPaths, index: &str) -> App {
-    let mut app = common::app_with_config(&format!("[editor]\nplugin-index = \"{index}\"\n"));
+    let mut app = common::app_with_config(&format!(
+        "[editor]\nplugin-index = \"{index}\"\nplugin-suggestions = false\n"
+    ));
     app.set_plugin_paths(paths.clone());
     app
 }
@@ -1312,4 +1326,124 @@ fn a_grammar_from_git_needs_its_commit() {
         "{}",
         message(&app)
     );
+}
+
+/// A plugin directory with a language pack for `.zz` files (no grammar).
+fn directory_with_pack(root: &Path) -> String {
+    repo(
+        root,
+        "packs",
+        &[
+            (
+                "index.toml",
+                "version = 1\n\n[[plugin]]\nname = \"zz\"\npath = \"languages/zz\"\ndescription = \"The zz language\"\nlanguage = true\n",
+            ),
+            (
+                "languages/zz/ferra-plugin.toml",
+                "name = \"zz\"\nversion = \"0.1.0\"\n[languages.zz]\nextensions = [\"zz\"]\ncomment = \"#\"\n",
+            ),
+        ],
+    )
+}
+
+/// An app that offers language packs from the directory at `index`.
+fn app_offering(paths: &PluginPaths, index: &str) -> App {
+    let mut app = common::app_with_config(&format!("[editor]\nplugin-index = \"{index}\"\n"));
+    app.set_plugin_paths(paths.clone());
+    app
+}
+
+#[test]
+fn opening_an_unknown_file_offers_its_language_pack() {
+    let s = setup();
+    let directory = directory_with_pack(s.temp.path());
+    let file = s.temp.path().join("a.zz");
+    fs::write(&file, "x\n").unwrap();
+
+    // No copy of the directory yet: it's fetched, then the pack offered.
+    let mut app = app_offering(&s.paths, &directory);
+    app.open(&file);
+    app.wait_for_background();
+    let shown = popup_text(&app);
+    assert!(shown.contains("a.zz is zz"), "{shown}");
+    assert!(shown.contains("The zz language"), "{shown}");
+    assert!(shown.contains("permissions"), "{shown}");
+    keys(&mut app, "y");
+    app.wait_for_background();
+    assert!(
+        message(&app).starts_with("Installed zz 0.1.0"),
+        "{}",
+        message(&app)
+    );
+    assert_eq!(app.editor().language_of(&app.editor().document), Some("zz"));
+    keys(&mut app, "gcc");
+    assert_eq!(text(&app), "# x");
+}
+
+#[test]
+fn offers_can_be_put_off_or_declined() {
+    let s = setup();
+    let directory = directory_with_pack(s.temp.path());
+    let file = s.temp.path().join("b.zz");
+    fs::write(&file, "x\n").unwrap();
+    let other = s.temp.path().join("c.zz");
+    fs::write(&other, "y\n").unwrap();
+
+    let mut app = app_offering(&s.paths, &directory);
+    app.open(&file);
+    app.wait_for_background();
+    assert!(app.editor().popup().is_some());
+    keys(&mut app, "n");
+    // Not again this session.
+    app.open(&other);
+    app.wait_for_background();
+    assert!(app.editor().popup().is_none());
+
+    // Next session, with the copy of the directory fresh: offered at once.
+    let mut again = app_offering(&s.paths, &directory);
+    again.open(&file);
+    assert!(again.editor().popup().is_some(), "no fetch needed");
+    keys(&mut again, "d");
+    assert_eq!(
+        message(&again),
+        "Won't offer zz again (:plugin_install zz installs it)"
+    );
+
+    let mut third = app_offering(&s.paths, &directory);
+    third.open(&file);
+    third.wait_for_background();
+    assert!(third.editor().popup().is_none(), "declined");
+
+    // By name, from the directory.
+    keys(&mut third, ":plugin_install zz<CR>");
+    assert!(
+        popup_text(&third).contains("folder languages/zz"),
+        "{}",
+        popup_text(&third)
+    );
+    keys(&mut third, "y");
+    third.wait_for_background();
+    assert!(
+        message(&third).starts_with("Installed zz"),
+        "{}",
+        message(&third)
+    );
+    keys(&mut third, ":plugin_install nothing<CR>");
+    assert_eq!(
+        message(&third),
+        "No plugin named nothing in the plugin directory (:plugin_browse lists them)"
+    );
+}
+
+#[test]
+fn known_files_never_ask() {
+    let s = setup();
+    let directory = directory_with_pack(s.temp.path());
+    let file = s.temp.path().join("main.rs");
+    fs::write(&file, "fn main() {}\n").unwrap();
+    let mut app = app_offering(&s.paths, &directory);
+    app.open(&file);
+    app.wait_for_background();
+    assert!(app.editor().popup().is_none());
+    assert!(!s.paths.data.join(".index").exists(), "nothing fetched");
 }

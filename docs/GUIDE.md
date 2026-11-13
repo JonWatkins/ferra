@@ -1169,6 +1169,7 @@ Plugins published as git repositories install from inside ferra:
 | Command | |
 |---------|---|
 | `:plugin_browse` | Pick from the [plugin directory](https://github.com/JonWatkins/ferra-plugins) and install the choice |
+| `:plugin_install name` | Install a plugin from the plugin directory by name (`:plugin_install zig`) |
 | `:plugin_install owner/repo` | Install a plugin from GitHub (`owner/repo@tag` for a tag or branch, `owner/repo//folder` for one kept in a folder; any git URL or local path works too) |
 | `:plugin_install` | Install what `plugins.toml` lists but isn't installed, at the locked commits (a new machine) |
 | `:plugin_update [name...]` | Fetch the plugins (or the ones named), show the new commits, and update after asking |
@@ -1217,6 +1218,13 @@ commands and keys go back to the built-ins and your config, and every
 plugin loads again, so it's how to try a change to a plugin or
 `init.lua` without restarting. Decorations plugins left in buffers stay
 until they clear them.
+
+When you open a file ferra has no language for, and the plugin directory
+has a language pack for it, ferra offers to install it: `y` installs, `n`
+asks again another time, `d` never offers that pack again. It keeps a
+copy of the directory, fetched in the background when it's more than a
+day old, so the offer costs nothing when nothing matches. Turn offers off
+with `plugin-suggestions = false` in `[editor]`.
 
 `:plugin_browse` fetches the directory's `index.toml` and lists its
 plugins in the picker (installed ones are marked); `<CR>` installs the

@@ -54,6 +54,8 @@ pub(super) enum PackageDone {
     Updated(Vec<Result<Updated, String>>),
     Restored(Vec<Result<Installed, String>>),
     Browsed(Result<packages::Index, String>),
+    /// Fetched quietly; `None` if it failed (nothing's said).
+    Refreshed(Option<packages::Index>),
 }
 
 pub(super) struct Background {
@@ -141,6 +143,9 @@ impl Background {
                 ),
                 PackageJob::Browse(source) => {
                     PackageDone::Browsed(packages::fetch_index(paths, &source))
+                }
+                PackageJob::Refresh(source) => {
+                    PackageDone::Refreshed(packages::fetch_index(paths, &source).ok())
                 }
                 PackageJob::Restore(names) => PackageDone::Restored(
                     names

@@ -31,6 +31,11 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.plugin_confirmed(),
     );
     r.register(
+        "plugin_decline",
+        "d when a language pack is offered: don't offer it again",
+        |cx| cx.editor.plugin_decline(),
+    );
+    r.register(
         "plugin_reload",
         "Load every plugin again, in a fresh Lua state (after changing one)",
         |cx| {

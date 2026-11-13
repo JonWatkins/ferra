@@ -54,6 +54,8 @@ pub struct EditorOptions {
     pub shell: String,
     /// The plugin directory `:plugin_browse` lists (a git source).
     pub plugin_index: String,
+    /// Offer the directory's language pack for files of unknown types.
+    pub plugin_suggestions: bool,
     pub syntax_highlighting: bool,
     /// Milliseconds to wait for the rest of a key sequence that's also a
     /// prefix of a longer one (`jk` in insert mode). 0 waits forever.

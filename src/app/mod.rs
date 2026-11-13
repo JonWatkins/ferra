@@ -385,6 +385,7 @@ impl App {
             PackageDone::Checked(Err(error)) => self.editor.set_message(Message::error(error)),
             PackageDone::Checked(Ok(checked)) => self.editor.plugin_show_updates(checked),
             PackageDone::Browsed(Ok(index)) => self.editor.plugin_show_index(index),
+            PackageDone::Refreshed(index) => self.editor.plugin_index_refreshed(index),
             PackageDone::Browsed(Err(error)) => self.editor.set_message(Message::error(error)),
             PackageDone::Updated(results) => {
                 let mut done = Vec::new();
@@ -1129,12 +1130,17 @@ impl App {
             for event in events {
                 self.editor.plugin_views_saw(event.kind());
                 self.editor.git_saw(&event);
+                self.editor.plugin_saw(&event);
                 if let Err(error) = self.commands.fire(&event, &mut self.editor) {
                     self.editor.set_message(Message::error(error));
                 }
             }
             // A hook's edits form their own undo step.
             self.editor.finish_command();
+            // Work the events asked for (fetching the plugin directory to
+            // offer a language pack), and a popup they opened.
+            self.start_background_requests();
+            self.after_background_popup();
         }
         if !self.editor.take_events().is_empty() {
             self.editor.set_message(Message::error(format!(

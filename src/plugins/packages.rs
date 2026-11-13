@@ -970,10 +970,104 @@ pub fn fetch_index(paths: &PluginPaths, source: &Source) -> Result<Index, String
             format!("index.toml: {e}")
         }
     })?;
-    Ok(Index {
-        entries: parse_index(&text)?,
-        stale,
+    let entries = parse_index(&text)?;
+    if stale.is_none() {
+        // When it was last brought up to date (see `cached_index`).
+        let _ = std::fs::write(dir.join(".git").join(FETCHED_STAMP), "");
+    }
+    Ok(Index { entries, stale })
+}
+
+/// Touched in the directory's clone each time it's fetched.
+const FETCHED_STAMP: &str = "ferra-fetched";
+
+/// The copy of the plugin directory from the last fetch, if there is one
+/// for `source`, and how long ago it was fetched.
+pub fn cached_index(
+    paths: &PluginPaths,
+    source: &Source,
+) -> Option<(Vec<IndexEntry>, std::time::Duration)> {
+    let dir = paths.data.join(".index");
+    let url = git(Some(&dir), &["remote", "get-url", "origin"]).ok()?;
+    if url != source.url() {
+        return None;
+    }
+    let entries = parse_index(&std::fs::read_to_string(dir.join("index.toml")).ok()?).ok()?;
+    let age = std::fs::metadata(dir.join(".git").join(FETCHED_STAMP))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .unwrap_or(std::time::Duration::MAX);
+    Some((entries, age))
+}
+
+/// A language pack in the plugin directory for a file ferra doesn't know.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestion {
+    /// The pack's name.
+    pub name: String,
+    /// What to install (`owner/repo//languages/zig`).
+    pub source: String,
+    pub description: String,
+    /// The language it gives the file.
+    pub language: String,
+}
+
+/// The directory's language pack for a file at `path` whose first line is
+/// `first_line`, if one of its packs (kept in the directory, so their
+/// manifests are in the copy) recognises it. `skip` are packs not to
+/// suggest (installed, declined).
+pub fn suggest(
+    paths: &PluginPaths,
+    directory: &Source,
+    entries: &[IndexEntry],
+    path: &Path,
+    first_line: &str,
+    skip: &[String],
+) -> Option<Suggestion> {
+    let copy = paths.data.join(".index");
+    entries.iter().find_map(|entry| {
+        let folder = entry.path.as_ref()?;
+        if !entry.language || entry.repo.is_some() || skip.contains(&entry.name) {
+            return None;
+        }
+        let manifest = Manifest::read(&copy.join(folder)).ok()?;
+        let languages = crate::config::Languages::from_map(manifest.languages);
+        let language = languages.detect(Some(path), first_line)?.to_string();
+        Some(Suggestion {
+            name: entry.name.clone(),
+            source: entry.source(directory),
+            description: entry.description.clone(),
+            language,
+        })
     })
+}
+
+/// The plugin directory's entry called `name`, from the last fetch.
+pub fn find_in_index(paths: &PluginPaths, directory: &Source, name: &str) -> Option<IndexEntry> {
+    let (entries, _) = cached_index(paths, directory)?;
+    entries.into_iter().find(|e| e.name == name)
+}
+
+/// A name no plugin can have (they start with a letter or digit).
+const DECLINED_FILE: &str = ".declined";
+
+/// Language packs the user said not to suggest again.
+pub fn declined(paths: &PluginPaths) -> Vec<String> {
+    std::fs::read_to_string(paths.data.join(DECLINED_FILE))
+        .map(|text| text.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// Remembers not to suggest pack `name` again.
+pub fn decline(paths: &PluginPaths, name: &str) -> Result<(), String> {
+    let mut names = declined(paths);
+    if !names.iter().any(|n| n == name) {
+        names.push(name.to_string());
+    }
+    std::fs::create_dir_all(&paths.data).map_err(|e| e.to_string())?;
+    std::fs::write(paths.data.join(DECLINED_FILE), names.join("\n") + "\n")
+        .map_err(|e| format!("{DECLINED_FILE}: {e}"))
 }
 
 #[cfg(test)]

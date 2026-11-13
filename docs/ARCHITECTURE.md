@@ -1534,9 +1534,24 @@ and `@outdent`, while `highlight::recognise` maps older capture names
 brackets, and the language's `@open` tokens), closed by its `@outdent`
 tokens or by a clause the parser did make that begins with one (Lua's
 `else_statement`); a closed one becomes an indent node up to its closer,
-with a made-up id the closer outdents against. A plugin language's
+with a made-up id the closer outdents against. A token that's both
+(`else`, `when`) closes the open block and opens the next, which takes
+the id of the clause the parser made, if it made one, so tokens inside
+the clause (Ruby's `else` within `elsif`) close the same node. A plugin language's
 re-indenting words are the quoted words of its rules
 (`indent::keywords`).
+
+Offering language packs (`Editor::plugin_saw`, on each `Opened` event):
+if ferra has no language for the file, `packages::suggest` reads the
+language packs' manifests from the copy of the directory (`.index`, only
+entries kept in the directory itself) and matches the file against their
+`[languages]` with the same detection the config uses, skipping packs
+installed, declined (`.declined` in the data folder) or offered this
+session. With no copy, or one over a day old, a quiet `Refresh` job
+fetches it first and the offer follows (`plugin_index_refreshed`).
+Events can open popups and ask for background work now, so
+`dispatch_events` starts both after each round. `:plugin_install name`
+looks a bare name up in the same copy.
 
 `:plugin_reload` doesn't unregister piece by piece: `App::reload_plugins`
 drops the `PluginHost` (so `require`'s cache goes too), rebuilds the
