@@ -394,7 +394,10 @@ shown hides the sidebar. The gear opens `config.toml` (`:open_config`).
 
 `icons = "nerd"` draws VS Code's own icons (its codicons), for a terminal
 font from [Nerd Fonts](https://www.nerdfonts.com); the default, `"plain"`,
-uses symbols every font has. A plugin's view can name its icon
+uses symbols every font has. With `"nerd"`, the file tree and the file
+picker show each file's icon too, coloured by its type (the Seti icons VS
+Code's file icons come from), and folders open and closed folder icons in
+place of `▸` and `▾`. A plugin's view can name its icon
 (`editor.view(name, { icon = "✎", ... })`); otherwise it's the first
 letter of its title. `activity-bar = false` turns the bar off, and the
 sidebar shows a row of tabs for its views instead. The colours are the
@@ -1326,7 +1329,10 @@ language-server = { command = "zls" }
 
 Open files in the language pick it up as soon as it's installed. A pack
 can't change a language ferra already has (built in or in your config):
-change those in your own `[languages]`.
+change those in your own `[languages]`. For a file type ferra has no icon
+for, a language can give its files' icon in the file tree (`icons =
+"nerd"`): `icon = "…"` (a Nerd Font character) and `icon-color =
+"#ffaff3"`.
 
 For highlighting, a pack names the language's tree-sitter grammar: its
 repository and the commit to build, as Helix does. ferra fetches that

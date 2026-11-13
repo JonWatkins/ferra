@@ -33,6 +33,11 @@ pub struct FileType {
     pub options: toml::Table,
     /// The language server for this language's files, if any.
     pub language_server: Option<ServerConfig>,
+    /// Its files' icon in the file tree (`icons = "nerd"`), for languages
+    /// ferra's own icons don't cover: a character or two.
+    pub icon: Option<String>,
+    /// The icon's colour (`"#ffaff3"`).
+    pub icon_color: Option<String>,
 }
 
 /// How to run a language server (`language-server` in a `[languages]`
@@ -201,6 +206,13 @@ impl Languages {
         Ok(())
     }
 
+    /// `language`'s own icon and its colour, if it has one.
+    pub fn icon(&self, language: &str) -> Option<(&str, Option<&str>)> {
+        let file_type = self.0.get(language)?;
+        let icon = file_type.icon.as_deref().filter(|i| !i.is_empty())?;
+        Some((icon, file_type.icon_color.as_deref()))
+    }
+
     /// Every configured language name.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.0.keys().map(String::as_str)
@@ -261,6 +273,8 @@ fn under(pack: FileType, config: &FileType) -> FileType {
         block_comment: config.block_comment.clone().or(pack.block_comment),
         options,
         language_server,
+        icon: config.icon.clone().or(pack.icon),
+        icon_color: config.icon_color.clone().or(pack.icon_color),
     }
 }
 

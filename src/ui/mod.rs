@@ -22,6 +22,7 @@ pub mod editor_view;
 pub mod find;
 pub mod git_gui;
 mod hover;
+pub mod icons;
 mod input_box;
 mod picker;
 mod popup;
@@ -222,11 +223,14 @@ pub fn draw(
                     frame.render_widget(GitViewWidget::new(editor, focused, theme), content);
                 }
                 None => {
-                    let view = SidebarView::new(explorer, theme)
+                    let mut view = SidebarView::new(explorer, theme)
                         .focused(focused)
                         .current(editor.document.path())
                         .modified(editor.modified_paths())
                         .git(editor.git_tree_marks());
+                    if editor.options.icons == crate::config::Icons::Nerd {
+                        view = view.icons(&editor.languages);
+                    }
                     frame.render_widget(view, content);
                 }
             }
@@ -443,7 +447,11 @@ pub fn draw(
     let popup = editor.picker().filter(|_| editor.mode() == Mode::Picker);
     if let Some(picker) = popup {
         let popup_area = PickerView::area(screen_main);
-        frame.render_widget(PickerView::new(picker, theme), popup_area);
+        let mut view = PickerView::new(picker, theme);
+        if editor.options.icons == crate::config::Icons::Nerd {
+            view = view.icons(&editor.languages);
+        }
+        frame.render_widget(view, popup_area);
         let (list, first) = PickerView::list(picker, popup_area);
         map.picker = Some(ListMap {
             area: popup_area,

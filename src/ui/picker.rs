@@ -22,16 +22,28 @@ use unicode_width::UnicodeWidthStr;
 
 use super::text::{truncate_end, truncate_start};
 use crate::config::Theme;
-use crate::editor::picker::Picker;
+use crate::editor::picker::{Picker, PickerAction};
 
 pub struct PickerView<'a> {
     picker: &'a Picker,
     theme: &'a Theme,
+    /// With a Nerd Font: the languages, for files' icons.
+    icons: Option<&'a crate::config::Languages>,
 }
 
 impl<'a> PickerView<'a> {
     pub fn new(picker: &'a Picker, theme: &'a Theme) -> Self {
-        Self { picker, theme }
+        Self {
+            picker,
+            theme,
+            icons: None,
+        }
+    }
+
+    /// Draws an icon before each item that's a file (`icons = "nerd"`).
+    pub fn icons(mut self, languages: &'a crate::config::Languages) -> Self {
+        self.icons = Some(languages);
+        self
     }
 
     /// The popup's area: centred, about 60% of the screen, within limits.
@@ -132,6 +144,21 @@ impl Widget for PickerView<'_> {
                 buf.set_style(line_area, self.theme.get("ui.popup.selected"));
             }
             let item = picker.item(found);
+            let file = match &item.action {
+                PickerAction::OpenFile(path) | PickerAction::GoTo(path, _) => Some(path),
+                _ => None,
+            };
+            let icon = self
+                .icons
+                .zip(file)
+                .map(|(languages, path)| super::icons::for_file(path, languages));
+            let line_area = match icon {
+                Some((glyph, color)) => {
+                    buf.set_string(line_area.x + 1, y, &glyph, Style::default().fg(color));
+                    Rect::new(line_area.x + 2, y, line_area.width.saturating_sub(2), 1)
+                }
+                None => line_area,
+            };
             render_item(
                 buf,
                 line_area,

@@ -344,6 +344,14 @@ integration tests run without it (`tests/common`'s classic chrome), so
 what they check doesn't move with the chrome; `tests/activity_bar.rs`
 tests it as shipped.
 
+File icons (`ui/icons.rs`, with `icons = "nerd"`): a table of Nerd Font
+glyphs and colours (the Seti set, code points checked against Nerd Fonts'
+`glyphnames.json`) by exact file name, then extension, then a language's
+own `icon`/`icon-color` from `[languages]` (which packs can set). The tree
+draws a file's icon, or a folder's open or closed one, in the two columns
+the folder marker takes, so names don't move; the picker draws one before
+items that open a file.
+
 `ui/sidebar.rs` draws it. `ui::draw` takes the sidebar's columns (plus a
 `│`) from the left before the windows are laid out, so splits, resizing and
 per-window status lines work within what's left. With per-window status

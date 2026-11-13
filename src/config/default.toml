@@ -67,8 +67,9 @@ sidebar-width = 30
 # shows the sidebar's views (click one; click the shown one to hide the
 # sidebar) and opens the settings.
 activity-bar = true
-# Its icons: "plain" (symbols every font has) or "nerd" (VS Code's own
-# icons, for a Nerd Font: https://www.nerdfonts.com).
+# Icons: "plain" (symbols every font has) or "nerd", for a Nerd Font
+# (https://www.nerdfonts.com): VS Code's own icons in the activity bar and
+# status bar, and file and folder icons in the file tree and the picker.
 icons = "plain"
 # Rows the terminal panel (<Space>t, :terminal) takes, under the windows.
 terminal-height = 12
@@ -322,6 +323,8 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.sidebar" = { fg = "#a9b1d6", bg = "#1a1c22" }
 "ui.sidebar.title" = { fg = "#7aa2f7", modifiers = ["bold"] }
 "ui.sidebar.marker" = "#6b7280"
+# Folders' icons (icons = "nerd"; files' are coloured by their type).
+"ui.sidebar.folder.icon" = "#7aa2f7"
 "ui.sidebar.folder" = "#c0caf5"
 "ui.sidebar.file" = "#a9b1d6"
 "ui.sidebar.current" = { fg = "#7dcfff", modifiers = ["bold"] }

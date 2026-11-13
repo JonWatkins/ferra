@@ -22,6 +22,7 @@ use ratatui::{
 
 use unicode_width::UnicodeWidthStr;
 
+use super::icons;
 use super::text::truncate_end;
 use crate::config::Theme;
 use crate::editor::explorer::Explorer;
@@ -35,6 +36,8 @@ pub struct SidebarView<'a> {
     modified: Vec<PathBuf>,
     /// Git's letters for changed files, and `•` for folders with changes.
     git: HashMap<PathBuf, char>,
+    /// With a Nerd Font: the languages, for files' icons.
+    icons: Option<&'a crate::config::Languages>,
 }
 
 /// The theme scope for a git status letter.
@@ -64,6 +67,7 @@ impl<'a> SidebarView<'a> {
             current: None,
             modified: Vec::new(),
             git: HashMap::new(),
+            icons: None,
         }
     }
 
@@ -74,6 +78,14 @@ impl<'a> SidebarView<'a> {
     }
 
     /// Whether the sidebar has focus (the selection is shown).
+    /// Draws file and folder icons (`icons = "nerd"`) in place of the
+    /// folder markers; `languages` give icons for files ferra's own table
+    /// doesn't know.
+    pub fn icons(mut self, languages: &'a crate::config::Languages) -> Self {
+        self.icons = Some(languages);
+        self
+    }
+
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
         self
@@ -181,19 +193,38 @@ impl Widget for SidebarView<'_> {
             }
 
             let indent = " ".repeat(1 + 2 * row.depth);
-            let marker = match (row.is_dir, row.open) {
-                (true, true) => "▾ ",
-                (true, false) => "▸ ",
-                (false, _) => "  ",
+            // The folder marker, or with icons, the icon in its place.
+            let (marker, marker_style) = match (self.icons, row.is_dir, row.open) {
+                (Some(_), true, open) => (
+                    format!(
+                        "{} ",
+                        if open {
+                            icons::FOLDER_OPEN
+                        } else {
+                            icons::FOLDER
+                        }
+                    ),
+                    theme.get("ui.sidebar.folder.icon"),
+                ),
+                (Some(languages), false, _) => {
+                    let (glyph, color) = icons::for_file(&row.path, languages);
+                    (format!("{glyph} "), theme.get("ui.sidebar").fg(color))
+                }
+                (None, true, true) => ("▾ ".into(), theme.get("ui.sidebar.marker")),
+                (None, true, false) => ("▸ ".into(), theme.get("ui.sidebar.marker")),
+                (None, false, _) => ("  ".into(), theme.get("ui.sidebar.marker")),
             };
             // Room for the name, keeping two columns each for the unsaved
             // mark and git's letter.
             let letter = git.filter(|_| !row.is_dir);
             let reserved = 2 * (usize::from(modified) + usize::from(letter.is_some()));
             let room = width.saturating_sub(name_column(row.depth) + reserved);
-            let start = format!("{indent}{marker}");
             let x = buf
-                .set_stringn(list.x, y, &start, width, theme.get("ui.sidebar.marker"))
+                .set_stringn(list.x, y, &indent, width, theme.get("ui.sidebar.marker"))
+                .0;
+            let room_for_marker = (list.x + list.width).saturating_sub(x) as usize;
+            let x = buf
+                .set_stringn(x, y, &marker, room_for_marker, marker_style)
                 .0;
             if room > 0 {
                 buf.set_stringn(x, y, truncate_end(&row.name, room), room, style);
