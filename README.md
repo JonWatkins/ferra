@@ -27,7 +27,8 @@
   windows, and the mouse.
 - **Git:** changes in the gutter, Source Control in the sidebar, a
   full-screen git view (stage single hunks, commit, switch branches, push
-  and pull, a file's history), and blame for the cursor's line.
+  and pull, a file's history and blame), and blame for the cursor's
+  line.
 - **Lua plugins:** commands, keys, hooks, status line items, popups,
   sidebar views, pickers, input boxes and decorations.
 - **Configurable:** every key, option and colour, in one TOML file.
@@ -59,7 +60,7 @@ the git features need `git`.
 | `<Space>e` | The sidebar: files, Git, plugins' views |
 | `<Space>/`, `<Space>h` | Find, find and replace |
 | `<Space>t` | The terminal panel |
-| `<Space>g`, `<Space>l` | The git view, the file's history |
+| `<Space>g`, `<Space>l`, `<Space>B` | The git view, the file's history, its blame |
 | `K`, `gd`, `<Space>a` | Hover, go to definition, code actions |
 
 `<Space>` is the leader; everything else is in the [user guide](docs/GUIDE.md).

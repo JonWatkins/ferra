@@ -12,13 +12,18 @@
 //! commits panel into the file's history: the commits that changed it,
 //! following renames, each showing just what it did to the file. `H` or
 //! `<Esc>` there goes back to the whole log.
+//!
+//! `B` on a file (or `<Space>B` / `:git_blame_view` in a buffer) shows
+//! the whole file with who last changed each line, over the panels;
+//! `<CR>` on a line opens its commit, `H` the file's history, `<Esc>`
+//! goes back.
 
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver};
 
-use super::{Editor, GitRow, Message, Mode};
-use crate::git::{self, Branch, Commit, Diff};
+use super::{Document, DocumentId, Editor, GitRow, Message, Mode};
+use crate::git::{self, BlameLine, Branch, Commit, Diff};
 
 /// How many commits the commits panel lists.
 const LOG_LENGTH: usize = 300;
@@ -81,6 +86,58 @@ pub struct GitGui {
     pub diff_job: Option<DiffJob>,
     /// Commits' diffs already read.
     diff_cache: HashMap<String, Diff>,
+    /// A file's blame, shown over the panels.
+    pub blame: Option<BlameView>,
+}
+
+/// A whole file's blame (`B`).
+#[derive(Debug, Default)]
+pub struct BlameView {
+    /// The file, relative to the repository.
+    pub path: String,
+    pub lines: Vec<BlameLine>,
+    /// The selected line.
+    pub row: usize,
+    /// The first line shown (set as it's drawn).
+    pub scroll: Cell<usize>,
+    /// How recent each line's change is, among the file's commits: 0
+    /// for the newest quarter up to 3 for the oldest.
+    pub heat: Vec<u8>,
+    /// The text, for syntax highlighting.
+    pub document: Document,
+    /// Its language, if it's one that's highlighted.
+    pub language: Option<String>,
+    /// Whether `<Esc>` closes the git view too (it was opened for this).
+    close_view: bool,
+}
+
+/// The blame view's document (never one that's open).
+pub const BLAME_DOCUMENT: DocumentId = DocumentId(u64::MAX - 1);
+
+/// Each line's heat: its commit's rank by time among the file's commits,
+/// in quarters (0 the newest).
+fn heat(lines: &[BlameLine]) -> Vec<u8> {
+    let mut times: Vec<i64> = lines
+        .iter()
+        .filter(|l| !l.uncommitted())
+        .map(|l| l.time)
+        .collect();
+    times.sort_unstable_by(|a, b| b.cmp(a));
+    times.dedup();
+    lines
+        .iter()
+        .map(|l| {
+            let rank = times.iter().position(|t| *t == l.time).unwrap_or(0);
+            (rank * 4 / times.len().max(1)) as u8
+        })
+        .collect()
+}
+
+impl BlameView {
+    /// The selected line's commit, if it's committed.
+    pub fn commit(&self) -> Option<&BlameLine> {
+        self.lines.get(self.row).filter(|l| !l.uncommitted())
+    }
 }
 
 /// A diff being read on a thread.
@@ -362,6 +419,7 @@ impl Editor {
         let Some(gui) = self.git_gui.as_mut() else {
             return;
         };
+        gui.blame = None;
         if panel == GitPanel::Diff {
             if gui.panel != GitPanel::Diff {
                 gui.from = gui.panel;
@@ -400,6 +458,10 @@ impl Editor {
         let step = |at: usize, len: usize| -> usize {
             (at as isize + delta).clamp(0, len.saturating_sub(1) as isize) as usize
         };
+        if let Some(blame) = gui.blame.as_mut() {
+            blame.row = step(blame.row, blame.lines.len());
+            return;
+        }
         match gui.panel {
             GitPanel::Files => {
                 self.git_select_file(delta);
@@ -445,8 +507,21 @@ impl Editor {
         self.git_gui_show_diff();
     }
 
+    /// A click on the blame's line `index`.
+    pub fn git_gui_blame_select(&mut self, index: usize) {
+        if let Some(blame) = self.git_gui.as_mut().and_then(|g| g.blame.as_mut())
+            && index < blame.lines.len()
+        {
+            blame.row = index;
+        }
+    }
+
     /// `<C-d>` / `<C-u>`, the wheel: scrolls the diff.
     pub fn git_gui_scroll(&mut self, lines: isize) {
+        if self.git_gui.as_ref().is_some_and(|g| g.blame.is_some()) {
+            self.git_gui_move(lines);
+            return;
+        }
         if let Some(gui) = self.git_gui.as_mut() {
             let last = gui.diff.lines.len().saturating_sub(1);
             gui.diff_scroll = gui.diff_scroll.saturating_add_signed(lines).min(last);
@@ -474,6 +549,15 @@ impl Editor {
         let Some(gui) = self.git_gui.as_ref() else {
             return Ok(());
         };
+        if let Some(blame) = &gui.blame {
+            let hash = blame
+                .commit()
+                .ok_or("This line isn't committed yet")?
+                .hash
+                .clone();
+            self.git_gui_show_commit(&hash);
+            return Ok(());
+        }
         match gui.panel {
             GitPanel::Diff => Ok(()),
             GitPanel::Branches => {
@@ -495,6 +579,12 @@ impl Editor {
     /// `<Esc>`: out of the diff, out of a file's history, or else closes
     /// the view.
     pub fn git_gui_back(&mut self) {
+        if let Some(blame) = self.git_gui.as_mut().and_then(|g| g.blame.take()) {
+            if blame.close_view {
+                self.close_git_gui();
+            }
+            return;
+        }
         match self
             .git_gui
             .as_ref()
@@ -569,6 +659,10 @@ impl Editor {
 
     /// `H`: on a file, its history; in a history, back to the whole log.
     pub fn git_gui_history(&mut self) -> Result<(), String> {
+        let gui = self.git_gui.as_mut().ok_or("The git view isn't open")?;
+        if let Some(blame) = gui.blame.take() {
+            return self.git_show_history(&blame.path);
+        }
         let gui = self.git_gui.as_ref().ok_or("The git view isn't open")?;
         if gui.history.is_some() && gui.panel != GitPanel::Files {
             self.git_gui_set_history(None);
@@ -586,10 +680,146 @@ impl Editor {
         }
     }
 
+    /// The commit `hash` in the diff panel, selected in the commits if
+    /// it's there (the whole log, not a file's history).
+    fn git_gui_show_commit(&mut self, hash: &str) {
+        let Some(gui) = self.git_gui.as_mut() else {
+            return;
+        };
+        gui.blame = None;
+        if gui.history.is_some() {
+            self.git_gui_set_history(None);
+        }
+        let Some(gui) = self.git_gui.as_mut() else {
+            return;
+        };
+        match gui.commits.iter().position(|c| c.hash == hash) {
+            Some(index) => {
+                gui.commit = index;
+                gui.panel = GitPanel::Commits;
+                self.git_gui_focus(GitPanel::Diff);
+            }
+            // Older than the log goes back: shown on its own.
+            None => {
+                let Some(root) = self.git_status().map(|s| s.root.clone()) else {
+                    return;
+                };
+                let Some(gui) = self.git_gui.as_mut() else {
+                    return;
+                };
+                gui.panel = GitPanel::Diff;
+                gui.from = GitPanel::Commits;
+                let hash = hash.to_string();
+                gui.diff_job = Some(DiffJob {
+                    of: DiffOf::Commit(hash.clone()),
+                    title: format!("Commit {}", &hash[..hash.len().min(7)]),
+                    key: None,
+                    receiver: spawn_diff(move || git::show_commit(&root, &hash)),
+                });
+            }
+        }
+    }
+
+    /// Shows `path`'s blame (`contents`: its text now) over the panels,
+    /// at line `row`, opening the git view if it isn't.
+    fn git_show_blame(
+        &mut self,
+        path: &std::path::Path,
+        relative: String,
+        contents: &str,
+        row: usize,
+    ) -> Result<(), String> {
+        let lines = git::blame_file(path, contents)
+            .filter(|l| !l.is_empty())
+            .ok_or_else(|| format!("git can't blame {relative} (is it committed?)"))?;
+        let close_view = self.git_gui.is_none();
+        if close_view {
+            self.open_git_gui()?;
+        }
+        let text: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        let mut document = Document::with_text(&text.join("\n"));
+        document.set_id(BLAME_DOCUMENT);
+        let language = self
+            .languages
+            .detect(Some(path), text.first().copied().unwrap_or(""))
+            .map(str::to_string);
+        let gui = self.git_gui.as_mut().ok_or("The git view isn't open")?;
+        gui.blame = Some(BlameView {
+            path: relative,
+            row: row.min(lines.len() - 1),
+            heat: heat(&lines),
+            lines,
+            scroll: Cell::new(0),
+            document,
+            language,
+            close_view,
+        });
+        Ok(())
+    }
+
+    /// `<Space>B`, `:git_blame_view`: the current file's blame, at the
+    /// cursor's line.
+    pub fn git_blame_view(&mut self) -> Result<(), String> {
+        if !self.options.git {
+            return Err("git is turned off (git = false)".into());
+        }
+        let path = self
+            .document
+            .path()
+            .and_then(|p| std::fs::canonicalize(p).ok())
+            .ok_or("This buffer isn't a file")?;
+        let root = path
+            .parent()
+            .and_then(git::repo_root)
+            .and_then(|r| std::fs::canonicalize(r).ok())
+            .ok_or("This file isn't in a git repository")?;
+        let relative = path
+            .strip_prefix(&root)
+            .map_err(|_| "This file isn't in the repository")?
+            .to_string_lossy()
+            .replace('\\', "/");
+        // As it'd be saved (line endings, the last line break), so lines
+        // not changed match what's committed.
+        let contents = self
+            .document
+            .format()
+            .encode(&self.document.buffer().text());
+        let row = self.document.cursor().row;
+        self.git_show_blame(&path, relative, &contents, row)
+    }
+
+    /// `B`: the selected file's blame, as it is on disk; in the blame,
+    /// back out of it.
+    pub fn git_gui_blame(&mut self) -> Result<(), String> {
+        let gui = self.git_gui.as_ref().ok_or("The git view isn't open")?;
+        if gui.blame.is_some() {
+            self.git_gui_back();
+            return Ok(());
+        }
+        let relative = match (gui.panel, self.git_rows().get(self.git_selected())) {
+            (GitPanel::Files | GitPanel::Diff, Some(GitRow::File { file, .. })) => {
+                file.path.clone()
+            }
+            _ => return Err("Choose a file (in [1] Files) to blame".into()),
+        };
+        let root = self
+            .git_status()
+            .ok_or("Not in a git repository")?
+            .root
+            .clone();
+        let path = root.join(&relative);
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|_| format!("{relative} isn't there to blame"))?;
+        self.git_show_blame(&path, relative, &contents, 0)
+    }
+
     /// `s` (and `u`): in the files, stages (or unstages) the file; in a
     /// file's diff, the selected hunk.
     pub fn git_gui_stage(&mut self, stage: bool) -> Result<(), String> {
         let gui = self.git_gui.as_ref().ok_or("The git view isn't open")?;
+        if gui.blame.is_some() {
+            return Err("Esc leaves the blame first".into());
+        }
         match (gui.panel, &gui.diff_of) {
             // Space on a branch switches to it, as in lazygit.
             (GitPanel::Branches, _) if stage => self.git_gui_enter(),

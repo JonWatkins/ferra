@@ -505,6 +505,25 @@ impl Blame {
     }
 }
 
+/// A short age, for a column: `5m`, `3h`, `2d`, `4w`, `6mo`, `1y`, `now`.
+pub fn short_age(seconds: i64) -> String {
+    let units = [
+        (60 * 60 * 24 * 365, "y"),
+        (60 * 60 * 24 * 30, "mo"),
+        (60 * 60 * 24 * 7, "w"),
+        (60 * 60 * 24, "d"),
+        (60 * 60, "h"),
+        (60, "m"),
+    ];
+    for (size, name) in units {
+        let n = seconds / size;
+        if n >= 1 {
+            return format!("{n}{name}");
+        }
+    }
+    "now".into()
+}
+
 /// `5 minutes ago`, `3 days ago`, `2 years ago`.
 pub fn time_ago(seconds: i64) -> String {
     let units = [
@@ -583,6 +602,108 @@ pub fn blame_line(path: &Path, row: usize, contents: &str) -> Option<Blame> {
         }
     }
     Some(blame)
+}
+
+/// One line of a whole file's blame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlameLine {
+    /// The commit that last changed it (all `0`s if it's not committed).
+    pub hash: String,
+    pub author: String,
+    /// Seconds since 1970 (`author-time`).
+    pub time: i64,
+    pub summary: String,
+    pub text: String,
+}
+
+impl BlameLine {
+    pub fn uncommitted(&self) -> bool {
+        self.hash.chars().all(|c| c == '0')
+    }
+
+    pub fn short(&self) -> &str {
+        &self.hash[..self.hash.len().min(7)]
+    }
+}
+
+/// Who last changed each line of the file at `path`, given its text as
+/// it is now (`contents`, so it matches what's being edited); `None`
+/// if git can't say (an untracked file, outside a repository).
+pub fn blame_file(path: &Path, contents: &str) -> Option<Vec<BlameLine>> {
+    use std::io::Write as _;
+    let dir = dir_of(path)?;
+    let name = path.file_name()?.to_str()?.to_string();
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(&dir)
+        .args(["blame", "--porcelain", "--contents", "-", "--", &name])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .spawn()
+        .ok()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let contents = contents.to_string();
+        thread::spawn(move || {
+            let _ = stdin.write_all(contents.as_bytes());
+        });
+    }
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(parse_blame(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// `git blame --porcelain`'s output: a header per line (the commit
+/// first), the commit's details the first time it's seen, then the line
+/// after a tab.
+fn parse_blame(text: &str) -> Vec<BlameLine> {
+    use std::collections::HashMap;
+    #[derive(Default, Clone)]
+    struct Info {
+        author: String,
+        time: i64,
+        summary: String,
+    }
+    let mut commits: HashMap<String, Info> = HashMap::new();
+    let mut lines = Vec::new();
+    let mut hash: Option<String> = None;
+    for line in text.lines() {
+        if let Some(code) = line.strip_prefix('\t') {
+            let Some(hash) = hash.take() else {
+                continue;
+            };
+            // Not committed: git's made-up author and summary are left out.
+            let info = commits
+                .get(&hash)
+                .filter(|_| !hash.chars().all(|c| c == '0'))
+                .cloned()
+                .unwrap_or_default();
+            lines.push(BlameLine {
+                hash,
+                author: info.author,
+                time: info.time,
+                summary: info.summary,
+                text: code.to_string(),
+            });
+        } else if hash.is_none() {
+            let id = line.split_whitespace().next().unwrap_or("").to_string();
+            commits.entry(id.clone()).or_default();
+            hash = Some(id);
+        } else if let Some(id) = &hash {
+            let info = commits.entry(id.clone()).or_default();
+            if let Some(author) = line.strip_prefix("author ") {
+                info.author = author.to_string();
+            } else if let Some(time) = line.strip_prefix("author-time ") {
+                info.time = time.parse().unwrap_or(0);
+            } else if let Some(summary) = line.strip_prefix("summary ") {
+                info.summary = summary.to_string();
+            }
+        }
+    }
+    lines
 }
 
 /// A commit, as the log shows it.
@@ -1342,6 +1463,26 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("a.txt"), "x").unwrap();
         assert_eq!(staged_text(&outside.path().join("a.txt")), None);
+    }
+
+    #[test]
+    fn blames_every_line_including_ones_not_committed() {
+        let Some(dir) = repo() else {
+            return;
+        };
+        let file = dir.path().join("file.txt");
+        let lines = blame_file(&file, "one\ntwo\nthree\n").unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].text, "one");
+        assert_eq!(lines[0].author, "t");
+        assert_eq!(lines[0].summary, "first");
+        assert!(!lines[0].uncommitted());
+        assert_eq!(lines[1].hash, lines[0].hash, "details shown once, kept");
+        assert_eq!(lines[1].summary, "first");
+        assert!(lines[2].uncommitted(), "typed, not saved");
+        assert_eq!(lines[0].short().len(), 7);
+        std::fs::write(dir.path().join("new.txt"), "x").unwrap();
+        assert_eq!(blame_file(&dir.path().join("new.txt"), "x"), None);
     }
 }
 

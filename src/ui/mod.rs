@@ -300,7 +300,7 @@ pub fn draw(
         && let (Some(hover), Some(cursor)) = (editor.hover(), window_cursor)
     {
         let rows = 0..hover.document.buffer().line_count();
-        let highlights = syntax.and_then(|engine| {
+        let highlights = syntax.as_deref_mut().and_then(|engine| {
             engine.highlight_as(
                 &hover.document,
                 Some("markdown"),
@@ -329,7 +329,24 @@ pub fn draw(
     // The git view covers everything but the command line.
     if editor.git_gui().is_some() {
         let full = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
-        frame.render_widget(git_gui::GitGuiView::new(editor, theme), full);
+        // The blame's code is highlighted around the selected line (as
+        // far as it could scroll either way).
+        let highlights = editor
+            .git_gui()
+            .and_then(|g| g.blame.as_ref())
+            .zip(syntax)
+            .and_then(|(blame, engine)| {
+                let reach = full.height as usize;
+                let rows = blame.row.saturating_sub(reach)..blame.row + reach;
+                engine.highlight_as(
+                    &blame.document,
+                    blame.language.as_deref(),
+                    &editor.languages,
+                    &editor.syntax_trees,
+                    rows,
+                )
+            });
+        frame.render_widget(git_gui::GitGuiView::new(editor, theme, highlights), full);
         map.git = Some(git_gui::GitGuiView::map(editor, full));
     }
 

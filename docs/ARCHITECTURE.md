@@ -462,6 +462,18 @@ answer is dropped with its receiver. Commits' diffs are cached (up to
 100, by hash and paths), so moving back is instant. A file's diff stays
 synchronous, as staging a hunk needs it exactly as it is.
 
+A file's blame (`GitGui::blame`, a `BlameView`) is drawn over the panels
+while it's there, and the view's movement keys act on it first. It's
+`blame --porcelain --contents -` (`git::blame_file`) given the buffer
+encoded as it would be saved (`TextFormat::encode`), so unchanged lines
+match what's committed; from the files panel it's the file on disk.
+Each line's heat is its commit's rank by time among the file's
+commits, in quarters; the code is highlighted from a scratch `Document`
+(`BLAME_DOCUMENT`), as the hover's is. `<CR>` opens the line's commit
+(selected in the log, or read on its own
+if it's older than the log goes). Opened from a buffer, `<Esc>` closes
+the whole view.
+
 ## Syntax highlighting
 
 `syntax/` wraps tree-sitter:
@@ -1551,9 +1563,9 @@ Control is a view in it, and plugins add their own.
 Started: changes in the gutter, `]c`/`[c`, the branch, the file tree's
 marks, Source Control in the sidebar, and the full-screen git view with
 diffs and staging hunks, branches, and fetch, pull and push in the
-background, amending and stashes, and a file's history (see
-[Git](#git)). Next: a whole-file blame view, side-by-side diffs, merge
-conflicts, and staging single lines.
+background, amending and stashes, a file's history and its blame (see
+[Git](#git)). Next: side-by-side diffs, merge conflicts, and staging
+single lines.
 
 The everyday Git features, without leaving the editor:
 
@@ -1567,7 +1579,7 @@ The everyday Git features, without leaving the editor:
   the whole working tree to browse file by file.
 - **Blame**: the author and summary of the current line as virtual text
   (optional), and a blame view of the whole file that opens a commit's
-  diff.
+  diff (both done).
 - **Status and commits**: a picker of changed files (stage or unstage from
   it), writing the commit message in a buffer and committing on save,
   amending, and branches (list, switch, create) in a picker.

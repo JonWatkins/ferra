@@ -635,3 +635,113 @@ fn a_files_history_follows_renames_and_shows_only_that_file() {
         "the view stays shut"
     );
 }
+
+#[test]
+fn blaming_a_whole_file_and_opening_a_lines_commit() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let commit = |message: &str| {
+        assert!(git(dir.path(), &["add", "-A"]));
+        assert!(git(
+            dir.path(),
+            &[
+                "-c",
+                "user.name=sam",
+                "-c",
+                "user.email=s@s",
+                "commit",
+                "-q",
+                "-m",
+                message,
+            ],
+        ));
+    };
+    let path = dir.path().join("code.txt");
+    std::fs::write(&path, "one\ntwo\nTHREE\nfour\nfive\n").unwrap();
+    commit("shout three");
+
+    // From a buffer, at the cursor's line, with an edit not saved.
+    let mut app = app();
+    keys(&mut app, &format!(":e {}<CR>3G", path.display()));
+    keys(&mut app, "jA!<Esc><Space>B");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Git);
+    let blame = app.editor().git_gui().unwrap().blame.as_ref().unwrap();
+    assert_eq!(blame.path, "code.txt");
+    assert_eq!(blame.row, 3, "at the cursor");
+    assert_eq!(blame.lines.len(), 5, "no extra line for the final newline");
+    let summaries: Vec<&str> = blame.lines.iter().map(|l| l.summary.as_str()).collect();
+    assert_eq!(summaries, ["x", "x", "shout three", "", "x"]);
+    assert!(blame.lines[3].uncommitted(), "edited, not saved");
+    assert!(!blame.lines[4].uncommitted());
+    assert_eq!(blame.lines[2].author, "sam");
+
+    let screen = render(&mut app, 100, 14).rows.join("\n");
+    assert!(screen.contains("Blame: code.txt"), "{screen}");
+    assert!(screen.contains("Not committed yet"), "the footer: {screen}");
+    assert!(screen.contains("sam now"), "author and age: {screen}");
+    // A run of lines from one commit is headed once, by its summary.
+    assert_eq!(screen.matches("shout three").count(), 1, "{screen}");
+    assert!(screen.contains("┊"), "the uncommitted line's bar: {screen}");
+    // The selected line's commit (and hash) along the bottom.
+    keys(&mut app, "k");
+    let hash = blame_hash(&app, 2);
+    let screen = render(&mut app, 100, 14).rows.join("\n");
+    assert!(
+        screen.contains(&format!("{} • sam", &hash[..7])),
+        "{screen}"
+    );
+    keys(&mut app, "j");
+
+    // <CR> on an uncommitted line can't open anything; on a committed one,
+    // its commit in the diff panel.
+    keys(&mut app, "<CR>");
+    assert_eq!(message(&app), "This line isn't committed yet");
+    keys(&mut app, "k<CR>");
+    app.editor_mut().git_gui_wait();
+    let gui = app.editor().git_gui().unwrap();
+    assert!(gui.blame.is_none());
+    assert_eq!(gui.panel, ferra::editor::git_gui::GitPanel::Diff);
+    assert_eq!(gui.commits[gui.commit].subject, "shout three");
+    assert!(
+        gui.diff.lines.iter().any(|(_, l)| l == "+THREE"),
+        "its diff"
+    );
+
+    // Opened from a buffer: Esc goes back to it.
+    keys(&mut app, "q<Space>B");
+    keys(&mut app, "<Esc>");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
+    assert!(app.editor().git_gui().is_none());
+
+    // `H` from the blame: the file's history.
+    keys(&mut app, "<Space>BH");
+    let gui = app.editor().git_gui().unwrap();
+    assert!(gui.blame.is_none());
+    assert_eq!(gui.history.as_deref(), Some("code.txt"));
+
+    // `B` on a changed file, as it is on disk; Esc back to the panels.
+    keys(&mut app, ":w<CR>");
+    keys(&mut app, "<Space>g1B");
+    let blame = app.editor().git_gui().unwrap().blame.as_ref().unwrap();
+    assert_eq!(blame.row, 0);
+    assert!(blame.lines[3].uncommitted(), "saved, not committed");
+    keys(&mut app, "<Esc>");
+    let gui = app.editor().git_gui().unwrap();
+    assert!(gui.blame.is_none(), "back to the panels");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Git);
+
+    // Untracked files can't be blamed.
+    std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
+    keys(
+        &mut app,
+        &format!("q:e {}<CR><Space>B", dir.path().join("new.txt").display()),
+    );
+    assert_eq!(message(&app), "git can't blame new.txt (is it committed?)");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
+}
+
+fn blame_hash(app: &ferra::App, row: usize) -> String {
+    let gui = app.editor().git_gui().unwrap();
+    gui.blame.as_ref().unwrap().lines[row].hash.clone()
+}

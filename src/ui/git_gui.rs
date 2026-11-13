@@ -33,6 +33,7 @@ use crate::config::Theme;
 use crate::editor::git_gui::{DiffOf, GitPanel};
 use crate::editor::{Editor, GitRow};
 use crate::git::DiffLineKind;
+use crate::syntax::Highlights;
 
 /// Where the view's parts are, for drawing and the mouse.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -41,11 +42,15 @@ pub struct GitGuiMap {
     pub panels: Vec<(Rect, GitPanel)>,
     /// Each panel's rows, and the index of the item on the first.
     pub lists: Vec<(Rect, GitPanel, usize)>,
+    /// The blame's rows and the line on the first, while it's shown.
+    pub blame: Option<(Rect, usize)>,
 }
 
 pub struct GitGuiView<'a> {
     editor: &'a Editor,
     theme: &'a Theme,
+    /// The blame's code, highlighted.
+    highlights: Option<&'a Highlights>,
 }
 
 /// The panels' areas in `area`.
@@ -79,8 +84,12 @@ fn layout(area: Rect) -> (Vec<(Rect, GitPanel)>, Rect) {
 }
 
 impl<'a> GitGuiView<'a> {
-    pub fn new(editor: &'a Editor, theme: &'a Theme) -> Self {
-        Self { editor, theme }
+    pub fn new(editor: &'a Editor, theme: &'a Theme, highlights: Option<&'a Highlights>) -> Self {
+        Self {
+            editor,
+            theme,
+            highlights,
+        }
     }
 
     /// Where things go in `area`, with each list's first item as it'll be
@@ -89,7 +98,14 @@ impl<'a> GitGuiView<'a> {
         let Some(gui) = editor.git_gui() else {
             return GitGuiMap::default();
         };
-        let (panels, _) = layout(area);
+        let (panels, hint) = layout(area);
+        if let Some(blame) = &gui.blame {
+            let body = Rect::new(area.x, area.y, area.width, hint.y - area.y);
+            return GitGuiMap {
+                blame: Some((Block::bordered().inner(body), blame.scroll.get())),
+                ..GitGuiMap::default()
+            };
+        }
         let lists = panels
             .iter()
             .map(|&(rect, panel)| {
@@ -103,7 +119,11 @@ impl<'a> GitGuiView<'a> {
                 (inner, panel, first)
             })
             .collect();
-        GitGuiMap { panels, lists }
+        GitGuiMap {
+            panels,
+            lists,
+            blame: None,
+        }
     }
 
     fn panel_block(&self, title: String, focused: bool) -> Block<'static> {
@@ -337,10 +357,150 @@ impl<'a> GitGuiView<'a> {
         }
     }
 
+    /// A file's blame over the whole view. Each run of lines from one
+    /// commit is headed by its summary, author and age, with a bar down
+    /// the run coloured by how recent it is; the selected line's commit is
+    /// picked out, its hash and date along the bottom, and the code is
+    /// highlighted.
+    fn draw_blame(&self, body: Rect, buf: &mut Buffer) {
+        let theme = self.theme;
+        let Some(blame) = self.editor.git_gui().and_then(|g| g.blame.as_ref()) else {
+            return;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let selected = blame.lines.get(blame.row);
+        let footer = match selected {
+            Some(line) if line.uncommitted() => " Not committed yet ".to_string(),
+            Some(line) => format!(
+                " {} • {}, {} • {} ",
+                line.short(),
+                line.author,
+                crate::git::time_ago(now - line.time),
+                line.summary
+            ),
+            None => String::new(),
+        };
+        let room = body.width.saturating_sub(12) as usize;
+        let block = self
+            .panel_block(
+                format!(" Blame: {} ", truncate_end(&blame.path, room)),
+                true,
+            )
+            .title_bottom(Span::styled(
+                truncate_end(&footer, body.width.saturating_sub(4) as usize),
+                theme.get("ui.git.title"),
+            ));
+        let inner = block.inner(body);
+        block.render(body, buf);
+        let first = keep_in_view(
+            &blame.scroll,
+            blame.row,
+            inner.height as usize,
+            blame.lines.len(),
+        );
+        let number_width = blame.lines.len().to_string().len();
+        // The bar, the header (summary, author and age), then a rule.
+        let header_width = (inner.width as usize * 2 / 5).clamp(20.min(inner.width as usize), 56);
+        let selected_hash = selected.filter(|l| !l.uncommitted()).map(|l| &l.hash);
+        for (offset, (index, line)) in blame
+            .lines
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(inner.height as usize)
+            .enumerate()
+        {
+            let y = inner.y + offset as u16;
+            let mut base = theme.get("ui.git");
+            if index == blame.row {
+                base = base.patch(self.selected_style(true));
+            } else if selected_hash == Some(&line.hash) {
+                base = base.patch(theme.get("ui.git.diff.selected"));
+            }
+            buf.set_style(Rect::new(inner.x, y, inner.width, 1), base);
+            let starts_run = index == first
+                || blame.lines.get(index.wrapping_sub(1)).map(|l| &l.hash) != Some(&line.hash);
+            let dim = base.patch(theme.get("ui.git.dim"));
+
+            let (bar, bar_scope) = if line.uncommitted() {
+                ("┊", "ui.git.blame.uncommitted".to_string())
+            } else {
+                let heat = blame.heat.get(index).copied().unwrap_or(3);
+                (
+                    if heat == 0 { "┃" } else { "│" },
+                    format!("ui.git.blame.heat{heat}"),
+                )
+            };
+            buf.set_string(inner.x + 1, y, bar, base.patch(theme.get(&bar_scope)));
+
+            // The header, on a run's first line: the summary, then the
+            // author and age at its right.
+            let header = Rect::new(inner.x + 3, y, (header_width as u16).saturating_sub(4), 1)
+                .intersection(inner);
+            if starts_run && header.width > 0 {
+                let room = header.width as usize;
+                if line.uncommitted() {
+                    buf.set_stringn(header.x, y, "Not committed", room, dim);
+                } else {
+                    let who = format!("{} {}", line.author, crate::git::short_age(now - line.time));
+                    let who = truncate_end(&who, room / 2);
+                    let who_width = who.width();
+                    let summary_room = room.saturating_sub(who_width + 1);
+                    buf.set_stringn(
+                        header.x,
+                        y,
+                        truncate_end(&line.summary, summary_room),
+                        summary_room,
+                        base.patch(theme.get("ui.git.blame.summary")),
+                    );
+                    buf.set_stringn(header.right() - who_width as u16, y, &who, who_width, dim);
+                }
+            }
+
+            // The line number and the code.
+            let mut x = inner.x + header_width as u16;
+            if x >= inner.right() {
+                continue;
+            }
+            buf.set_string(x, y, "│", dim);
+            x += 2;
+            let number = format!("{:>number_width$} ", index + 1);
+            buf.set_stringn(x, y, &number, inner.right().saturating_sub(x) as usize, dim);
+            x += number.len() as u16;
+            let spans = self.highlights.map_or(&[][..], |h| h.line(index));
+            for (col, c) in line.text.chars().enumerate() {
+                let style = spans
+                    .iter()
+                    .filter(|s| s.start <= col && col < s.end)
+                    .fold(base, |style, s| style.patch(theme.get(s.name())));
+                let (text, w) = match c {
+                    '\t' => ("    ".to_string(), 4),
+                    c => (
+                        c.to_string(),
+                        unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16,
+                    ),
+                };
+                if w == 0 {
+                    continue;
+                }
+                if x + w > inner.right() {
+                    break;
+                }
+                buf.set_string(x, y, text, style);
+                x += w;
+            }
+        }
+    }
+
     fn hint(&self) -> &'static str {
         let Some(gui) = self.editor.git_gui() else {
             return "";
         };
+        if gui.blame.is_some() {
+            return " j/k lines  ⏎ open the commit  H history  ⌃d/⌃u page  Esc back  q close";
+        }
         match (gui.panel, &gui.diff_of) {
             (GitPanel::Files, _) => {
                 " s stage/unstage  ⏎ hunks  H history  a stage all  x discard  c commit  Tab panels  q close"
@@ -392,6 +552,13 @@ impl Widget for GitGuiView<'_> {
         Clear.render(area, buf);
         buf.set_style(area, self.theme.get("ui.git"));
         let (panels, hint) = layout(area);
+        if gui.blame.is_some() {
+            let body = Rect::new(area.x, area.y, area.width, hint.y - area.y);
+            self.draw_blame(body, buf);
+            let text = truncate_end(self.hint(), hint.width as usize);
+            buf.set_string(hint.x, hint.y, text, self.theme.get("ui.git.hint"));
+            return;
+        }
         for (rect, panel) in panels {
             let focused = gui.panel == panel;
             let title = match panel {
@@ -437,5 +604,45 @@ mod tests {
         assert_eq!(left, 29, "the left panels fill the height");
         assert_eq!(panels[3].0, Rect::new(35, 0, 65, 29));
         assert_eq!(hint, Rect::new(0, 29, 100, 1));
+    }
+
+    #[test]
+    fn the_blames_code_is_highlighted() {
+        let Some(dir) = crate::git::tests_support::repo() else {
+            return;
+        };
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let path = root.join("main.rs");
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        crate::git::stage(&root, &["main.rs"]).unwrap();
+        crate::git::commit(&root, "main").unwrap();
+        let mut editor = Editor::default();
+        editor.open(&path).unwrap();
+        editor.git_blame_view().unwrap();
+        let blame = editor.git_gui().unwrap().blame.as_ref().unwrap();
+        assert_eq!(blame.language.as_deref(), Some("rust"));
+
+        let theme = crate::config::Config::default().theme;
+        let mut engine = crate::syntax::SyntaxEngine::default();
+        let highlights = engine.highlight_as(
+            &blame.document,
+            blame.language.as_deref(),
+            &editor.languages,
+            &editor.syntax_trees,
+            0..1,
+        );
+        assert!(highlights.is_some());
+        let area = Rect::new(0, 0, 80, 10);
+        let mut buf = Buffer::empty(area);
+        GitGuiView::new(&editor, &theme, highlights).render(area, &mut buf);
+        let row: String = (0..80).map(|x| buf[(x, 1)].symbol()).collect();
+        let x = row.find("fn main").expect("the code");
+        let x = row[..x].chars().count() as u16;
+        assert_eq!(
+            buf[(x, 1)].fg,
+            theme.get("keyword").fg.unwrap(),
+            "`fn` as a keyword: {row}"
+        );
+        assert!(row.contains("main"), "the summary: {row}");
     }
 }

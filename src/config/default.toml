@@ -372,6 +372,14 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "ui.git.diff.header" = { fg = "#a9b1d6", modifiers = ["bold"] }
 "ui.git.diff.selected" = { bg = "#262a33" }
 "ui.git.hint" = "#565f89"
+# The blame view's bar: its file's newest changes brightest, its oldest
+# faintest, and lines not committed yet.
+"ui.git.blame.heat0" = "#ff9e64"
+"ui.git.blame.heat1" = "#e0af68"
+"ui.git.blame.heat2" = "#7a6a52"
+"ui.git.blame.heat3" = "#3b4048"
+"ui.git.blame.uncommitted" = "#9ece6a"
+"ui.git.blame.summary" = "#c0caf5"
 # The tabs at the top of the sidebar, when plugins add views.
 "ui.sidebar.tabs" = { bg = "#1f2229" }
 "ui.sidebar.tab" = { fg = "#6b7280", bg = "#1f2229" }
@@ -595,6 +603,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "<Space>t" = "terminal_toggle"
 "<Space>g" = "git_gui_open"
 "<Space>l" = "git_history"
+"<Space>B" = "git_blame_view"
 "<C-`>" = "terminal_toggle"
 "<Space>f" = "file_picker"
 "<Space>r" = "register_picker"
@@ -960,6 +969,7 @@ language-server = { command = "vscode-css-language-server", args = ["--stdio"] }
 "z" = "git_stash"
 "Z" = "git_stash_list"
 "H" = "git_gui_history"
+"B" = "git_gui_blame"
 ":" = "command_mode"
 
 # A plugin's input box (ctx:input), while it has focus. Typing edits it.

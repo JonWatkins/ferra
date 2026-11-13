@@ -301,6 +301,16 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "git_blame_view",
+        "Who last changed each line of the current file, in the git view (<Space>B)",
+        |cx| cx.editor.git_blame_view(),
+    );
+    r.register(
+        "git_gui_blame",
+        "Git view: the selected file's blame, or back out of it (B)",
+        |cx| cx.editor.git_gui_blame(),
+    );
+    r.register(
         "git_gui_history",
         "Git view: the selected file's history, or back to the whole log (H)",
         |cx| cx.editor.git_gui_history(),

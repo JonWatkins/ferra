@@ -411,6 +411,13 @@ impl App {
                 let Some(git) = map.git else {
                     return true;
                 };
+                if let Some((rows, first)) = git.blame {
+                    if rows.contains(at) {
+                        self.editor
+                            .git_gui_blame_select(first + (at.y - rows.y) as usize);
+                    }
+                    return true;
+                }
                 if let Some(&(list, panel, first)) =
                     git.lists.iter().find(|(list, ..)| list.contains(at))
                 {
@@ -533,6 +540,15 @@ impl App {
                 return;
             }
             Mode::Git => {
+                if self
+                    .screen_map
+                    .git
+                    .as_ref()
+                    .is_some_and(|g| g.blame.is_some())
+                {
+                    self.editor.git_gui_scroll(WHEEL_LINES as isize * sign);
+                    return;
+                }
                 let panel = self.screen_map.git.as_ref().and_then(|git| {
                     git.panels
                         .iter()

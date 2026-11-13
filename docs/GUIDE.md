@@ -503,6 +503,7 @@ or staged changes, a commit, or a branch's log.
 | `z` | Stash every change, untracked files too (asks for an optional message) |
 | `Z` | Pick a stash to put back (it's dropped once it's back) |
 | `H` | The selected file's history, in place of the commits; `H` or `<Esc>` there goes back to the whole log |
+| `B` | The selected file's blame: who last changed each line |
 | `q` | Close |
 
 Fetching, pulling and pushing run in the background with git's progress
@@ -523,6 +524,15 @@ following it back through renames, and each shows only what it did to
 that file (a rename as one). `<Space>l` (or `:git_history`) opens it for
 the file you're editing; `:git_history path` for any file in the
 repository.
+
+`<Space>B` (or `:git_blame_view`) shows the whole file you're editing
+with who last changed each line, as it is now (lines you've changed say
+`Not committed`). Each run of lines from one commit is headed by its
+summary, author and age, with a bar down it coloured by how recent the
+change is among the file's (brightest for the newest; `ui.git.blame.*`
+in the theme). The code is highlighted, the selected line's commit is
+picked out, and its hash, author and date are along the bottom. `<CR>` opens that commit's diff, `H` the
+file's history, and `<Esc>` goes back to where you were.
 
 `git = false` turns all of this off. ferra runs the `git` command, so it
 needs git installed; commits run your hooks, and their errors show as
