@@ -50,6 +50,8 @@ pub struct EditorOptions {
     /// Use the mouse: click, drag to select, scroll (the terminal's own
     /// selecting then needs Shift, or Option in some macOS terminals).
     pub mouse: bool,
+    /// The menu bar along the top.
+    pub menu_bar: bool,
     /// The column of icons down the left that shows the sidebar's views.
     pub activity_bar: bool,
     /// What icons are drawn with.

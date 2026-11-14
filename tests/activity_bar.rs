@@ -3,13 +3,21 @@
 
 mod common;
 
-use common::{app_as_shipped, app_with_config, keys, render};
+use common::{app_with_config, keys, render};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ferra::App;
 use ferra::editor::Mode;
 
 const W: u16 = 60;
 const H: u16 = 20;
+
+/// As shipped, but for the menu bar above (its own tests have it), so the
+/// bar's rows are where these tests count them.
+fn app_as_shipped() -> App {
+    app_with_config(
+        "[editor]\nactivity-bar = true\nstatusline = \"global\"\nstatusline-style = \"vscode\"\n",
+    )
+}
 
 fn click(app: &mut App, x: u16, y: u16) {
     for kind in [

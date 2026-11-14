@@ -270,6 +270,26 @@ impl App {
     }
 
     fn mouse_down(&mut self, at: Position) {
+        // The menu bar first: a title opens its menu (another one's open
+        // menu switching to it), the open one's closes it.
+        if let Some((y, titles)) = &self.screen_map.menu_bar
+            && at.y == *y
+        {
+            let index = titles
+                .iter()
+                .position(|&(from, to)| (from..to).contains(&at.x));
+            match index {
+                Some(index) => {
+                    let name = crate::editor::menu_bar::MENUS[index].title.to_lowercase();
+                    self.execute(&format!("menu_{name}"), Invocation::default());
+                }
+                None if self.editor.open_menu().is_some() => {
+                    self.execute("popup_close", Invocation::default());
+                }
+                None => {}
+            }
+            return;
+        }
         // A hover-like popup goes with any click.
         if self.editor.mode() != Mode::Popup && self.editor.popup().is_some() {
             self.editor.close_popup();

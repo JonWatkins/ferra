@@ -376,6 +376,22 @@ current file is highlighted and files with unsaved changes have a `●`.
 `sidebar-width` (30 columns, at most half the screen) sets its width; the
 colours are the `ui.sidebar.*` theme scopes.
 
+### The menu bar
+
+Along the top is a menu bar, as a desktop app has: File, Edit, View, Go,
+Git, Terminal and Help, each a list of commands with their keys beside
+them (from your keymap). Click a title to open its menu, or press F10 (for
+File), or Alt and the underlined letter: `Alt+F` File, `Alt+D` Edit,
+`Alt+V` View, `Alt+O` Go, `Alt+G` Git, `Alt+T` Terminal, `Alt+H` Help.
+In a menu, `j`/`k` or the arrows move, `<CR>` (or a click) runs the item,
+`←`/`→` open the menu beside it, and `<Esc>` closes it.
+
+On a Mac it's ⌥ and the letter, and that works even if the terminal isn't
+set to send ⌥ as Alt: ferra takes the characters ⌥ types (`ƒ` for ⌥F,
+`∂` for ⌥D...) in normal mode and the sidebar, where they can't be text.
+The letters avoid ⌥E, ⌥U, ⌥I, ⌥N and ⌥\`, which the Mac keeps for
+accents. `menu-bar = false` hides the bar (F10 still opens the menus).
+
 ### The activity bar
 
 Down the left edge, always there, is the activity bar, as in VS Code: an

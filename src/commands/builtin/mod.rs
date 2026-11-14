@@ -17,6 +17,7 @@ mod jumps;
 mod lsp;
 mod macros;
 mod marks;
+mod menu;
 mod modes;
 mod motions;
 mod operators;
@@ -63,6 +64,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     input_box::register(registry);
     git::register(registry);
     plugins::register(registry);
+    menu::register(registry);
 }
 
 #[cfg(test)]

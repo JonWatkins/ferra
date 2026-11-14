@@ -24,6 +24,7 @@ pub mod git_gui;
 mod hover;
 pub mod icons;
 mod input_box;
+mod menu_bar;
 mod picker;
 mod popup;
 mod search;
@@ -78,6 +79,8 @@ pub struct ScreenMap {
     pub windows: Vec<(crate::editor::WindowId, Rect)>,
     /// The activity bar: its area, and each icon's row and what it shows.
     pub activity: Option<(Rect, Vec<(u16, String)>)>,
+    /// The menu bar: its row, and each title's columns.
+    pub menu_bar: Option<(u16, Vec<(u16, u16)>)>,
     pub sidebar: Option<SidebarMap>,
     /// The terminal panel, title row included.
     pub terminal: Option<Rect>,
@@ -133,6 +136,22 @@ pub fn draw(
     let area = frame.area();
     let base = theme.get("ui.background").patch(theme.get("ui.text"));
     frame.buffer_mut().set_style(area, base);
+
+    // The menu bar takes the top row, with a line under it; everything
+    // else is laid out below. (A menu drops down over the line.)
+    let area = if editor.options.menu_bar && area.height > 5 {
+        let row = Rect::new(area.x, area.y, area.width, 1);
+        frame.render_widget(menu_bar::MenuBar::new(editor.open_menu(), theme), row);
+        map.menu_bar = Some((row.y, crate::editor::menu_bar::title_spans(row.x)));
+        horizontal_line(
+            frame,
+            Rect::new(area.x, area.y + 1, area.width, 1),
+            theme.get("ui.menubar.border"),
+        );
+        Rect::new(area.x, area.y + 2, area.width, area.height - 2)
+    } else {
+        area
+    };
 
     let [main, status, command] = Layout::vertical([
         Constraint::Min(1),
@@ -280,7 +299,13 @@ pub fn draw(
             if room >= 2 {
                 let height = (editor.options.terminal_height.max(2) + 1).min(room);
                 let panel = Rect::new(main.x, main.y + region - height, main.width, height);
-                let windows_bottom = panel.y - u16::from(per_window);
+                // A line above it, unless a window's status line is there.
+                let border = u16::from(!per_window);
+                if border == 1 {
+                    let line = Rect::new(main.x, panel.y - 1, main.width, 1);
+                    horizontal_line(frame, line, theme.get("ui.terminal.border"));
+                }
+                let windows_bottom = panel.y - border - u16::from(per_window);
                 let main = Rect::new(main.x, main.y, main.width, windows_bottom - main.y);
                 let status = if per_window {
                     Rect::new(status.x, windows_bottom, status.width, 1)
@@ -447,7 +472,16 @@ pub fn draw(
 
     // A plugin's popup floats over the windows.
     if let Some(popup) = editor.popup() {
-        let area = PopupView::area(popup, main, window_cursor, drawn.active);
+        // A menu goes under its title, anywhere on the screen.
+        let bounds = if matches!(
+            popup.position,
+            crate::editor::popup::PopupPosition::At { .. }
+        ) {
+            screen_main
+        } else {
+            main
+        };
+        let area = PopupView::area(popup, bounds, window_cursor, drawn.active);
         frame.render_widget(PopupView::new(popup, theme), area);
         let inner = ratatui::widgets::Block::bordered().inner(area);
         map.popup = Some(ListMap {
@@ -507,4 +541,12 @@ pub fn draw(
         frame.set_cursor_position(position);
     }
     map
+}
+
+/// A row of `─` across `area`.
+fn horizontal_line(frame: &mut Frame, area: Rect, style: ratatui::style::Style) {
+    let buf = frame.buffer_mut();
+    for x in area.left()..area.right() {
+        buf[(x, area.y)].set_symbol("─").set_style(style);
+    }
 }

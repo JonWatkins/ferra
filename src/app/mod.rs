@@ -136,6 +136,7 @@ impl App {
             .registers
             .set_clipboard(clipboard::for_provider(provider), mode);
         app.validate_keymap();
+        app.refresh_menu_hints();
         if !unknown_hook_commands.is_empty() {
             unknown_hook_commands.sort_unstable();
             let text = format!(
@@ -338,6 +339,7 @@ impl App {
         self.plugins = None;
         (self.commands, _) = base_commands(&self.config_hooks);
         self.keymap = self.config_keys.clone();
+        self.refresh_menu_hints();
         self.editor.languages = self.config_languages.clone();
         self.popup_keymap = None;
         self.plugin_status_errors.clear();
@@ -484,7 +486,23 @@ impl App {
         };
         let errors = host.install(&mut self.commands, &mut self.keymap);
         self.editor.add_sidebar_views(host.take_new_views());
+        self.refresh_menu_hints();
         errors
+    }
+
+    /// The keys menus show beside their items, from the keymap (normal
+    /// mode's), as the find box labels them (⌃ on macOS).
+    fn refresh_menu_hints(&mut self) {
+        let mac = cfg!(target_os = "macos");
+        let hints = crate::editor::menu_bar::MENUS
+            .iter()
+            .flat_map(|menu| menu.items.iter().flatten())
+            .filter_map(|(_, command)| {
+                let keys = self.keymap.hint_keys(Mode::Normal, command)?;
+                Some((command.to_string(), ui::find::key_label(&keys, mac)))
+            })
+            .collect();
+        self.editor.set_menu_hints(hints);
     }
 
     /// Before drawing: calls the `lines` function of the plugin view the

@@ -33,6 +33,7 @@ pub mod git_gui;
 pub use git::GitRow;
 pub mod input_box;
 pub mod lsp;
+pub mod menu_bar;
 mod plugin_packages;
 pub use plugin_packages::{PackageJob, PackageRequest};
 pub mod popup;
@@ -228,6 +229,8 @@ pub struct Editor {
     popup_keys_changed: bool,
     /// A plugin's input box.
     input_box: Option<input_box::InputBox>,
+    /// The menu bar: the menu open, and the keys shown for commands.
+    menu: menu_bar::MenuState,
     /// Plugin packages: where they go, and an install asked about or running.
     packages: plugin_packages::PackageState,
     /// Git: open files' staged text and changes, and the branch.

@@ -81,6 +81,10 @@ impl<'a> PopupView<'a> {
                     .min(screen.right().saturating_sub(width));
                 (x, y.max(screen.y))
             }
+            (PopupPosition::At { x, y }, _, _) => (
+                x.min(screen.right().saturating_sub(width)).max(screen.x),
+                y.max(screen.y),
+            ),
             (PopupPosition::TopRight, _, Some(window)) => (
                 window.right().saturating_sub(width + 1).max(screen.x),
                 window.y,

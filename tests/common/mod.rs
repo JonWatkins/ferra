@@ -15,9 +15,9 @@ fn with_classic_chrome(toml: &str) -> String {
         .or_insert_with(|| toml::Value::Table(toml::Table::new()))
         .as_table_mut()
         .expect("[editor] is a table");
-    editor
-        .entry("activity-bar")
-        .or_insert(toml::Value::Boolean(false));
+    for key in ["activity-bar", "menu-bar"] {
+        editor.entry(key).or_insert(toml::Value::Boolean(false));
+    }
     // The classic status line: one per window, worded tersely, laid out as
     // it was.
     for (key, value) in [("statusline", "windows"), ("statusline-style", "classic")] {

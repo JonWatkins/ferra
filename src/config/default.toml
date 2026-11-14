@@ -63,6 +63,9 @@ mouse = true
 # Columns the sidebar's file tree (<Space>e, :explorer) takes, left of the
 # windows. It never takes more than half the screen.
 sidebar-width = 30
+# The menu bar along the top: File, Edit, View, Go, Git, Terminal, Help
+# (F10, or Alt/⌥ and a menu's letter, or a click).
+menu-bar = true
 # The activity bar: a column of icons down the left, always there, that
 # shows the sidebar's views (click one; click the shown one to hide the
 # sidebar) and opens the settings.
@@ -428,6 +431,16 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.popup" = { fg = "#d4d7dd", bg = "#1f2229" }
 "ui.popup.border" = "#4b5263"
 "ui.popup.title" = { fg = "#7aa2f7", modifiers = ["bold"] }
+# The menu bar, its open menu's title and the letters that open them; and
+# in a menu, the keys beside its items and its separators.
+"ui.menubar" = { fg = "#a9b1d6", bg = "#16181d" }
+"ui.menubar.open" = { fg = "#c0caf5", bg = "#33467c" }
+"ui.menubar.letter" = { modifiers = ["underlined"] }
+# The lines under the menu bar and above the terminal panel.
+"ui.menubar.border" = { fg = "#3b4048", bg = "#16181d" }
+"ui.terminal.border" = { fg = "#3b4048" }
+"ui.menu.key" = "#6b7280"
+"ui.menu.separator" = "#3b4048"
 "ui.popup.prompt" = "#7aa2f7"
 "ui.popup.selected" = { bg = "#33467c" }
 "ui.popup.match" = { fg = "#e0af68", modifiers = ["bold"] }
@@ -467,6 +480,24 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 # (the range for d/c/y). A register can be selected with "x before a command.
 
 [keys.normal]
+# The menu bar: F10 opens it, Alt and a menu's letter opens that menu
+# (on a Mac, ⌥ and the letter: the characters ⌥ types count too, so it
+# works without setting the terminal to send ⌥ as Alt).
+"<F10>" = "menu_open"
+"<A-f>" = "menu_file"
+"ƒ" = "menu_file"
+"<A-d>" = "menu_edit"
+"∂" = "menu_edit"
+"<A-v>" = "menu_view"
+"√" = "menu_view"
+"<A-o>" = "menu_go"
+"ø" = "menu_go"
+"<A-g>" = "menu_git"
+"©" = "menu_git"
+"<A-t>" = "menu_terminal"
+"†" = "menu_terminal"
+"<A-h>" = "menu_help"
+"˙" = "menu_help"
 "<Esc>" = "clear_search_highlight"
 "<C-v>" = "visual_block_mode"
 "h" = "move_left"
@@ -752,6 +783,7 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 # In visual mode (v, V), motions extend the selection and text objects
 # select. Operators act on the selection straight away.
 [keys.visual]
+"<F10>" = "menu_open"
 "<Esc>" = "normal_mode"
 "A" = "visual_append"
 "I" = "visual_insert"
@@ -888,6 +920,21 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 
 # The sidebar's file tree (<Space>e), while it has focus.
 [keys.sidebar]
+"<F10>" = "menu_open"
+"<A-f>" = "menu_file"
+"ƒ" = "menu_file"
+"<A-d>" = "menu_edit"
+"∂" = "menu_edit"
+"<A-v>" = "menu_view"
+"√" = "menu_view"
+"<A-o>" = "menu_go"
+"ø" = "menu_go"
+"<A-g>" = "menu_git"
+"©" = "menu_git"
+"<A-t>" = "menu_terminal"
+"†" = "menu_terminal"
+"<A-h>" = "menu_help"
+"˙" = "menu_help"
 "j" = "sidebar_down"
 "k" = "sidebar_up"
 "<Down>" = "sidebar_down"
@@ -1061,6 +1108,7 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "<BS>" = "picker_backspace"
 
 [keys.insert]
+"<F10>" = "menu_open"
 "<C-n>" = "complete_next"
 "<C-p>" = "complete_previous"
 "<C-y>" = "complete_accept"

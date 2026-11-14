@@ -20,6 +20,8 @@ pub enum PopupPosition {
     Cursor,
     /// At the top right of the active window, like the find box.
     TopRight,
+    /// At a place on the screen (a menu, under its title).
+    At { x: u16, y: u16 },
 }
 
 impl PopupPosition {
