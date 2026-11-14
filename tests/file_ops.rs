@@ -261,3 +261,55 @@ fn right_click_menus() {
     assert!(project.path("b.txt").is_file());
     assert_eq!(text(&app), "");
 }
+
+#[test]
+fn right_clicking_below_the_files_makes_them_in_the_root() {
+    let project = project(&[("src/a.txt", "")]);
+    let mut app = app_with_config("[editor]\nkeymap = \"vscode\"\n");
+    keys(&mut app, "<C-b>");
+    let shown = common::render(&mut app, 80, 20);
+    let last = shown.rows.iter().rposition(|r| r.contains("src")).unwrap() as u16;
+    click(&mut app, MouseButton::Right, 3, last + 3);
+    let popup = app.editor().popup().unwrap();
+    assert!(format!("{:?}", popup.lines).contains("New File"));
+    keys(&mut app, "<CR>");
+    let input = app.editor().input_box().unwrap();
+    assert_eq!(input.title, "New file", "in the project's folder");
+    keys(&mut app, "top.txt<CR>");
+    assert!(project.path("top.txt").is_file());
+}
+
+#[test]
+fn save_as_completes_paths_with_tab() {
+    let project = project(&[("src/ui/x.rs", ""), ("src/util.rs", ""), ("docs/a.md", "")]);
+    let mut app = app_with_config("[editor]\nkeymap = \"vscode\"\n");
+    keys(&mut app, "<C-n>x<C-s>");
+    let field = |app: &App| app.editor().input_box().unwrap().field.text().to_string();
+    keys(&mut app, "s<Tab>");
+    assert_eq!(field(&app), "src/", "the one match");
+    // Two matches, agreeing on nothing more: the first, and what there is.
+    keys(&mut app, "u<Tab>");
+    assert_eq!(field(&app), "src/ui/");
+    assert!(message(&app).contains("ui/  util.rs"), "{}", message(&app));
+    keys(&mut app, "<Tab>");
+    assert_eq!(field(&app), "src/util.rs", "then each in turn");
+    keys(&mut app, "<S-Tab>");
+    assert_eq!(field(&app), "src/ui/");
+    keys(&mut app, "new.rs<CR>");
+    assert_eq!(
+        fs::read_to_string(project.path("src/ui/new.rs")).unwrap(),
+        "x\n"
+    );
+}
+
+#[test]
+fn ctrl_tab_goes_through_the_buffers() {
+    let project = project(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    let mut app = app_with_config("[editor]\nkeymap = \"vscode\"\n");
+    app.open(&project.path("a.txt"));
+    app.open(&project.path("b.txt"));
+    keys(&mut app, "<C-Tab>");
+    assert_eq!(text(&app), "a");
+    keys(&mut app, "<C-S-Tab>");
+    assert_eq!(text(&app), "b");
+}

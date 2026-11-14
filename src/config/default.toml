@@ -684,6 +684,8 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 [keys.input]
 "<CR>" = "input_submit"
 "<Esc>" = "input_cancel"
+"<Tab>" = "input_complete"
+"<S-Tab>" = "input_complete_prev"
 "<C-c>" = "input_cancel"
 "<BS>" = "input_backspace"
 "<Del>" = "input_delete"

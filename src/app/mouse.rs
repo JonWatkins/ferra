@@ -644,6 +644,13 @@ impl App {
             Hit::SidebarLine(row) if self.clicks_allowed() && self.editor.tree_select_line(row) => {
                 self.editor.context_menu(true, at.x, at.y);
             }
+            // Below the files: the project's folder.
+            Hit::SidebarLine(_) | Hit::Sidebar
+                if self.clicks_allowed() && self.editor.file_tree_shown() =>
+            {
+                self.editor.set_mode(Mode::Sidebar);
+                self.editor.tree_root_menu(at.x, at.y);
+            }
             _ => {}
         }
     }

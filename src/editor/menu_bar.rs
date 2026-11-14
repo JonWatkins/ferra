@@ -187,6 +187,17 @@ pub const TREE_MENU: &[Option<(&str, &str)>] = &[
     Some(("Collapse All", "sidebar_collapse_all")),
 ];
 
+/// The right-click menu on the file tree's empty space: the project's
+/// folder.
+pub const TREE_ROOT_MENU: &[Option<(&str, &str)>] = &[
+    Some(("New File", "tree_new_file_at_root")),
+    Some(("New Folder", "tree_new_folder_at_root")),
+    None,
+    Some(("Find in Files", "project_search")),
+    Some(("Refresh", "sidebar_refresh")),
+    Some(("Collapse All", "sidebar_collapse_all")),
+];
+
 const REVEAL: &str = if cfg!(target_os = "macos") {
     "Reveal in Finder"
 } else {
@@ -233,6 +244,12 @@ impl Editor {
     /// screen position `x`, `y`.
     pub fn context_menu(&mut self, tree: bool, x: u16, y: u16) {
         self.show_menu(if tree { TREE_MENU } else { TEXT_MENU }, x, y);
+        self.menu.open = None;
+    }
+
+    /// A right-click on the file tree's empty space.
+    pub fn tree_root_menu(&mut self, x: u16, y: u16) {
+        self.show_menu(TREE_ROOT_MENU, x, y);
         self.menu.open = None;
     }
 

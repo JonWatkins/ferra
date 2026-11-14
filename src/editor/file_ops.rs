@@ -30,18 +30,24 @@ impl Editor {
             _ => String::new(),
         };
         let mut input = InputBox::new("Save as", &start, "write");
-        input.placeholder = "path/to/file".into();
+        input.placeholder = "path/to/file (Tab completes)".into();
+        input.completes_paths = true;
         input.field.end();
         self.open_input_box(input);
     }
 
+    /// Whether the sidebar shows the file tree (not Search, Source Control
+    /// or a plugin's view).
+    pub fn file_tree_shown(&self) -> bool {
+        self.sidebar().is_some()
+            && !self.search_view_shown()
+            && !self.git_view_shown()
+            && self.plugin_view().is_none()
+    }
+
     /// The file tree's actions work when it's the sidebar's view.
     fn in_file_tree(&self) -> Result<(), String> {
-        if self.sidebar().is_none()
-            || self.search_view_shown()
-            || self.git_view_shown()
-            || self.plugin_view().is_some()
-        {
+        if !self.file_tree_shown() {
             return Err("That's for the file tree (the sidebar's Explorer)".into());
         }
         Ok(())
@@ -74,6 +80,20 @@ impl Editor {
     pub fn tree_ask_new(&mut self, folder: bool) -> Result<(), String> {
         self.in_file_tree()?;
         let dir = self.tree_folder().ok_or("No folder selected")?;
+        self.ask_new_in(dir, folder);
+        Ok(())
+    }
+
+    /// New File / New Folder from a right-click on the tree's empty space:
+    /// in the project's folder.
+    pub fn tree_ask_new_at_root(&mut self, folder: bool) -> Result<(), String> {
+        self.in_file_tree()?;
+        let root = self.explorer_mut().root().to_path_buf();
+        self.ask_new_in(root, folder);
+        Ok(())
+    }
+
+    fn ask_new_in(&mut self, dir: PathBuf, folder: bool) {
         let shown = self.relative(&dir);
         let title = match (folder, shown.is_empty()) {
             (false, true) => "New file".to_string(),
@@ -95,7 +115,6 @@ impl Editor {
         }
         .into();
         self.open_input_box(input);
-        Ok(())
     }
 
     /// The new file or folder `name` (asked for by `tree_ask_new`): made,

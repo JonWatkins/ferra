@@ -30,6 +30,16 @@ pub fn register(r: &mut CommandRegistry) {
             None => Ok(()),
         },
     );
+    r.register(
+        "input_complete",
+        "Input box asking for a path: complete the folder or file name (Tab)",
+        |cx| cx.editor.input_box_complete(true),
+    );
+    r.register(
+        "input_complete_prev",
+        "Input box asking for a path: the previous completion (Shift+Tab)",
+        |cx| cx.editor.input_box_complete(false),
+    );
     let edits: [(&str, &str, FieldEdit); 8] = [
         (
             "input_backspace",

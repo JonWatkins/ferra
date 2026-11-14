@@ -719,7 +719,7 @@ impl App {
     /// The keys menus show beside their items, from the keymap (normal
     /// mode's), as the find box labels them (⌃ on macOS).
     fn refresh_menu_hints(&mut self) {
-        use crate::editor::menu_bar::{MENUS, TEXT_MENU, TREE_MENU};
+        use crate::editor::menu_bar::{MENUS, TEXT_MENU, TREE_MENU, TREE_ROOT_MENU};
         let mac = cfg!(target_os = "macos");
         let home = self.home_mode();
         // The bar's and the text's menus show the keys where you type; the
@@ -729,7 +729,13 @@ impl App {
             .flat_map(|menu| menu.items.iter().flatten())
             .chain(TEXT_MENU.iter().flatten())
             .map(|item| (item, home))
-            .chain(TREE_MENU.iter().flatten().map(|item| (item, Mode::Sidebar)));
+            .chain(
+                TREE_MENU
+                    .iter()
+                    .chain(TREE_ROOT_MENU)
+                    .flatten()
+                    .map(|item| (item, Mode::Sidebar)),
+            );
         let hints = items
             .filter_map(|((_, command), mode)| {
                 let keys = self.keymap.hint_keys(mode, command)?;

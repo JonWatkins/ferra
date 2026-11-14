@@ -80,6 +80,8 @@ inherit = { visual = "insert" }
 "<C-w>" = "buffer_delete"
 "<C-PageDown>" = "buffer_next"
 "<C-PageUp>" = "buffer_prev"
+"<C-Tab>" = "buffer_next"
+"<C-S-Tab>" = "buffer_prev"
 "<C-q>" = "quit_all"
 "<F1>" = "command_palette"
 "<C-S-p>" = "command_palette"

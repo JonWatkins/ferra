@@ -269,7 +269,7 @@ impl Editor {
         self.explorer.as_ref().filter(|_| self.sidebar_open)
     }
 
-    fn explorer_mut(&mut self) -> &mut Explorer {
+    pub(super) fn explorer_mut(&mut self) -> &mut Explorer {
         let root = std::env::current_dir().unwrap_or_default();
         self.explorer.get_or_insert_with(|| Explorer::new(&root))
     }

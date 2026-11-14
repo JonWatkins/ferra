@@ -44,6 +44,16 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.tree_ask_new(true),
     );
     r.register(
+        "tree_new_file_at_root",
+        "In the file tree: a new file in the project's folder (asks its name)",
+        |cx| cx.editor.tree_ask_new_at_root(false),
+    );
+    r.register(
+        "tree_new_folder_at_root",
+        "In the file tree: a new folder in the project's folder (asks its name)",
+        |cx| cx.editor.tree_ask_new_at_root(true),
+    );
+    r.register(
         "tree_create_file",
         "Make the file named (the new file box's answer)",
         |cx| cx.editor.tree_create(&cx.args.join(" "), false),

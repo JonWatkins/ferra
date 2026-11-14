@@ -17,6 +17,11 @@ pub struct InputBox {
     pub on_submit: String,
     /// A command run when it's cancelled, if any.
     pub on_cancel: Option<String>,
+    /// It asks for a path: `<Tab>` completes folders and files.
+    pub completes_paths: bool,
+    /// The completions `<Tab>` goes through, the one shown, and the text
+    /// they were for (typing anything else starts again).
+    completion: Option<(Vec<String>, usize, String)>,
     /// Where focus goes back to: the sidebar or the git view, if it was
     /// asked from there, else normal mode.
     back_to: Option<Mode>,
@@ -57,6 +62,80 @@ impl Editor {
     pub fn input_box_edit(&mut self, edit: impl FnOnce(&mut TextField)) {
         if let Some(input) = &mut self.input_box {
             edit(&mut input.field);
+        }
+    }
+
+    /// `<Tab>` / `<S-Tab>` in a box asking for a path: fills in as far as
+    /// the folders and files that match agree, then (again) goes through
+    /// them one by one. Says what there is to choose from.
+    pub fn input_box_complete(&mut self, forward: bool) -> Result<(), String> {
+        let Some(input) = &mut self.input_box else {
+            return Ok(());
+        };
+        if !input.completes_paths {
+            return Ok(());
+        }
+        let typed = input.field.text().to_string();
+        // Going through the choices already offered.
+        if let Some((choices, at, shown)) = &mut input.completion
+            && *shown == typed
+            && choices.len() > 1
+        {
+            let n = choices.len();
+            *at = if forward {
+                (*at + 1) % n
+            } else {
+                (*at + n - 1) % n
+            };
+            let choice = choices[*at].clone();
+            *shown = choice.clone();
+            input.field.set_text(&choice);
+            input.field.end();
+            return Ok(());
+        }
+        let choices = crate::files::complete_path(&typed);
+        match choices.as_slice() {
+            [] => Err(format!("Nothing matches {typed}")),
+            [only] => {
+                input.field.set_text(only);
+                input.field.end();
+                input.completion = None;
+                Ok(())
+            }
+            many => {
+                // As far as they all agree.
+                let common = many.iter().skip(1).fold(many[0].clone(), |common, c| {
+                    common
+                        .chars()
+                        .zip(c.chars())
+                        .take_while(|(a, b)| a == b)
+                        .map(|(a, _)| a)
+                        .collect()
+                });
+                let text = if common.chars().count() > typed.chars().count() {
+                    common
+                } else {
+                    // Nothing more in common: the first choice.
+                    many[0].clone()
+                };
+                let at = many.iter().position(|c| *c == text).unwrap_or(usize::MAX);
+                input.field.set_text(&text);
+                input.field.end();
+                // Each by its own name (a folder's with its `/`).
+                let names: Vec<String> = many
+                    .iter()
+                    .map(|c| {
+                        let trimmed = c.trim_end_matches('/');
+                        let name = trimmed.rsplit('/').next().unwrap_or(trimmed);
+                        let slash = if c.ends_with('/') { "/" } else { "" };
+                        format!("{name}{slash}")
+                    })
+                    .collect();
+                let at = if at == usize::MAX { many.len() - 1 } else { at };
+                input.completion = Some((many.to_vec(), at, text));
+                self.set_message(super::Message::info(names.join("  ")));
+                Ok(())
+            }
         }
     }
 
