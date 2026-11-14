@@ -91,6 +91,11 @@ impl Document {
         self.path.as_deref()
     }
 
+    /// Its file was moved to `path` (renamed in the file tree).
+    pub(in crate::editor) fn moved_to(&mut self, path: PathBuf) {
+        self.path = Some(path);
+    }
+
     /// Whether another program changed or deleted the file since it was
     /// read or written. A state already reported with
     /// [`Document::acknowledge_disk_state`] reads as unchanged until the

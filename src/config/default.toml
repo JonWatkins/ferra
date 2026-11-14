@@ -531,6 +531,16 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "<Left>" = "sidebar_collapse"
 "zM" = "sidebar_collapse_all"
 "R" = "sidebar_refresh"
+# The file tree's files: new file and folder, rename, to the bin, copy the
+# path (relative, full).
+"a" = "tree_new_file"
+"A" = "tree_new_folder"
+"<F2>" = "tree_rename"
+"m" = "tree_rename"
+"d" = "tree_trash"
+"<Del>" = "tree_trash"
+"y" = "tree_copy_relative_path"
+"Y" = "tree_copy_path"
 "/" = "search_query"
 "r" = "search_replace_selected"
 "<Tab>" = "sidebar_next_view"

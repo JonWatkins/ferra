@@ -308,7 +308,7 @@ mod tests {
         let vscode = Config::from_toml(user).unwrap();
         assert_eq!(
             vscode.keys.lookup(Mode::Insert, &key("<C-s>")),
-            Lookup::Command("write")
+            Lookup::Command("save")
         );
         assert_eq!(
             vscode.keys.lookup(Mode::Insert, &key("<Esc>")),

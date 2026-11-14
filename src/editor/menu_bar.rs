@@ -29,10 +29,12 @@ pub const MENUS: &[Menu] = &[
         title: "File",
         letter: 'f',
         items: &[
+            Some(("New File", "new_file")),
             Some(("Open File…", "file_picker")),
             Some(("Open Buffer…", "buffer_picker")),
             None,
-            Some(("Save", "write")),
+            Some(("Save", "save")),
+            Some(("Save As…", "save_as")),
             Some(("Save All", "write_all")),
             None,
             Some(("Close Buffer", "buffer_delete")),
@@ -146,11 +148,58 @@ pub const MAC_OPTION_LETTERS: &[(char, char)] = &[
     ('h', '˙'),
 ];
 
-/// The menu bar's state: which menu is open, and the keys to show for
-/// commands (from the keymap, given by the app).
+/// The right-click menu in the text.
+pub const TEXT_MENU: &[Option<(&str, &str)>] = &[
+    Some(("Go to Definition", "goto_definition")),
+    Some(("Go to Declaration", "goto_declaration")),
+    Some(("Go to Type Definition", "goto_type_definition")),
+    Some(("Go to Implementation", "goto_implementation")),
+    Some(("Find All References", "goto_references")),
+    None,
+    Some(("Rename Symbol", "rename_prompt")),
+    Some(("Format Document", "format")),
+    Some(("Code Actions", "code_actions")),
+    None,
+    Some(("Cut", "cut")),
+    Some(("Copy", "copy")),
+    Some(("Paste", "paste_clipboard")),
+    None,
+    Some((REVEAL, "reveal_in_file_manager")),
+    Some(("Copy Path", "copy_path")),
+    Some(("Copy Relative Path", "copy_relative_path")),
+    Some(("File History", "git_history")),
+];
+
+/// The right-click menu in the file tree.
+pub const TREE_MENU: &[Option<(&str, &str)>] = &[
+    Some(("New File", "tree_new_file")),
+    Some(("New Folder", "tree_new_folder")),
+    None,
+    Some((REVEAL, "tree_reveal_in_file_manager")),
+    Some(("Find in Files", "project_search")),
+    None,
+    Some(("Copy Path", "tree_copy_path")),
+    Some(("Copy Relative Path", "tree_copy_relative_path")),
+    None,
+    Some(("Rename", "tree_rename")),
+    Some(("Move to Bin", "tree_trash")),
+    None,
+    Some(("Collapse All", "sidebar_collapse_all")),
+];
+
+const REVEAL: &str = if cfg!(target_os = "macos") {
+    "Reveal in Finder"
+} else {
+    "Show in File Manager"
+};
+
+/// The menu bar's state: which menu is open (or that a right-click menu
+/// is), its items, and the keys to show for commands (from the keymap,
+/// given by the app).
 #[derive(Debug, Default)]
 pub struct MenuState {
     open: Option<usize>,
+    items: Vec<Option<(String, String)>>,
     hints: HashMap<String, String>,
 }
 
@@ -175,8 +224,21 @@ impl Editor {
             self.close_popup();
             return Ok(());
         }
-        let width = menu
-            .items
+        self.show_menu(menu.items, x, 1);
+        self.menu.open = Some(index);
+        Ok(())
+    }
+
+    /// A right-click: the text's menu, or the file tree's (`tree`), at
+    /// screen position `x`, `y`.
+    pub fn context_menu(&mut self, tree: bool, x: u16, y: u16) {
+        self.show_menu(if tree { TREE_MENU } else { TEXT_MENU }, x, y);
+        self.menu.open = None;
+    }
+
+    /// Shows `items` as a menu at `x`, `y` (with focus).
+    fn show_menu(&mut self, items: &[Option<(&str, &str)>], x: u16, y: u16) {
+        let width = items
             .iter()
             .flatten()
             .map(|(label, command)| {
@@ -189,8 +251,7 @@ impl Editor {
             })
             .max()
             .unwrap_or(0);
-        let lines = menu
-            .items
+        let lines = items
             .iter()
             .map(|item| match item {
                 None => vec![PopupSpan {
@@ -220,8 +281,7 @@ impl Editor {
             name: "menu".into(),
             title: String::new(),
             lines,
-            // Under the menu bar's row.
-            position: PopupPosition::At { x, y: 1 },
+            position: PopupPosition::At { x, y },
             select: true,
             focus: true,
             keys: vec![
@@ -234,16 +294,25 @@ impl Editor {
             ],
             ..Popup::default()
         });
-        self.menu.open = Some(index);
-        Ok(())
+        self.menu.items = items
+            .iter()
+            .map(|item| item.map(|(label, command)| (label.to_string(), command.to_string())))
+            .collect();
+    }
+
+    /// Whether a menu, the bar's or a right-click's, is open.
+    pub fn any_menu_open(&self) -> bool {
+        self.popup().is_some_and(|p| p.name == "menu")
     }
 
     /// `<CR>` (or a click) on the open menu's item: closes the menu and
     /// returns the command to run, with its arguments.
     pub fn menu_chosen(&mut self) -> Result<Option<(String, Vec<String>)>, String> {
-        let index = self.open_menu().ok_or("No menu is open")?;
+        if !self.any_menu_open() {
+            return Err("No menu is open".into());
+        }
         let selected = self.popup().and_then(|p| p.selected()).unwrap_or(0);
-        let item = MENUS[index].items.get(selected).copied().flatten();
+        let item = self.menu.items.get(selected).cloned().flatten();
         let Some((_, command)) = item else {
             // A separator: nothing to run.
             return Ok(None);

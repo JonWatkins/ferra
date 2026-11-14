@@ -48,7 +48,7 @@ a paste) ends an undo step.
 | `Tab` `Shift+Tab` | Indent / outdent (the selected lines, with a selection) |
 | `Alt+↑` `Alt+↓`, `Shift+Alt+↑` `Shift+Alt+↓` | Move the line (or selected lines) / copy it up or down |
 | `Ctrl+Shift+K`, `Ctrl+Enter`, `Ctrl+Shift+Enter`, `Ctrl+/` | Delete the line / a new line below / above / comment in or out |
-| `Ctrl+S`, `Ctrl+P` (`Ctrl+O`), `Ctrl+W`, `Ctrl+PageDown` `Ctrl+PageUp`, `Ctrl+Q` | Save / open a file / close the buffer / next and previous buffer / quit |
+| `Ctrl+N`, `Ctrl+S`, `Ctrl+P` (`Ctrl+O`), `Ctrl+W`, `Ctrl+PageDown` `Ctrl+PageUp`, `Ctrl+Q` | A new file (saving asks its name) / save / open a file / close the buffer / next and previous buffer / quit |
 | `F1` (`Ctrl+Shift+P`), `F10`, `Alt` + a menu's letter, `Ctrl+G` | The command palette / the menu bar / a menu / the `:` line (`:42` goes to line 42) |
 | `Ctrl+F`, `Ctrl+H`, `Ctrl+Shift+F` | Find / replace / find in files |
 | `Ctrl+B`, `Ctrl+Shift+E`, ``Ctrl+` ``, `Ctrl+\` | The sidebar / its focus / the terminal panel / split the window |
@@ -381,6 +381,13 @@ With `mouse = true` (the default):
   goes on into the text).
 - **Drag** the sidebar's edge, the terminal panel's title row, or the line
   between two windows to resize them.
+- **Right-click** in the text for a menu of what can be done there (go to
+  the definition or references, rename, format, code actions, cut, copy,
+  paste, reveal the file in Finder, copy its path, its history); the cursor
+  goes where you clicked first, unless there's a selection. In the file
+  tree, it's on the entry clicked: new file and folder, reveal in Finder,
+  find in files, copy the path, rename, move to the bin, collapse all.
+  Each item shows its keys.
 
 In terminals that let programs set the mouse pointer (kitty, Ghostty,
 WezTerm, foot, and iTerm2 from 3.7), it's a hand over things to click, a
@@ -414,6 +421,10 @@ it open. `:explorer` (or `:Explore`) opens and closes it, as does `q` in it.
 | `h`, `←` | Close the folder, or go to the folder it's in |
 | `zM` | Close every folder |
 | `R` | List the files again (a saved new file shows up by itself) |
+| `a`, `A` | A new file / folder in the selected folder (asks its name; `a/b.txt` makes the folders on the way); a new file opens |
+| `m` (`F2`) | Rename the selected file or folder (open buffers follow it) |
+| `d` (`Del`) | Move it to the bin (asks first): macOS's Trash, or the freedesktop trash |
+| `y`, `Y` | Copy its path from the working directory / its full path |
 | `<Tab>` `<S-Tab>` | The next / previous view, when plugins add some (see [Lua plugins](#lua-plugins)) |
 | `:` `<Space>f` `<Space>b` `<Space>p` | As in normal mode |
 

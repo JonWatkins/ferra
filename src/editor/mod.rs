@@ -7,6 +7,7 @@ mod buffers;
 mod command_line;
 mod completion;
 mod document;
+mod file_ops;
 mod files;
 mod increment;
 mod jumps;
@@ -248,6 +249,9 @@ pub struct Editor {
     keybindings: Option<keybindings::KeybindingsView>,
     keybindings_wanted: Option<String>,
     key_edits: Vec<keybindings::KeyEdit>,
+    /// The file or folder the file tree's name box or bin question is
+    /// about.
+    tree_target: Option<std::path::PathBuf>,
     /// The user's `config.toml`, where the settings editor saves.
     config_file: Option<std::path::PathBuf>,
     /// The uses of the symbol under the cursor (a language server's).

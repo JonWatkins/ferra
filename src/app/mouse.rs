@@ -91,6 +91,7 @@ impl App {
                 return;
             }
             MouseEventKind::Down(MouseButton::Left) => self.mouse_down(at),
+            MouseEventKind::Down(MouseButton::Right) => self.right_click(at),
             MouseEventKind::Drag(MouseButton::Left) => self.mouse_drag(at),
             MouseEventKind::Up(_) => self.dragging = None,
             MouseEventKind::ScrollDown => self.mouse_wheel(at, true),
@@ -613,6 +614,37 @@ impl App {
             // The `:` line, or an operator waiting: clicks wait too.
             Mode::Command | Mode::OperatorPending => true,
             _ => false,
+        }
+    }
+
+    /// A right-click: a menu of what can be done there, at the pointer, as
+    /// in a desktop editor. In the text it goes where the cursor is put
+    /// (a selection stays, for Cut and Copy); in the file tree, on the
+    /// entry clicked.
+    fn right_click(&mut self, at: Position) {
+        if self.editor.popup().is_some() {
+            self.editor.close_popup();
+        }
+        if self
+            .screen_map
+            .menu_bar
+            .as_ref()
+            .is_some_and(|(y, _)| *y == at.y)
+        {
+            return;
+        }
+        match self.hit(at) {
+            Hit::Window(_) if self.clicks_allowed() => {
+                if self.editor.mode() != Mode::Visual {
+                    self.mouse_down(at);
+                    self.dragging = None;
+                }
+                self.editor.context_menu(false, at.x, at.y);
+            }
+            Hit::SidebarLine(row) if self.clicks_allowed() && self.editor.tree_select_line(row) => {
+                self.editor.context_menu(true, at.x, at.y);
+            }
+            _ => {}
         }
     }
 

@@ -73,7 +73,8 @@ inherit = { visual = "insert" }
 "<C-_>" = "toggle_comment"
 
 # Files and the window.
-"<C-s>" = "write"
+"<C-s>" = "save"
+"<C-n>" = "new_file"
 "<C-p>" = "file_picker"
 "<C-o>" = "file_picker"
 "<C-w>" = "buffer_delete"
@@ -122,6 +123,7 @@ inherit = { visual = "insert" }
 # A selection has typing's keys too (inherit, above); typing replaces it.
 
 [keys.sidebar]
+"<C-n>" = "new_file"
 "<C-b>" = "sidebar_toggle"
 "<C-p>" = "file_picker"
 "<C-S-p>" = "command_palette"

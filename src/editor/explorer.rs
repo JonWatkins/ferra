@@ -428,6 +428,23 @@ impl Editor {
         self.sidebar_choose()
     }
 
+    /// A right-click on the file tree's line `row` (down from the top of
+    /// what's shown): selects it, with focus, without opening it. Returns
+    /// whether there's an entry there.
+    pub fn tree_select_line(&mut self, row: usize) -> bool {
+        if self.search_view_shown() || self.git_view_shown() || self.plugin_view().is_some() {
+            return false;
+        }
+        self.set_mode(Mode::Sidebar);
+        let explorer = self.explorer_mut();
+        let index = explorer.scroll.get() + row;
+        if index >= explorer.rows().len() {
+            return false;
+        }
+        explorer.select(index);
+        true
+    }
+
     /// `h` / `←`: closes the folder, or goes to the one it's in.
     pub fn sidebar_collapse(&mut self) {
         if self.plugin_view().is_none() && !self.git_view_shown() && !self.search_view_shown() {

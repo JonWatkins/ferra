@@ -81,9 +81,11 @@ impl<'a> PopupView<'a> {
                     .min(screen.right().saturating_sub(width));
                 (x, y.max(screen.y))
             }
+            // Kept on the screen: one opened low goes up (a right-click near
+            // the bottom), as a desktop menu does.
             (PopupPosition::At { x, y }, _, _) => (
                 x.min(screen.right().saturating_sub(width)).max(screen.x),
-                y.max(screen.y),
+                y.min(screen.bottom().saturating_sub(height)).max(screen.y),
             ),
             (PopupPosition::TopRight, _, Some(window)) => (
                 window.right().saturating_sub(width + 1).max(screen.x),

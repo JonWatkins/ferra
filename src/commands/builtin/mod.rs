@@ -7,6 +7,7 @@ mod buffers;
 mod command_line;
 mod editing;
 mod ex_commands;
+mod file_ops;
 mod files;
 mod find;
 mod folds;
@@ -69,6 +70,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     git::register(registry);
     plugins::register(registry);
     menu::register(registry);
+    file_ops::register(registry);
     keybindings::register(registry);
     modeless::register(registry);
 }
