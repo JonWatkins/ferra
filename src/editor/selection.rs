@@ -23,6 +23,9 @@ pub enum SelectionKind {
 pub struct Selection {
     pub anchor: Position,
     pub kind: SelectionKind,
+    /// VS Code's kind (`keymap = "vscode"`): up to the cursor, not
+    /// including the character there.
+    pub exclusive: bool,
 }
 
 impl Selection {
@@ -39,6 +42,7 @@ impl Selection {
                 first: start.row,
                 last: end.row,
             },
+            SelectionKind::Char if self.exclusive => Range::Chars { start, end },
             SelectionKind::Char => {
                 // Inclusive of the character under `end`. On an empty line (or
                 // past the last character) that "character" is the line break.
@@ -99,7 +103,12 @@ impl Editor {
             _ => {
                 let anchor = self.document.cursor();
                 self.set_mode(Mode::Visual);
-                self.selection = Some(Selection { anchor, kind });
+                let exclusive = self.modeless();
+                self.selection = Some(Selection {
+                    anchor,
+                    kind,
+                    exclusive,
+                });
                 self.block_to_eol = false;
             }
         }
@@ -235,7 +244,11 @@ impl Editor {
             }
         };
         self.set_mode(Mode::Visual);
-        self.selection = Some(Selection { anchor, kind });
+        self.selection = Some(Selection {
+            anchor,
+            kind,
+            exclusive: self.modeless(),
+        });
         self.block_to_eol = to_eol;
         self.document.set_cursor(cursor);
     }
@@ -254,6 +267,8 @@ impl Editor {
         let buffer = self.document.buffer();
         let (anchor, cursor, kind) = match range {
             Range::Chars { start, end } if start == end => return,
+            // VS Code's selections end before the cursor.
+            Range::Chars { start, end } if self.modeless() => (start, end, SelectionKind::Char),
             Range::Chars { start, end } => {
                 // `end` is exclusive; the cursor sits on the last selected char.
                 let last = if end.col > 0 {
@@ -269,7 +284,11 @@ impl Editor {
                 SelectionKind::Line,
             ),
         };
-        self.selection = Some(Selection { anchor, kind });
+        self.selection = Some(Selection {
+            anchor,
+            kind,
+            exclusive: self.modeless(),
+        });
         self.document.set_cursor(cursor);
     }
 
@@ -288,6 +307,7 @@ impl Editor {
         self.selection = Some(Selection {
             anchor,
             kind: last.selection.kind,
+            exclusive: last.selection.exclusive,
         });
         self.block_to_eol = last.to_eol;
         self.document.set_cursor(last.cursor);
@@ -339,6 +359,7 @@ mod tests {
         let s = Selection {
             anchor: pos(0, 1),
             kind: SelectionKind::Char,
+            exclusive: false,
         };
         assert_eq!(s.range(&b, pos(0, 3)), chars(pos(0, 1), pos(0, 4)));
         assert_eq!(s.range(&b, pos(0, 0)), chars(pos(0, 0), pos(0, 2)));
@@ -350,6 +371,7 @@ mod tests {
         let s = Selection {
             anchor: pos(1, 0),
             kind: SelectionKind::Char,
+            exclusive: false,
         };
         assert_eq!(s.range(&b, pos(1, 0)), chars(pos(1, 0), pos(2, 0)));
     }
@@ -360,6 +382,7 @@ mod tests {
         let s = Selection {
             anchor: pos(1, 0),
             kind: SelectionKind::Char,
+            exclusive: false,
         };
         assert_eq!(s.range(&b, pos(1, 0)), chars(pos(1, 0), pos(1, 0)));
     }
@@ -370,6 +393,7 @@ mod tests {
         let s = Selection {
             anchor: pos(2, 0),
             kind: SelectionKind::Line,
+            exclusive: false,
         };
         assert_eq!(s.range(&b, pos(1, 0)), Range::Lines { first: 1, last: 2 });
     }

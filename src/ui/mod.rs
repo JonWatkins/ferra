@@ -387,7 +387,7 @@ pub fn draw(
     }
 
     // A language server's hover floats by the cursor.
-    if editor.mode() == Mode::Normal
+    if editor.resting()
         && let (Some(hover), Some(cursor)) = (editor.hover(), window_cursor)
     {
         let rows = 0..hover.document.buffer().line_count();

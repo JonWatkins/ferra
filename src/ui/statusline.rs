@@ -175,6 +175,14 @@ impl Active<'_> {
             return span;
         }
         match element {
+            // VS Code's keys have no modes to show, only the views'.
+            StatusElement::Mode
+                if editor.modeless()
+                    && matches!(editor.mode(), Mode::Insert | Mode::Visual)
+                    && !editor.replacing() =>
+            {
+                Span::raw("")
+            }
             StatusElement::Mode => {
                 let mode = editor.mode();
                 let label = match editor.selection() {

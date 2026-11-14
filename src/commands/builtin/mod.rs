@@ -18,6 +18,7 @@ mod lsp;
 mod macros;
 mod marks;
 mod menu;
+mod modeless;
 mod modes;
 mod motions;
 mod operators;
@@ -67,6 +68,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     git::register(registry);
     plugins::register(registry);
     menu::register(registry);
+    modeless::register(registry);
 }
 
 #[cfg(test)]

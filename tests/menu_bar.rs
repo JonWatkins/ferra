@@ -69,14 +69,26 @@ fn f10_opens_file_and_arrows_go_along() {
     assert_eq!(app.editor().mode(), Mode::Popup);
     let rows = screen(&mut app).join("\n");
     assert!(rows.contains("Open File…"), "{rows}");
-    assert!(rows.contains("Space f"), "the item's keys: {rows}");
+    // The item's keys, VS Code's as shipped.
+    let open = if cfg!(target_os = "macos") {
+        "⌃O"
+    } else {
+        "Ctrl+O"
+    };
+    assert!(rows.contains(open), "the item's keys: {rows}");
     keys(&mut app, "<Right>");
     assert_eq!(open_menu(&app), Some("Edit"));
     keys(&mut app, "<Left><Left>");
     assert_eq!(open_menu(&app), Some("Help"), "round the end");
     keys(&mut app, "<Esc>");
     assert_eq!(open_menu(&app), None);
-    assert_eq!(app.editor().mode(), Mode::Normal);
+    assert_eq!(app.editor().mode(), Mode::Insert, "back to typing");
+
+    // With Vim's keys, Vim's are shown.
+    let mut app = app_with_config("[editor]\nmenu-bar = true\n");
+    keys(&mut app, "<F10>");
+    let rows = screen(&mut app).join("\n");
+    assert!(rows.contains("Space f"), "{rows}");
 }
 
 #[test]
@@ -94,23 +106,31 @@ fn enter_runs_the_item() {
 
 #[test]
 fn alt_letters_and_the_option_keys_characters() {
+    // Alt and the letter, with either keymap.
     for (keys_typed, menu) in [
         ("<A-f>", "File"),
         ("<A-d>", "Edit"),
         ("<A-o>", "Go"),
         ("<A-g>", "Git"),
-        ("ƒ", "File"),
-        ("∂", "Edit"),
-        ("ø", "Go"),
-        ("˙", "Help"),
     ] {
-        let mut app = app_as_shipped();
+        for (name, mut app) in [("vscode", app_as_shipped()), ("vim", app_with_config(""))] {
+            keys(&mut app, keys_typed);
+            assert_eq!(open_menu(&app), Some(menu), "{name}: {keys_typed}");
+        }
+    }
+    // The characters ⌥ types: in Vim's normal mode.
+    for (keys_typed, menu) in [("ƒ", "File"), ("∂", "Edit"), ("ø", "Go"), ("˙", "Help")] {
+        let mut app = app_with_config("");
         keys(&mut app, keys_typed);
         assert_eq!(open_menu(&app), Some(menu), "{keys_typed}");
     }
-    // In insert mode they're text.
-    let mut app = app_as_shipped();
+    // Typing, they're text.
+    let mut app = app_with_config("");
     keys(&mut app, "iƒ<Esc>");
+    assert_eq!(common::text(&app), "ƒ");
+    assert_eq!(open_menu(&app), None);
+    let mut app = app_as_shipped();
+    keys(&mut app, "ƒ");
     assert_eq!(common::text(&app), "ƒ");
     assert_eq!(open_menu(&app), None);
 }

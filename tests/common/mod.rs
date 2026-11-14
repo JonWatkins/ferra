@@ -6,7 +6,8 @@ use ratatui::{Terminal, backend::TestBackend};
 
 /// The screen most tests check positions on: the editor without the
 /// activity bar down the left, with the classic status line under each
-/// window (their own tests check the new chrome). Tests of what's in the
+/// window, and Vim's keys (their own tests check the new chrome and VS
+/// Code's keys). Tests of what's in the
 /// windows needn't move with the chrome around them.
 fn with_classic_chrome(toml: &str) -> String {
     let mut table: toml::Table = toml.parse().expect("test config should be valid TOML");
@@ -19,8 +20,13 @@ fn with_classic_chrome(toml: &str) -> String {
         editor.entry(key).or_insert(toml::Value::Boolean(false));
     }
     // The classic status line: one per window, worded tersely, laid out as
-    // it was.
-    for (key, value) in [("statusline", "windows"), ("statusline-style", "classic")] {
+    // it was. And Vim's keys, which most tests type (VS Code's have their
+    // own tests).
+    for (key, value) in [
+        ("statusline", "windows"),
+        ("statusline-style", "classic"),
+        ("keymap", "vim"),
+    ] {
         editor
             .entry(key)
             .or_insert(toml::Value::String(value.into()));

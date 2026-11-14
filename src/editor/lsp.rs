@@ -182,7 +182,7 @@ impl Editor {
         let cursor = self.document.cursor();
         let current = references.document == self.document.id()
             && references.edit_seq == self.document.buffer().edit_seq()
-            && self.mode() == Mode::Normal
+            && self.resting()
             && references
                 .ranges
                 .iter()
@@ -486,7 +486,7 @@ impl Editor {
             && buffer.id() == request.buffer_id
             && buffer.edit_seq() == request.edit_seq
             && self.document.cursor() == request.position
-            && self.mode() == Mode::Normal
+            && self.resting()
     }
 
     /// Shows `markdown` in a popup by the cursor, until the next key.

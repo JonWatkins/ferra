@@ -71,9 +71,8 @@ fn category_of(path: &str) -> &'static str {
         "file-picker" | "fallback-encoding" | "watch-files" => "Files",
         "git" | "git-blame" => "Git",
         "lsp" | "auto-complete" | "highlight-references" | "inlay-hints" => "Language servers",
-        "mouse" | "kitty-keyboard" | "key-timeout" | "clipboard" | "clipboard-provider" => {
-            "Keyboard and mouse"
-        }
+        "keymap" | "mouse" | "kitty-keyboard" | "key-timeout" | "clipboard"
+        | "clipboard-provider" => "Keyboard and mouse",
         "terminal-height" | "shell" => "Terminal",
         "cursor-shape" => "Cursor shape",
         "plugin-index" | "plugin-suggestions" => "Plugins",

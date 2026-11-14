@@ -67,9 +67,15 @@ impl KeyPress {
     /// Ensures equal keys compare equal regardless of how they were produced.
     fn normalized(mut self) -> Self {
         if let KeyCode::Char(c) = self.code {
-            self.modifiers.shift = false;
             if self.modifiers.ctrl {
+                // Ctrl+Shift and a letter (or Space) is a key of its own
+                // (`<C-S-p>`, VS Code's Ctrl+Shift+P) where the terminal
+                // says Shift was held (with the kitty protocol). `<C-P>` is
+                // `<C-p>`, as in Vim.
+                self.modifiers.shift &= c.is_ascii_alphabetic() || c == ' ';
                 self.code = KeyCode::Char(c.to_ascii_lowercase());
+            } else {
+                self.modifiers.shift = false;
             }
         }
         self
@@ -354,6 +360,15 @@ mod tests {
     #[test]
     fn ctrl_chars_are_case_insensitive() {
         assert_eq!(parse_keys("<C-Q>").unwrap(), parse_keys("<c-q>").unwrap());
+        // Ctrl+Shift+P is its own key, as the kitty protocol sends it.
+        let shifted = parse_keys("<C-S-p>").unwrap()[0];
+        assert_ne!(shifted, parse_keys("<C-p>").unwrap()[0]);
+        assert_eq!(shifted.to_string(), "<C-S-p>");
+        let event = ct::KeyEvent::new(
+            ct::KeyCode::Char('P'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+        assert_eq!(KeyPress::from_event(event), Some(shifted));
     }
 
     #[test]

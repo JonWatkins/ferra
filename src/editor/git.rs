@@ -739,7 +739,7 @@ impl Editor {
         );
         let wanted = self.options.git
             && self.options.git_blame
-            && self.mode() == Mode::Normal
+            && self.resting()
             && self.document.path().is_some();
         let mut changed = false;
         // Shown for somewhere else: it goes.

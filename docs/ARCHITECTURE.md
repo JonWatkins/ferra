@@ -1820,25 +1820,30 @@ panel](#the-terminal-panel), plugin popups and views, and [The
 mouse](#the-mouse)). The sidebar holds more than files: Git's Source
 Control is a view in it, and plugins add their own.
 
-Next, in the spirit of [Fresh](https://getfresh.dev/), a terminal IDE
-built for people coming from VS Code:
+In the spirit of [Fresh](https://getfresh.dev/), a terminal IDE built
+for people coming from VS Code, done: an activity bar down the left, a
+menu bar along the top, a settings editor (`editor/settings.rs`; its
+settings come from `default.toml`'s comments, `config/schema.rs`, and are
+saved with `toml_edit` keeping the file's comments, `config/edit.rs`), and
+VS Code's keys as the default keymap.
 
-1. **An activity bar**: a narrow column of icons down the left that
-   stays put (Files, Search, Git, plugins' views). Clicking one shows
-   its view; clicking the one shown hides the sidebar. It replaces the
-   sidebar's row of tabs.
-2. **A menu bar** along the top (File, Edit, Selection, View, Go, Git,
-   Terminal, Help) whose entries run commands, opened with a click, F10
-   or Alt/⌥ and a letter.
-3. **A settings editor**: the options by category, with each one's
-   description and default, edited by toggling, typing or picking, and
-   saved to `config.toml` (as `:set` checks them). A keybinding editor
-   beside it: a searchable table of keys, commands and modes, finding a
-   binding by pressing its key, warning about conflicts.
-4. **A modeless keymap**: a `vscode` preset where you're always typing
-   (Ctrl+S, Ctrl+Z, Ctrl+C/X/V, Shift+arrows to select, Ctrl+D for the
-   next match, Ctrl+P), alongside the Vim keys. The largest: selection,
-   copying and undo steps assume modes today.
+**Keymaps.** `keymap = "vscode" | "vim"`. `default.toml`'s `[keys]` are
+the modes every keymap shares (the sidebar, pickers, popups, the find box,
+the git view, the settings editor, the terminal panel, the `:` line);
+`config/keymaps/vim.toml` and `keymaps/vscode.toml` add their editing
+modes, and the user's `[keys]` go over the lot (`config::layered_keys`;
+the app builds them again when `keymap` changes). With VS Code's keys
+(`editor/modeless.rs`) insert mode is where the editor rests: asking for
+normal mode gives insert mode, a selection is visual mode with an
+exclusive end that typing replaces, there are no counts or registers,
+and since insert mode is never left, commands other than typing end an
+undo step (as does each new word). Features that showed when resting in
+normal mode (hover, blame, references, watching files) ask
+`Editor::resting` instead.
+
+Next: **a keybinding editor**, beside the settings editor: a searchable
+table of keys, commands and modes, finding a binding by pressing its
+key, recording a new one, and warning about conflicts.
 
 **Option on macOS, Alt elsewhere, with no configuration.** Key labels
 show ⌥F on macOS and Alt+F elsewhere. A Mac terminal sends Option+F as

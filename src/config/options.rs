@@ -56,6 +56,8 @@ pub struct EditorOptions {
     pub activity_bar: bool,
     /// What icons are drawn with.
     pub icons: Icons,
+    /// Vim's keys and modes, or VS Code's (no modes).
+    pub keymap: KeymapPreset,
     /// Rows the terminal panel takes (at most most of the screen).
     pub terminal_height: u16,
     /// The terminal panel's shell ("": `$SHELL`, else `/bin/sh`).
@@ -150,7 +152,15 @@ impl From<SearchCase> for CaseMode {
 
 impl Default for EditorOptions {
     fn default() -> Self {
-        super::Config::default().editor
+        #[allow(unused_mut)]
+        let mut options = super::Config::default().editor;
+        // The unit tests drive Vim's keys (VS Code's have their own tests,
+        // which set the keymap).
+        #[cfg(test)]
+        {
+            options.keymap = KeymapPreset::Vim;
+        }
+        options
     }
 }
 
@@ -316,6 +326,17 @@ pub enum StatuslineStyle {
     Vscode,
     /// `12:4`, and only what's unusual (an encoding that isn't UTF-8).
     Classic,
+}
+
+/// Which keys: Vim's, with its modes, or VS Code's, without (`keymap`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KeymapPreset {
+    /// Normal, insert, visual...: Vim's keys.
+    Vim,
+    /// Always typing, as in VS Code: Ctrl+S, Ctrl+F, Shift and the arrows
+    /// to select (`config/keymaps/vscode.toml`).
+    Vscode,
 }
 
 /// What icons are drawn with.

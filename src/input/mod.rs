@@ -51,6 +51,9 @@ pub struct InputHandler {
     awaiting_char: Option<AwaitingChar>,
     /// The last key handled was taken as a digit of a count.
     took_count: bool,
+    /// VS Code's keys: a selection (visual mode) is typed over, and
+    /// there are no counts or registers.
+    modeless: bool,
 }
 
 #[derive(Debug)]
@@ -61,6 +64,15 @@ struct AwaitingChar {
 }
 
 impl InputHandler {
+    /// With VS Code's keys (`keymap = "vscode"`) or Vim's.
+    pub fn set_modeless(&mut self, modeless: bool) {
+        self.modeless = modeless;
+    }
+
+    fn accepts_text(&self, mode: Mode) -> bool {
+        mode.accepts_text() || (self.modeless && mode == Mode::Visual)
+    }
+
     /// Processes one key press.
     ///
     /// Usually yields a single outcome, but an abandoned sequence in
@@ -100,7 +112,8 @@ impl InputHandler {
             };
         }
 
-        if mode.accepts_register()
+        if !self.modeless
+            && mode.accepts_register()
             && self.pending.is_empty()
             && key.as_text() == Some(REGISTER_PREFIX)
         {
@@ -108,7 +121,7 @@ impl InputHandler {
             return vec![Outcome::Pending];
         }
 
-        if mode.accepts_count()
+        if !self.modeless && mode.accepts_count()
             && self.pending.is_empty()
             && let Some(digit) = key.as_digit()
             // A leading `0` is a command (go to line start), not a count.
@@ -140,7 +153,7 @@ impl InputHandler {
                 if mode == Mode::Terminal {
                     return vec![Outcome::PassThrough(keys)];
                 }
-                if !mode.accepts_text() {
+                if !self.accepts_text(mode) {
                     // Like Vim, an invalid normal-mode sequence is discarded.
                     return vec![Outcome::Unbound];
                 }
@@ -190,7 +203,7 @@ impl InputHandler {
             self.reset();
             return vec![Outcome::PassThrough(keys)];
         }
-        if !mode.accepts_text() {
+        if !self.accepts_text(mode) {
             return Vec::new();
         }
         let keys = std::mem::take(&mut self.pending);

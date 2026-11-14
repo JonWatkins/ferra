@@ -1,0 +1,138 @@
+# VS Code's keys (keymap = "vscode"): no modes, you're always typing.
+#
+# Laid over the keys every keymap shares (default.toml's [keys]: the
+# sidebar, pickers, popups, the find box...), adding to them; there's no
+# normal mode. A mode in `inherit` starts with another's keys (a selection
+# has the same keys as typing, plus its own). Your [keys] in config.toml go
+# over all of it.
+#
+# These are VS Code's Linux and Windows keys: in a terminal on a Mac, ⌘
+# belongs to the terminal. Ctrl+Shift and a letter needs a terminal with
+# the kitty keyboard protocol (kitty, WezTerm, Ghostty, foot, recent
+# iTerm2); F1 opens the command palette everywhere.
+inherit = { visual = "insert" }
+
+[keys.insert]
+# Moving, and with Shift selecting.
+"<Left>" = "cursor_left"
+"<Right>" = "cursor_right"
+"<Up>" = "cursor_up"
+"<Down>" = "cursor_down"
+"<C-Left>" = "cursor_word_left"
+"<C-Right>" = "cursor_word_right"
+"<A-Left>" = "cursor_word_left"
+"<A-Right>" = "cursor_word_right"
+"<Home>" = "cursor_home"
+"<End>" = "cursor_end"
+"<C-Home>" = "cursor_top"
+"<C-End>" = "cursor_bottom"
+"<PageUp>" = "cursor_page_up"
+"<PageDown>" = "cursor_page_down"
+"<S-Left>" = "select_left"
+"<S-Right>" = "select_right"
+"<S-Up>" = "select_up"
+"<S-Down>" = "select_down"
+"<C-S-Left>" = "select_word_left"
+"<C-S-Right>" = "select_word_right"
+"<A-S-Left>" = "select_word_left"
+"<A-S-Right>" = "select_word_right"
+"<S-Home>" = "select_home"
+"<S-End>" = "select_end"
+"<C-S-Home>" = "select_top"
+"<C-S-End>" = "select_bottom"
+"<S-PageUp>" = "select_page_up"
+"<S-PageDown>" = "select_page_down"
+"<C-a>" = "select_all"
+"<C-l>" = "select_line"
+"<C-d>" = "select_next_match"
+"<Esc>" = "escape"
+
+# Editing.
+"<CR>" = "accept_or_newline"
+"<Tab>" = "indent_or_tab"
+"<S-Tab>" = "outdent_lines"
+"<BS>" = "delete_left"
+"<Del>" = "delete_right"
+"<C-BS>" = "delete_word_left"
+"<A-BS>" = "delete_word_left"
+"<C-Del>" = "delete_word_right"
+"<C-c>" = "copy"
+"<C-x>" = "cut"
+"<C-v>" = "paste_clipboard"
+"<C-z>" = "undo"
+"<C-y>" = "redo"
+"<C-S-z>" = "redo"
+"<C-S-k>" = "delete_lines"
+"<A-Up>" = "move_lines_up"
+"<A-Down>" = "move_lines_down"
+"<A-S-Up>" = "copy_lines_up"
+"<A-S-Down>" = "copy_lines_down"
+"<C-CR>" = "open_line_below"
+"<C-S-CR>" = "open_line_above"
+"<C-/>" = "toggle_comment"
+"<C-_>" = "toggle_comment"
+
+# Files and the window.
+"<C-s>" = "write"
+"<C-p>" = "file_picker"
+"<C-o>" = "file_picker"
+"<C-w>" = "buffer_delete"
+"<C-PageDown>" = "buffer_next"
+"<C-PageUp>" = "buffer_prev"
+"<C-q>" = "quit_all"
+"<F1>" = "command_palette"
+"<C-S-p>" = "command_palette"
+"<F10>" = "menu_open"
+# Alt and a menu's letter (⌥ on a Mac sent as Alt; the characters ⌥ types
+# are text here, as you're typing).
+"<A-f>" = "menu_file"
+"<A-d>" = "menu_edit"
+"<A-v>" = "menu_view"
+"<A-o>" = "menu_go"
+"<A-g>" = "menu_git"
+"<A-t>" = "menu_terminal"
+"<A-h>" = "menu_help"
+"<C-g>" = "command_mode"
+"<C-b>" = "sidebar_toggle"
+"<C-S-e>" = "sidebar_focus"
+"<C-`>" = "terminal_toggle"
+"<C-\\>" = "split_vertical"
+
+# Finding.
+"<C-f>" = "find_open"
+"<C-h>" = "find_replace_open"
+"<C-S-f>" = "project_search"
+
+# The language server.
+"<C-Space>" = "complete_lsp"
+"<C-S-Space>" = "signature_help"
+"<F2>" = "rename_prompt"
+"<F12>" = "goto_definition"
+"<S-F12>" = "goto_references"
+"<C-.>" = "code_actions"
+"<A-F>" = "format"
+"<F8>" = "goto_next_diagnostic"
+"<S-F8>" = "goto_prev_diagnostic"
+"<C-S-o>" = "symbol_picker"
+"<C-t>" = "project_symbol_picker"
+"<C-k><C-i>" = "hover"
+
+[keys.visual]
+# A selection has typing's keys too (inherit, above); typing replaces it.
+
+[keys.sidebar]
+"<C-b>" = "sidebar_toggle"
+"<C-p>" = "file_picker"
+"<C-S-p>" = "command_palette"
+"<F1>" = "command_palette"
+"<C-`>" = "terminal_toggle"
+"<C-S-f>" = "project_search"
+"<C-q>" = "quit_all"
+
+[keys.terminal]
+"<C-`>" = "terminal_toggle"
+
+[keys.settings]
+"<C-p>" = "file_picker"
+"<F1>" = "command_palette"
+"<C-S-p>" = "command_palette"

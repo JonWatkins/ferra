@@ -76,6 +76,10 @@ pub struct App {
     /// The config's keys and hooks, to start again from when plugins
     /// reload (dropping what they registered).
     config_keys: Keymap,
+    /// The user's own `[keys]`, for building the keys again when `keymap`
+    /// changes, and the keymap they were built for.
+    user_keys: toml::Table,
+    keymap_preset: crate::config::KeymapPreset,
     config_hooks: HashMap<EventKind, Vec<String>>,
     /// The config's languages, before plugins add theirs.
     config_languages: crate::config::Languages,
@@ -104,13 +108,15 @@ impl Default for App {
 impl App {
     pub fn new(config: Config) -> Self {
         let (commands, mut unknown_hook_commands) = base_commands(&config.hooks);
-        let mut editor = Editor::new(config.editor);
+        let mut editor = Editor::new(config.editor.clone());
         editor.languages = config.languages.clone();
         let mut app = Self {
             editor,
             commands,
             keymap: config.keys.clone(),
             config_keys: config.keys,
+            user_keys: config.user_keys,
+            keymap_preset: config.editor.keymap,
             config_hooks: config.hooks,
             config_languages: config.languages,
             plugin_config_dir: None,
@@ -141,6 +147,9 @@ impl App {
             .set_clipboard(clipboard::for_provider(provider), mode);
         app.validate_keymap();
         app.refresh_menu_hints();
+        // VS Code's keys start out typing.
+        app.input.set_modeless(app.editor.modeless());
+        app.editor.keymap_switched();
         if !unknown_hook_commands.is_empty() {
             unknown_hook_commands.sort_unstable();
             let text = format!(
@@ -150,6 +159,48 @@ impl App {
             app.editor.set_message(Message::error(text));
         }
         app
+    }
+
+    /// The mode the editor rests in: normal with Vim's keys, insert with
+    /// VS Code's. Its keys are the ones shown in menus and the splash.
+    fn home_mode(&self) -> Mode {
+        if self.editor.modeless() {
+            Mode::Insert
+        } else {
+            Mode::Normal
+        }
+    }
+
+    /// After a command: if `keymap` changed (`:set`, the settings editor),
+    /// the keys are built again for it, the user's and plugins' over them.
+    fn follow_keymap_option(&mut self) {
+        let preset = self.editor.global_options().keymap;
+        if preset == self.keymap_preset {
+            return;
+        }
+        self.keymap_preset = preset;
+        match crate::config::keymap_for(preset, &self.user_keys) {
+            Ok(keys) => self.config_keys = keys,
+            Err(error) => {
+                self.editor.set_message(Message::error(error));
+                return;
+            }
+        }
+        if self.plugins.is_some() {
+            // Plugins' keys go back on top.
+            let message = self.editor.message().cloned();
+            self.reload_plugins(false);
+            if let Some(message) = message {
+                self.editor.set_message(message);
+            }
+        } else {
+            self.keymap = self.config_keys.clone();
+            self.popup_keymap = None;
+            self.refresh_menu_hints();
+        }
+        self.input.reset();
+        self.input.set_modeless(self.editor.modeless());
+        self.editor.keymap_switched();
     }
 
     /// Warns about bindings to commands that don't exist (usually typos).
@@ -502,7 +553,7 @@ impl App {
             .iter()
             .flat_map(|menu| menu.items.iter().flatten())
             .filter_map(|(_, command)| {
-                let keys = self.keymap.hint_keys(Mode::Normal, command)?;
+                let keys = self.keymap.hint_keys(self.home_mode(), command)?;
                 Some((command.to_string(), ui::find::key_label(&keys, mac)))
             })
             .collect();
@@ -634,6 +685,9 @@ impl App {
                 .for_mode(self.editor.mode());
             let wanted = if self.editor.replacing() {
                 self.editor.options.cursor_shape.replace
+            } else if self.editor.modeless() && self.editor.mode() == Mode::Visual {
+                // A selection with VS Code's keys ends at the cursor: a bar.
+                self.editor.options.cursor_shape.insert
             } else {
                 wanted
             };
@@ -833,7 +887,10 @@ impl App {
     /// mode, so a reload never lands mid-insert or mid-command. Public so
     /// tests can trigger it.
     pub fn check_files_while_idle(&mut self) {
-        if self.editor.options.watch_files && self.is_idle() {
+        // With VS Code's keys, insert mode is where the editor rests.
+        let resting = self.is_idle()
+            || (self.editor.resting() && self.input.is_idle() && self.paste.is_none());
+        if self.editor.options.watch_files && resting {
             self.editor.check_disk_changes();
             self.dispatch_events();
         }
@@ -896,6 +953,10 @@ impl App {
                     .chars()
                     .for_each(|c| self.editor.insert_text_char(c));
                 self.editor.search_symbols_after_key();
+            }
+            Mode::Visual if self.editor.modeless() => {
+                self.editor.paste_over_selection(text);
+                self.editor.document.commit();
             }
             Mode::Normal | Mode::Visual | Mode::OperatorPending => {
                 self.editor.set_mode(Mode::Normal);
@@ -1036,7 +1097,7 @@ impl App {
             ui::TerminalKeys {
                 leave: label(Mode::Terminal, "terminal_leave"),
                 hide: label(Mode::Terminal, "terminal_toggle"),
-                focus: label(Mode::Normal, "terminal_toggle"),
+                focus: label(self.home_mode(), "terminal_toggle"),
             }
         } else {
             ui::TerminalKeys::default()
@@ -1065,7 +1126,7 @@ impl App {
     fn splash_entries(&self) -> Vec<ui::SplashEntry> {
         let bound = |command: &str| {
             self.keymap
-                .keys_for(Mode::Normal, command)
+                .keys_for(self.home_mode(), command)
                 .map(|keys| keys.iter().map(ToString::to_string).collect::<String>())
         };
         let entry = |keys: Option<String>, description| {
@@ -1400,10 +1461,29 @@ impl App {
     pub fn execute(&mut self, command: &str, invocation: Invocation) {
         crate::log::note_input(|| format!("({command})"));
         self.editor.clear_message();
+        // With VS Code's keys there's no leaving insert mode to end an undo
+        // step: commands other than typing's end one, before and after.
+        let typing = matches!(
+            command,
+            "delete_left"
+                | "delete_right"
+                | "accept_or_newline"
+                | "insert_newline"
+                | "indent_or_tab"
+                | "insert_tab"
+        );
+        let grouping = self.editor.modeless() && !typing;
+        if grouping && self.editor.mode() == Mode::Insert {
+            self.editor.document.commit();
+        }
         if let Err(error) = self.commands.execute(command, &mut self.editor, invocation) {
             self.editor.set_message(Message::error(error));
             self.note_command_failure();
         }
+        if grouping && self.editor.mode() == Mode::Insert {
+            self.editor.document.commit();
+        }
+        self.follow_keymap_option();
         if let Some(error) = self.editor.registers.take_clipboard_error() {
             self.editor.set_message(Message::error(error));
         }

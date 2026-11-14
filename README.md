@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  A modal terminal text editor written in Rust, inspired by Vim, Helix,
-  Emacs and VS Code.
+  A terminal text editor written in Rust, inspired by Vim, Helix, Emacs
+  and VS Code: VS Code's keys, or Vim's modes.
 </p>
 
 > [!WARNING]
@@ -14,9 +14,11 @@
 
 ## Features
 
-- **Modal editing, Vim-style:** motions, operators, text objects, visual
-  and block selections, registers, macros, marks, `.` to repeat, `:s` with
-  ranges, folding.
+- **VS Code's keys or Vim's:** without modes as in VS Code (Ctrl+S,
+  Shift and the arrows to select, Ctrl+C and Ctrl+V), the default; or
+  modal editing Vim-style: motions, operators, text objects, visual and
+  block selections, registers, macros, marks, `.` to repeat, `:s` with
+  ranges, folding. Switch with `keymap` in the settings editor.
 - **Language servers:** diagnostics, completion, hover, go to definition
   and references, rename, code actions, formatting, signature help,
   symbols and inlay hints.

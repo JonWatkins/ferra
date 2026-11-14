@@ -13,6 +13,7 @@ mod jumps;
 mod marks;
 mod message;
 mod mode;
+pub mod modeless;
 mod operator;
 pub mod picker;
 pub mod registers;
@@ -549,6 +550,12 @@ impl Editor {
         } else {
             mode
         };
+        // With VS Code's keys there's no normal mode: insert mode is home.
+        let mode = if mode == Mode::Normal && self.modeless() {
+            Mode::Insert
+        } else {
+            mode
+        };
         let previous = std::mem::replace(&mut self.mode, mode);
         if previous != mode {
             self.emit(Event::ModeChanged {
@@ -623,10 +630,12 @@ impl Editor {
 
     /// Normal mode may not rest on the end-of-line slot.
     pub fn enforce_cursor_rules(&mut self) {
-        if matches!(
-            self.mode,
-            Mode::Normal | Mode::OperatorPending | Mode::Visual
-        ) {
+        // VS Code's selections end before the cursor, which can be at a
+        // line's end.
+        let visual_clamps = !self.modeless();
+        if matches!(self.mode, Mode::Normal | Mode::OperatorPending)
+            || (self.mode == Mode::Visual && visual_clamps)
+        {
             // A closed fold shows as its first line, so that's where the
             // cursor sits.
             let cursor = self.document.cursor();
@@ -666,7 +675,15 @@ impl Editor {
     /// Inserts typed text into whatever has focus in the current mode.
     pub fn insert_text_char(&mut self, c: char) {
         match self.mode {
+            Mode::Visual if self.modeless() => self.type_over_selection(c),
             Mode::Insert => {
+                // With VS Code's keys, typing undoes a word at a time.
+                if self.modeless()
+                    && !c.is_whitespace()
+                    && self.typed.chars().last().is_some_and(char::is_whitespace)
+                {
+                    self.document.commit();
+                }
                 if self.replacing.is_some() {
                     self.type_replacing(c);
                 } else {

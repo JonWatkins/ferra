@@ -37,19 +37,24 @@ fn open(app: &mut App, name: &str, text: &str) -> tempfile::TempDir {
 #[test]
 fn one_bar_along_the_bottom_the_full_width() {
     let mut app = app_as_shipped();
-    keys(&mut app, "<Space>e<Esc>");
+    keys(&mut app, "<C-b><C-S-e>");
     let (text, bgs) = bar(&mut app);
-    // It starts at the left edge (under the activity bar and sidebar).
-    assert!(text.starts_with(" NORMAL "), "{text:?}");
+    // It starts at the left edge (under the activity bar and sidebar),
+    // with the sidebar's mode (VS Code's keys show none while typing).
+    assert!(text.starts_with(" SIDEBAR "), "{text:?}");
     // Past the mode, the bar's colour all the way across.
     assert!(bgs[10..].iter().all(|&bg| bg == BAR), "{bgs:?}");
+    keys(&mut app, "<Esc>");
+    let (text, bgs) = bar(&mut app);
+    assert!(!text.contains("INSERT"), "{text:?}");
+    assert!(bgs.iter().all(|&bg| bg == BAR), "{bgs:?}");
 }
 
 #[test]
 fn worded_as_vs_codes() {
     let mut app = app_as_shipped();
     let _dir = open(&mut app, "main.rs", "fn main() {\n    let x = 1;\n}\n");
-    keys(&mut app, "jw");
+    keys(&mut app, "<Down><End><Home>");
     let (text, _) = bar(&mut app);
     for part in [
         "main.rs",

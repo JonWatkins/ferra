@@ -105,7 +105,7 @@ fn opens_in_the_windows_place_and_closes() {
 #[test]
 fn the_gear_and_the_menus_open_it() {
     let mut app = app_as_shipped();
-    keys(&mut app, ":activity settings<CR>");
+    keys(&mut app, "<C-g>activity settings<CR>");
     assert_eq!(app.editor().mode(), Mode::Settings);
     keys(&mut app, ":activity settings<CR>");
     assert!(

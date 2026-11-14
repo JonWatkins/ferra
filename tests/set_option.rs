@@ -43,12 +43,13 @@ fn vim_switches_redraw_the_gutter() {
 #[test]
 fn plain_set_lists_what_changed() {
     // As shipped: the tests' usual chrome is a change from the defaults.
+    // (With VS Code's keys, as shipped, Ctrl+G opens the `:` line.)
     let mut app = common::app_as_shipped();
-    keys(&mut app, ":set<CR>");
+    keys(&mut app, "<C-g>set<CR>");
     assert_eq!(message(&app), "All options are at their defaults");
-    keys(&mut app, ":set so=1 nocul<CR>:set<CR>");
+    keys(&mut app, "<C-g>set so=1 nocul<CR><C-g>set<CR>");
     assert_eq!(message(&app), "cursorline=false  scroll-off=1");
-    keys(&mut app, ":set so? cul?<CR>");
+    keys(&mut app, "<C-g>set so? cul?<CR>");
     assert_eq!(message(&app), "scroll-off=1  cursorline=false");
 }
 

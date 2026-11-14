@@ -11,15 +11,57 @@ ferra a.rs b.rs  # open several files, one buffer each
 ferra            # start on the splash screen
 ```
 
-Save with `:w`, quit with `:q` (or `ZZ` to save and quit).
+Save with `Ctrl+S` and quit with `Ctrl+Q` (with Vim's keys, `:w` and
+`:q`, or `ZZ` to save and quit).
 
 Started without a file, ferra shows a splash screen: the logo, the version
-and a few ways to begin (`:e <file>`, `<Space>f` to find a file, `<Space>p`
-for every command, `i` to start writing, `:q`). The keys listed are the ones
-actually bound, so your own bindings show up there. It goes away once you
-type, open a file or split the window.
+and a few ways to begin (`:e <file>`, finding a file, every command, `:q`).
+The keys listed are the ones actually bound, so your own bindings show up
+there. It goes away once you type, open a file or split the window.
 
-## Default keys
+## Keymaps: VS Code's or Vim's
+
+`keymap` picks the keys: `"vscode"` (the default) or `"vim"`. Change it
+in the settings editor (`:settings keymap`) or with `:set keymap=vim`; it
+takes effect at once. Your own `[keys]` go over either. The keys every
+keymap shares (the sidebar, pickers, the find box, the git view...) are in
+[default.toml](../src/config/default.toml), each keymap's editing keys in
+[keymaps/vscode.toml](../src/config/keymaps/vscode.toml) and
+[keymaps/vim.toml](../src/config/keymaps/vim.toml).
+
+### VS Code's keys
+
+There are no modes: you're always typing. Shift and a move selects (the
+selection ends before the cursor, as in VS Code), and typing, `Backspace`
+or a paste replaces a selection. `Esc` drops the selection, completion and
+search highlights. Undo takes a word at a time, and any command (a move,
+a paste) ends an undo step.
+
+| Keys | Action |
+|------|--------|
+| arrows, `Home` `End`, `Ctrl+←` `Ctrl+→` (`⌥←` `⌥→`), `Ctrl+Home` `Ctrl+End`, `PageUp` `PageDown` | Move (`Home` goes to the first non-blank, then the line's start) |
+| `Shift` + any of those | Select on the way |
+| `Ctrl+A`, `Ctrl+L`, `Ctrl+D` | Select everything / the line (again: the next) / the word, then its next match |
+| `Ctrl+C` `Ctrl+X` `Ctrl+V` | Copy / cut / paste with the system clipboard (nothing selected: the whole line) |
+| `Ctrl+Z`, `Ctrl+Y` (`Ctrl+Shift+Z`) | Undo / redo |
+| `Ctrl+Backspace` (`⌥Backspace`), `Ctrl+Delete` | Delete a word back / forward |
+| `Tab` `Shift+Tab` | Indent / outdent (the selected lines, with a selection) |
+| `Alt+↑` `Alt+↓`, `Shift+Alt+↑` `Shift+Alt+↓` | Move the line (or selected lines) / copy it up or down |
+| `Ctrl+Shift+K`, `Ctrl+Enter`, `Ctrl+Shift+Enter`, `Ctrl+/` | Delete the line / a new line below / above / comment in or out |
+| `Ctrl+S`, `Ctrl+P` (`Ctrl+O`), `Ctrl+W`, `Ctrl+PageDown` `Ctrl+PageUp`, `Ctrl+Q` | Save / open a file / close the buffer / next and previous buffer / quit |
+| `F1` (`Ctrl+Shift+P`), `F10`, `Alt` + a menu's letter, `Ctrl+G` | The command palette / the menu bar / a menu / the `:` line (`:42` goes to line 42) |
+| `Ctrl+F`, `Ctrl+H`, `Ctrl+Shift+F` | Find / replace / find in files |
+| `Ctrl+B`, `Ctrl+Shift+E`, ``Ctrl+` ``, `Ctrl+\` | The sidebar / its focus / the terminal panel / split the window |
+| `Ctrl+Space`, `F2`, `F12`, `Shift+F12`, `Ctrl+.`, `Shift+Alt+F`, `F8` `Shift+F8`, `Ctrl+Shift+O`, `Ctrl+T`, `Ctrl+K Ctrl+I` | The language server: complete / rename / definition / references / code actions / format / next and previous problem / symbols in the file / in the project / hover |
+
+These are VS Code's Linux and Windows keys: in a terminal on a Mac, `⌘`
+belongs to the terminal (`⌘C` and `⌘V` still copy and paste through it).
+`Ctrl+Shift` and a letter needs a terminal with the kitty keyboard
+protocol (kitty, WezTerm, Ghostty, foot, recent iTerm2); elsewhere it's
+`Ctrl` and the letter, and `F1` and the menu bar are always there. In
+iTerm2, set Profiles → Keys → Left Option key to "Esc+" for the `Alt` keys.
+
+### Vim's keys
 
 | Mode    | Keys | Action |
 |---------|------|--------|
