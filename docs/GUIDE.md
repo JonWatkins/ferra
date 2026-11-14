@@ -412,6 +412,8 @@ results come in as you type, grouped by file, with each file's count.
 ```text
  SEARCH
   alpha               Aa  W  .*
+
+  Replace                    All
  3 results in 2 files
  ▾ notes.txt                 1
     Alpha is first
@@ -430,8 +432,19 @@ one, so `n` and `N` carry on in the file. `R` searches again.
 It searches the folder ferra started in, leaving out what `.gitignore`
 ignores (and hidden files, as the file picker does: `[editor.file-picker]`
 sets both), binary files and files over 4 MB, and stops at 10,000 matches.
-It reads the files on disk, so unsaved changes aren't searched yet; and
-replacing across files comes next.
+Open files with unsaved changes are searched as they are in ferra, not as
+saved.
+
+To replace, `<Tab>` from the query to the replace field (or click it):
+the results then show each match struck through with its replacement
+after it (with a regex, `$1` and `$2` are its groups). `<CR>` there (or
+`<C-CR>`, or the `All` chip) replaces every match, after saying how many
+in how many files; `r` in the results replaces the selected match's line,
+or all of the selected file's. A file's replacements are one edit in its
+buffer (files that aren't open are opened, in the background), so `u`
+in a file undoes them, and nothing's written until you save: `:wa`
+saves them all. A line that's changed since the search isn't replaced
+(`R` searches again).
 
 ## The terminal panel
 

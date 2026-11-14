@@ -32,7 +32,7 @@ pub fn register(r: &mut CommandRegistry) {
     r.register(
         "find_enter",
         "In the find field, the next match; in the replace field, replace the match and go to the next",
-        |cx| match cx.editor.find_state().focus {
+        |cx| match cx.editor.find_focus() {
             FindField::Find => cx.editor.find_step(true),
             FindField::Replace => cx.editor.find_replace_one(),
         },

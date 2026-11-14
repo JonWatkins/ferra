@@ -368,6 +368,16 @@ matching lines, flattened into rows for the list; the sidebar's
 characters can start background work now, so the app starts requests
 after every key's outcomes, not only after commands.
 
+Replacing (`<Tab>` to the replace field, `FindField::Replace`): the
+results preview each match's replacement (`search_replacements`, through
+`SearchPattern::next_replacement`, so `$1` expands). Replacing a file's
+matches (`replace_in_file`) opens its buffer in the background
+(`buffer_for_path`, as a rename's edits do) and replaces line by line,
+bottom up, as one undo step; one line (`r` on a match) is only replaced
+if it still reads as it did when found. Replacing searches again, and a
+search reads open, modified buffers' text instead of the files
+(`SearchRequest::unsaved`), so the results match what's in ferra.
+
 `ui/sidebar.rs` draws it. `ui::draw` takes the sidebar's columns (plus a
 `│`) from the left before the windows are laid out, so splits, resizing and
 per-window status lines work within what's left. With per-window status

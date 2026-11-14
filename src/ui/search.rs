@@ -4,6 +4,8 @@
 //! ```text
 //!  SEARCH
 //!  alpha            Aa W .*
+//!
+//!  Replace              All
 //!  3 results in 2 files
 //!  ▾ main.rs src          2
 //!      fn alpha() {}
@@ -25,8 +27,16 @@ use crate::editor::project_search::SearchRow;
 /// The toggles after the field: the chip, plain and with a Nerd Font.
 const TOGGLES: [(&str, &str); 3] = [("Aa", "\u{eab1}"), ("W", "\u{eb7e}"), (".*", "\u{eb38}")];
 
-/// Rows above the results: the title, the field, the status.
-const HEAD: u16 = 3;
+/// Rows above the results: the title, the query, a gap, the replacement,
+/// the status.
+const HEAD: u16 = 5;
+
+/// How far below the query the replace field is (a blank row between
+/// them, as in the find box).
+const REPLACE_ROW: u16 = 2;
+
+/// The replace-all chip after the replace field: plain, and a Nerd Font's.
+const REPLACE_ALL: (&str, &str) = ("All", "\u{eb3c}");
 
 /// Where the view's parts are, for the mouse.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -35,6 +45,9 @@ pub struct SearchHits {
     pub field: Rect,
     /// Each toggle's chip: match case, whole word, regex.
     pub toggles: Vec<Rect>,
+    /// The replace field, and its replace-all chip.
+    pub replace: Rect,
+    pub replace_all: Rect,
 }
 
 pub struct SearchViewWidget<'a> {
@@ -88,17 +101,40 @@ impl<'a> SearchViewWidget<'a> {
         let field_width = right
             .saturating_sub(chips_width + 1)
             .saturating_sub(field_x);
+        // The replace field lines up with the query, its chip at the end.
+        let chip = Self::replace_all_chip(editor);
+        let chip_width = chip.width() as u16 + 2;
+        let replace_all = Rect::new(
+            right.saturating_sub(chip_width),
+            y + REPLACE_ROW,
+            chip_width,
+            1,
+        );
         SearchHits {
             field: Rect::new(field_x, y, field_width, 1),
             toggles,
+            replace: Rect::new(field_x, y + REPLACE_ROW, field_width, 1),
+            replace_all,
+        }
+    }
+
+    fn replace_all_chip(editor: &Editor) -> &'static str {
+        if editor.options.icons == Icons::Nerd {
+            REPLACE_ALL.1
+        } else {
+            REPLACE_ALL.0
         }
     }
 
     /// Where the terminal cursor goes while the query's typed.
     pub fn cursor_position(editor: &Editor, area: Rect) -> Option<(u16, u16)> {
         let hits = Self::hits(editor, area);
-        let field = &editor.project_search().fields.find;
-        let width = hits.field.width.saturating_sub(2);
+        let fields = &editor.project_search().fields;
+        let (field, rect) = match fields.focus {
+            crate::editor::find::FindField::Find => (&fields.find, hits.field),
+            crate::editor::find::FindField::Replace => (&fields.replace, hits.replace),
+        };
+        let width = rect.width.saturating_sub(2);
         let scroll = super::find::field_scroll(field, width);
         let before: String = field
             .text()
@@ -106,7 +142,7 @@ impl<'a> SearchViewWidget<'a> {
             .skip(scroll)
             .take(field.cursor() - scroll)
             .collect();
-        Some((hits.field.x + 1 + before.width() as u16, hits.field.y))
+        Some((rect.x + 1 + before.width() as u16, rect.y))
     }
 }
 
@@ -124,45 +160,35 @@ impl Widget for SearchViewWidget<'_> {
             return;
         }
 
-        // The field, then the toggles.
+        // The fields, then the toggles and the replace-all chip.
+        use crate::editor::find::FindField;
         let hits = Self::hits(editor, area);
         let typing = editor.search_typing();
-        let style = if typing {
-            theme.get("ui.find.field.focused")
-        } else {
-            theme.get("ui.find.field")
-        };
-        buf.set_style(hits.field, style);
-        let field = &search.fields.find;
-        let width = hits.field.width.saturating_sub(2);
-        let shown: String = field
-            .text()
-            .chars()
-            .skip(super::find::field_scroll(field, width))
-            .take(width as usize)
-            .collect();
-        let text_style = if field.is_selected() {
-            style.patch(theme.get("ui.find.field.selected"))
-        } else {
-            style
-        };
-        if field.text().is_empty() && !typing {
-            buf.set_stringn(
-                hits.field.x + 1,
-                hits.field.y,
-                "Search",
-                width as usize,
-                theme.get("ui.find.hint"),
-            );
-        } else {
-            buf.set_stringn(
-                hits.field.x + 1,
-                hits.field.y,
-                shown,
-                width as usize,
-                text_style,
-            );
-        }
+        let focus = search.fields.focus;
+        draw_field(
+            buf,
+            hits.field,
+            &search.fields.find,
+            "Search",
+            typing && focus == FindField::Find,
+            theme,
+        );
+        draw_field(
+            buf,
+            hits.replace,
+            &search.fields.replace,
+            "Replace",
+            typing && focus == FindField::Replace,
+            theme,
+        );
+        let chip = Self::replace_all_chip(editor);
+        buf.set_stringn(
+            hits.replace_all.x,
+            hits.replace_all.y,
+            format!(" {chip} "),
+            hits.replace_all.width as usize,
+            theme.get("ui.find.toggle"),
+        );
         let on = [
             search.fields.match_case,
             search.fields.whole_word,
@@ -193,7 +219,7 @@ impl Widget for SearchViewWidget<'_> {
             };
         buf.set_stringn(
             area.x + 1,
-            area.y + 2,
+            area.y + HEAD - 1,
             &status,
             area.width.saturating_sub(2) as usize,
             status_style,
@@ -205,7 +231,6 @@ impl Widget for SearchViewWidget<'_> {
         // Only the rows shown are made.
         let rows = search.rows_from(first, list.height as usize);
         let width = list.width as usize;
-        let match_style = theme.get("ui.sidebar.search.match");
         for (offset, (i, row)) in rows
             .iter()
             .enumerate()
@@ -273,14 +298,18 @@ impl Widget for SearchViewWidget<'_> {
                     );
                 }
                 SearchRow::Line(_, found) => {
+                    let replacements = if editor.search_previewing() {
+                        editor.search_replacements(found)
+                    } else {
+                        Vec::new()
+                    };
                     draw_line(
                         buf,
-                        list.x + 4,
-                        y,
+                        (list.x + 4, y),
                         width.saturating_sub(5),
                         found,
-                        theme.get("ui.sidebar.search.line"),
-                        match_style,
+                        &replacements,
+                        theme,
                     );
                 }
             }
@@ -288,21 +317,66 @@ impl Widget for SearchViewWidget<'_> {
     }
 }
 
+/// A field: its text (scrolled to the cursor, shown selected when it is),
+/// or `placeholder` when it's empty and doesn't have the keys.
+fn draw_field(
+    buf: &mut Buffer,
+    rect: Rect,
+    field: &crate::editor::text_field::TextField,
+    placeholder: &str,
+    focused: bool,
+    theme: &Theme,
+) {
+    let style = if focused {
+        theme.get("ui.find.field.focused")
+    } else {
+        theme.get("ui.find.field")
+    };
+    buf.set_style(rect, style);
+    let width = rect.width.saturating_sub(2);
+    if field.text().is_empty() && !focused {
+        buf.set_stringn(
+            rect.x + 1,
+            rect.y,
+            placeholder,
+            width as usize,
+            theme.get("ui.find.hint"),
+        );
+        return;
+    }
+    let shown: String = field
+        .text()
+        .chars()
+        .skip(super::find::field_scroll(field, width))
+        .take(width as usize)
+        .collect();
+    let text_style = if field.is_selected() {
+        style.patch(theme.get("ui.find.field.selected"))
+    } else {
+        style
+    };
+    buf.set_stringn(rect.x + 1, rect.y, shown, width as usize, text_style);
+}
+
 /// A matching line, its indentation dropped and, if the first match would
 /// be off the end, cut from the start (with `…`) to show it; matches
-/// highlighted.
+/// highlighted. With `replacements` (one per match), each match is shown
+/// struck through and its replacement after it, as VS Code previews them.
 fn draw_line(
     buf: &mut Buffer,
-    x: u16,
-    y: u16,
+    (x, y): (u16, u16),
     width: usize,
     found: &crate::editor::project_search::LineMatch,
-    line_style: ratatui::style::Style,
-    match_style: ratatui::style::Style,
+    replacements: &[String],
+    theme: &Theme,
 ) {
     if width == 0 {
         return;
     }
+    let line_style = theme.get("ui.sidebar.search.line");
+    let match_style = theme.get("ui.sidebar.search.match");
+    let removed = theme.get("ui.sidebar.search.removed");
+    let added = theme.get("ui.sidebar.search.added");
     let chars: Vec<char> = found.text.chars().collect();
     let indent = chars.iter().take_while(|c| c.is_whitespace()).count();
     let first = found.ranges.first().map_or(indent, |r| r.0);
@@ -312,25 +386,42 @@ fn draw_line(
     } else {
         indent
     };
-    let mut cx = x;
-    let right = x + width as u16;
+    // The line as runs of text and their styles.
+    let mut segments: Vec<(String, ratatui::style::Style)> = Vec::new();
     if start > indent {
-        buf.set_string(cx, y, "…", line_style);
-        cx += 1;
+        segments.push(("…".into(), line_style));
     }
-    for (i, c) in chars.iter().enumerate().skip(start) {
-        let w = unicode_width::UnicodeWidthChar::width(*c).unwrap_or(0) as u16;
-        if cx + w > right {
-            break;
+    let mut at = start;
+    for (i, &(from, to)) in found.ranges.iter().enumerate() {
+        if to <= at {
+            continue;
         }
-        let in_match = found.ranges.iter().any(|&(s, e)| (s..e).contains(&i));
-        let cell = &mut buf[(cx, y)];
-        cell.set_char(if *c == '\t' { ' ' } else { *c });
-        if in_match {
-            cell.set_style(match_style);
-        } else {
-            cell.set_style(line_style);
+        let from = from.max(at);
+        segments.push((chars[at..from].iter().collect(), line_style));
+        let text: String = chars[from..to].iter().collect();
+        match replacements.get(i) {
+            Some(new) => {
+                segments.push((text, removed));
+                segments.push((new.clone(), added));
+            }
+            None => segments.push((text, match_style)),
         }
-        cx += w.max(1);
+        at = to;
+    }
+    segments.push((chars[at.min(chars.len())..].iter().collect(), line_style));
+
+    let right = x + width as u16;
+    let mut cx = x;
+    for (text, style) in segments {
+        for c in text.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16;
+            if cx + w.max(1) > right {
+                return;
+            }
+            let cell = &mut buf[(cx, y)];
+            cell.set_char(if c == '\t' || c == '\n' { ' ' } else { c });
+            cell.set_style(style);
+            cx += w.max(1);
+        }
     }
 }

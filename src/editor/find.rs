@@ -116,7 +116,7 @@ impl FindState {
 
     /// The replacement for one match: as typed, or with a regex, expanded
     /// (`$1`) by the caller.
-    fn literal_replacement(&self) -> String {
+    pub(super) fn literal_replacement(&self) -> String {
         if self.regex {
             self.replace.text().to_string()
         } else {
@@ -212,11 +212,23 @@ impl Editor {
         &self.find
     }
 
+    /// The field with the keys: the find box's, or the Search view's while
+    /// it's typed in.
+    pub fn find_focus(&self) -> FindField {
+        if self.project_search.typing {
+            self.project_search.fields.focus
+        } else {
+            self.find.focus
+        }
+    }
+
     /// `<Space>/` (and `<Space>h`, with `replace`): opens the find box with
     /// focus in its find field, seeded with the visual selection (one
     /// line), or the word under the cursor if nothing was found before, or
     /// else what was; selected, so typing replaces it.
     pub fn open_find(&mut self, replace: bool) {
+        // The find box's keys are its own again (not the Search view's).
+        self.project_search.typing = false;
         let selected = self
             .selection_range()
             .filter(|_| self.mode() == Mode::Visual)
@@ -329,7 +341,11 @@ impl Editor {
     pub fn find_edit(&mut self, edit: impl FnOnce(&mut TextField)) {
         if self.project_search.typing {
             edit(self.project_search.fields.field());
-            self.search_changed();
+            // The query searches again; the replacement only changes the
+            // preview.
+            if self.project_search.fields.focus == FindField::Find {
+                self.search_changed();
+            }
             return;
         }
         edit(self.find.field());
@@ -351,7 +367,14 @@ impl Editor {
     /// field).
     pub fn find_switch_field(&mut self) {
         if self.project_search.typing {
-            self.search_focus_results();
+            // The query, then the replacement, then the results.
+            match self.project_search.fields.focus {
+                FindField::Find => self.project_search.fields.focus = FindField::Replace,
+                FindField::Replace => {
+                    self.project_search.fields.focus = FindField::Find;
+                    self.search_focus_results();
+                }
+            }
             return;
         }
         self.find.replacing = true;
@@ -402,7 +425,7 @@ impl Editor {
     /// (as VS Code does).
     pub fn find_replace_one(&mut self) -> Result<(), String> {
         if self.project_search.typing {
-            return self.search_replace_unsupported();
+            return self.search_ask_replace_all();
         }
         let pattern = self.find_pattern()?;
         let Some(current) = self.find_current_match() else {
@@ -429,7 +452,7 @@ impl Editor {
     /// `<A-a>`: replaces every match in the buffer, as one undo step.
     pub fn find_replace_all(&mut self) -> Result<(), String> {
         if self.project_search.typing {
-            return self.search_replace_unsupported();
+            return self.search_ask_replace_all();
         }
         let pattern = self.find_pattern()?;
         let replacement = self.find.literal_replacement();

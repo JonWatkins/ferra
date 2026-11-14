@@ -92,6 +92,21 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "search_replace_selected",
+        "In the Search view: replace the selected match (or all of the selected file's)",
+        |cx| cx.editor.search_replace_selected(),
+    );
+    r.register(
+        "search_replace_all",
+        "In the Search view: replace every match, after asking",
+        |cx| cx.editor.search_ask_replace_all(),
+    );
+    r.register(
+        "search_replace_confirmed",
+        "y when asked to replace in files: replace every match",
+        |cx| cx.editor.search_replace_confirmed(),
+    );
+    r.register(
         "activity",
         "The activity bar: show a sidebar view (or hide the sidebar if it's shown); settings opens the config",
         |cx| {

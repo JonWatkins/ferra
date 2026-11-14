@@ -230,3 +230,135 @@ fn the_wheel_scrolls_the_results_not_the_selection() {
     let rows = render(&mut app, 70, 20).rows.join("\n");
     assert!(rows.contains("alpha 1"), "{rows}");
 }
+
+fn popup_text(app: &App) -> String {
+    app.editor()
+        .popup()
+        .map(|p| {
+            p.lines
+                .iter()
+                .map(|l| l.iter().map(|s| s.text.as_str()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+fn message(app: &App) -> String {
+    app.editor()
+        .message()
+        .map(|m| m.text.clone())
+        .unwrap_or_default()
+}
+
+/// The text of the buffer for `name`, opening it.
+fn buffer_text(app: &mut App, name: &str) -> String {
+    keys(app, &format!(":e {name}<CR>"));
+    common::text(app)
+}
+
+#[test]
+fn replace_all_edits_the_buffers_and_asks_first() {
+    let _cwd = CWD.lock().unwrap_or_else(|e| e.into_inner());
+    let _project = project(FILES);
+    let mut app = searching("alpha");
+    // To the replace field; the preview shows in the results.
+    keys(&mut app, "<Tab>omega");
+    let rows = render(&mut app, 70, 20).rows.join("\n");
+    assert!(rows.contains("alphaomega();"), "old then new: {rows}");
+    keys(&mut app, "<CR>");
+    let shown = popup_text(&app);
+    assert!(
+        shown.contains("Replace 3 matches in 2 files with “omega”?"),
+        "{shown}"
+    );
+    keys(&mut app, "y");
+    app.wait_for_background();
+    assert!(
+        message(&app).starts_with("Replaced 3 matches in 2 files"),
+        "{}",
+        message(&app)
+    );
+    // The search sees the buffers' unsaved text: nothing left.
+    assert_eq!(app.editor().search_status(), "No results");
+    // Not on disk until saved.
+    assert!(
+        fs::read_to_string("notes.txt")
+            .unwrap()
+            .starts_with("Alpha")
+    );
+    assert_eq!(
+        buffer_text(&mut app, "src/main.rs"),
+        "fn main() {\n    omega();\n}\n\nfn omega() {}"
+    );
+    assert!(buffer_text(&mut app, "notes.txt").starts_with("omega is first"));
+    // One undo step per file.
+    keys(&mut app, "u");
+    assert!(common::text(&app).starts_with("Alpha is first"));
+    keys(&mut app, ":wa<CR>");
+    assert!(
+        fs::read_to_string("src/main.rs")
+            .unwrap()
+            .contains("omega();")
+    );
+}
+
+#[test]
+fn r_replaces_the_selected_match_or_file() {
+    let _cwd = CWD.lock().unwrap_or_else(|e| e.into_inner());
+    let _project = project(FILES);
+    let mut app = searching("alpha");
+    keys(&mut app, "<Tab>beta<Tab>");
+    assert_eq!(app.editor().mode(), Mode::Sidebar, "Tab, Tab: the results");
+    // The first match (notes.txt's line): just that one.
+    keys(&mut app, "r");
+    app.wait_for_background();
+    assert!(
+        message(&app).starts_with("Replaced 1 match in 1 file"),
+        "{}",
+        message(&app)
+    );
+    assert_eq!(app.editor().search_status(), "2 results in 1 file");
+    // main.rs's row: all of the file's.
+    keys(&mut app, "gg");
+    keys(&mut app, "r");
+    app.wait_for_background();
+    assert!(
+        message(&app).starts_with("Replaced 2 matches in 1 file"),
+        "{}",
+        message(&app)
+    );
+    assert_eq!(app.editor().search_status(), "No results");
+}
+
+#[test]
+fn regex_replacements_expand_captures() {
+    let _cwd = CWD.lock().unwrap_or_else(|e| e.into_inner());
+    let _project = project(&[("a.txt", "key=value\nname=ferra\n")]);
+    let mut app = searching(r"(\w+)=(\w+)");
+    keys(&mut app, "<C-r>");
+    app.wait_for_background();
+    assert_eq!(app.editor().search_status(), "2 results in 1 file");
+    keys(&mut app, "<Tab>$2: $1");
+    let rows = render(&mut app, 70, 20).rows.join("\n");
+    assert!(rows.contains("key=valuevalue: key"), "{rows}");
+    keys(&mut app, "<CR>y");
+    app.wait_for_background();
+    assert_eq!(buffer_text(&mut app, "a.txt"), "value: key\nferra: name");
+}
+
+#[test]
+fn a_line_changed_since_the_search_isnt_replaced() {
+    let _cwd = CWD.lock().unwrap_or_else(|e| e.into_inner());
+    let _project = project(FILES);
+    let mut app = searching("alpha");
+    keys(&mut app, "<Tab>x<Tab>");
+    // Change notes.txt's line behind the search's back.
+    fs::write("notes.txt", "Alpha was first\n").unwrap();
+    keys(&mut app, "r");
+    assert!(
+        message(&app).contains("changed since the search"),
+        "{}",
+        message(&app)
+    );
+}

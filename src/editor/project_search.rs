@@ -10,6 +10,14 @@
 //! `<CR>` opens the match (or folds a file's matches away) and `/` goes
 //! back to the query.
 //!
+//! The replace field (`<Tab>` from the query) previews each match's
+//! replacement in the results (the old text struck through, the new after
+//! it). `<CR>` there (or the chip after it) replaces every match, after
+//! asking; `r` in the results replaces the selected match, or all of the
+//! selected file's. A file's replacements are one edit in its buffer (opened
+//! in the background if it isn't open, as a rename's are): undoable, and
+//! saved only when you save (`:wa`).
+//!
 //! Each change to the query starts a search on a thread (`search_files`,
 //! run by the app), which walks the project as the file picker does
 //! (leaving out what `.gitignore` ignores), skips binary and very large
@@ -17,11 +25,11 @@
 //! app drop what an older one sends.
 
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::find::FindState;
+use super::find::{FindField, FindState};
 use super::{Editor, Message, Mode};
 use crate::core::Position;
 use crate::core::search::SearchPattern;
@@ -72,6 +80,9 @@ pub struct SearchRequest {
     pub root: PathBuf,
     pub pattern: SearchPattern,
     pub options: WalkOptions,
+    /// The text of open buffers with unsaved changes, by canonical path:
+    /// searched instead of what's on disk.
+    pub unsaved: HashMap<PathBuf, String>,
 }
 
 #[derive(Debug, Default)]
@@ -90,6 +101,8 @@ pub struct ProjectSearch {
     /// The view follows the selection (after keys), rather than staying
     /// where the mouse wheel scrolled it.
     follow: Cell<bool>,
+    /// The folder searched (results' paths are relative to it).
+    root: PathBuf,
     /// The search the results are from.
     job: u64,
     searching: bool,
@@ -199,6 +212,16 @@ impl ProjectSearch {
     }
 }
 
+/// `n` and `word`, made plural when `n` isn't 1 (`3 matches`, `2 files`).
+fn plural(n: usize, word: &str) -> String {
+    let ending = match (n, word.ends_with("ch") || word.ends_with('s')) {
+        (1, _) => "",
+        (_, true) => "es",
+        _ => "s",
+    };
+    format!("{n} {word}{ending}")
+}
+
 /// Searches the files under `root` for `pattern`, handing each file with
 /// matches to `on_file` as it's found. Stops when `cancel` is set, or at
 /// `MAX_MATCHES` (returning `true`, cut short). Blocking: run it on a
@@ -207,6 +230,7 @@ pub fn search_files(
     root: &Path,
     pattern: &SearchPattern,
     options: &WalkOptions,
+    unsaved: &HashMap<PathBuf, String>,
     cancel: &AtomicBool,
     mut on_file: impl FnMut(FileMatches),
 ) -> bool {
@@ -218,17 +242,27 @@ pub fn search_files(
                 return;
             }
             let path = root.join(&relative);
-            if std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX_FILE_BYTES) {
-                continue;
-            }
-            let Ok(bytes) = std::fs::read(&path) else {
-                continue;
+            // An open buffer's unsaved text, else the file's.
+            let open = (!unsaved.is_empty())
+                .then(|| std::fs::canonicalize(&path).ok())
+                .flatten()
+                .and_then(|p| unsaved.get(&p));
+            let text = match open {
+                Some(text) => std::borrow::Cow::Borrowed(text.as_str()),
+                None => {
+                    if std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX_FILE_BYTES) {
+                        continue;
+                    }
+                    let Ok(bytes) = std::fs::read(&path) else {
+                        continue;
+                    };
+                    // Binary files (a NUL near the start) aren't searched.
+                    if bytes.iter().take(8192).any(|&b| b == 0) {
+                        continue;
+                    }
+                    std::borrow::Cow::Owned(String::from_utf8_lossy(&bytes).into_owned())
+                }
             };
-            // Binary files (a NUL near the start) aren't searched.
-            if bytes.iter().take(8192).any(|&b| b == 0) {
-                continue;
-            }
-            let text = String::from_utf8_lossy(&bytes);
             let mut lines = Vec::new();
             for (row, line) in text.lines().enumerate() {
                 let ranges = pattern.matches_in_line(line);
@@ -304,6 +338,12 @@ impl Editor {
 
     /// `/` in the results (or a click on the field): back to the query.
     pub fn search_focus_query(&mut self) {
+        self.project_search.fields.focus = FindField::Find;
+        self.search_focus_field();
+    }
+
+    /// Into the field `fields.focus` names.
+    fn search_focus_field(&mut self) {
         self.project_search.typing = true;
         self.set_mode(Mode::Find);
     }
@@ -325,6 +365,12 @@ impl Editor {
         if let (false, Some(first)) = (on_match, first) {
             self.project_search.selected = first;
         }
+    }
+
+    /// A click on the replace field: typing the replacement.
+    pub fn search_focus_replace(&mut self) {
+        self.project_search.fields.focus = FindField::Replace;
+        self.search_focus_field();
     }
 
     /// A click elsewhere while typing the query: out of the field, to
@@ -353,10 +399,20 @@ impl Editor {
         match self.project_search.fields.pattern() {
             Some(pattern) => {
                 let root = std::env::current_dir().unwrap_or_default();
+                self.project_search.root = root.clone();
                 self.project_search.searching = true;
+                let unsaved = std::iter::once(&self.document)
+                    .chain(&self.background)
+                    .filter(|doc| doc.is_modified())
+                    .filter_map(|doc| {
+                        let path = std::fs::canonicalize(doc.path()?).ok()?;
+                        Some((path, doc.buffer().text()))
+                    })
+                    .collect();
                 self.project_search.request = Some(SearchRequest {
                     job: self.project_search.job,
                     root,
+                    unsaved,
                     pattern: pattern.clone(),
                     options: WalkOptions {
                         hidden: self.options.file_picker.hidden,
@@ -487,7 +543,6 @@ impl Editor {
         if matches == 0 {
             return "No results".into();
         }
-        let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
         let more = if search.truncated { "+" } else { "" };
         let searching = if search.searching { "…" } else { "" };
         format!(
@@ -497,10 +552,210 @@ impl Editor {
         )
     }
 
-    /// Replacing across files: the next round.
-    pub(super) fn search_replace_unsupported(&mut self) -> Result<(), String> {
-        self.set_message(Message::info("Replacing in files isn't there yet"));
+    /// Whether the results show replacements: when something's typed in
+    /// the replace field, or it has the keys.
+    pub fn search_previewing(&self) -> bool {
+        let fields = &self.project_search.fields;
+        !fields.replace.text().is_empty()
+            || (self.search_typing() && fields.focus == FindField::Replace)
+    }
+
+    /// What each match in `found` would become (its `$1`s expanded, with
+    /// a regex), in the order of its ranges.
+    pub fn search_replacements(&self, found: &LineMatch) -> Vec<String> {
+        let fields = &self.project_search.fields;
+        let (Some(pattern), replacement) = (fields.pattern(), fields.literal_replacement()) else {
+            return Vec::new();
+        };
+        found
+            .ranges
+            .iter()
+            .map(|&(start, _)| {
+                pattern
+                    .next_replacement(&found.text, start, &replacement)
+                    .map(|(_, _, text)| text)
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    /// `<CR>` in the replace field (or its chip): asks, then replaces every
+    /// match.
+    pub fn search_ask_replace_all(&mut self) -> Result<(), String> {
+        let search = &self.project_search;
+        if search.fields.pattern().is_none() {
+            return Err("Nothing to replace: type what to find first".into());
+        }
+        if search.searching {
+            return Err("Still searching…".into());
+        }
+        let (matches, files) = search.totals();
+        if matches == 0 {
+            return Err("No results to replace".into());
+        }
+        let replacement = search.fields.replace.text().to_string();
+        let span = |text: &str, style: Option<&str>| super::popup::PopupSpan {
+            text: text.to_string(),
+            style: style.map(str::to_string),
+        };
+        let lines = vec![
+            vec![
+                span(
+                    &format!(
+                        "Replace {} in {} with ",
+                        plural(matches, "match"),
+                        plural(files, "file")
+                    ),
+                    None,
+                ),
+                span(&format!("“{replacement}”"), Some("ui.popup.title")),
+                span("?", None),
+            ],
+            vec![],
+            vec![span(
+                "Each file's replacements are one edit in its buffer:",
+                None,
+            )],
+            vec![span("u undoes them, :wa saves them.", None)],
+            vec![],
+            vec![
+                span("y", Some("ui.popup.title")),
+                span(" replace   ", None),
+                span("n", Some("ui.popup.title")),
+                span(" cancel", None),
+            ],
+        ];
+        self.project_search.typing = false;
+        self.open_popup(super::popup::Popup {
+            name: "search-replace".into(),
+            title: "Replace in files".into(),
+            lines,
+            keys: vec![
+                ("y".into(), "search_replace_confirmed".into()),
+                ("n".into(), "popup_close".into()),
+            ],
+            focus: true,
+            ..super::popup::Popup::default()
+        });
         Ok(())
+    }
+
+    /// `y` in that popup: replaces every match, file by file.
+    pub fn search_replace_confirmed(&mut self) -> Result<(), String> {
+        if self.popup().is_none_or(|p| p.name != "search-replace") {
+            return Err("Nothing to replace".into());
+        }
+        self.close_popup();
+        let paths: Vec<PathBuf> = self
+            .project_search
+            .files
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
+        let (mut replaced, mut files, mut problems) = (0, 0, Vec::new());
+        for path in &paths {
+            match self.replace_in_file(path, None) {
+                Ok(0) => {}
+                Ok(n) => {
+                    replaced += n;
+                    files += 1;
+                }
+                Err(e) => problems.push(format!("{}: {e}", path.display())),
+            }
+        }
+        self.after_replacing(replaced, files, problems);
+        Ok(())
+    }
+
+    /// `r` in the results: replaces the selected match's line, or all of
+    /// the selected file's matches.
+    pub fn search_replace_selected(&mut self) -> Result<(), String> {
+        if !self.search_view_shown() {
+            return Err("Only in the Search view".into());
+        }
+        if self.project_search.fields.pattern().is_none() {
+            return Err("Nothing to replace".into());
+        }
+        let selected = self.project_search.selected;
+        let rows = self.project_search.rows_from(selected, 1);
+        let Some(row) = rows.first().copied() else {
+            return Err("No result selected".into());
+        };
+        let (path, only) = match row {
+            SearchRow::File(file, _) => (file.path.clone(), None),
+            SearchRow::Line(file, line) => (file.path.clone(), Some((line.row, line.text.clone()))),
+        };
+        drop(rows);
+        let replaced = self.replace_in_file(&path, only)?;
+        self.after_replacing(replaced, usize::from(replaced > 0), Vec::new());
+        // Searching again keeps the selection about where it was.
+        self.project_search.selected = selected;
+        Ok(())
+    }
+
+    /// Replaces the matches in the file at `relative` (in the folder
+    /// searched): all of them, or `only` those on that row, if it still
+    /// reads as it did. One undo step in the file's buffer, which is opened
+    /// in the background if it isn't open. Returns how many.
+    fn replace_in_file(
+        &mut self,
+        relative: &Path,
+        only: Option<(usize, String)>,
+    ) -> Result<usize, String> {
+        let pattern = self
+            .project_search
+            .fields
+            .pattern()
+            .cloned()
+            .ok_or("Nothing to replace")?;
+        let replacement = self.project_search.fields.literal_replacement();
+        let path = self.project_search.root.join(relative);
+        let id = self.buffer_for_path(&path)?;
+        let document = self.document_by_id_mut(id).ok_or("The buffer went")?;
+        let rows: Vec<usize> = match &only {
+            Some((row, text)) => {
+                if document.buffer().line(*row) != *text {
+                    return Err("it changed since the search (R searches again)".into());
+                }
+                vec![*row]
+            }
+            // Bottom up, so lines put in don't move the rows still to do.
+            None => (0..document.buffer().line_count()).rev().collect(),
+        };
+        let mut replaced = 0;
+        for row in rows {
+            let line = document.buffer().line(row).into_owned();
+            if !pattern.is_match(&line) {
+                continue;
+            }
+            let (text, count) = pattern.replace(&line, &replacement, true);
+            if text != line {
+                let end = document.buffer().line_end(row);
+                document.delete(Position::new(row, 0), end);
+                document.insert(Position::new(row, 0), &text);
+            }
+            replaced += count;
+        }
+        document.commit();
+        Ok(replaced)
+    }
+
+    /// Says what was replaced, and searches again (the buffers' new text).
+    fn after_replacing(&mut self, replaced: usize, files: usize, problems: Vec<String>) {
+        let done = format!(
+            "Replaced {} in {}: unsaved (:wa saves them, u in a file undoes)",
+            plural(replaced, "match"),
+            plural(files, "file")
+        );
+        self.search_changed();
+        if problems.is_empty() {
+            self.set_message(Message::info(done));
+        } else {
+            self.set_message(Message::error(format!(
+                "{done}; not replaced: {}",
+                problems.join("; ")
+            )));
+        }
     }
 }
 
@@ -527,6 +782,7 @@ mod tests {
             root,
             &pattern,
             &WalkOptions::default(),
+            &HashMap::new(),
             &AtomicBool::new(false),
             |file| found.push(file),
         );

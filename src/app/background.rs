@@ -141,6 +141,7 @@ impl Background {
                 &request.root,
                 &request.pattern,
                 &request.options,
+                &request.unsaved,
                 &cancel,
                 |file| {
                     let _ = sender.send(Update::SearchFound { job, file });

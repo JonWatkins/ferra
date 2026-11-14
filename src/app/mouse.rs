@@ -65,6 +65,9 @@ enum Hit {
     ActivityBar,
     /// The Search view's query field.
     SearchField,
+    /// Its replace field, and the replace-all chip.
+    SearchReplace,
+    SearchReplaceAll,
     /// One of the Search view's toggles: match case, whole word, regex.
     SearchToggle(usize),
     SidebarTab(usize),
@@ -150,7 +153,8 @@ impl App {
         }
         match self.hit(at) {
             Hit::SidebarTab(_) | Hit::Activity(_) | Hit::SearchToggle(_) => "pointer",
-            Hit::SearchField => "text",
+            Hit::SearchField | Hit::SearchReplace => "text",
+            Hit::SearchReplaceAll => "pointer",
             Hit::SidebarLine(row) if self.sidebar_line_exists(row) => "pointer",
             Hit::Window(_) | Hit::Terminal => "text",
             _ => "default",
@@ -199,6 +203,12 @@ impl App {
             if let Some(search) = &sidebar.search {
                 if search.field.contains(at) {
                     return Hit::SearchField;
+                }
+                if search.replace_all.contains(at) {
+                    return Hit::SearchReplaceAll;
+                }
+                if search.replace.contains(at) {
+                    return Hit::SearchReplace;
                 }
                 if let Some(i) = search.toggles.iter().position(|t| t.contains(at)) {
                     return Hit::SearchToggle(i);
@@ -301,6 +311,12 @@ impl App {
             }
             Hit::ActivityBar => {}
             Hit::SearchField => self.editor.search_focus_query(),
+            Hit::SearchReplace => self.editor.search_focus_replace(),
+            Hit::SearchReplaceAll => {
+                if let Err(error) = self.editor.search_ask_replace_all() {
+                    self.editor.set_message(Message::error(error));
+                }
+            }
             Hit::SearchToggle(i) => {
                 // Toggled as the keys do, from the query field.
                 self.editor.search_focus_query();
@@ -653,6 +669,8 @@ impl App {
             Hit::Activity(_)
             | Hit::ActivityBar
             | Hit::SearchField
+            | Hit::SearchReplace
+            | Hit::SearchReplaceAll
             | Hit::SearchToggle(_)
             | Hit::Nothing => {}
         }
