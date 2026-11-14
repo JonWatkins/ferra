@@ -97,6 +97,27 @@ impl Popup {
         }
     }
 
+    /// The key shown at column `col` of line `line`, for a click: a key in
+    /// the popup's title style (`y`, `Esc`), or the words after one (so
+    /// "y move it" is all `y`). The app runs what it's bound to.
+    pub fn key_at(&self, line: usize, col: usize) -> Option<&str> {
+        use unicode_width::UnicodeWidthStr;
+        let spans = self.lines.get(line)?;
+        let mut x = 0;
+        let mut key = None;
+        for span in spans {
+            if span.style.as_deref() == Some("ui.popup.title") {
+                key = Some(span.text.trim());
+            }
+            let width = span.text.width();
+            if col < x + width {
+                return key.filter(|k| !k.is_empty());
+            }
+            x += width;
+        }
+        None
+    }
+
     pub fn to_end(&mut self, end: bool) {
         let to = if end {
             self.lines.len() as isize

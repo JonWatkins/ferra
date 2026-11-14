@@ -31,6 +31,7 @@ use crate::commands::Invocation;
 use crate::editor::find::FindField;
 use crate::editor::windows::SplitDirection;
 use crate::editor::{Message, Mode, WindowId};
+use crate::input::Lookup;
 use crate::ui::{FindView, InputBoxView};
 
 /// Lines the wheel scrolls at a time.
@@ -143,7 +144,7 @@ impl App {
             && popup.area.contains(at)
         {
             let list = self.editor.popup().is_some_and(|p| p.select);
-            return if list && popup.list.contains(at) {
+            return if (list && popup.list.contains(at)) || self.popup_click(at).is_some() {
                 "pointer"
             } else {
                 "default"
@@ -530,7 +531,13 @@ impl App {
             }
             Mode::Popup => {
                 if let Some(area) = map.popup {
-                    if area.list.contains(at) {
+                    let list = self.editor.popup().is_some_and(|p| p.select);
+                    if !list && area.list.contains(at) {
+                        // A key shown in it (`y move it`): as if pressed.
+                        if let Some(command) = self.popup_click(at) {
+                            self.execute(&command, Invocation::default());
+                        }
+                    } else if area.list.contains(at) {
                         let index = area.first + (at.y - area.list.y) as usize;
                         let choose = self.editor.popup_mut().and_then(|popup| {
                             if !popup.select || index >= popup.lines.len() {
@@ -632,6 +639,27 @@ impl App {
             Mode::Command | Mode::OperatorPending => true,
             _ => false,
         }
+    }
+
+    /// The command a click at `at` in the popup runs: the one bound (in the
+    /// popup) to the key shown there, if any.
+    fn popup_click(&self, at: Position) -> Option<String> {
+        let area = self.screen_map.popup?;
+        if !area.list.contains(at) {
+            return None;
+        }
+        let popup = self.editor.popup()?;
+        // Its text starts a column in from the border.
+        let col = at.x.checked_sub(area.list.x + 1)? as usize;
+        let line = area.first + (at.y - area.list.y) as usize;
+        let key = popup.key_at(line, col)?;
+        [key.to_string(), format!("<{key}>")]
+            .iter()
+            .filter_map(|notation| crate::input::parse_keys(notation).ok())
+            .find_map(|keys| match self.mode_keymap().lookup(Mode::Popup, &keys) {
+                Lookup::Command(command) => Some(command.to_string()),
+                _ => None,
+            })
     }
 
     /// The tab under `at`, and whether it's on its `×`.

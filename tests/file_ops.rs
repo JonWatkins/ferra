@@ -313,3 +313,46 @@ fn ctrl_tab_goes_through_the_buffers() {
     keys(&mut app, "<C-S-Tab>");
     assert_eq!(text(&app), "b");
 }
+
+/// Where `text` is on screen.
+fn find(app: &mut App, text: &str) -> (u16, u16) {
+    let rows = common::render(app, 80, 20).rows;
+    for (y, row) in rows.iter().enumerate() {
+        if let Some(byte) = row.find(text) {
+            return (row[..byte].chars().count() as u16, y as u16);
+        }
+    }
+    panic!("{text:?} isn't on screen:\n{}", rows.join("\n"));
+}
+
+#[test]
+fn confirmations_take_clicks() {
+    let project = project(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    let mut app = app_with_config("[editor]\nkeymap = \"vscode\"\n");
+    app.open(&project.path("a.txt"));
+    keys(&mut app, "x<C-q>");
+    // The question itself does nothing.
+    let (x, y) = find(&mut app, "Save the changes");
+    click(&mut app, MouseButton::Left, x + 2, y);
+    assert_eq!(app.editor().mode(), Mode::Popup);
+    // "Esc cancel": as Esc.
+    let (x, y) = find(&mut app, "cancel");
+    click(&mut app, MouseButton::Left, x, y);
+    assert_eq!(app.editor().mode(), Mode::Insert);
+    assert!(!app.editor().should_quit());
+    // "d don't save": the key's words count too.
+    keys(&mut app, "<C-q>");
+    let (x, y) = find(&mut app, "d don't save");
+    click(&mut app, MouseButton::Left, x + 5, y);
+    assert!(app.editor().should_quit());
+    assert_eq!(fs::read_to_string(project.path("a.txt")).unwrap(), "a\n");
+
+    // The bin's question: "y move it".
+    let mut app = common::app();
+    keys(&mut app, "<Space>e");
+    select(&mut app, "b.txt");
+    keys(&mut app, "d");
+    let (x, y) = find(&mut app, "move it");
+    click(&mut app, MouseButton::Left, x, y);
+    assert!(!project.path("b.txt").exists());
+}

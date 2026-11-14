@@ -375,7 +375,9 @@ With `mouse = true` (the default):
 - In the **sidebar**, a click on a file opens it, on a folder opens or
   closes it, and on a tab shows that view. A click on the **terminal
   panel** goes to it.
-- In the **picker** and plugins' list popups, a click chooses. In the
+- In the **picker** and plugins' list popups, a click chooses. In a
+  question (`y move it   n cancel`, `s save   d don't save   Esc
+  cancel`), a click on a key or the words after it is that key. In the
   **find box**, a click flips a toggle or puts the cursor in a field. A
   click outside one of these closes it (from the find box, the click then
   goes on into the text).
