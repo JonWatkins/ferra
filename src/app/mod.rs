@@ -203,6 +203,177 @@ impl App {
         self.editor.keymap_switched();
     }
 
+    /// Every binding, for the keybinding editor: its keys, mode and where
+    /// it comes from, and every command with no keys; by command.
+    fn binding_rows(&self) -> Vec<crate::editor::keybindings::BindingRow> {
+        use crate::editor::keybindings::{BindingRow, BindingSource};
+        use crate::input::parse_keys;
+        let user_line = |mode: Mode, keys: &[KeyPress]| -> Option<String> {
+            let toml::Value::Table(table) = self.user_keys.get(mode.id())? else {
+                return None;
+            };
+            table.iter().find_map(|(notation, command)| {
+                (parse_keys(notation).ok()?.as_slice() == keys)
+                    .then(|| command.as_str().unwrap_or_default().to_string())
+            })
+        };
+        let describe = |command: &str| {
+            self.commands
+                .get(command)
+                .map(|c| c.description.clone())
+                .unwrap_or_default()
+        };
+        let mut rows = Vec::new();
+        let mut bound = std::collections::HashSet::new();
+        for mode in Mode::ALL {
+            for (keys, command) in self.keymap.bindings(mode) {
+                let source = if self.config_keys.command_at(mode, &keys) != Some(command.as_str()) {
+                    BindingSource::Plugin
+                } else if user_line(mode, &keys).as_deref() == Some(command.as_str()) {
+                    BindingSource::User
+                } else {
+                    BindingSource::Keymap
+                };
+                bound.insert(command.clone());
+                rows.push(BindingRow {
+                    description: describe(&command),
+                    command,
+                    keys,
+                    mode: Some(mode),
+                    source,
+                });
+            }
+        }
+        // The keymap's bindings the user took away.
+        if let Ok(defaults) = crate::config::keymap_for(self.keymap_preset, &toml::Table::new()) {
+            for mode in Mode::ALL {
+                let Some(toml::Value::Table(table)) = self.user_keys.get(mode.id()) else {
+                    continue;
+                };
+                for (notation, command) in table {
+                    let (Ok(keys), Some("")) = (parse_keys(notation), command.as_str()) else {
+                        continue;
+                    };
+                    if let Some(command) = defaults.command_at(mode, &keys) {
+                        rows.push(BindingRow {
+                            description: describe(command),
+                            command: command.to_string(),
+                            keys,
+                            mode: Some(mode),
+                            source: BindingSource::Removed,
+                        });
+                    }
+                }
+            }
+        }
+        for command in self.commands.commands() {
+            if !bound.contains(&command.name) {
+                rows.push(BindingRow {
+                    command: command.name.clone(),
+                    description: command.description.clone(),
+                    keys: Vec::new(),
+                    mode: None,
+                    source: BindingSource::Unbound,
+                });
+            }
+        }
+        let mode_order = |m: Option<Mode>| m.map_or(usize::MAX, |m| m as usize);
+        rows.sort_by(|a, b| {
+            (
+                &a.command,
+                mode_order(a.mode),
+                crate::editor::keybindings::notation(&a.keys),
+            )
+                .cmp(&(
+                    &b.command,
+                    mode_order(b.mode),
+                    crate::editor::keybindings::notation(&b.keys),
+                ))
+        });
+        rows
+    }
+
+    /// Makes the keybinding editor's changes: the user's keys changed (and
+    /// `config.toml` with them), then the keys built again.
+    fn apply_key_edits(&mut self) {
+        use crate::input::parse_keys;
+        let edits = self.editor.take_key_edits();
+        if edits.is_empty() {
+            return;
+        }
+        let file = self.editor.config_file().map(std::path::Path::to_path_buf);
+        let mut said = Vec::new();
+        for edit in &edits {
+            let mode = edit.mode.id();
+            let notation = crate::editor::keybindings::notation(&edit.keys);
+            let table = self
+                .user_keys
+                .entry(mode)
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            let toml::Value::Table(table) = table else {
+                continue;
+            };
+            // The user's lines for these keys, however they're written.
+            let same: Vec<String> = table
+                .keys()
+                .filter(|n| parse_keys(n).is_ok_and(|k| k == edit.keys))
+                .cloned()
+                .collect();
+            for old in &same {
+                table.remove(old);
+                if let Some(file) = &file
+                    && let Err(error) = crate::config::edit::write_key(file, mode, old, None)
+                {
+                    self.editor.set_message(Message::error(error));
+                    return;
+                }
+            }
+            if let Some(command) = &edit.command {
+                table.insert(notation.clone(), toml::Value::String(command.clone()));
+                if let Some(file) = &file
+                    && let Err(error) =
+                        crate::config::edit::write_key(file, mode, &notation, Some(command))
+                {
+                    self.editor.set_message(Message::error(error));
+                    return;
+                }
+            }
+            said.push(match edit.command.as_deref() {
+                Some("") => format!("{notation} in {mode}: taken away"),
+                Some(command) => format!("{notation} in {mode}: {command}"),
+                None => format!("{notation} in {mode}: back to the keymap's"),
+            });
+        }
+        // Rebuilt, the plugins' keys back on top.
+        match crate::config::keymap_for(self.keymap_preset, &self.user_keys) {
+            Ok(keys) => self.config_keys = keys,
+            Err(error) => {
+                self.editor.set_message(Message::error(error));
+                return;
+            }
+        }
+        let message = self.editor.message().cloned();
+        if self.plugins.is_some() {
+            self.reload_plugins(false);
+        } else {
+            self.keymap = self.config_keys.clone();
+            self.popup_keymap = None;
+            self.refresh_menu_hints();
+        }
+        let rows = self.binding_rows();
+        self.editor.keybindings_show(rows, None);
+        match message.filter(|m| m.severity == crate::editor::Severity::Error) {
+            Some(warning) => self.editor.set_message(warning),
+            None => {
+                let mut text = said.join(", ");
+                if file.is_none() {
+                    text.push_str(" (not saved: there's no config file)");
+                }
+                self.editor.set_message(Message::info(text));
+            }
+        }
+    }
+
     /// Warns about bindings to commands that don't exist (usually typos).
     fn validate_keymap(&mut self) {
         let mut unknown: Vec<String> = self
@@ -967,6 +1138,7 @@ impl App {
             }
             Mode::Terminal => self.editor.terminal_paste(text),
             Mode::Settings => self.editor.settings_paste(text),
+            Mode::Keybindings => {}
             Mode::Popup | Mode::Git => {}
             // Nothing to paste into.
             Mode::Sidebar => {}
@@ -1205,6 +1377,14 @@ impl App {
 
     /// Handles one key press. Public so tests can drive the app directly.
     pub fn handle_key(&mut self, key: KeyPress) {
+        // Keys pressed for the keybinding editor are taken as they come,
+        // bound or not (Alt ones too).
+        if self.editor.mode() == Mode::Keybindings && self.editor.keybindings_recording() {
+            self.editor.clear_message();
+            self.editor.keybindings_field_key(key);
+            self.apply_key_edits();
+            return;
+        }
         let key = self.as_legacy(key);
         if let Some([esc, key]) = self.split_alt(key) {
             self.handle_key(esc);
@@ -1389,6 +1569,9 @@ impl App {
         if self.editor.mode() == Mode::Settings && self.editor.settings_field_key(key) {
             return;
         }
+        if self.editor.mode() == Mode::Keybindings && self.editor.keybindings_field_key(key) {
+            return;
+        }
         self.editor.note_key_for_completion();
         self.editor.note_key_for_hover();
         let mode = self.editor.mode();
@@ -1484,6 +1667,12 @@ impl App {
             self.editor.document.commit();
         }
         self.follow_keymap_option();
+        if let Some(query) = self.editor.take_keybindings_request() {
+            let rows = self.binding_rows();
+            let query = (!query.is_empty()).then_some(query.as_str());
+            self.editor.keybindings_show(rows, query.or(Some("")));
+        }
+        self.apply_key_edits();
         if let Some(error) = self.editor.registers.take_clipboard_error() {
             self.editor.set_message(Message::error(error));
         }

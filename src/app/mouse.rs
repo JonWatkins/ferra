@@ -287,7 +287,43 @@ impl App {
                 | Mode::Sidebar
                 | Mode::Terminal
                 | Mode::Settings
+                | Mode::Keybindings
         )
+    }
+
+    /// A click in the keybinding editor: the search box, or a row (the
+    /// selected one again: press new keys for it).
+    fn click_in_keybindings(&mut self, at: Position) -> bool {
+        let Some(map) = self.screen_map.keybindings.clone() else {
+            return false;
+        };
+        if !map.area.contains(at)
+            || !matches!(
+                self.editor.mode(),
+                Mode::Keybindings | Mode::Sidebar | Mode::Terminal | Mode::Normal
+            )
+        {
+            return false;
+        }
+        self.input.reset();
+        self.editor.set_mode(Mode::Keybindings);
+        if self.editor.keybindings_recording() {
+            return true;
+        }
+        if map.search.contains(at) {
+            self.editor.keybindings_search();
+        } else if map.list.contains(at) {
+            let index = map.first + (at.y - map.list.y) as usize;
+            let again = self
+                .editor
+                .keybindings()
+                .is_some_and(|v| v.selected == index);
+            self.editor.keybindings_select(index);
+            if again {
+                self.execute("keybindings_change", Invocation::default());
+            }
+        }
+        true
     }
 
     /// A click in the settings editor: a category shows its settings, a
@@ -345,7 +381,11 @@ impl App {
         if self.editor.mode() != Mode::Popup && self.editor.popup().is_some() {
             self.editor.close_popup();
         }
-        if self.click_in_settings(at) || self.click_in_box(at) || !self.clicks_allowed() {
+        if self.click_in_settings(at)
+            || self.click_in_keybindings(at)
+            || self.click_in_box(at)
+            || !self.clicks_allowed()
+        {
             return;
         }
         self.input.reset();
@@ -668,6 +708,15 @@ impl App {
             .is_some_and(|s| s.list.contains(at))
         {
             self.editor.settings_move(sign);
+            return;
+        }
+        if self
+            .screen_map
+            .keybindings
+            .as_ref()
+            .is_some_and(|k| k.list.contains(at))
+        {
+            self.editor.keybindings_move(sign * WHEEL_LINES as isize);
             return;
         }
         match self.editor.mode() {

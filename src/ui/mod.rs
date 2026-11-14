@@ -24,6 +24,7 @@ pub mod git_gui;
 mod hover;
 pub mod icons;
 mod input_box;
+pub mod keybindings;
 mod menu_bar;
 mod picker;
 mod popup;
@@ -97,6 +98,8 @@ pub struct ScreenMap {
     pub git: Option<git_gui::GitGuiMap>,
     /// The settings editor's parts.
     pub settings: Option<settings::SettingsMap>,
+    /// The keybinding editor's.
+    pub keybindings: Option<keybindings::KeybindingsMap>,
 }
 
 /// A box with a list: its area, the list's rows, and the index of the item
@@ -412,6 +415,12 @@ pub fn draw(
         map.settings = Some(settings::SettingsWidget::map(editor, main));
         settings_cursor = settings::SettingsWidget::cursor_position(editor, main);
     }
+    // So does the keybinding editor.
+    if editor.keybindings().is_some() {
+        frame.render_widget(keybindings::KeybindingsWidget::new(editor, theme), main);
+        map.keybindings = Some(keybindings::KeybindingsWidget::map(editor, main));
+        settings_cursor = keybindings::KeybindingsWidget::cursor_position(editor, main);
+    }
 
     // The find box floats at the top right of the active window.
     let mut find_cursor = None;
@@ -546,7 +555,9 @@ pub fn draw(
         (Mode::Popup, _) => None,
         (Mode::Input, _) => input_cursor,
         (Mode::Git, _) => None,
-        (Mode::Settings, _) => settings_cursor.map(|(x, y)| ratatui::layout::Position::new(x, y)),
+        (Mode::Settings | Mode::Keybindings, _) => {
+            settings_cursor.map(|(x, y)| ratatui::layout::Position::new(x, y))
+        }
         _ => window_cursor,
     };
     if let Some(position) = cursor {

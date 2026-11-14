@@ -124,6 +124,7 @@ impl Editor {
             view.selected = 0;
         }
         view.focus = SettingsFocus::List;
+        self.keybindings = None;
         self.settings = Some(view);
         self.set_mode(Mode::Settings);
     }

@@ -401,7 +401,7 @@ impl CursorShapes {
             Mode::Input => self.input,
             Mode::Git => self.git,
             // Its fields take text.
-            Mode::Settings => self.input,
+            Mode::Settings | Mode::Keybindings => self.input,
         }
     }
 }

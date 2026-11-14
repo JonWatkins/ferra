@@ -116,6 +116,7 @@ inherit = { visual = "insert" }
 "<C-S-o>" = "symbol_picker"
 "<C-t>" = "project_symbol_picker"
 "<C-k><C-i>" = "hover"
+"<C-k><C-s>" = "keybindings"
 
 [keys.visual]
 # A selection has typing's keys too (inherit, above); typing replaces it.

@@ -10,6 +10,7 @@ mod document;
 mod files;
 mod increment;
 mod jumps;
+pub mod keybindings;
 mod marks;
 mod message;
 mod mode;
@@ -242,6 +243,11 @@ pub struct Editor {
     git_gui: Option<git_gui::GitGui>,
     /// The settings editor, while it's open.
     settings: Option<settings::SettingsView>,
+    /// The keybinding editor, while it's open; a request to open it (for
+    /// the app, which has the keys); and changes to the keys it asked for.
+    keybindings: Option<keybindings::KeybindingsView>,
+    keybindings_wanted: Option<String>,
+    key_edits: Vec<keybindings::KeyEdit>,
     /// The user's `config.toml`, where the settings editor saves.
     config_file: Option<std::path::PathBuf>,
     /// The uses of the symbol under the cursor (a language server's).
@@ -537,6 +543,8 @@ impl Editor {
         // The settings editor, open, is what's in the windows' place.
         let mode = if mode == Mode::Normal && self.settings.is_some() {
             Mode::Settings
+        } else if mode == Mode::Normal && self.keybindings.is_some() {
+            Mode::Keybindings
         } else {
             mode
         };
@@ -703,7 +711,7 @@ impl Editor {
             }
             Mode::Find => self.find_edit(|field| field.push(c)),
             Mode::Input => self.input_box_edit(|field| field.push(c)),
-            Mode::Settings => {}
+            Mode::Settings | Mode::Keybindings => {}
             Mode::Normal
             | Mode::OperatorPending
             | Mode::Visual

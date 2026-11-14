@@ -615,8 +615,9 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 
 # The settings editor (:settings, the activity bar's gear), while it has
 # focus. In the search box or a value being typed, typing edits it: <CR>
-# takes it, <Esc> leaves it.
+# takes it, <Esc> leaves it. K opens the keybinding editor.
 [keys.settings]
+"K" = "keybindings"
 "q" = "settings_close"
 "<Esc>" = "settings_close"
 "j" = "settings_down"
@@ -639,6 +640,35 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "/" = "settings_search"
 "e" = "settings_edit_toml"
 ":" = "command_mode"
+
+# The keybinding editor (:keybindings), while it has focus. In the search
+# box, typing edits it; while keys are being recorded, every key is taken
+# as one (<CR> keeps them, <Esc> stops).
+[keys.keybindings]
+"q" = "keybindings_close"
+"<Esc>" = "keybindings_close"
+"j" = "keybindings_down"
+"k" = "keybindings_up"
+"<Down>" = "keybindings_down"
+"<Up>" = "keybindings_up"
+"<C-d>" = "keybindings_page_down"
+"<C-u>" = "keybindings_page_up"
+"<PageDown>" = "keybindings_page_down"
+"<PageUp>" = "keybindings_page_up"
+"gg" = "keybindings_first"
+"G" = "keybindings_last"
+"/" = "keybindings_search"
+"r" = "keybindings_search_keys"
+"<CR>" = "keybindings_change"
+"<Space>" = "keybindings_change"
+"a" = "keybindings_add"
+"d" = "keybindings_remove"
+"<Del>" = "keybindings_remove"
+"u" = "keybindings_reset"
+"e" = "keybindings_edit_toml"
+":" = "command_mode"
+"<C-p>" = "file_picker"
+"<F1>" = "command_palette"
 
 # A plugin's input box (ctx:input), while it has focus. Typing edits it.
 [keys.input]

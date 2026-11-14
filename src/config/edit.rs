@@ -1,6 +1,6 @@
-//! Changing one option in the user's `config.toml` in place, as the
-//! settings editor does: the rest of the file (comments, order, spacing)
-//! is left as it was.
+//! Changing one option or key binding in the user's `config.toml` in
+//! place, as the settings and keybinding editors do: the rest of the file
+//! (comments, order, spacing) is left as it was.
 
 use std::path::Path;
 
@@ -11,13 +11,40 @@ use toml_edit::{DocumentMut, Item, Table};
 /// in the config file at `file` (made if it isn't there), or, with `None`,
 /// takes it out so the default applies.
 pub fn write_option(file: &Path, path: &str, value: Option<&Value>) -> Result<(), String> {
+    let names: Vec<&str> = std::iter::once("editor").chain(path.split('.')).collect();
+    write_at(file, &names, value)
+}
+
+/// Binds `keys` (notation) in `[keys.<mode>]` to `command` in the config
+/// file at `file` ("" unbinds a default), or with `None` takes the line out.
+pub fn write_key(file: &Path, mode: &str, keys: &str, command: Option<&str>) -> Result<(), String> {
+    let value = command.map(|c| Value::String(c.to_string()));
+    write_at(file, &["keys", mode, keys], value.as_ref())
+}
+
+/// The `[keys]` table of the config file at `file` (empty without one).
+pub fn read_keys(file: &Path) -> Result<toml::Table, String> {
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(toml::Table::new()),
+        Err(e) => return Err(format!("{}: {e}", file.display())),
+    };
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e: toml::de::Error| format!("{}: {}", file.display(), e.message()))?;
+    Ok(match table.get("keys") {
+        Some(Value::Table(keys)) => keys.clone(),
+        _ => toml::Table::new(),
+    })
+}
+
+fn write_at(file: &Path, names: &[&str], value: Option<&Value>) -> Result<(), String> {
     let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("{}: {e}", file.display())),
     };
-    let updated =
-        with_option(&text, path, value).map_err(|e| format!("{}: {e}", file.display()))?;
+    let updated = with_path(&text, names, value).map_err(|e| format!("{}: {e}", file.display()))?;
     if updated == text {
         return Ok(());
     }
@@ -32,11 +59,18 @@ pub fn write_option(file: &Path, path: &str, value: Option<&Value>) -> Result<()
 /// `text` (a config file) with `[editor]` option `path` set to `value`, or
 /// taken out with `None`.
 pub fn with_option(text: &str, path: &str, value: Option<&Value>) -> Result<String, String> {
+    let names: Vec<&str> = std::iter::once("editor").chain(path.split('.')).collect();
+    with_path(text, &names, value)
+}
+
+/// `text` with the value at `names` (tables, then the key) set, or taken
+/// out with `None`.
+fn with_path(text: &str, names: &[&str], value: Option<&Value>) -> Result<String, String> {
     let mut doc: DocumentMut = text
         .parse()
         .map_err(|e: toml_edit::TomlError| format!("can't change it: {}", e.message()))?;
-    let mut names: Vec<&str> = std::iter::once("editor").chain(path.split('.')).collect();
-    let leaf = names.pop().expect("a name");
+    let (leaf, names) = names.split_last().expect("a name");
+    let leaf = *leaf;
     match value {
         Some(value) => {
             let mut table = doc.as_table_mut();
@@ -68,7 +102,7 @@ pub fn with_option(text: &str, path: &str, value: Option<&Value>) -> Result<Stri
         None => {
             let mut table = doc.as_table_mut();
             let mut chain: Vec<String> = Vec::new();
-            for name in &names {
+            for name in names {
                 match table.get_mut(name) {
                     Some(Item::Table(t)) => table = t,
                     _ => return Ok(text.to_string()),
@@ -193,6 +227,24 @@ mod tests {
         assert_eq!(
             set(text, "search.case", Value::String("insensitive".into())),
             "[editor]\nsearch.case = \"insensitive\"\n"
+        );
+    }
+
+    #[test]
+    fn key_bindings() {
+        let text = "[keys.insert]\n\"<C-k>\" = \"write\"\n";
+        let set = |text: &str, keys: &str, command: Option<&str>| {
+            let value = command.map(|c| Value::String(c.into()));
+            with_path(text, &["keys", "insert", keys], value.as_ref()).unwrap()
+        };
+        assert_eq!(
+            set(text, "<C-s>", Some("")),
+            "[keys.insert]\n\"<C-k>\" = \"write\"\n\"<C-s>\" = \"\"\n"
+        );
+        assert_eq!(set(text, "<C-k>", None), "");
+        assert_eq!(
+            set("", "gg", Some("goto_file_start")),
+            "[keys.insert]\ngg = \"goto_file_start\"\n"
         );
     }
 

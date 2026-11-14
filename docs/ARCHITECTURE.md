@@ -1841,9 +1841,14 @@ undo step (as does each new word). Features that showed when resting in
 normal mode (hover, blame, references, watching files) ask
 `Editor::resting` instead.
 
-Next: **a keybinding editor**, beside the settings editor: a searchable
-table of keys, commands and modes, finding a binding by pressing its
-key, recording a new one, and warning about conflicts.
+**The keybinding editor** (`editor/keybindings.rs`, `ui/keybindings.rs`):
+the app owns the keys, so it builds the rows (`App::binding_rows`: each
+binding's source from comparing the keymap, the config's keys and the
+user's `[keys]`) and makes the editor's `KeyEdit`s
+(`App::apply_key_edits`): the user's keys changed, written with
+`config::edit::write_key`, and the keymap built again with the plugins'
+keys on top. Keys pressed to record go straight to it from
+`App::handle_key`, bound or not.
 
 **Option on macOS, Alt elsewhere, with no configuration.** Key labels
 show ⌥F on macOS and Alt+F elsewhere. A Mac terminal sends Option+F as

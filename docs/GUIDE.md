@@ -1071,6 +1071,44 @@ setting put back to its default is taken out of it. The descriptions are
 the comments in [the defaults](../src/config/default.toml). Its keys are
 in `[keys.settings]`, its colours the `ui.settings.*` scopes.
 
+### The keybinding editor
+
+`:keybindings` (or File → Keyboard Shortcuts, `K` in the settings editor,
+`Ctrl+K Ctrl+S` with VS Code's keys) lists every command with its keys,
+the mode they're for and where they come from: the keymap, your
+`[keys]` ("user"), a plugin, or one of the keymap's you took away
+("removed"). Commands without keys are listed too, so anything can be
+bound.
+
+```text
+ Keyboard Shortcuts                                     5 of 683
+ ⌕  write
+────────────────────────────────────────────────────────────────
+ Command                         Keys          Mode       Source
+ write                           ⌃S            insert     keymap
+ write                           ⌃K            visual     user
+ write_all                       —
+ Save the file, or write to [path] (! to overwrite)
+ ↵ change  a add  d remove  u reset  / search  r search by keys  q close
+```
+
+`/` searches commands and their descriptions (`:keybindings save` opens
+it searching); `r` searches by pressing keys instead, listing every
+binding they start. `<CR>` (or a click on the selected row) changes the
+binding: press the new keys, then `<CR>` to keep them or `<Esc>` not to.
+While you press them, any other binding in that mode they'd clash with
+(the same keys, or a sequence one starts) is shown, and keeping them
+says what they were taken from. `a` adds keys besides the command's
+others, `d` takes a binding away, `u` puts back the keymap's, and `e`
+opens `config.toml`. A command without keys is bound in the mode you
+rest in (normal with Vim's keys, insert with VS Code's).
+
+Changes take effect at once and are saved to `config.toml`'s
+`[keys.<mode>]`, keeping the file's comments: a new binding is
+`"<C-j>" = "join_lines"`, and one of the keymap's taken away is
+`J = ""`. A plugin's keys are changed in the plugin. Its own keys are in
+`[keys.keybindings]`.
+
 ### The config file
 
 Create `~/.config/ferra/config.toml` (or under `$XDG_CONFIG_HOME`).

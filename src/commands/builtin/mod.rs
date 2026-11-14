@@ -14,6 +14,7 @@ mod git;
 mod history;
 mod input_box;
 mod jumps;
+mod keybindings;
 mod lsp;
 mod macros;
 mod marks;
@@ -68,6 +69,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     git::register(registry);
     plugins::register(registry);
     menu::register(registry);
+    keybindings::register(registry);
     modeless::register(registry);
 }
 

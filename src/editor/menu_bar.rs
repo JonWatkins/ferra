@@ -37,6 +37,7 @@ pub const MENUS: &[Menu] = &[
             None,
             Some(("Close Buffer", "buffer_delete")),
             Some(("Settings", "settings")),
+            Some(("Keyboard Shortcuts", "keybindings")),
             Some(("Edit config.toml", "open_config")),
             None,
             Some(("Quit", "quit_all")),
@@ -127,6 +128,7 @@ pub const MENUS: &[Menu] = &[
             Some(("Installed Plugins", "plugin_list")),
             None,
             Some(("Settings", "settings")),
+            Some(("Keyboard Shortcuts", "keybindings")),
         ],
     },
 ];

@@ -153,6 +153,26 @@ impl Keymap {
         self.modes.get(&mode).is_some_and(|node| walk(node, key))
     }
 
+    /// Every binding in `mode`: its keys and command, sorted by keys.
+    pub fn bindings(&self, mode: Mode) -> Vec<(Vec<KeyPress>, String)> {
+        fn walk(node: &Node, path: &mut Vec<KeyPress>, out: &mut Vec<(Vec<KeyPress>, String)>) {
+            if let Some(command) = &node.command {
+                out.push((path.clone(), command.clone()));
+            }
+            for (key, child) in &node.children {
+                path.push(*key);
+                walk(child, path, out);
+                path.pop();
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(node) = self.modes.get(&mode) {
+            walk(node, &mut Vec::new(), &mut out);
+        }
+        out.sort_by_key(|(keys, _)| keys.iter().map(ToString::to_string).collect::<String>());
+        out
+    }
+
     /// Every `(mode, command)` pair that is bound, for validation.
     pub fn bound_commands(&self) -> Vec<(Mode, &str)> {
         fn walk<'a>(node: &'a Node, mode: Mode, out: &mut Vec<(Mode, &'a str)>) {

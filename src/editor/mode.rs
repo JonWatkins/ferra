@@ -33,10 +33,12 @@ pub enum Mode {
     Git,
     /// The settings editor (`:settings`) has focus.
     Settings,
+    /// The keybinding editor (`:keybindings`) has focus.
+    Keybindings,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 13] = [
+    pub const ALL: [Mode; 14] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
@@ -50,6 +52,7 @@ impl Mode {
         Mode::Input,
         Mode::Git,
         Mode::Settings,
+        Mode::Keybindings,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -68,6 +71,7 @@ impl Mode {
             Mode::Input => "input",
             Mode::Git => "git",
             Mode::Settings => "settings",
+            Mode::Keybindings => "keybindings",
         }
     }
 
