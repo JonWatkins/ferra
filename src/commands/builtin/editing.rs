@@ -136,6 +136,8 @@ pub fn register(r: &mut CommandRegistry) {
             for _ in 0..cx.count() {
                 if cx.editor.replacing() {
                     cx.editor.backspace_replacing();
+                } else if cx.editor.delete_empty_pair() {
+                    cx.editor.note_typed_backspace();
                 } else {
                     cx.editor.document.delete_backward();
                     cx.editor.note_typed_backspace();

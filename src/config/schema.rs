@@ -56,8 +56,8 @@ pub const CATEGORIES: &[&str] = &[
 fn category_of(path: &str) -> &'static str {
     let table = path.split('.').next().unwrap_or(path);
     match table {
-        "tab-width" | "expand-tab" | "detect-indent" | "auto-indent" | "text-width"
-        | "auto-wrap" | "format-on-save" => "Editing",
+        "tab-width" | "expand-tab" | "detect-indent" | "auto-indent" | "auto-pairs"
+        | "text-width" | "auto-wrap" | "format-on-save" => "Editing",
         "line-numbers"
         | "wrap"
         | "wrap-indent"

@@ -266,6 +266,9 @@ impl Editor {
 
     /// A character typed over a selection: it replaces it.
     pub(super) fn type_over_selection(&mut self, c: char) {
+        if self.wrap_selection(c) {
+            return;
+        }
         self.delete_selection();
         self.set_mode(Mode::Insert);
         self.insert_text_char(c);
@@ -274,7 +277,7 @@ impl Editor {
     /// `Backspace` and `Delete` (`forward`): the selection, or the
     /// character before or after the cursor (joining lines at their ends).
     pub fn delete_char_or_selection(&mut self, forward: bool) {
-        if self.delete_selection() {
+        if self.delete_selection() || (!forward && self.delete_empty_pair()) {
             return;
         }
         let at = self.document.cursor();

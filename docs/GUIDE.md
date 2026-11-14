@@ -168,6 +168,14 @@ That only goes one way: paste with your terminal (Cmd/Ctrl+Shift+V).
 terminal (Cmd/Ctrl+V) inserts the text exactly as copied, with no
 auto-indent, as one undo step. `.` and macros repeat pastes too.
 
+**Brackets and quotes:** typing `(`, `[`, `{`, `"`, `'` or `` ` `` puts
+in its closer after the cursor (before a space, the line's end or a
+closing bracket; a quote not straight after a letter, so `don't` and
+Rust's `&'a` stay as typed). Typing the closer then steps over it, and
+Backspace between an empty pair takes both. With VS Code's keys, typing
+one over a selection wraps it (and keeps it selected). `auto-pairs =
+false` turns it off.
+
 **Indentation:** in Rust, JSON, TOML, JavaScript, TypeScript, Go, C, C++,
 Bash, HTML and CSS, indentation follows the syntax tree. Enter and `o`
 start a line at the right depth (Enter between `{}` opens an indented line

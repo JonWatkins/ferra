@@ -17,6 +17,8 @@ pub struct EditorOptions {
     pub detect_indent: bool,
     /// New lines start with the indentation of the line they came from.
     pub auto_indent: bool,
+    /// Typing an opening bracket or quote puts in its closer.
+    pub auto_pairs: bool,
     pub line_numbers: LineNumbers,
     /// The width `gq` reflows text to (0: 79, as in Vim).
     pub text_width: usize,
@@ -161,6 +163,7 @@ impl Default for EditorOptions {
         #[cfg(test)]
         {
             options.keymap = KeymapPreset::Vim;
+            options.auto_pairs = false;
         }
         options
     }

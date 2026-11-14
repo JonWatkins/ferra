@@ -17,6 +17,7 @@ mod message;
 mod mode;
 pub mod modeless;
 mod operator;
+mod pairs;
 pub mod picker;
 pub mod registers;
 mod replace;
@@ -698,7 +699,7 @@ impl Editor {
                 }
                 if self.replacing.is_some() {
                     self.type_replacing(c);
-                } else {
+                } else if !self.auto_pair(c) {
                     self.type_with_indent(c);
                     self.auto_wrap(c);
                 }

@@ -22,6 +22,12 @@ detect-indent = true
 # bracket). Typing a closing bracket first on a line re-indents it, as do
 # keywords like Bash's fi and Python's else:.
 auto-indent = true
+# Typing an opening bracket or quote puts in its closer after the cursor
+# (before a space, the line's end or a closing bracket; a quote not after a
+# letter), typing the closer then steps over it, and Backspace between an
+# empty pair takes both. With VS Code's keys, typing one over a selection
+# wraps it.
+auto-pairs = true
 # "absolute", "relative" (hybrid: current line shows its absolute number) or "none".
 line-numbers = "relative"
 # The width gq and gw reflow text to (per buffer with :setlocal tw=72).
