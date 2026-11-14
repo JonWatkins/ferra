@@ -219,6 +219,12 @@ impl Editor {
         }
     }
 
+    /// Closes the settings and keybinding editors (a tab clicked).
+    pub fn close_views(&mut self) {
+        self.settings_close();
+        self.keybindings_close();
+    }
+
     /// `q`, `<Esc>`: back to the windows.
     pub fn keybindings_close(&mut self) {
         if self.keybindings.take().is_some() && self.mode() == Mode::Keybindings {

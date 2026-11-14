@@ -16,7 +16,7 @@ fn with_classic_chrome(toml: &str) -> String {
         .or_insert_with(|| toml::Value::Table(toml::Table::new()))
         .as_table_mut()
         .expect("[editor] is a table");
-    for key in ["activity-bar", "menu-bar"] {
+    for key in ["activity-bar", "menu-bar", "tab-bar"] {
         editor.entry(key).or_insert(toml::Value::Boolean(false));
     }
     // The classic status line: one per window, worded tersely, laid out as

@@ -92,6 +92,11 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) => self.mouse_down(at),
             MouseEventKind::Down(MouseButton::Right) => self.right_click(at),
+            MouseEventKind::Down(MouseButton::Middle) => {
+                if let Some(id) = self.tab_at(at).map(|(id, _)| id) {
+                    self.close_tab(id);
+                }
+            }
             MouseEventKind::Drag(MouseButton::Left) => self.mouse_drag(at),
             MouseEventKind::Up(_) => self.dragging = None,
             MouseEventKind::ScrollDown => self.mouse_wheel(at, true),
@@ -378,6 +383,18 @@ impl App {
             }
             return;
         }
+        // The tab bar: a tab shows its buffer, its × closes it.
+        if let Some((id, on_close)) = self.tab_at(at) {
+            if self.editor.popup().is_some() {
+                self.editor.close_popup();
+            }
+            if on_close {
+                self.close_tab(id);
+            } else {
+                self.show_tab(id);
+            }
+            return;
+        }
         // A hover-like popup goes with any click.
         if self.editor.mode() != Mode::Popup && self.editor.popup().is_some() {
             self.editor.close_popup();
@@ -615,6 +632,35 @@ impl App {
             Mode::Command | Mode::OperatorPending => true,
             _ => false,
         }
+    }
+
+    /// The tab under `at`, and whether it's on its `×`.
+    fn tab_at(&self, at: Position) -> Option<(crate::editor::DocumentId, bool)> {
+        let map = self.screen_map.tab_bar.as_ref()?;
+        if !map.row.contains(at) {
+            return None;
+        }
+        map.tabs
+            .iter()
+            .find(|(from, to, _, _)| (*from..*to).contains(&at.x))
+            .map(|&(_, _, close, id)| (id, at.x == close))
+    }
+
+    /// A tab clicked: its buffer in the active window, there to type in.
+    fn show_tab(&mut self, id: crate::editor::DocumentId) {
+        self.input.reset();
+        self.editor.close_views();
+        self.editor.switch_to(id);
+        if !matches!(self.editor.mode(), Mode::Normal | Mode::Insert) {
+            self.editor.set_mode(Mode::Normal);
+        }
+    }
+
+    /// A tab's `×` (or a middle click): closes its buffer (asking first,
+    /// with VS Code's keys, if it has unsaved changes).
+    fn close_tab(&mut self, id: crate::editor::DocumentId) {
+        self.show_tab(id);
+        self.execute("buffer_delete", Invocation::default());
     }
 
     /// A right-click: a menu of what can be done there, at the pointer, as

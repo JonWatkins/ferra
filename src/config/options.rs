@@ -54,6 +54,8 @@ pub struct EditorOptions {
     pub menu_bar: bool,
     /// The column of icons down the left that shows the sidebar's views.
     pub activity_bar: bool,
+    /// A tab for each open buffer, along the top of the windows.
+    pub tab_bar: bool,
     /// What icons are drawn with.
     pub icons: Icons,
     /// Vim's keys and modes, or VS Code's (no modes).

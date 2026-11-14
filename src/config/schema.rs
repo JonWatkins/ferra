@@ -65,7 +65,7 @@ fn category_of(path: &str) -> &'static str {
         | "cursorline"
         | "scroll-off"
         | "syntax-highlighting" => "Display",
-        "menu-bar" | "activity-bar" | "icons" | "sidebar-width" | "statusline"
+        "menu-bar" | "activity-bar" | "tab-bar" | "icons" | "sidebar-width" | "statusline"
         | "statusline-style" | "statusline-layout" => "Workbench",
         "search" => "Search",
         "file-picker" | "fallback-encoding" | "watch-files" => "Files",

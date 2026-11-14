@@ -235,6 +235,7 @@ impl Editor {
             self.close_popup();
             return Ok(());
         }
+        // Under the menu bar's row.
         self.show_menu(menu.items, x, 1);
         self.menu.open = Some(index);
         Ok(())

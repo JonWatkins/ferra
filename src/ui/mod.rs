@@ -34,6 +34,7 @@ mod sidebar;
 mod signature;
 mod splash;
 mod statusline;
+pub mod tab_bar;
 mod terminal;
 mod text;
 mod windows;
@@ -100,6 +101,8 @@ pub struct ScreenMap {
     pub settings: Option<settings::SettingsMap>,
     /// The keybinding editor's.
     pub keybindings: Option<keybindings::KeybindingsMap>,
+    /// The tab bar's tabs.
+    pub tab_bar: Option<tab_bar::TabBarMap>,
 }
 
 /// A box with a list: its area, the list's rows, and the index of the item
@@ -331,6 +334,16 @@ pub fn draw(
             }
         }
         None => (main, status),
+    };
+
+    // The tab bar takes the top row of the windows' area.
+    let main = if editor.options.tab_bar && main.height > 4 {
+        let row = Rect::new(main.x, main.y, main.width, 1);
+        frame.render_widget(tab_bar::TabBar::new(editor, theme), row);
+        map.tab_bar = Some(tab_bar::TabBar::map(editor, row));
+        Rect::new(main.x, main.y + 1, main.width, main.height - 1)
+    } else {
+        main
     };
 
     let drawn = match editor.options.statusline {

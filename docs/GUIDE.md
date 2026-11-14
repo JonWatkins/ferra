@@ -451,6 +451,20 @@ set to send ⌥ as Alt: ferra takes the characters ⌥ types (`ƒ` for ⌥F,
 The letters avoid ⌥E, ⌥U, ⌥I, ⌥N and ⌥\`, which the Mac keeps for
 accents. `menu-bar = false` hides the bar (F10 still opens the menus).
 
+### The tab bar
+
+Along the top of the windows, a tab for each open buffer, as in VS Code:
+the active window's buffer is highlighted, `●` marks unsaved changes.
+Click a tab to show its buffer; click its `×` (or middle-click it) to
+close it (with VS Code's keys, unsaved changes ask first). Two files with
+the same name show their folders; with more tabs than fit, the bar keeps
+the active one in sight. `tab-bar = false` turns it off; the colours are
+the `ui.tabbar.*` scopes.
+
+```text
+ ▎ main.rs × │  lib.rs ● │  Cargo.toml × │
+```
+
 ### The activity bar
 
 Down the left edge, always there, is the activity bar, as in VS Code: an
