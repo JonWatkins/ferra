@@ -237,3 +237,57 @@ fn menus_show_vscode_keys() {
     };
     assert!(shown.contains(save), "{shown}");
 }
+
+#[test]
+fn quitting_with_unsaved_changes_asks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    std::fs::write(&path, "a\n").unwrap();
+    let (mut app, _) = vscode("");
+    app.open(&path);
+    keys(&mut app, "x<C-q>");
+    assert!(!app.editor().should_quit());
+    assert_eq!(app.editor().mode(), Mode::Popup);
+    let shown = render(&mut app, 80, 20).rows.join("\n");
+    assert!(shown.contains("Save the changes to"), "{shown}");
+    // Esc: back to typing, nothing lost.
+    keys(&mut app, "<Esc>");
+    assert_eq!(app.editor().mode(), Mode::Insert);
+    assert!(!app.editor().should_quit());
+    // s: saved, then quit.
+    keys(&mut app, "<C-q>s");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "xa\n");
+    assert!(app.editor().should_quit());
+
+    // d: quit without saving.
+    let (mut app, _) = vscode("");
+    app.open(&path);
+    keys(&mut app, "y<C-q>d");
+    assert!(app.editor().should_quit());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "xa\n");
+
+    // Nothing unsaved: it just quits.
+    let (mut app, _) = vscode("");
+    keys(&mut app, "<C-q>");
+    assert!(app.editor().should_quit());
+}
+
+#[test]
+fn closing_a_buffer_with_unsaved_changes_asks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    std::fs::write(&path, "a\n").unwrap();
+    let (mut app, _) = vscode("");
+    app.open(&path);
+    keys(&mut app, "x<C-w>");
+    assert_eq!(app.editor().mode(), Mode::Popup);
+    keys(&mut app, "d");
+    assert_ne!(app.editor().document.path(), Some(path.as_path()), "closed");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\n", "not saved");
+    assert_eq!(app.editor().mode(), Mode::Insert);
+
+    app.open(&path);
+    keys(&mut app, "z<C-w>s");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "za\n", "saved");
+    assert_ne!(app.editor().document.path(), Some(path.as_path()), "closed");
+}

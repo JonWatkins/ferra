@@ -504,6 +504,67 @@ impl Editor {
         Ok(())
     }
 
+    /// Quitting or closing the buffer with unsaved changes: asks what to do
+    /// with them, as VS Code does (`s` saves, `d` doesn't, `Esc` cancels).
+    /// `closing` is the active buffer only; otherwise every buffer.
+    pub fn ask_about_unsaved(&mut self, closing: bool) {
+        use super::popup::{Popup, PopupSpan};
+        let span = |text: &str, style: Option<&str>| PopupSpan {
+            text: text.to_string(),
+            style: style.map(str::to_string),
+        };
+        let names: Vec<String> = if closing {
+            vec![self.document.name().into_owned()]
+        } else {
+            self.buffers()
+                .into_iter()
+                .filter(|b| b.modified)
+                .map(|b| b.name)
+                .collect()
+        };
+        let question = match names.as_slice() {
+            [one] => format!("Save the changes to {one}?"),
+            many => format!("Save the changes to {} files?", many.len()),
+        };
+        let mut lines = vec![vec![span(&question, None)]];
+        if names.len() > 1 {
+            lines.push(vec![]);
+            lines.extend(names.iter().map(|n| vec![span(&format!("  {n}"), None)]));
+        }
+        lines.push(vec![]);
+        lines.push(vec![span(
+            "Your changes will be lost if you don't save them.",
+            None,
+        )]);
+        lines.push(vec![]);
+        lines.push(vec![
+            span("s", Some("ui.popup.title")),
+            span(" save   ", None),
+            span("d", Some("ui.popup.title")),
+            span(" don't save   ", None),
+            span("Esc", Some("ui.popup.title")),
+            span(" cancel", None),
+        ]);
+        let (save, discard) = if closing {
+            ("close_saving", "close_discarding")
+        } else {
+            ("quit_saving", "quit_discarding")
+        };
+        self.open_popup(Popup {
+            name: "unsaved".into(),
+            title: if closing { "Close" } else { "Quit" }.into(),
+            lines,
+            keys: vec![
+                ("s".into(), save.into()),
+                ("<CR>".into(), save.into()),
+                ("d".into(), discard.into()),
+                ("n".into(), discard.into()),
+            ],
+            focus: true,
+            ..Popup::default()
+        });
+    }
+
     /// `Esc`: drops the selection, completion, a hover, search highlights.
     pub fn modeless_escape(&mut self) {
         self.clear_selection();

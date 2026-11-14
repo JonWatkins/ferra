@@ -216,6 +216,45 @@ pub fn register(r: &mut CommandRegistry) {
             Ok(())
         },
     );
+    // The answers when quitting or closing with unsaved changes.
+    r.register(
+        "quit_saving",
+        "Save every buffer with unsaved changes, then quit (asked when quitting)",
+        |cx| {
+            cx.editor.close_popup();
+            then(cx, "write_all_quit")
+        },
+    );
+    r.register(
+        "quit_discarding",
+        "Quit, losing unsaved changes (asked when quitting)",
+        |cx| {
+            cx.editor.close_popup();
+            cx.editor.quit();
+            Ok(())
+        },
+    );
+    r.register(
+        "close_saving",
+        "Save the buffer, then close it (asked when closing)",
+        |cx| {
+            cx.editor.close_popup();
+            then(cx, "write")?;
+            if !cx.editor.document.is_modified() {
+                cx.editor.close_buffer();
+            }
+            Ok(())
+        },
+    );
+    r.register(
+        "close_discarding",
+        "Close the buffer, losing its unsaved changes (asked when closing)",
+        |cx| {
+            cx.editor.close_popup();
+            cx.editor.close_buffer();
+            Ok(())
+        },
+    );
     r.register(
         "escape",
         "Drop the selection, completion and search highlights (Esc, with VS Code's keys)",

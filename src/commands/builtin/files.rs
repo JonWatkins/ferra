@@ -141,6 +141,11 @@ fn quit(cx: &mut Context) -> CommandResult {
 
 /// Quits unless a buffer has unsaved changes (or `!` was given).
 fn quit_all(cx: &mut Context) -> CommandResult {
+    // With VS Code's keys, it asks what to do with them, as VS Code does.
+    if !cx.bang && cx.editor.modeless() && cx.editor.first_modified_buffer().is_some() {
+        cx.editor.ask_about_unsaved(false);
+        return Ok(());
+    }
     if !cx.bang
         && let Some(doc) = cx.editor.first_modified_buffer()
     {

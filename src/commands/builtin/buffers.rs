@@ -66,6 +66,11 @@ pub fn register(r: &mut CommandRegistry) {
         "Close the current buffer (! to discard unsaved changes)",
         |cx| {
             if cx.editor.document.is_modified() && !cx.bang {
+                // With VS Code's keys, it asks, as VS Code does.
+                if cx.editor.modeless() {
+                    cx.editor.ask_about_unsaved(true);
+                    return Ok(());
+                }
                 return Err(UNSAVED_CHANGES.into());
             }
             cx.editor.close_buffer();

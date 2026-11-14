@@ -54,6 +54,11 @@ a paste) ends an undo step.
 | `Ctrl+B`, `Ctrl+Shift+E`, ``Ctrl+` ``, `Ctrl+\` | The sidebar / its focus / the terminal panel / split the window |
 | `Ctrl+Space`, `F2`, `F12`, `Shift+F12`, `Ctrl+.`, `Shift+Alt+F`, `F8` `Shift+F8`, `Ctrl+Shift+O`, `Ctrl+T`, `Ctrl+K Ctrl+I` | The language server: complete / rename / definition / references / code actions / format / next and previous problem / symbols in the file / in the project / hover |
 
+Quitting (`Ctrl+Q`, File → Quit) or closing a buffer (`Ctrl+W`) with
+unsaved changes asks what to do with them, as VS Code does: `s` saves
+them first, `d` doesn't, `Esc` cancels. (With Vim's keys, `:q` and `:bd`
+refuse instead, and `:qa!`, `:wqa` and `:bd!` say which.)
+
 These are VS Code's Linux and Windows keys: in a terminal on a Mac, `⌘`
 belongs to the terminal (`⌘C` and `⌘V` still copy and paste through it).
 `Ctrl+Shift` and a letter needs a terminal with the kitty keyboard
