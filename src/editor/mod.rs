@@ -25,6 +25,7 @@ mod block;
 mod comment;
 mod confirm;
 pub mod conflicts;
+mod crash_report;
 pub mod diagnostics;
 pub mod explorer;
 pub mod find;
@@ -689,6 +690,9 @@ impl Editor {
     }
 
     pub fn set_message(&mut self, message: Message) {
+        if message.severity == message::Severity::Error {
+            crate::log::debug("WARN", &message.text);
+        }
         self.message = Some(message);
     }
 

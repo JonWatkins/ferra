@@ -120,6 +120,11 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.open_config(),
     );
     r.register(
+        "log",
+        "Open ferra's log: crashes, with what led to them, and errors shown",
+        |cx| cx.editor.open_log(),
+    );
+    r.register(
         "sidebar_view",
         "Open the sidebar at a view (:sidebar_view files, or a plugin's)",
         |cx| {

@@ -211,3 +211,66 @@ fn tiny_terminals_with_splits_dont_panic() {
         render(&mut app, w, h);
     }
 }
+
+/// Splitting the starting (empty) buffer into a grid, then opening a file
+/// in each window: every window keeps its own file, and moving between
+/// them doesn't mix them up (or crash on a cursor from another file).
+#[test]
+fn files_opened_into_a_grid_of_the_starting_buffer_stay_apart() {
+    let dir = tempfile::tempdir().unwrap();
+    let names = ["one", "two", "three", "four"];
+    let paths: Vec<PathBuf> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let lines: String = (0..=i * 10).map(|n| format!("{name} {n}\n")).collect();
+            file(&dir, name, &lines)
+        })
+        .collect();
+    let mut app = plain_app();
+    // Two columns of two windows, all showing the starting buffer.
+    keys(&mut app, ":vs<CR><C-w>h:sp<CR><C-w>l:sp<CR>");
+    assert_eq!(app.editor().windows().count(), 4);
+    // A file in each, at its end, noting which window has which.
+    let mut shown = std::collections::HashMap::new();
+    for (i, path) in paths.iter().enumerate() {
+        keys(&mut app, &format!(":e {}<CR>G", path.display()));
+        shown.insert(app.editor().windows().active(), i);
+        keys(&mut app, "<C-w>w");
+    }
+    assert_eq!(shown.len(), 4, "a file in each window");
+    let editor = app.editor();
+    let ids: Vec<_> = editor.buffers().iter().map(|b| b.id).collect();
+    let mut unique = ids.clone();
+    unique.dedup();
+    assert_eq!(ids, unique, "every buffer has its own number: {ids:?}");
+
+    // Round the grid twice: each window shows its own file at its end.
+    for _ in 0..8 {
+        keys(&mut app, "<C-w>w");
+        render(&mut app, 60, 20);
+        let i = shown[&app.editor().windows().active()];
+        let doc = &app.editor().document;
+        assert!(
+            doc.path().is_some_and(|p| p.ends_with(names[i])),
+            "window {:?}: {:?}",
+            app.editor().windows().active(),
+            doc.path()
+        );
+        assert_eq!(cursor(&app).0, i * 10, "{}'s cursor", names[i]);
+    }
+}
+
+/// A window whose buffer shrank while it wasn't looking (edited in
+/// another window) draws without its old cursor running off the end.
+#[test]
+fn a_window_draws_after_its_buffer_shrinks_elsewhere() {
+    let mut app = plain_app();
+    keys(&mut app, "ione<CR>two<CR>three<CR>four<Esc>:vs<CR>");
+    // The new window deletes everything; the other's cursor was on line 4.
+    keys(&mut app, "ggdG");
+    render(&mut app, 40, 10);
+    keys(&mut app, "<C-w>w");
+    render(&mut app, 40, 10);
+    assert_eq!(cursor(&app), (0, 0));
+}

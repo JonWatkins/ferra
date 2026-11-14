@@ -2,6 +2,7 @@
 //! runs the event loop.
 
 mod background;
+pub mod crash;
 mod macros;
 mod mouse;
 mod normal;
@@ -30,6 +31,9 @@ use crate::ui::{self, Views};
 /// Upper bound on keys handled between redraws, so the screen still updates
 /// during a very long paste.
 const MAX_KEYS_PER_FRAME: usize = 256;
+
+/// Drawing panicking this many times running ends the editor.
+const MAX_DRAW_FAILURES: u32 = 3;
 
 /// How often the event loop checks for background results while a job is
 /// running (it blocks on input when nothing is).
@@ -591,9 +595,33 @@ impl App {
         // server's message, a background job's results): waking to check
         // for those doesn't redraw.
         let mut redraw = true;
+        // Panics are caught (see `crash`); drawing failing this many times
+        // running gives up.
+        crash::install();
+        let mut draw_failures = 0;
         while !self.should_quit() {
+            if let Some(report) = crash::take_thread_panic() {
+                self.editor
+                    .set_message(Message::error(format!("{report} (details in :log)")));
+                redraw = true;
+            }
             if redraw {
-                terminal.draw(|frame| self.draw(frame))?;
+                match crash::catching(|| terminal.draw(|frame| self.draw(frame))) {
+                    Ok(drawn) => {
+                        drawn?;
+                        draw_failures = 0;
+                    }
+                    Err(panic) => {
+                        draw_failures += 1;
+                        if draw_failures >= MAX_DRAW_FAILURES {
+                            return Err(self.give_up(&panic));
+                        }
+                        self.caught_panic("drawing", &panic);
+                        // The half-drawn frame mustn't be diffed against.
+                        terminal.clear()?;
+                        continue;
+                    }
+                }
                 // The shell's terminal takes the size its panel was drawn at.
                 self.editor.apply_terminal_size();
                 redraw = false;
@@ -651,11 +679,19 @@ impl App {
                 Some(wait) => event::poll(wait)?,
                 None => true,
             };
-            redraw |= self.handle_background();
-            redraw |= self.editor.pump_terminal();
-            redraw |= self.editor.pump_git_job();
-            redraw |= self.editor.pump_git_gui_diff();
-            redraw |= self.editor.git_blame_tick();
+            match crash::catching(|| {
+                self.handle_background()
+                    | self.editor.pump_terminal()
+                    | self.editor.pump_git_job()
+                    | self.editor.pump_git_gui_diff()
+                    | self.editor.git_blame_tick()
+            }) {
+                Ok(changed) => redraw |= changed,
+                Err(panic) => {
+                    self.caught_panic("handling a background job", &panic);
+                    redraw = true;
+                }
+            }
             if !input_ready {
                 redraw |= self.update_lsp();
                 if deadline.is_some_and(|due| Instant::now() >= due) {
@@ -676,7 +712,7 @@ impl App {
             // pointer moving only changes its shape: no redraw for that.
             let event = event::read()?;
             redraw = !is_pointer_move(&event);
-            self.handle_event(event);
+            self.handle_event_caught(event);
             let mut handled = 1;
             while handled < MAX_KEYS_PER_FRAME
                 && !self.should_quit()
@@ -684,7 +720,7 @@ impl App {
             {
                 let event = event::read()?;
                 redraw |= !is_pointer_move(&event);
-                self.handle_event(event);
+                self.handle_event_caught(event);
                 handled += 1;
             }
             deadline = self.key_deadline();
@@ -702,6 +738,70 @@ impl App {
         terminal::disable_focus_reporting()?;
         terminal::disable_bracketed_paste()?;
         terminal::restore_cursor_shape()
+    }
+
+    /// Handles `event`, reporting a panic on the message line rather than
+    /// crashing.
+    fn handle_event_caught(&mut self, event: Event) {
+        let what = match &event {
+            Event::Key(key) => format!("handling the key {:?}", key.code),
+            Event::Mouse(mouse) => format!("handling the mouse ({:?})", mouse.kind),
+            Event::Paste(_) => "pasting".into(),
+            _ => "handling an event".into(),
+        };
+        if let Event::Mouse(mouse) = &event
+            && matches!(
+                mouse.kind,
+                event::MouseEventKind::Down(_) | event::MouseEventKind::Up(_)
+            )
+        {
+            crate::log::note_input(|| format!("[{:?} {},{}]", mouse.kind, mouse.column, mouse.row));
+        }
+        if let Err(panic) = crash::catching(|| self.handle_event(event)) {
+            self.caught_panic(&what, &panic);
+        }
+    }
+
+    /// A panic was caught while doing `what`: the log gets the editor's
+    /// state (the hook wrote the panic itself), the message line says so.
+    fn caught_panic(&mut self, what: &str, panic: &str) {
+        crate::log::debug(
+            "ERROR",
+            &format!(
+                "caught a panic while {what}; the editor carried on. Its state:\n{}",
+                self.editor.debug_state()
+            ),
+        );
+        self.editor.set_message(Message::error(format!(
+            "ferra hit a bug while {what}: {panic} (details in :log)"
+        )));
+    }
+
+    /// Drawing kept failing: saves unsaved buffers to the recovery folder
+    /// and returns the error that ends the editor.
+    fn give_up(&mut self, panic: &str) -> std::io::Error {
+        let recovery =
+            crate::log::default_path().and_then(|p| p.parent().map(|dir| dir.join("recovery")));
+        let saved = recovery
+            .as_deref()
+            .map(|dir| self.editor.save_recovery(dir))
+            .unwrap_or_default();
+        let mut report = format!("ferra kept failing to draw the screen: {panic}");
+        if !saved.is_empty() {
+            report.push_str("\nUnsaved changes were saved to:");
+            for path in &saved {
+                report.push_str(&format!("\n  {}", path.display()));
+            }
+        }
+        crate::log::error(&report);
+        crate::log::debug(
+            "ERROR",
+            &format!("Its state:\n{}", self.editor.debug_state()),
+        );
+        if let Some(path) = crate::log::path() {
+            report.push_str(&format!("\nThe details are in {}", path.display()));
+        }
+        std::io::Error::other(report)
     }
 
     fn handle_event(&mut self, event: Event) {
@@ -1050,6 +1150,11 @@ impl App {
             return;
         }
         self.record_macro_key(key);
+        // Never the terminal panel's keys: what's typed there (a password
+        // at a sudo prompt) mustn't end up on disk. (Debug builds only.)
+        if self.editor.mode() != Mode::Terminal {
+            crate::log::note_input(|| key.to_string());
+        }
         if self.replaying {
             self.process_key(key);
             return;
@@ -1288,6 +1393,7 @@ impl App {
 
     /// Runs a named command, reporting failures on the message line.
     pub fn execute(&mut self, command: &str, invocation: Invocation) {
+        crate::log::note_input(|| format!("({command})"));
         self.editor.clear_message();
         if let Err(error) = self.commands.execute(command, &mut self.editor, invocation) {
             self.editor.set_message(Message::error(error));

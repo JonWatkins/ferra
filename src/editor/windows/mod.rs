@@ -83,6 +83,11 @@ impl Windows {
         self.windows.len()
     }
 
+    /// Every window, in the order they were made.
+    pub fn list(&self) -> &[Window] {
+        &self.windows
+    }
+
     pub fn get(&self, id: WindowId) -> Option<&Window> {
         self.windows.iter().find(|w| w.id == id)
     }
@@ -393,7 +398,12 @@ impl Editor {
         }
         let window = self.windows.get(id)?;
         let document = self.document_by_id(window.document)?;
-        Some((document, window.cursor))
+        // Kept within the buffer, which may have shrunk since (another
+        // window's edits, a reload).
+        let last = document.buffer().line_count().saturating_sub(1);
+        let row = window.cursor.row.min(last);
+        let col = window.cursor.col.min(document.buffer().line_len(row));
+        Some((document, Position::new(row, col)))
     }
 
     /// Resizes the active window's height (`Horizontal`) or width

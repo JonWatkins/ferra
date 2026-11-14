@@ -29,6 +29,13 @@ fn main() -> color_eyre::Result<ExitCode> {
         Err(error) => (Config::default(), Some(error)),
     };
 
+    // From here on, panics go to the log (`:log`).
+    ferra::log::init();
+    ferra::log::debug(
+        "INFO",
+        &format!("ferra {} started", env!("CARGO_PKG_VERSION")),
+    );
+
     let mut app = App::new(config);
     if let Some(paths) = ferra::plugins::packages::PluginPaths::standard() {
         app.set_plugin_paths(paths);

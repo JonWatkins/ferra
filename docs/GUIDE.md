@@ -1449,4 +1449,23 @@ first word on a line re-indents it:
 Without one, a new line follows the line above (one level in after a
 line ending in an open bracket).
 
+## When something goes wrong
+
+ferra keeps a log at `$XDG_STATE_HOME/ferra/ferra.log` (else
+`~/.local/state/ferra/ferra.log`); `:log` opens it at the latest entry.
+It records each start, the errors shown on the message line, and every
+crash: what went wrong and where, the commands run and clicks just
+before it, a backtrace, and the windows and buffers open at the time.
+Nothing typed is written: keys are noted only in debug builds (never
+those typed into the terminal panel). A log over
+1 MB is moved to `ferra.log.old` at the next start.
+
+A bug that panics while drawing, handling a key or a background job's
+results doesn't end the editor: the message line says what happened and
+ferra carries on, so unsaved work isn't lost. If drawing keeps failing,
+ferra gives up, first writing buffers with unsaved changes to
+`recovery/` beside the log. A language server's or background job's
+thread crashing is reported the same way. When reporting a bug, the
+log's entry is the thing to include.
+
 See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for the design.

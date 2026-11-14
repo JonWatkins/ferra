@@ -177,6 +177,15 @@ impl Document {
         self.format.encoding = encoding;
     }
 
+    /// The bytes saving would write (as plain UTF-8 if the file's
+    /// encoding can't hold the text).
+    pub fn contents(&self) -> Vec<u8> {
+        let text = self.buffer.text();
+        self.format
+            .encode_bytes(&text)
+            .unwrap_or_else(|_| text.into_bytes())
+    }
+
     /// Saves to `target`, or to the document's own path if `None`.
     ///
     /// Like Vim's `:w`:
