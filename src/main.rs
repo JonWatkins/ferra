@@ -37,6 +37,9 @@ fn main() -> color_eyre::Result<ExitCode> {
     );
 
     let mut app = App::new(config);
+    // Where the settings editor saves.
+    app.editor_mut()
+        .set_config_file(ferra::config::default_path());
     if let Some(paths) = ferra::plugins::packages::PluginPaths::standard() {
         app.set_plugin_paths(paths);
     }

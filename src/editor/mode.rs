@@ -31,10 +31,12 @@ pub enum Mode {
     Input,
     /// The full-screen git view (`<Space>g`) has focus.
     Git,
+    /// The settings editor (`:settings`) has focus.
+    Settings,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 12] = [
+    pub const ALL: [Mode; 13] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
@@ -47,6 +49,7 @@ impl Mode {
         Mode::Popup,
         Mode::Input,
         Mode::Git,
+        Mode::Settings,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -64,6 +67,7 @@ impl Mode {
             Mode::Popup => "popup",
             Mode::Input => "input",
             Mode::Git => "git",
+            Mode::Settings => "settings",
         }
     }
 

@@ -4,8 +4,10 @@
 //! single source of truth. A user config is deep-merged on top, so users only
 //! write what they want to change.
 
+pub mod edit;
 mod languages;
 mod options;
+pub mod schema;
 pub mod set;
 mod theme;
 

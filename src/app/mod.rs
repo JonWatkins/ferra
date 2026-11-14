@@ -905,6 +905,7 @@ impl App {
                 self.editor.finish_command();
             }
             Mode::Terminal => self.editor.terminal_paste(text),
+            Mode::Settings => self.editor.settings_paste(text),
             Mode::Popup | Mode::Git => {}
             // Nothing to paste into.
             Mode::Sidebar => {}
@@ -1322,6 +1323,10 @@ impl App {
             }
             KeyCode::PasteEnd => return,
             _ => {}
+        }
+        // Typing in the settings editor's search box or a value's field.
+        if self.editor.mode() == Mode::Settings && self.editor.settings_field_key(key) {
+            return;
         }
         self.editor.note_key_for_completion();
         self.editor.note_key_for_hover();

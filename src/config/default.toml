@@ -32,9 +32,9 @@ format-on-save = false
 # Long lines continue on the next screen rows, breaking between words, and
 # gj/gk move by screen rows. false scrolls sideways instead.
 wrap = true
-# A wrapped line's later rows start at its indentation, after this marker
-# ("" for none).
+# A wrapped line's later rows start at its indentation.
 wrap-indent = true
+# What a wrapped line's later rows start with ("" for nothing).
 wrap-marker = "↪ "
 # Highlight the line the cursor is on.
 cursorline = true
@@ -153,14 +153,17 @@ highlight = true
 # Searches wrap around the end of the file.
 wrap = true
 
-[editor.file-picker]
 # <Space>f lists files under the current directory.
+[editor.file-picker]
+# List hidden files (names starting with a dot) too.
 hidden = false
+# Leave out files git ignores (.gitignore and the like).
 git-ignore = true
+# Stop listing after this many files, in a very large directory.
 max-files = 20000
 
+# The cursor's shape in each mode: "block", "bar" or "underline".
 [editor.cursor-shape]
-# "block", "bar" or "underline".
 normal = "block"
 insert = "bar"
 command = "bar"
@@ -353,6 +356,19 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.sidebar.git.header" = { fg = "#7aa2f7", modifiers = ["bold"] }
 "ui.sidebar.git.branch" = "#6b7280"
 # The full-screen git view (<Space>g).
+"ui.settings" = { fg = "#d4d7dd", bg = "#16181d" }
+"ui.settings.title" = { fg = "#c0caf5", modifiers = ["bold"] }
+"ui.settings.border" = "#3b4048"
+"ui.settings.category" = "#a9b1d6"
+"ui.settings.category.shown" = { fg = "#7aa2f7", modifiers = ["bold"] }
+"ui.settings.category.selected" = { fg = "#c0caf5", bg = "#33467c", modifiers = ["bold"] }
+"ui.settings.selected" = { bg = "#1f2229" }
+"ui.settings.name" = { fg = "#c0caf5", modifiers = ["bold"] }
+"ui.settings.description" = "#8c93ad"
+"ui.settings.value" = { fg = "#d4d7dd", bg = "#2a2e38" }
+"ui.settings.value.on" = { fg = "#9ece6a", bg = "#2a2e38", modifiers = ["bold"] }
+"ui.settings.modified" = "#7aa2f7"
+"ui.settings.hint" = "#565f89"
 "ui.git" = { fg = "#d4d7dd", bg = "#16181d" }
 "ui.git.border" = "#3b4048"
 "ui.git.border.focused" = "#7aa2f7"
@@ -1028,6 +1044,33 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "v" = "git_diff_selected"
 "]c" = "git_gui_next_change"
 "[c" = "git_gui_prev_change"
+":" = "command_mode"
+
+# The settings editor (:settings, the activity bar's gear), while it has
+# focus. In the search box or a value being typed, typing edits it: <CR>
+# takes it, <Esc> leaves it.
+[keys.settings]
+"q" = "settings_close"
+"<Esc>" = "settings_close"
+"j" = "settings_down"
+"k" = "settings_up"
+"<Down>" = "settings_down"
+"<Up>" = "settings_up"
+"gg" = "settings_first"
+"G" = "settings_last"
+"<Tab>" = "settings_pane"
+"<S-Tab>" = "settings_pane"
+"<CR>" = "settings_change"
+"<Space>" = "settings_change"
+"l" = "settings_next"
+"<Right>" = "settings_next"
+"+" = "settings_next"
+"h" = "settings_prev"
+"<Left>" = "settings_prev"
+"-" = "settings_prev"
+"u" = "settings_reset"
+"/" = "settings_search"
+"e" = "settings_edit_toml"
 ":" = "command_mode"
 
 # A plugin's input box (ctx:input), while it has focus. Typing edits it.

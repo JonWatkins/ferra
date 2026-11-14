@@ -40,6 +40,7 @@ pub use plugin_packages::{PackageJob, PackageRequest};
 pub mod popup;
 pub mod project_search;
 mod selection;
+pub mod settings;
 pub mod sidebar_views;
 mod terminal_panel;
 pub mod text_field;
@@ -238,6 +239,10 @@ pub struct Editor {
     git: git::GitState,
     /// The full-screen git view, while it's open.
     git_gui: Option<git_gui::GitGui>,
+    /// The settings editor, while it's open.
+    settings: Option<settings::SettingsView>,
+    /// The user's `config.toml`, where the settings editor saves.
+    config_file: Option<std::path::PathBuf>,
     /// The uses of the symbol under the cursor (a language server's).
     references: Option<lsp::References>,
     /// Servers' diagnostics for files that aren't open, by path.
@@ -528,6 +533,12 @@ impl Editor {
     pub fn set_mode(&mut self, mode: Mode) {
         // With the git view open, leaving a box or the `:` line asked from
         // it goes back to it, not to the text behind.
+        // The settings editor, open, is what's in the windows' place.
+        let mode = if mode == Mode::Normal && self.settings.is_some() {
+            Mode::Settings
+        } else {
+            mode
+        };
         let mode = if mode == Mode::Normal
             && self.git_gui.is_some()
             && matches!(
@@ -675,6 +686,7 @@ impl Editor {
             }
             Mode::Find => self.find_edit(|field| field.push(c)),
             Mode::Input => self.input_box_edit(|field| field.push(c)),
+            Mode::Settings => {}
             Mode::Normal
             | Mode::OperatorPending
             | Mode::Visual

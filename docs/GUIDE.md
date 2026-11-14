@@ -398,7 +398,8 @@ Down the left edge, always there, is the activity bar, as in VS Code: an
 icon for each of the sidebar's views (the files, Search, Source Control,
 and any plugins add), with the gear for the settings at the bottom. Clicking an
 icon shows its view (opening the sidebar, with focus); clicking the one
-shown hides the sidebar. The gear opens `config.toml` (`:open_config`).
+shown hides the sidebar. The gear opens the [settings
+editor](#the-settings-editor).
 
 ```text
  ▎    │ FERRA                │   1 fn main() {
@@ -989,6 +990,46 @@ language-server = { enabled = false }            # off for one language
 them all off with `lsp = false` under `[editor]`.
 
 ## Configuration
+
+### The settings editor
+
+`:settings` (or the activity bar's gear, or File → Settings) opens every
+`[editor]` option in the windows' place, as VS Code's Settings does: the
+categories down the left, each setting's name, description and value on
+the right. A bar left of a name marks one changed from its default.
+
+```text
+ Settings                                              1 changed
+ ⌕  Search settings (/)
+────────────────────────────────────────────────────────────────
+ Editing         │▎Tab Width
+ Display         │ Width of a tab stop, and of one indent level.
+ Workbench       │  2
+ Search          │
+ Files           │ Expand Tab
+ …               │ Indent with spaces (true) or tab characters…
+                 │  [✓] on
+ ↵ change  h/l choose  u reset  / search  Tab categories  e config.toml  q close
+```
+
+`j`/`k` move through the settings, `<Tab>` to the categories and back.
+`<CR>` (or `<Space>`, or a click on the value) flips a switch, takes the
+next choice, or starts typing a number or text (`<CR>` sets it, `<Esc>`
+doesn't); `l`/`h` take the next and previous choice, and step a number up
+and down (`+`/`-` too). `u` puts a setting back to its default. `/`
+searches every setting's name and description (`:settings tab` opens it
+searching for "tab"); `<Esc>` in the box clears it. `e` opens
+`config.toml` itself, for what the editor doesn't do (the status line's
+lists, languages, the theme, keys), and `q` or `<Esc>` closes it. Opening a
+file closes it too.
+
+A change applies at once, as `:set` would, and is saved to `config.toml`
+straight away: the file's comments and order stay as they were, and a
+setting put back to its default is taken out of it. The descriptions are
+the comments in [the defaults](../src/config/default.toml). Its keys are
+in `[keys.settings]`, its colours the `ui.settings.*` scopes.
+
+### The config file
 
 Create `~/.config/ferra/config.toml` (or under `$XDG_CONFIG_HOME`).
 It's merged over [the defaults](../src/config/default.toml), which document

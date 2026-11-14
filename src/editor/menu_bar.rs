@@ -36,7 +36,8 @@ pub const MENUS: &[Menu] = &[
             Some(("Save All", "write_all")),
             None,
             Some(("Close Buffer", "buffer_delete")),
-            Some(("Settings", "open_config")),
+            Some(("Settings", "settings")),
+            Some(("Edit config.toml", "open_config")),
             None,
             Some(("Quit", "quit_all")),
         ],
@@ -125,7 +126,7 @@ pub const MENUS: &[Menu] = &[
             Some(("Browse Plugins…", "plugin_browse")),
             Some(("Installed Plugins", "plugin_list")),
             None,
-            Some(("Settings", "open_config")),
+            Some(("Settings", "settings")),
         ],
     },
 ];

@@ -379,6 +379,8 @@ impl CursorShapes {
             Mode::Popup => self.popup,
             Mode::Input => self.input,
             Mode::Git => self.git,
+            // Its fields take text.
+            Mode::Settings => self.input,
         }
     }
 }

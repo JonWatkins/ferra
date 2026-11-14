@@ -157,6 +157,9 @@ impl Editor {
     /// Makes `document` active, keeping the current one in the background
     /// unless it's an untouched scratch buffer.
     pub(super) fn activate(&mut self, document: Document) {
+        // A file opened (from the sidebar, a picker) takes the windows'
+        // place back from the settings editor.
+        self.settings = None;
         let previous = std::mem::replace(&mut self.document, document);
         if !previous.is_pristine_scratch() || self.shown_in_other_window(previous.id()) {
             self.background.push(previous);

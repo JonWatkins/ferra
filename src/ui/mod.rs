@@ -28,6 +28,7 @@ mod menu_bar;
 mod picker;
 mod popup;
 mod search;
+pub mod settings;
 mod sidebar;
 mod signature;
 mod splash;
@@ -94,6 +95,8 @@ pub struct ScreenMap {
     pub input: Option<(Rect, Rect)>,
     /// The git view's panels and lists.
     pub git: Option<git_gui::GitGuiMap>,
+    /// The settings editor's parts.
+    pub settings: Option<settings::SettingsMap>,
 }
 
 /// A box with a list: its area, the list's rows, and the index of the item
@@ -402,6 +405,14 @@ pub fn draw(
         frame.render_widget(view, area);
     }
 
+    // The settings editor takes the windows' place.
+    let mut settings_cursor = None;
+    if editor.settings().is_some() {
+        frame.render_widget(settings::SettingsWidget::new(editor, theme), main);
+        map.settings = Some(settings::SettingsWidget::map(editor, main));
+        settings_cursor = settings::SettingsWidget::cursor_position(editor, main);
+    }
+
     // The find box floats at the top right of the active window.
     let mut find_cursor = None;
     if editor.mode() == Mode::Find
@@ -535,6 +546,7 @@ pub fn draw(
         (Mode::Popup, _) => None,
         (Mode::Input, _) => input_cursor,
         (Mode::Git, _) => None,
+        (Mode::Settings, _) => settings_cursor.map(|(x, y)| ratatui::layout::Position::new(x, y)),
         _ => window_cursor,
     };
     if let Some(position) = cursor {

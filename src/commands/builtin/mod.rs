@@ -27,6 +27,7 @@ mod plugins;
 mod popup;
 mod scrolling;
 mod search;
+mod settings;
 mod sidebar;
 mod terminal;
 mod text_objects;
@@ -58,6 +59,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     folds::register(registry);
     lsp::register(registry);
     sidebar::register(registry);
+    settings::register(registry);
     find::register(registry);
     terminal::register(registry);
     popup::register(registry);

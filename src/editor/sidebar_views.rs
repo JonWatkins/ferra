@@ -247,17 +247,22 @@ impl Editor {
             name: "settings".into(),
             title: "Settings".into(),
             icon: icon("⚙", "\u{eb51}"),
-            active: false,
+            active: self.settings().is_some(),
         };
         (items, settings)
     }
 
     /// A click on the activity bar's item `name`: shows that view (opening
     /// the sidebar, with focus), or hides the sidebar if it's the view
-    /// shown; `settings` opens the config.
+    /// shown; `settings` opens the settings editor (or closes it).
     pub fn activity(&mut self, name: &str) -> Result<(), String> {
         if name == "settings" {
-            return self.open_config();
+            if self.settings().is_some() {
+                self.settings_close();
+            } else {
+                self.settings_open(None);
+            }
+            return Ok(());
         }
         let shown = self.sidebar().is_some()
             && self.sidebar_view_names().get(self.sidebar_view) == Some(&name);
@@ -271,7 +276,11 @@ impl Editor {
 
     /// `:open_config`: the config file (made if there isn't one yet).
     pub fn open_config(&mut self) -> Result<(), String> {
-        let path = crate::config::default_path().ok_or("No config folder (is HOME set?)")?;
+        let path = self
+            .config_file()
+            .map(std::path::Path::to_path_buf)
+            .or_else(crate::config::default_path)
+            .ok_or("No config folder (is HOME set?)")?;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }

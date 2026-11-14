@@ -104,6 +104,22 @@ impl App {
     /// The pointer's shape over `at`: a CSS cursor name.
     pub fn pointer_for(&self, at: Position) -> &'static str {
         let map = &self.screen_map;
+        if let Some(settings) = &map.settings
+            && settings.area.contains(at)
+        {
+            let on = settings.categories.iter().any(|(r, _)| r.contains(at))
+                || settings
+                    .items
+                    .iter()
+                    .any(|(_, value, _)| value.contains(at));
+            return if on {
+                "pointer"
+            } else if settings.search.contains(at) {
+                "text"
+            } else {
+                "default"
+            };
+        }
         if let Some(git) = &map.git {
             let on_list = git.lists.iter().any(|(list, panel, _)| {
                 *panel != crate::editor::git_gui::GitPanel::Diff && list.contains(at)
@@ -265,8 +281,43 @@ impl App {
     fn clicks_allowed(&self) -> bool {
         matches!(
             self.editor.mode(),
-            Mode::Normal | Mode::Insert | Mode::Visual | Mode::Sidebar | Mode::Terminal
+            Mode::Normal
+                | Mode::Insert
+                | Mode::Visual
+                | Mode::Sidebar
+                | Mode::Terminal
+                | Mode::Settings
         )
+    }
+
+    /// A click in the settings editor: a category shows its settings, a
+    /// setting is selected, and one on its value changes it (as `<CR>`).
+    fn click_in_settings(&mut self, at: Position) -> bool {
+        let Some(map) = self.screen_map.settings.clone() else {
+            return false;
+        };
+        if !map.area.contains(at)
+            || !matches!(
+                self.editor.mode(),
+                Mode::Settings | Mode::Sidebar | Mode::Terminal | Mode::Normal
+            )
+        {
+            return false;
+        }
+        self.input.reset();
+        self.editor.set_mode(Mode::Settings);
+        if map.search.contains(at) {
+            self.editor.settings_search();
+        } else if let Some(&(_, i)) = map.categories.iter().find(|(row, _)| row.contains(at)) {
+            self.editor.settings_category(i);
+        } else if let Some(&(_, value, i)) = map.items.iter().find(|(block, ..)| block.contains(at))
+        {
+            self.editor.settings_select(i);
+            if value.contains(at) {
+                self.execute("settings_change", Invocation::default());
+            }
+        }
+        true
     }
 
     fn mouse_down(&mut self, at: Position) {
@@ -294,7 +345,7 @@ impl App {
         if self.editor.mode() != Mode::Popup && self.editor.popup().is_some() {
             self.editor.close_popup();
         }
-        if self.click_in_box(at) || !self.clicks_allowed() {
+        if self.click_in_settings(at) || self.click_in_box(at) || !self.clicks_allowed() {
             return;
         }
         self.input.reset();
@@ -610,6 +661,15 @@ impl App {
 
     fn mouse_wheel(&mut self, at: Position, down: bool) {
         let sign: isize = if down { 1 } else { -1 };
+        if self
+            .screen_map
+            .settings
+            .as_ref()
+            .is_some_and(|s| s.list.contains(at))
+        {
+            self.editor.settings_move(sign);
+            return;
+        }
         match self.editor.mode() {
             Mode::Picker => {
                 if let Some(picker) = self.editor.picker_mut() {
