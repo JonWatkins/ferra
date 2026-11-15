@@ -929,6 +929,81 @@ fn k_shows_the_hover_and_any_other_key_closes_it() {
 }
 
 #[test]
+fn resting_the_pointer_shows_the_hover_under_the_problem() {
+    use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+    let text = format!("{}let bad = 1;\nfine\n", "\n".repeat(12));
+    let (_dir, mut app, _) = with_server(&text, true);
+    ready(&mut app);
+    until(&mut app, |a| !diagnostic_starts(a).is_empty());
+    keys(&mut app, "G");
+    let screen = render(&mut app, 60, 24);
+    let (x, y) = screen
+        .rows
+        .iter()
+        .enumerate()
+        .find_map(|(y, row)| row.find("bad").map(|b| (row[..b].chars().count(), y)))
+        .unwrap();
+    let rest = |app: &mut App, x: usize, y: usize| {
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: x as u16,
+            row: y as u16,
+            modifiers: KeyModifiers::NONE,
+        });
+        app.show_pending_hover();
+    };
+    rest(&mut app, x + 1, y);
+    until(&mut app, |a| {
+        a.editor()
+            .hover()
+            .is_some_and(|h| h.document.buffer().text().contains("A **bad** word"))
+    });
+    let text = render(&mut app, 60, 24).rows.join("\n");
+    let above = text.find("A bad word").unwrap() < text.find("let bad").unwrap();
+    assert!(above, "above the word:\n{text}");
+    assert!(text.contains("⊗ bad word (fake)"), "the problem first:\n{text}");
+    assert!(text.contains("A bad word, see fine."), "then the hover:\n{text}");
+
+    // Nothing to say about `fine`: nothing shows, and nothing's said.
+    rest(&mut app, x, y + 1);
+    app.update_lsp();
+    std::thread::sleep(Duration::from_millis(50));
+    app.update_lsp();
+    assert!(app.editor().hover().is_none());
+    assert!(app.editor().message().is_none());
+}
+
+#[test]
+fn ctrl_resting_peeks_at_the_definition() {
+    use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+    let text = format!("fn area() {{\n    1\n}}\nfn next() {{}}\n{}area();\n", "\n".repeat(10));
+    let (_dir, mut app, _) = with_server(&text, true);
+    ready(&mut app);
+    keys(&mut app, "G");
+    let screen = render(&mut app, 60, 24);
+    let (x, y) = screen
+        .rows
+        .iter()
+        .enumerate()
+        .find_map(|(y, row)| row.find("area();").map(|b| (row[..b].chars().count(), y)))
+        .unwrap();
+    app.handle_mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: x as u16 + 1,
+        row: y as u16,
+        modifiers: KeyModifiers::CONTROL,
+    });
+    app.show_pending_hover();
+    until(&mut app, |a| a.editor().hover().is_some());
+    let shown = render(&mut app, 60, 24).rows.join("\n");
+    assert!(shown.contains("main.rs:1"), "where it is:\n{shown}");
+    assert!(shown.contains("│ fn area() {"), "{shown}");
+    assert!(shown.contains("│     1"), "{shown}");
+    assert!(!shown.contains("│ fn next"), "only that definition:\n{shown}");
+    assert!(!shown.contains("```"), "{shown}");
+}
+
+#[test]
 fn gd_goes_to_the_definition_and_ctrl_o_comes_back() {
     let (_dir, mut app, _) = with_server("fn bad() {}\nfine\nbad();\n", true);
     ready(&mut app);

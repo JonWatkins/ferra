@@ -312,3 +312,47 @@ fn mouse_off_ignores_it() {
     click(&mut app, 12, 0);
     assert_eq!(cursor(&app), (0, 0));
 }
+
+#[test]
+fn resting_on_a_problem_shows_it_and_moving_off_hides_it() {
+    use ferra::core::Position;
+    use ferra::editor::diagnostics::{Diagnostic, Severity};
+    let mut app = with_text("let thing = 1;\nnext line");
+    app.editor_mut().document.set_diagnostics(vec![Diagnostic {
+        start: Position::new(0, 4),
+        end: Position::new(0, 9),
+        severity: Severity::Warning,
+        message: "unused variable".into(),
+        source: Some("rustc".into()),
+    }]);
+    let (x, y) = find(&mut app, "thing");
+    mouse(&mut app, MouseEventKind::Moved, x + 2, y);
+    app.show_pending_hover();
+    let shown = render(&mut app, W, H).rows.join("\n");
+    assert!(shown.contains("⚠ unused variable (rustc)"), "{shown}");
+
+    // Along the same word, it stays; onto the next, it goes.
+    mouse(&mut app, MouseEventKind::Moved, x, y);
+    assert!(app.editor().hover().is_some());
+    mouse(&mut app, MouseEventKind::Moved, x + 6, y);
+    assert!(app.editor().hover().is_none());
+    // No problem there (and no language server): nothing shows.
+    app.show_pending_hover();
+    assert!(app.editor().hover().is_none());
+
+    // A key closes it, and a space isn't hovered.
+    mouse(&mut app, MouseEventKind::Moved, x, y);
+    app.show_pending_hover();
+    assert!(app.editor().hover().is_some());
+    keys(&mut app, "l");
+    assert!(app.editor().hover().is_none());
+    mouse(&mut app, MouseEventKind::Moved, x - 1, y);
+    app.show_pending_hover();
+    assert!(app.editor().hover().is_none());
+
+    // Off with `mouse-hover = false`.
+    app.editor_mut().options.mouse_hover = false;
+    mouse(&mut app, MouseEventKind::Moved, x, y);
+    app.show_pending_hover();
+    assert!(app.editor().hover().is_none());
+}

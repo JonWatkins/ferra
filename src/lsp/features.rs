@@ -299,6 +299,10 @@ pub(super) fn answer(
             editor.document.id() == request.document
                 && editor.document.buffer().edit_seq() == request.edit_seq
         }
+        // The pointer's: while it rests there.
+        LspFeature::Hover | LspFeature::Definition if !request.manual => {
+            editor.mouse_hover_wanted(&request)
+        }
         _ => editor.still_at(&request),
     };
     if !current {
@@ -307,6 +311,13 @@ pub(super) fn answer(
     let result = match result {
         Ok(result) => result,
         Err(error) if error.is_stale() => return,
+        // The pointer's hover stays quiet about it.
+        Err(_)
+            if matches!(request.feature, LspFeature::Hover | LspFeature::Definition)
+                && !request.manual =>
+        {
+            return;
+        }
         Err(error) => {
             editor.lsp_failed(format!("{}: {}", client.name, error.message));
             return;
@@ -432,7 +443,9 @@ pub(super) fn answer(
     }
     if request.feature == LspFeature::Hover {
         let markdown = hover_markdown(&result["contents"]);
-        if markdown.trim().is_empty() {
+        if !request.manual {
+            editor.mouse_hover_answer(&markdown);
+        } else if markdown.trim().is_empty() {
             editor.set_message(Message::info("No hover information here"));
         } else {
             editor.show_hover(&markdown);
@@ -440,6 +453,11 @@ pub(super) fn answer(
         return;
     }
     let locations = locations(editor, &result, client.encoding);
+    // Ctrl held on the pointer's word: the definition peeked at.
+    if request.feature == LspFeature::Definition && !request.manual {
+        editor.mouse_peek_answer(&locations);
+        return;
+    }
     if let Err(error) = editor.show_locations(request.feature, locations) {
         editor.set_message(Message::info(error));
     }

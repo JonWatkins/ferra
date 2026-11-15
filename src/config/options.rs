@@ -58,6 +58,11 @@ pub struct EditorOptions {
     /// Use the mouse: click, drag to select, scroll (the terminal's own
     /// selecting then needs Shift, or Option in some macOS terminals).
     pub mouse: bool,
+    /// Resting the pointer on a word shows what the language server says
+    /// about it, and any problem there, as VS Code's hover.
+    pub mouse_hover: bool,
+    /// Milliseconds the pointer rests before the hover shows.
+    pub mouse_hover_delay: u64,
     /// The menu bar along the top.
     pub menu_bar: bool,
     /// The column of icons down the left that shows the sidebar's views.

@@ -114,14 +114,22 @@ impl<'a> HoverView<'a> {
     /// Where the popup goes for a cursor at `cursor` in `screen`: below the
     /// cursor's row if it fits there, else above, else wherever has more
     /// room.
-    pub fn area(&self, cursor: Position, screen: Rect) -> Rect {
+    /// Where it goes: below `cursor`, or above if there's more room there;
+    /// with `above` (the pointer's, as VS Code's, so moving down a line
+    /// leaves it), above if it fits.
+    pub fn area(&self, cursor: Position, screen: Rect, above_first: bool) -> Rect {
         let width = self.text_width(screen);
         let rows = self.rows(width).len().clamp(1, MAX_HEIGHT) as u16;
         let width = width as u16 + 4;
         let height = rows + 2;
         let below = (screen.y + screen.height).saturating_sub(cursor.y + 1);
         let above = cursor.y.saturating_sub(screen.y);
-        let (y, height) = if height <= below || below >= above {
+        let go_below = if above_first {
+            height > above && below > above
+        } else {
+            height <= below || below >= above
+        };
+        let (y, height) = if go_below {
             (cursor.y + 1, height.min(below))
         } else {
             (cursor.y - height.min(above), height.min(above))

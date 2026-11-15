@@ -138,6 +138,106 @@ pub struct Hover {
     /// are (wrapped, without code fences), so `K` can scroll by a page.
     pub shown: std::cell::Cell<usize>,
     pub total: std::cell::Cell<usize>,
+    /// Where the pointer rested, for a hover it showed (else it's by the
+    /// cursor): the screen cell.
+    pub anchor: Option<(u16, u16)>,
+}
+
+/// The HTML tags docs use (VS Code draws them): taken out of a hover, as
+/// a terminal can't, keeping their text. Others (`Vec<T>`) are text.
+const HTML_TAGS: &[&str] = &[
+    "a", "b", "br", "code", "del", "details", "div", "em", "font", "h1", "h2", "h3", "h4",
+    "h5", "h6", "hr", "i", "img", "kbd", "li", "ol", "p", "pre", "s", "small", "span",
+    "strong", "sub", "summary", "sup", "table", "tbody", "td", "th", "thead", "tr", "u", "ul",
+];
+
+/// `markdown` without HTML tags and with its entities (`&quot;`) made
+/// chars, outside code blocks (where they're the code).
+pub fn without_html(markdown: &str) -> String {
+    let mut out = String::with_capacity(markdown.len());
+    let mut in_code = false;
+    for (i, line) in markdown.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if line.trim_start().starts_with("```") {
+            in_code = !in_code;
+            out.push_str(line);
+            continue;
+        }
+        if in_code {
+            out.push_str(line);
+            continue;
+        }
+        out.push_str(&decode_entities(&strip_tags(line)));
+    }
+    out
+}
+
+fn strip_tags(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(open) = rest.find('<') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let name: String = after
+            .trim_start_matches('/')
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        let close = after.find('>');
+        match close {
+            Some(close) if HTML_TAGS.contains(&name.as_str()) => {
+                rest = &after[close + 1..];
+            }
+            _ => {
+                out.push('<');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn decode_entities(line: &str) -> String {
+    if !line.contains('&') {
+        return line.to_string();
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let entity = after.find(';').filter(|&end| end <= 8).map(|end| &after[..end]);
+        let decoded = entity.and_then(|e| match e {
+            "quot" => Some('"'),
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "apos" => Some('\''),
+            "nbsp" => Some(' '),
+            _ => e
+                .strip_prefix("#x")
+                .or_else(|| e.strip_prefix("#X"))
+                .and_then(|h| u32::from_str_radix(h, 16).ok())
+                .or_else(|| e.strip_prefix('#').and_then(|d| d.parse().ok()))
+                .and_then(char::from_u32),
+        });
+        match (entity, decoded) {
+            (Some(entity), Some(c)) => {
+                out.push(c);
+                rest = &after[entity.len() + 1..];
+            }
+            _ => {
+                out.push('&');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Formats a buffer by asking its language server, waiting for the answer
@@ -496,6 +596,7 @@ impl Editor {
 
     /// Shows `markdown` in a popup by the cursor, until the next key.
     pub fn show_hover(&mut self, markdown: &str) {
+        let markdown = without_html(markdown);
         let mut document = Document::with_text(markdown.trim());
         document.set_id(HOVER_DOCUMENT);
         let lines = document.buffer().line_count();
@@ -504,6 +605,7 @@ impl Editor {
             scroll: 0,
             shown: std::cell::Cell::new(lines),
             total: std::cell::Cell::new(lines),
+            anchor: None,
         });
         // Shown as it arrives, between keys: the next key is the first that
         // could close it.
@@ -541,6 +643,7 @@ impl Editor {
     pub fn end_hover_unless_used(&mut self) {
         if !self.hover_used {
             self.hover = None;
+            self.mouse_hover = None;
         }
     }
 
@@ -653,6 +756,13 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hovers_lose_html_but_not_generics_or_code() {
+        let shown = super::without_html(
+            "<span style=\"color: #F15D22\"><b>Finished</b></span> &quot;x&quot; &amp; Vec<T> &#39;\n```html\n<b>kept</b>\n```",
+        );
+        assert_eq!(shown, "Finished \"x\" & Vec<T> '\n```html\n<b>kept</b>\n```");
+    }
     use super::*;
 
     fn location(path: &Path, row: usize, col: usize) -> Location {

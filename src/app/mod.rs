@@ -8,6 +8,7 @@ mod themes;
 pub use session::default_dir as session_dir;
 mod macros;
 mod mouse;
+mod mouse_hover;
 mod normal;
 mod repeat;
 mod terminal;
@@ -64,6 +65,10 @@ pub struct App {
     last_click: Option<(Instant, ratatui::layout::Position, u8)>,
     /// The mouse pointer's shape wanted over what's under it (a CSS name).
     pointer: &'static str,
+    /// Where the pointer's resting, until its hover's due.
+    hover_wait: Option<mouse_hover::HoverWait>,
+    /// The pointer's moving changed what's shown (its hover went).
+    hover_changed: bool,
     /// The keymap with the open popup's and the shown sidebar view's own
     /// keys, while they have some.
     popup_keymap: Option<Keymap>,
@@ -135,6 +140,8 @@ impl App {
             dragging: None,
             last_click: None,
             pointer: "default",
+            hover_wait: None,
+            hover_changed: false,
             theme: config.theme,
             themes: themes::Themes::default(),
             user_theme: config.user_theme,
@@ -957,7 +964,8 @@ impl App {
             // the next check of open files, or (while a background job runs)
             // for its results.
             let watch = self.editor.options.watch_files.then_some(next_watch);
-            let due = [deadline, watch].into_iter().flatten().min();
+            let hover_due = self.hover_due();
+            let due = [deadline, watch, hover_due].into_iter().flatten().min();
             // Language servers' messages arrive on their own threads, so
             // keep checking while any are running.
             let busy = self.background.busy()
@@ -1002,6 +1010,10 @@ impl App {
                     deadline = None;
                     redraw = true;
                 }
+                if hover_due.is_some_and(|due| Instant::now() >= due) {
+                    self.show_pending_hover();
+                    redraw = true;
+                }
                 if watch.is_some_and(|due| Instant::now() >= due) {
                     self.check_files_while_idle();
                     next_watch = Instant::now() + WATCH_INTERVAL;
@@ -1026,6 +1038,7 @@ impl App {
                 self.handle_event_caught(event);
                 handled += 1;
             }
+            redraw |= std::mem::take(&mut self.hover_changed);
             deadline = self.key_deadline();
         }
         // What's open, for the next start here.
@@ -1660,6 +1673,8 @@ impl App {
         }
         self.editor.note_key_for_completion();
         self.editor.note_key_for_hover();
+        // A key before the pointer's hover showed: not after it, then.
+        self.hover_wait = None;
         let mode = self.editor.mode();
         // A popup's own keys are in a copy of the keymap made for it.
         let keymap = match (&self.popup_keymap, mode) {

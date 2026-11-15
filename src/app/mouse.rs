@@ -89,6 +89,12 @@ impl App {
         match event.kind {
             MouseEventKind::Moved => {
                 self.pointer = self.pointer_for(at);
+                // Ctrl (or ⌥, as for Ctrl+click) held: peek at the
+                // definition.
+                let peek = event
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+                self.pointer_moved(at, peek);
                 return;
             }
             // Ctrl+click (or ⌥+click: a Mac's terminal takes Ctrl+click
@@ -384,6 +390,12 @@ impl App {
     }
 
     fn mouse_down(&mut self, at: Position) {
+        // A click in the hover leaves it be; anywhere else, it goes.
+        if self.over_hover(at) {
+            return;
+        }
+        self.hover_wait = None;
+        self.editor.end_any_hover();
         // The menu bar first: a title opens its menu (another one's open
         // menu switching to it), the open one's closes it.
         if let Some((y, titles)) = &self.screen_map.menu_bar
@@ -951,6 +963,14 @@ impl App {
 
     fn mouse_wheel(&mut self, at: Position, down: bool) {
         let sign: isize = if down { 1 } else { -1 };
+        // Over the hover, it scrolls; elsewhere the text moves from under
+        // it, so it goes.
+        if self.over_hover(at) {
+            self.editor.scroll_hover_by(3 * sign);
+            return;
+        }
+        self.hover_wait = None;
+        self.editor.end_any_hover();
         if self
             .screen_map
             .settings

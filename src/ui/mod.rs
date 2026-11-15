@@ -109,6 +109,8 @@ pub struct ScreenMap {
     pub panel: Option<panel::PanelMap>,
     /// The breadcrumbs' crumbs.
     pub breadcrumbs: Option<breadcrumbs::BreadcrumbsMap>,
+    /// The hover popup, while it's shown.
+    pub hover: Option<Rect>,
     /// The status bar's row and each of its items' columns (with one
     /// status bar, not one per window).
     pub status_bar: Option<(u16, Vec<StatusPlace>)>,
@@ -434,10 +436,14 @@ pub fn draw(
         frame.render_widget(menu, area);
     }
 
-    // A language server's hover floats by the cursor.
-    if editor.resting()
-        && let (Some(hover), Some(cursor)) = (editor.hover(), window_cursor)
-    {
+    // A language server's hover floats by the cursor (or where the
+    // pointer rested, for its hover).
+    let hover_at = editor.hover().and_then(|hover| match hover.anchor {
+        Some((x, y)) => Some(ratatui::layout::Position::new(x, y)),
+        None if editor.resting() => window_cursor,
+        None => None,
+    });
+    if let (Some(hover), Some(cursor)) = (editor.hover(), hover_at) {
         let rows = 0..hover.document.buffer().line_count();
         let highlights = syntax.as_deref_mut().and_then(|engine| {
             engine.highlight_as(
@@ -449,8 +455,9 @@ pub fn draw(
             )
         });
         let view = hover::HoverView::new(hover, highlights, theme);
-        let area = view.area(cursor, main);
+        let area = view.area(cursor, main, hover.anchor.is_some());
         frame.render_widget(view, area);
+        map.hover = Some(area);
     }
 
     // The settings editor takes the windows' place.

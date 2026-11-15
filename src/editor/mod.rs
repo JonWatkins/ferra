@@ -42,6 +42,7 @@ pub use git::GitRow;
 pub mod input_box;
 pub mod lsp;
 pub mod menu_bar;
+pub mod mouse_hover;
 mod plugin_packages;
 pub use plugin_packages::{PackageJob, PackageRequest};
 pub mod popup;
@@ -220,6 +221,8 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
+    /// What the pointer rested on, for the hover it shows.
+    mouse_hover: Option<mouse_hover::MouseHoverAt>,
     /// The file tree, once the sidebar's been opened, and whether it's open.
     explorer: Option<explorer::Explorer>,
     sidebar_open: bool,

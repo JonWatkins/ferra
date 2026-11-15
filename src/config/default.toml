@@ -80,6 +80,12 @@ git-blame = true
 # with the terminal's own selection instead, hold Shift while dragging
 # (Option in iTerm2 and Terminal.app), or set this to false.
 mouse = true
+# Rest the pointer on a word to see what the language server says about it
+# (its type, its docs) and any problem there, as VS Code's hover. Moving
+# off it, a key or a click closes it; the wheel over it scrolls it.
+mouse-hover = true
+# Milliseconds the pointer rests before the hover shows.
+mouse-hover-delay = 500
 # Columns the sidebar's file tree (<Space>e, :explorer) takes, left of the
 # windows. It never takes more than half the screen.
 sidebar-width = 30

@@ -96,6 +96,37 @@ impl ViewState {
         ))
     }
 
+    /// The char drawn at screen cell `(x, y)`, if there's one there (not
+    /// the gutter, past a line's end or below the text): for the hover.
+    pub fn char_at(
+        &self,
+        document: &Document,
+        x: u16,
+        y: u16,
+        tab_width: usize,
+    ) -> Option<TextPosition> {
+        let drawn = self.rows.iter().find(|r| r.y == y)?;
+        let start = self.text_x as usize + drawn.indent;
+        if (x as usize) < start {
+            return None;
+        }
+        let display = document.display_line(drawn.row);
+        let line = match &display {
+            Some(d) => std::borrow::Cow::Borrowed(d.text.as_str()),
+            None => document.buffer().line(drawn.row),
+        };
+        let col = crate::core::columns::char_col_at(
+            &line,
+            drawn.left + (x as usize - start),
+            tab_width,
+        );
+        if col < drawn.start || col >= drawn.end || col >= line.chars().count() {
+            return None;
+        }
+        let real = display.as_ref().map_or(col, |d| d.to_real(col));
+        Some(TextPosition::new(drawn.row, real))
+    }
+
     /// The rows the pane will show when it's next drawn `height` rows tall
     /// with the cursor at `cursor`: where it is, scrolled as drawing will
     /// scroll it.
