@@ -37,7 +37,7 @@ pub const MENUS: &[Menu] = &[
             Some(("Save As…", "save_as")),
             Some(("Save All", "write_all")),
             None,
-            Some(("Close Buffer", "buffer_delete")),
+            Some(("Close Tab", "tab_close")),
             Some(("Settings", "settings")),
             Some(("Keyboard Shortcuts", "keybindings")),
             Some(("Color Theme…", "theme")),

@@ -1,7 +1,7 @@
 //! Buffer commands: switching between and closing open buffers.
 //! (`:e` opens buffers, in `files.rs`; the picker is in `picker.rs`.)
 
-use crate::commands::{ArgCompletion, CommandRegistry};
+use crate::commands::{ArgCompletion, CommandRegistry, CommandResult, Context};
 use crate::editor::UNSAVED_CHANGES;
 
 pub fn register(r: &mut CommandRegistry) {
@@ -64,21 +64,53 @@ pub fn register(r: &mut CommandRegistry) {
     r.register(
         "buffer_delete",
         "Close the current buffer (! to discard unsaved changes)",
+        delete_buffer,
+    );
+    r.register(
+        "tab_close",
+        "Close this window's tab (the buffer too, unless another window has a tab for it)",
         |cx| {
-            if cx.editor.document.is_modified() && !cx.bang {
-                // With VS Code's keys, it asks, as VS Code does.
-                if cx.editor.modeless() {
-                    cx.editor.ask_about_unsaved(true);
-                    return Ok(());
-                }
-                return Err(UNSAVED_CHANGES.into());
+            // Open in another window's tabs too: only this tab closes.
+            if cx.editor.tab_open_elsewhere() {
+                cx.editor.close_tab_here();
+                return Ok(());
             }
-            cx.editor.close_buffer();
+            delete_buffer(cx)
+        },
+    );
+    r.register(
+        "tab_next",
+        "Show the next tab in this window (wrapping)",
+        |cx| {
+            cx.editor.switch_tab(1);
+            Ok(())
+        },
+    );
+    r.register(
+        "tab_prev",
+        "Show the previous tab in this window (wrapping)",
+        |cx| {
+            cx.editor.switch_tab(-1);
             Ok(())
         },
     );
     r.alias("bd", "buffer_delete");
     r.alias("bdelete", "buffer_delete");
+}
+
+/// `:bd`: closes the active buffer (asking first, or refusing, if it has
+/// unsaved changes).
+fn delete_buffer(cx: &mut Context) -> CommandResult {
+    if cx.editor.document.is_modified() && !cx.bang {
+        // With VS Code's keys, it asks, as VS Code does.
+        if cx.editor.modeless() {
+            cx.editor.ask_about_unsaved(true);
+            return Ok(());
+        }
+        return Err(UNSAVED_CHANGES.into());
+    }
+    cx.editor.close_buffer();
+    Ok(())
 }
 
 #[cfg(test)]

@@ -32,6 +32,9 @@ pub struct Window {
     pub document: DocumentId,
     /// The cursor, for windows that aren't active.
     pub cursor: Position,
+    /// Its tabs, as VS Code's editor groups: the buffers opened in it, in
+    /// order (`window_tabs` gives them, tidied).
+    pub tabs: Vec<DocumentId>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +50,9 @@ pub struct Windows {
     tops: RefCell<HashMap<WindowId, usize>>,
     /// First rows commands asked for, which the UI uses at the next draw.
     requested_tops: RefCell<HashMap<WindowId, usize>>,
+    /// Rows at the top of each window for its tabs and breadcrumbs (set by
+    /// the UI).
+    chrome: Cell<u16>,
 }
 
 /// The area assumed before anything is drawn (tests, a first command).
@@ -60,12 +66,14 @@ impl Default for Windows {
                 id: WindowId(0),
                 document: DocumentId(0),
                 cursor: Position::default(),
+                tabs: vec![DocumentId(0)],
             }],
             active: WindowId(0),
             last_id: 0,
             area: Cell::new(DEFAULT_AREA),
             tops: RefCell::default(),
             requested_tops: RefCell::default(),
+            chrome: Cell::new(0),
         }
     }
 }
@@ -97,9 +105,23 @@ impl Windows {
         self.area.set(area);
     }
 
-    /// Each window's current size, as last drawn.
+    /// Each window's current size, as last drawn (its tab and breadcrumb
+    /// rows included).
     pub fn sizes(&self) -> Vec<(WindowId, Area)> {
         self.layout.arrange(self.area.get()).0
+    }
+
+    /// Records how many rows each window's tabs and breadcrumbs take (the
+    /// UI calls this).
+    pub fn note_chrome(&self, rows: u16) {
+        self.chrome.set(rows);
+    }
+
+    /// The rows a window `height` rows tall gives its tabs and breadcrumbs:
+    /// none if it's too short to spare them.
+    pub fn chrome_for(&self, height: u16) -> u16 {
+        let rows = self.chrome.get();
+        if height > rows + 2 { rows } else { 0 }
     }
 
     /// How many rows of text window `id` shows.
@@ -107,7 +129,7 @@ impl Windows {
         self.sizes()
             .into_iter()
             .find(|(window, _)| *window == id)
-            .map_or(0, |(_, area)| area.height as usize)
+            .map_or(0, |(_, area)| (area.height - self.chrome_for(area.height)) as usize)
     }
 
     /// Records the first row window `id` showed when drawn (the UI calls
@@ -460,10 +482,13 @@ impl Editor {
         let id = WindowId(self.windows.last_id);
         let active = self.windows.active;
         self.windows.layout.split(active, id, direction);
+        // The new window's one tab is what it shows (as VS Code's new
+        // group).
         self.windows.windows.push(Window {
             id,
             document: self.document.id(),
             cursor: self.document.cursor(),
+            tabs: vec![self.document.id()],
         });
         // A split starts with its window's own options, as in Vim.
         self.copy_window_options(active, id);
@@ -531,22 +556,224 @@ impl Editor {
         self.windows.windows.retain(|w| w.id == active);
     }
 
-    /// Whether a window other than the active one shows `document`.
-    pub(super) fn shown_in_other_window(&self, document: DocumentId) -> bool {
+    /// Window `id`'s tabs: the open buffers in its list, with the one it
+    /// shows.
+    pub fn window_tabs(&self, id: WindowId) -> Vec<DocumentId> {
+        let Some(window) = self.windows.get(id) else {
+            return Vec::new();
+        };
+        let shown = if id == self.windows.active {
+            self.document.id()
+        } else {
+            window.document
+        };
+        let mut tabs: Vec<DocumentId> = window
+            .tabs
+            .iter()
+            .copied()
+            .filter(|&t| self.document_by_id(t).is_some())
+            .collect();
+        if !tabs.contains(&shown) {
+            tabs.push(shown);
+        }
+        tabs
+    }
+
+    /// `new` is shown in the active window, opened from `previous`: its
+    /// tab goes after `previous`'s (VS Code's order), if it hasn't one.
+    pub(super) fn note_tab(&mut self, previous: DocumentId, new: DocumentId) {
+        let active = self.windows.active;
+        let Some(window) = self.windows.get_mut(active) else {
+            return;
+        };
+        if window.tabs.is_empty() {
+            window.tabs.push(previous);
+        }
+        if !window.tabs.contains(&new) {
+            let at = window
+                .tabs
+                .iter()
+                .position(|&t| t == previous)
+                .map_or(window.tabs.len(), |i| i + 1);
+            window.tabs.insert(at, new);
+        }
+    }
+
+    /// Whether a window other than the active one shows buffer `id` or
+    /// has a tab for it.
+    pub(super) fn in_other_window(&self, id: DocumentId) -> bool {
         self.windows
             .windows
             .iter()
-            .any(|w| w.id != self.windows.active && w.document == document)
+            .filter(|w| w.id != self.windows.active)
+            .any(|w| w.document == id || w.tabs.contains(&id))
     }
 
-    /// Points windows showing `old` (a closed buffer) at `new` instead.
-    pub(super) fn replace_window_document(&mut self, old: DocumentId, new: DocumentId) {
+    /// Buffer `id`'s tab in the active window goes.
+    pub(super) fn forget_tab_here(&mut self, id: DocumentId) {
+        let active = self.windows.active;
+        if let Some(window) = self.windows.get_mut(active) {
+            window.tabs.retain(|&t| t != id);
+        }
+    }
+
+    /// Buffer `id` closed: its tabs go.
+    pub(super) fn forget_tab(&mut self, id: DocumentId) {
         for window in &mut self.windows.windows {
-            if window.document == old {
-                window.document = new;
-                window.cursor = Position::default();
+            window.tabs.retain(|&t| t != id);
+        }
+    }
+
+    /// The tab beside `document`'s in window `id` (before it, else after).
+    fn tab_beside(&self, id: WindowId, document: DocumentId) -> Option<DocumentId> {
+        let tabs = self.window_tabs(id);
+        let at = tabs.iter().position(|&t| t == document)?;
+        if at > 0 {
+            tabs.get(at - 1).copied()
+        } else {
+            tabs.get(at + 1).copied()
+        }
+    }
+
+    /// Whether the active buffer has a tab in another window too (so
+    /// closing its tab here leaves it open).
+    pub fn tab_open_elsewhere(&self) -> bool {
+        let here = self.document.id();
+        self.windows
+            .windows
+            .iter()
+            .filter(|w| w.id != self.windows.active)
+            .any(|w| self.window_tabs(w.id).contains(&here))
+    }
+
+    /// Closes the active buffer's tab in this window only (it's open in
+    /// another): the tab beside it shows, or with none, the window closes.
+    pub fn close_tab_here(&mut self) {
+        let active = self.windows.active;
+        let closing = self.document.id();
+        let beside = self.tab_beside(active, closing);
+        if let Some(window) = self.windows.get_mut(active) {
+            window.tabs.retain(|&t| t != closing);
+        }
+        match beside {
+            Some(next) => {
+                self.switch_to(next);
+            }
+            None => {
+                let _ = self.close_window();
             }
         }
+    }
+
+    /// A tab dragged along its window's tab row: `document`'s tab to
+    /// position `index`.
+    pub fn move_tab(&mut self, window: WindowId, document: DocumentId, index: usize) {
+        let mut tabs = self.window_tabs(window);
+        let Some(at) = tabs.iter().position(|&t| t == document) else {
+            return;
+        };
+        tabs.remove(at);
+        tabs.insert(index.min(tabs.len()), document);
+        if let Some(w) = self.windows.get_mut(window) {
+            w.tabs = tabs;
+        }
+    }
+
+    /// A tab dragged to another window (its tab row at `index`, or its
+    /// text: the end): it moves there and shows, the window it left
+    /// showing the tab beside it, or closing if that was its only one.
+    pub fn move_tab_to_window(
+        &mut self,
+        document: DocumentId,
+        from: WindowId,
+        to: WindowId,
+        index: Option<usize>,
+    ) {
+        if from == to || self.windows.get(to).is_none() {
+            return;
+        }
+        self.focus_window(from);
+        let beside = self.tab_beside(from, document);
+        if let Some(w) = self.windows.get_mut(from) {
+            w.tabs.retain(|&t| t != document);
+        }
+        if let Some(next) = beside {
+            self.switch_to(next);
+        }
+        self.focus_window(to);
+        let mut tabs = self.window_tabs(to);
+        tabs.retain(|&t| t != document);
+        let index = index.unwrap_or(tabs.len()).min(tabs.len());
+        tabs.insert(index, document);
+        if let Some(w) = self.windows.get_mut(to) {
+            w.tabs = tabs;
+        }
+        self.switch_to(document);
+        if beside.is_none() {
+            self.windows.layout.remove(from);
+            self.windows.windows.retain(|w| w.id != from);
+        }
+    }
+
+    /// The next or previous tab in this window (`Ctrl+Tab`), wrapping.
+    pub fn switch_tab(&mut self, delta: isize) {
+        let tabs = self.window_tabs(self.windows.active);
+        let Some(at) = tabs.iter().position(|&t| t == self.document.id()) else {
+            return;
+        };
+        let next = tabs[(at as isize + delta).rem_euclid(tabs.len() as isize) as usize];
+        self.switch_to(next);
+    }
+
+    /// The tab to show in place of the active buffer, closing: the one
+    /// beside it in this window.
+    pub(super) fn tab_to_show_after_closing(&self) -> Option<DocumentId> {
+        self.tab_beside(self.windows.active, self.document.id())
+    }
+
+    /// Buffer `old` closed (`new` shows in the active window): other
+    /// windows that showed it show the tab beside it, or close if it was
+    /// their only one (while another window's left).
+    pub(super) fn replace_window_document(&mut self, old: DocumentId, new: DocumentId) {
+        let active = self.windows.active;
+        let others: Vec<WindowId> = self
+            .windows
+            .windows
+            .iter()
+            .filter(|w| w.id != active && w.document == old)
+            .map(|w| w.id)
+            .collect();
+        for id in others {
+            let beside = self
+                .windows
+                .get(id)
+                .and_then(|w| {
+                    let at = w.tabs.iter().position(|&t| t == old)?;
+                    let rest: Vec<DocumentId> =
+                        w.tabs.iter().copied().filter(|&t| t != old).collect();
+                    rest.get(at.saturating_sub(1)).copied()
+                })
+                .filter(|&t| self.document_by_id(t).is_some() && t != old);
+            match beside {
+                Some(tab) => {
+                    if let Some(window) = self.windows.get_mut(id) {
+                        window.document = tab;
+                        window.cursor = Position::default();
+                    }
+                }
+                None if self.windows.count() > 1 => {
+                    self.windows.layout.remove(id);
+                    self.windows.windows.retain(|w| w.id != id);
+                }
+                None => {
+                    if let Some(window) = self.windows.get_mut(id) {
+                        window.document = new;
+                        window.cursor = Position::default();
+                    }
+                }
+            }
+        }
+        self.forget_tab(old);
     }
 
     fn save_active_window(&mut self) {

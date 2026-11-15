@@ -191,6 +191,19 @@ impl Editor {
         if to == from {
             return Ok(());
         }
+        self.move_path(&from, &to)?;
+        self.set_message(Message::info(format!(
+            "Renamed {} to {}",
+            self.relative(&from),
+            self.relative(&to)
+        )));
+        Ok(())
+    }
+
+    /// Moves `from` (a file or folder) to `to`, open buffers in it
+    /// following, and shows it in the tree.
+    fn move_path(&mut self, from: &Path, to: &Path) -> Result<(), String> {
+        let (from, to) = (from.to_path_buf(), to.to_path_buf());
         if to.exists() {
             return Err(format!("{} already exists", self.relative(&to)));
         }
@@ -218,8 +231,76 @@ impl Editor {
             explorer.reveal(&to);
         }
         self.refresh_options();
+        Ok(())
+    }
+
+    /// A file or folder dragged onto `folder` in the tree: asks before
+    /// moving it there (nothing to ask if it's there already).
+    pub fn tree_ask_move(&mut self, from: PathBuf, folder: PathBuf) -> Result<(), String> {
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let (from, folder) = (canonical(&from), canonical(&folder));
+        if from.parent() == Some(folder.as_path()) || from == folder {
+            return Ok(());
+        }
+        if folder.starts_with(&from) {
+            return Err("A folder can't be moved into itself".into());
+        }
+        if self.explorer.as_ref().is_some_and(|e| canonical(e.root()) == from) {
+            return Err("The project's folder can't be moved here".into());
+        }
+        let name = from
+            .file_name()
+            .ok_or("Nothing to move")?
+            .to_string_lossy()
+            .into_owned();
+        let to = folder.join(&name);
+        if to.exists() {
+            return Err(format!("{} already exists", self.relative(&to)));
+        }
+        let span = |text: &str, style: Option<&str>| PopupSpan {
+            text: text.to_string(),
+            style: style.map(str::to_string),
+        };
+        let into = self.relative(&folder);
+        let into = if into.is_empty() {
+            "the project's folder".to_string()
+        } else {
+            into
+        };
+        self.tree_target = Some(from);
+        self.tree_move_to = Some(to);
+        self.open_popup(Popup {
+            name: "tree-move".into(),
+            title: "Move".into(),
+            lines: vec![
+                vec![span(&format!("Move {name} into {into}?"), None)],
+                vec![],
+                vec![
+                    span("y", Some("ui.popup.title")),
+                    span(" move it   ", None),
+                    span("n", Some("ui.popup.title")),
+                    span(" cancel", None),
+                ],
+            ],
+            keys: vec![
+                ("y".into(), "tree_move_confirmed".into()),
+                ("<CR>".into(), "tree_move_confirmed".into()),
+                ("n".into(), "popup_close".into()),
+            ],
+            focus: true,
+            ..Popup::default()
+        });
+        Ok(())
+    }
+
+    /// `y` there: moves it.
+    pub fn tree_move(&mut self) -> Result<(), String> {
+        self.close_popup();
+        let from = self.tree_target.take().ok_or("Nothing to move")?;
+        let to = self.tree_move_to.take().ok_or("Nothing to move")?;
+        self.move_path(&from, &to)?;
         self.set_message(Message::info(format!(
-            "Renamed {} to {}",
+            "Moved {} to {}",
             self.relative(&from),
             self.relative(&to)
         )));

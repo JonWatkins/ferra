@@ -6,7 +6,8 @@
 //! ```
 //!
 //! A folder clicked shows in the sidebar; a symbol, the cursor goes to it.
-//! Too long for the row, it loses crumbs from the start.
+//! Too long for the row, it loses crumbs from the start. Each window has
+//! its own; the symbols are only known for the active one's buffer.
 
 use std::path::PathBuf;
 
@@ -14,7 +15,7 @@ use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::Theme;
-use crate::editor::Editor;
+use crate::editor::{Editor, WindowId};
 use crate::editor::outline::kind_icon;
 
 /// What a crumb is, for a click.
@@ -31,16 +32,21 @@ pub enum Crumb {
 pub struct BreadcrumbsMap {
     pub row: Rect,
     pub crumbs: Vec<(u16, u16, Crumb)>,
+    /// The window they're for.
+    pub window: WindowId,
 }
 
 const SEPARATOR: &str = " › ";
 
 /// The crumbs: text, scope and what they are.
-fn crumbs(editor: &Editor) -> Vec<(String, &'static str, Crumb)> {
+fn crumbs(editor: &Editor, window: WindowId) -> Vec<(String, &'static str, Crumb)> {
     let mut out = Vec::new();
-    let Some(path) = editor.document.path() else {
+    let Some((document, _)) = editor.window_view(window) else {
+        return out;
+    };
+    let Some(path) = document.path() else {
         out.push((
-            editor.document.name().into_owned(),
+            document.name().into_owned(),
             "ui.breadcrumbs.file",
             Crumb::File,
         ));
@@ -72,7 +78,8 @@ fn crumbs(editor: &Editor) -> Vec<(String, &'static str, Crumb)> {
             out.push((text, "ui.breadcrumbs", Crumb::Folder(at.clone())));
         }
     }
-    if let Some(symbols) = editor.outline() {
+    let active = window == editor.windows().active();
+    if let Some(symbols) = editor.outline().filter(|_| active) {
         for index in editor.symbols_at_cursor() {
             let symbol = &symbols[index];
             let icon = kind_icon(&symbol.kind, editor.options.icons);
@@ -88,8 +95,12 @@ fn crumbs(editor: &Editor) -> Vec<(String, &'static str, Crumb)> {
 
 /// The crumbs that fit in `width`, from the end: their text, scope, kind
 /// and column (from 0), and whether some were left out at the start.
-fn laid_out(editor: &Editor, width: u16) -> (Vec<(String, &'static str, Crumb, u16)>, bool) {
-    let all = crumbs(editor);
+fn laid_out(
+    editor: &Editor,
+    window: WindowId,
+    width: u16,
+) -> (Vec<(String, &'static str, Crumb, u16)>, bool) {
+    let all = crumbs(editor, window);
     let mut first = 0;
     let total = |from: usize| -> usize {
         let crumbs = &all[from..];
@@ -117,15 +128,20 @@ fn laid_out(editor: &Editor, width: u16) -> (Vec<(String, &'static str, Crumb, u
 pub struct Breadcrumbs<'a> {
     editor: &'a Editor,
     theme: &'a Theme,
+    window: WindowId,
 }
 
 impl<'a> Breadcrumbs<'a> {
-    pub fn new(editor: &'a Editor, theme: &'a Theme) -> Self {
-        Self { editor, theme }
+    pub fn new(editor: &'a Editor, theme: &'a Theme, window: WindowId) -> Self {
+        Self {
+            editor,
+            theme,
+            window,
+        }
     }
 
-    pub fn map(editor: &Editor, row: Rect) -> BreadcrumbsMap {
-        let (crumbs, _) = laid_out(editor, row.width);
+    pub fn map(editor: &Editor, row: Rect, window: WindowId) -> BreadcrumbsMap {
+        let (crumbs, _) = laid_out(editor, window, row.width);
         BreadcrumbsMap {
             row,
             crumbs: crumbs
@@ -133,6 +149,7 @@ impl<'a> Breadcrumbs<'a> {
                 .map(|(text, _, crumb, x)| (row.x + x, row.x + x + text.width() as u16, crumb))
                 .filter(|(from, _, _)| *from < row.right())
                 .collect(),
+            window,
         }
     }
 }
@@ -141,7 +158,7 @@ impl Widget for Breadcrumbs<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let theme = self.theme;
         buf.set_style(area, theme.get("ui.breadcrumbs"));
-        let (crumbs, cut) = laid_out(self.editor, area.width);
+        let (crumbs, cut) = laid_out(self.editor, self.window, area.width);
         let separator = theme.get("ui.breadcrumbs.separator");
         if cut {
             buf.set_string(area.x + 1, area.y, "…", separator);

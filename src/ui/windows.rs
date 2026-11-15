@@ -13,6 +13,8 @@ use ratatui::{
     layout::{Position, Rect},
 };
 
+use super::breadcrumbs::{Breadcrumbs, BreadcrumbsMap};
+use super::tab_bar::{TabBar, TabBarMap};
 use super::{EditorView, StatusLine, ViewState};
 use crate::config::Theme;
 use crate::editor::windows::Area;
@@ -40,6 +42,9 @@ pub struct Drawn {
     pub windows: Vec<(WindowId, Rect)>,
     /// The lines between windows (and whether each is vertical).
     pub separators: Vec<(Rect, bool)>,
+    /// Each window's tabs and breadcrumbs, for the mouse.
+    pub tab_bars: Vec<TabBarMap>,
+    pub breadcrumbs: Vec<BreadcrumbsMap>,
 }
 
 /// Draws every window into `area`.
@@ -56,6 +61,11 @@ pub fn draw_windows(
     let area_cells = Area::new(area.x, area.y, area.width, area.height);
     // Resizing works in cells, so the editor needs to know the real size.
     windows.note_area(area_cells);
+    // Each window's own tab row and breadcrumbs, at its top.
+    let (tab_bar, crumbs) = (editor.options.tab_bar, editor.options.breadcrumbs);
+    windows.note_chrome(u16::from(tab_bar) + u16::from(crumbs));
+    let mut tab_bars = Vec::new();
+    let mut breadcrumbs = Vec::new();
     let (placed, separators) = windows.layout().arrange(area_cells);
 
     let separator_areas: Vec<(Rect, bool)> = separators
@@ -107,12 +117,26 @@ pub fn draw_windows(
             continue;
         };
         let active = id == windows.active();
-        let rect = Rect::new(
+        let mut rect = Rect::new(
             window_area.x,
             window_area.y,
             window_area.width,
             window_area.height,
         );
+        if windows.chrome_for(rect.height) > 0 {
+            if tab_bar {
+                let row = Rect::new(rect.x, rect.y, rect.width, 1).intersection(screen);
+                frame.render_widget(TabBar::new(editor, theme, id), row);
+                tab_bars.push(TabBar::map(editor, row, id));
+                rect = Rect::new(rect.x, rect.y + 1, rect.width, rect.height - 1);
+            }
+            if crumbs {
+                let row = Rect::new(rect.x, rect.y, rect.width, 1).intersection(screen);
+                frame.render_widget(Breadcrumbs::new(editor, theme, id), row);
+                breadcrumbs.push(Breadcrumbs::map(editor, row, id));
+                rect = Rect::new(rect.x, rect.y + 1, rect.width, rect.height - 1);
+            }
+        }
         areas.push((id, rect));
         // Each window draws with its own options (`:setlocal wrap`...).
         let options = editor.options_for(id, document.id());
@@ -188,5 +212,7 @@ pub fn draw_windows(
         active: active_area,
         windows: areas,
         separators: separator_areas,
+        tab_bars,
+        breadcrumbs,
     }
 }

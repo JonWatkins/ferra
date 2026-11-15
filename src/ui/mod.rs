@@ -104,11 +104,13 @@ pub struct ScreenMap {
     /// The keybinding editor's.
     pub keybindings: Option<keybindings::KeybindingsMap>,
     /// The tab bar's tabs.
-    pub tab_bar: Option<tab_bar::TabBarMap>,
+    /// Each window's tab row.
+    pub tab_bars: Vec<tab_bar::TabBarMap>,
     /// The bottom panel's tabs and list.
     pub panel: Option<panel::PanelMap>,
     /// The breadcrumbs' crumbs.
-    pub breadcrumbs: Option<breadcrumbs::BreadcrumbsMap>,
+    /// Each window's breadcrumbs.
+    pub breadcrumbs: Vec<breadcrumbs::BreadcrumbsMap>,
     /// The hover popup, while it's shown.
     pub hover: Option<Rect>,
     /// The status bar's row and each of its items' columns (with one
@@ -360,25 +362,6 @@ pub fn draw(
         None => (main, status),
     };
 
-    // The tab bar takes the top row of the windows' area.
-    let main = if editor.options.tab_bar && main.height > 4 {
-        let row = Rect::new(main.x, main.y, main.width, 1);
-        frame.render_widget(tab_bar::TabBar::new(editor, theme), row);
-        map.tab_bar = Some(tab_bar::TabBar::map(editor, row));
-        Rect::new(main.x, main.y + 1, main.width, main.height - 1)
-    } else {
-        main
-    };
-    // The breadcrumbs, under it.
-    let main = if editor.options.breadcrumbs && main.height > 4 {
-        let row = Rect::new(main.x, main.y, main.width, 1);
-        frame.render_widget(breadcrumbs::Breadcrumbs::new(editor, theme), row);
-        map.breadcrumbs = Some(breadcrumbs::Breadcrumbs::map(editor, row));
-        Rect::new(main.x, main.y + 1, main.width, main.height - 1)
-    } else {
-        main
-    };
-
     let drawn = match editor.options.statusline {
         StatuslineMode::Windows => {
             let per_window = windows::WindowStatus {
@@ -412,6 +395,8 @@ pub fn draw(
     };
     let window_cursor = drawn.cursor;
     map.windows = drawn.windows.clone();
+    map.tab_bars = drawn.tab_bars.clone();
+    map.breadcrumbs = drawn.breadcrumbs.clone();
     map.separators = drawn.separators.clone();
     frame.render_widget(CommandLineView::new(editor, theme), command);
     if editor.splash_visible() && !splash.is_empty() {
@@ -460,7 +445,21 @@ pub fn draw(
         map.hover = Some(area);
     }
 
-    // The settings editor takes the windows' place.
+    // The settings editor takes the windows' place (under a tab row).
+    let main = if editor.options.tab_bar
+        && main.height > 4
+        && (editor.settings().is_some() || editor.keybindings().is_some())
+    {
+        let row = Rect::new(main.x, main.y, main.width, 1);
+        frame.render_widget(ratatui::widgets::Clear, row);
+        frame.render_widget(
+            tab_bar::TabBar::new(editor, theme, editor.windows().active()),
+            row,
+        );
+        Rect::new(main.x, main.y + 1, main.width, main.height - 1)
+    } else {
+        main
+    };
     let mut settings_cursor = None;
     if editor.settings().is_some() {
         frame.render_widget(settings::SettingsWidget::new(editor, theme), main);

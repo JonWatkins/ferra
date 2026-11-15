@@ -74,6 +74,7 @@ pub fn x11_pointer(css: &str) -> &'static str {
         "text" => "xterm",
         "ew-resize" => "sb_h_double_arrow",
         "ns-resize" => "sb_v_double_arrow",
+        "grabbing" => "fleur",
         _ => "left_ptr",
     }
 }

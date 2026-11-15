@@ -273,6 +273,8 @@ pub struct Editor {
     /// The file or folder the file tree's name box or bin question is
     /// about.
     tree_target: Option<std::path::PathBuf>,
+    /// Where a file dragged in the tree is to go, once confirmed.
+    tree_move_to: Option<std::path::PathBuf>,
     /// The user's `config.toml`, where the settings editor saves.
     config_file: Option<std::path::PathBuf>,
     /// The uses of the symbol under the cursor (a language server's).

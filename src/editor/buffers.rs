@@ -108,7 +108,12 @@ impl Editor {
     /// `:bd`: closes the active buffer, switching to the most recently used
     /// other one (or an empty scratch buffer if it was the last).
     pub fn close_buffer(&mut self) {
-        let next = match self.background.pop() {
+        // The tab beside it in this window, else the most recently used.
+        let beside = self
+            .tab_to_show_after_closing()
+            .and_then(|id| self.background.iter().position(|d| d.id() == id));
+        let alone = beside.is_none() && self.windows.count() > 1 && !self.tab_open_elsewhere();
+        let next = match beside.map(|i| self.background.remove(i)).or_else(|| self.background.pop()) {
             Some(document) => document,
             None => {
                 let mut scratch = Document::default();
@@ -117,9 +122,14 @@ impl Editor {
             }
         };
         let closed = std::mem::replace(&mut self.document, next);
-        // Other windows that showed the closed buffer show the new one.
+        self.note_tab(closed.id(), self.document.id());
+        // Other windows that showed the closed buffer show another tab.
         self.replace_window_document(closed.id(), self.document.id());
         self.set_mode(Mode::Normal);
+        // Its window's last tab: the window goes too (as `:bd` in Vim).
+        if alone {
+            let _ = self.close_window();
+        }
     }
 
     /// Any open buffer by id, active or not.
@@ -162,8 +172,19 @@ impl Editor {
         self.settings = None;
         self.keybindings = None;
         let previous = std::mem::replace(&mut self.document, document);
-        if !previous.is_pristine_scratch() || self.shown_in_other_window(previous.id()) {
+        let (from, to) = (previous.id(), self.document.id());
+        self.note_tab(from, to);
+        if !previous.is_pristine_scratch() {
             self.background.push(previous);
+        } else {
+            // An untouched scratch buffer's tab gives way to what's opened
+            // over it; it stays open while another window has it.
+            self.forget_tab_here(from);
+            if self.in_other_window(from) {
+                self.background.push(previous);
+            } else {
+                self.forget_tab(from);
+            }
         }
         self.refresh_options();
         self.set_mode(Mode::Normal);

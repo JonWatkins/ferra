@@ -83,6 +83,11 @@ pub fn register(r: &mut CommandRegistry) {
         "Move it to the bin (the answer when asked)",
         |cx| cx.editor.tree_trash(),
     );
+    r.register(
+        "tree_move_confirmed",
+        "Move the file or folder dragged in the tree (the answer when asked)",
+        |cx| cx.editor.tree_move(),
+    );
     for (name, relative, tree, what) in [
         ("copy_path", false, false, "the file's full path"),
         (

@@ -356,3 +356,67 @@ fn confirmations_take_clicks() {
     click(&mut app, MouseButton::Left, x, y);
     assert!(!project.path("b.txt").exists());
 }
+
+fn drag(app: &mut App, from: (u16, u16), to: (u16, u16)) {
+    let event = |kind, (x, y): (u16, u16)| MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    };
+    app.handle_mouse(event(MouseEventKind::Down(MouseButton::Left), from));
+    app.handle_mouse(event(MouseEventKind::Drag(MouseButton::Left), to));
+    app.handle_mouse(event(MouseEventKind::Up(MouseButton::Left), to));
+}
+
+#[test]
+fn dragging_in_the_tree_moves_after_asking() {
+    let project = project(&[("notes.txt", "n\n"), ("docs/readme.md", "r\n")]);
+    let mut app = app();
+    app.open(&project.path("notes.txt"));
+    keys(&mut app, "<Space>e");
+    let from = find(&mut app, "notes.txt");
+    let onto = find(&mut app, "docs");
+    drag(&mut app, from, onto);
+    let shown = common::render(&mut app, 80, 20).rows.join("\n");
+    assert!(shown.contains("Move notes.txt into docs?"), "{shown}");
+    keys(&mut app, "y");
+    assert!(project.path("docs/notes.txt").exists());
+    assert!(!project.path("notes.txt").exists());
+    // The open buffer went with it.
+    assert!(
+        app.editor()
+            .document
+            .path()
+            .unwrap()
+            .ends_with("docs/notes.txt")
+    );
+    assert_eq!(message(&app), "Moved notes.txt to docs/notes.txt");
+
+    // Below the files: back to the project's folder.
+    let from = find(&mut app, "notes.txt");
+    drag(&mut app, from, (from.0, 18));
+    let shown = common::render(&mut app, 80, 20).rows.join("\n");
+    assert!(shown.contains("into the project's folder?"), "{shown}");
+    keys(&mut app, "y");
+    assert!(project.path("notes.txt").exists());
+
+    // Onto where it already is: nothing to ask.
+    let from = find(&mut app, "readme.md");
+    let onto = find(&mut app, "docs");
+    drag(&mut app, from, onto);
+    assert!(app.editor().popup().is_none());
+}
+
+#[test]
+fn a_file_dragged_from_the_tree_opens_in_that_window() {
+    let project = project(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    let mut app = app();
+    app.open(&project.path("a.txt"));
+    keys(&mut app, ":vs<CR><C-w>h<Space>e");
+    let from = find(&mut app, "b.txt");
+    // The right-hand window, well clear of the tree.
+    drag(&mut app, from, (70, 10));
+    assert_eq!(text(&app), "b");
+    assert_ne!(app.editor().windows().active(), ferra::editor::WindowId(0));
+}

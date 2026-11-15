@@ -94,9 +94,10 @@ impl Editor {
         }
         // A file replacing the untouched starting buffer takes its number,
         // so the first file opened is buffer 1, as in Vim. Not if another
-        // window shows it: it stays open, keeping its number.
+        // window shows it or has a tab for it: it stays open, keeping its
+        // number (and that tab isn't this file's).
         let replaces_scratch =
-            self.document.is_pristine_scratch() && !self.shown_in_other_window(self.document.id());
+            self.document.is_pristine_scratch() && !self.in_other_window(self.document.id());
         let id = if replaces_scratch {
             self.document.id()
         } else {

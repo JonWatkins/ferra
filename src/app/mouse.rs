@@ -41,7 +41,7 @@ const WHEEL_LINES: usize = 3;
 const MULTI_CLICK: Duration = Duration::from_millis(400);
 
 /// What a drag is doing, from where it started.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Drag {
     /// Selecting text in a window.
     Text(WindowId),
@@ -55,6 +55,14 @@ pub(super) enum Drag {
         area: Rect,
         vertical: bool,
     },
+    /// A tab dragged: along its row (reordering it), or to another window.
+    Tab {
+        window: WindowId,
+        document: crate::editor::DocumentId,
+    },
+    /// A file or folder dragged from the tree's row `row`: onto a folder
+    /// (moving it there), or into a window (opening it there).
+    Tree { path: std::path::PathBuf, row: usize },
 }
 
 /// What's at a place on the screen (boxes aside).
@@ -111,12 +119,12 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => self.mouse_down(at),
             MouseEventKind::Down(MouseButton::Right) => self.right_click(at),
             MouseEventKind::Down(MouseButton::Middle) => {
-                if let Some(id) = self.tab_at(at).map(|(id, _)| id) {
-                    self.close_tab(id);
+                if let Some((window, id, _)) = self.tab_at(at) {
+                    self.close_tab(window, id);
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => self.mouse_drag(at),
-            MouseEventKind::Up(_) => self.dragging = None,
+            MouseEventKind::Up(_) => self.mouse_up(at),
             MouseEventKind::ScrollDown => self.mouse_wheel(at, true),
             MouseEventKind::ScrollUp => self.mouse_wheel(at, false),
             _ => {}
@@ -434,9 +442,10 @@ impl App {
         }
         // The breadcrumbs: a folder shows in the sidebar, a symbol is gone
         // to.
-        if let Some(crumb) = self.crumb_at(at) {
+        if let Some((window, crumb)) = self.crumb_at(at) {
             use crate::ui::breadcrumbs::Crumb;
             self.input.reset();
+            self.editor.focus_window(window);
             match crumb {
                 Crumb::Folder(path) => self.editor.reveal_in_tree(&path),
                 Crumb::File => {
@@ -454,14 +463,18 @@ impl App {
             return;
         }
         // The tab bar: a tab shows its buffer, its × closes it.
-        if let Some((id, on_close)) = self.tab_at(at) {
+        if let Some((window, id, on_close)) = self.tab_at(at) {
             if self.editor.popup().is_some() {
                 self.editor.close_popup();
             }
             if on_close {
-                self.close_tab(id);
+                self.close_tab(window, id);
             } else {
-                self.show_tab(id);
+                self.show_tab(window, id);
+                self.dragging = Some(Drag::Tab {
+                    window,
+                    document: id,
+                });
             }
             return;
         }
@@ -536,10 +549,17 @@ impl App {
                 }
             }
             Hit::SidebarLine(row) => {
+                let dragged = self.editor.tree_row_on_screen(row);
                 if let Err(error) = self.editor.sidebar_click_times(row, clicks) {
                     self.editor.set_message(Message::error(error));
                 }
                 self.editor.finish_command();
+                if let Some(entry) = dragged {
+                    self.dragging = Some(Drag::Tree {
+                        path: entry.path,
+                        row,
+                    });
+                }
             }
             Hit::Sidebar => self.editor.set_mode(Mode::Sidebar),
             Hit::Terminal => self.panel_click(at),
@@ -800,33 +820,33 @@ impl App {
     }
 
     /// The breadcrumb under `at`.
-    fn crumb_at(&self, at: Position) -> Option<crate::ui::breadcrumbs::Crumb> {
-        let map = self.screen_map.breadcrumbs.as_ref()?;
-        if at.y != map.row.y {
-            return None;
-        }
+    fn crumb_at(&self, at: Position) -> Option<(WindowId, crate::ui::breadcrumbs::Crumb)> {
+        let map = self
+            .screen_map
+            .breadcrumbs
+            .iter()
+            .find(|m| m.row.contains(at))?;
         map.crumbs
             .iter()
             .find(|(from, to, _)| (*from..*to).contains(&at.x))
-            .map(|(_, _, crumb)| crumb.clone())
+            .map(|(_, _, crumb)| (map.window, crumb.clone()))
     }
 
     /// The tab under `at`, and whether it's on its `×`.
-    fn tab_at(&self, at: Position) -> Option<(crate::editor::DocumentId, bool)> {
-        let map = self.screen_map.tab_bar.as_ref()?;
-        if !map.row.contains(at) {
-            return None;
-        }
+    fn tab_at(&self, at: Position) -> Option<(WindowId, crate::editor::DocumentId, bool)> {
+        let map = self.screen_map.tab_bars.iter().find(|m| m.row.contains(at))?;
         map.tabs
             .iter()
             .find(|(from, to, _, _)| (*from..*to).contains(&at.x))
-            .map(|&(_, _, close, id)| (id, at.x == close))
+            .map(|&(_, _, close, id)| (map.window, id, at.x == close))
     }
 
-    /// A tab clicked: its buffer in the active window, there to type in.
-    fn show_tab(&mut self, id: crate::editor::DocumentId) {
+    /// A tab clicked: its window focused, showing its buffer, there to
+    /// type in.
+    fn show_tab(&mut self, window: WindowId, id: crate::editor::DocumentId) {
         self.input.reset();
         self.editor.close_views();
+        self.editor.focus_window(window);
         self.editor.switch_to(id);
         if !matches!(self.editor.mode(), Mode::Normal | Mode::Insert) {
             self.editor.set_mode(Mode::Normal);
@@ -835,9 +855,9 @@ impl App {
 
     /// A tab's `×` (or a middle click): closes its buffer (asking first,
     /// with VS Code's keys, if it has unsaved changes).
-    fn close_tab(&mut self, id: crate::editor::DocumentId) {
-        self.show_tab(id);
-        self.execute("buffer_delete", Invocation::default());
+    fn close_tab(&mut self, window: WindowId, id: crate::editor::DocumentId) {
+        self.show_tab(window, id);
+        self.execute("tab_close", Invocation::default());
     }
 
     /// A right-click: a menu of what can be done there, at the pointer, as
@@ -900,6 +920,24 @@ impl App {
     }
 
     fn mouse_drag(&mut self, at: Position) {
+        match self.dragging.clone() {
+            Some(Drag::Tab { window, document }) => {
+                self.pointer = "grabbing";
+                self.drag_tab(window, document, at);
+                return;
+            }
+            Some(Drag::Tree { row, .. }) => {
+                self.pointer = "grabbing";
+                // The row it'd drop on, selected.
+                if let Hit::SidebarLine(over) = self.hit(at)
+                    && over != row
+                {
+                    self.editor.tree_select_on_screen(over);
+                }
+                return;
+            }
+            _ => {}
+        }
         match self.dragging {
             Some(Drag::Text(id)) => self.drag_select(id, at),
             Some(Drag::Sidebar) => {
@@ -926,7 +964,134 @@ impl App {
                     .resize_window(axis, |_, most| want.clamp(1, most.max(1)));
                 self.editor.focus_window(active);
             }
-            None => {}
+            Some(Drag::Tab { .. } | Drag::Tree { .. }) | None => {}
+        }
+    }
+
+    /// A tab dragged along its own row: it takes the place of the tab
+    /// it's over, once the pointer's where it would then be (so tabs of
+    /// different widths don't swap back and forth).
+    fn drag_tab(&mut self, window: WindowId, document: crate::editor::DocumentId, at: Position) {
+        let Some(map) = self
+            .screen_map
+            .tab_bars
+            .iter()
+            .find(|m| m.window == window && m.row.contains(at))
+        else {
+            return;
+        };
+        let Some(&(from, _, _, _)) = map.tabs.iter().find(|t| t.3 == document) else {
+            return;
+        };
+        let width = map
+            .tabs
+            .iter()
+            .find(|t| t.3 == document)
+            .map_or(0, |t| t.1 - t.0);
+        let Some(&(over_from, over_to, _, over)) = map
+            .tabs
+            .iter()
+            .find(|t| (t.0..t.1).contains(&at.x))
+        else {
+            return;
+        };
+        if over == document {
+            return;
+        }
+        let lands = if over_from > from {
+            at.x >= over_to.saturating_sub(width)
+        } else {
+            at.x < over_from + width
+        };
+        if !lands {
+            return;
+        }
+        let tabs = self.editor.window_tabs(window);
+        if let Some(index) = tabs.iter().position(|&t| t == over) {
+            self.editor.move_tab(window, document, index);
+        }
+    }
+
+    /// The button let go: a dragged tab or tree entry dropped.
+    fn mouse_up(&mut self, at: Position) {
+        let dragging = self.dragging.take();
+        self.pointer = self.pointer_for(at);
+        match dragging {
+            Some(Drag::Tab { window, document }) => {
+                // On another window's tab row (before the tab it's over),
+                // or in its text (at the end).
+                let row = self
+                    .screen_map
+                    .tab_bars
+                    .iter()
+                    .find(|m| m.row.contains(at))
+                    .map(|m| {
+                        let over = m
+                            .tabs
+                            .iter()
+                            .find(|t| (t.0..t.1).contains(&at.x))
+                            .map(|t| t.3);
+                        (m.window, over)
+                    });
+                let target = match row {
+                    Some((to, over)) => Some((
+                        to,
+                        over.and_then(|o| {
+                            self.editor.window_tabs(to).iter().position(|&t| t == o)
+                        }),
+                    )),
+                    None => match self.hit(at) {
+                        Hit::Window(to) => Some((to, None)),
+                        _ => None,
+                    },
+                };
+                if let Some((to, index)) = target
+                    && to != window
+                {
+                    self.editor.move_tab_to_window(document, window, to, index);
+                    if !matches!(self.editor.mode(), Mode::Normal | Mode::Insert) {
+                        self.editor.set_mode(Mode::Normal);
+                    }
+                }
+            }
+            Some(Drag::Tree { path, row }) => match self.hit(at) {
+                Hit::SidebarLine(over) if over == row => {}
+                Hit::SidebarLine(over) if self.editor.tree_row_on_screen(over).is_some() => {
+                    let Some(target) = self.editor.tree_row_on_screen(over) else {
+                        return;
+                    };
+                    let folder = if target.is_dir {
+                        target.path
+                    } else {
+                        match target.path.parent() {
+                            Some(parent) => parent.to_path_buf(),
+                            None => return,
+                        }
+                    };
+                    if let Err(error) = self.editor.tree_ask_move(path, folder) {
+                        self.editor.set_message(Message::error(error));
+                    }
+                }
+                // Below the files (or on the sidebar's title): the
+                // project's folder.
+                Hit::SidebarLine(_) | Hit::Sidebar if self.editor.file_tree_shown() => {
+                    let Some(root) = self.editor.sidebar().map(|e| e.root().to_path_buf()) else {
+                        return;
+                    };
+                    if let Err(error) = self.editor.tree_ask_move(path, root) {
+                        self.editor.set_message(Message::error(error));
+                    }
+                }
+                Hit::Window(id) if path.is_file() => {
+                    self.leave_panes();
+                    self.editor.focus_window(id);
+                    if let Err(error) = self.editor.open(&path) {
+                        self.editor.set_message(Message::error(error.to_string()));
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
 

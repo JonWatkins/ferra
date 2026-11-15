@@ -400,6 +400,25 @@ impl Editor {
     /// A click on the sidebar's list (`_clicks` 2 for a double click; a
     /// single one does). In Source Control a click selects the file and
     /// shows its change side by side, as VS Code does.
+    /// The file tree's row `row` down from the top of its list, if the
+    /// sidebar shows the tree (for dragging).
+    pub fn tree_row_on_screen(&self, row: usize) -> Option<TreeRow> {
+        if self.search_view_shown() || self.git_view_shown() || self.plugin_view().is_some() {
+            return None;
+        }
+        let explorer = self.sidebar()?;
+        explorer.rows().get(explorer.scroll.get() + row).cloned()
+    }
+
+    /// Selects the tree's row `row` down (showing where a drag would drop).
+    pub fn tree_select_on_screen(&mut self, row: usize) {
+        if self.tree_row_on_screen(row).is_some() {
+            let explorer = self.explorer_mut();
+            let index = explorer.scroll.get() + row;
+            explorer.select(index);
+        }
+    }
+
     pub fn sidebar_click_times(&mut self, row: usize, _clicks: u8) -> Result<(), String> {
         if self.search_view_shown() {
             return self.search_click(row);
