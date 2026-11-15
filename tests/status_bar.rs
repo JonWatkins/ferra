@@ -183,11 +183,9 @@ fn clicking_the_problems_lists_them() {
     let mut app = app_as_shipped();
     let _dir = open(&mut app, "notes.txt", "x\n");
     click_bar(&mut app, "⊗ 0");
-    // None: it says so.
-    let message = app
-        .editor()
-        .message()
-        .map(|m| m.text.clone())
-        .unwrap_or_default();
-    assert!(message.to_lowercase().contains("no "), "{message}");
+    // The bottom panel's Problems.
+    assert_eq!(
+        app.editor().panel_shown(),
+        Some(ferra::editor::panel::PanelTab::Problems)
+    );
 }

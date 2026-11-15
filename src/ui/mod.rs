@@ -27,6 +27,7 @@ pub mod icons;
 mod input_box;
 pub mod keybindings;
 mod menu_bar;
+pub mod panel;
 mod picker;
 mod popup;
 mod search;
@@ -104,6 +105,8 @@ pub struct ScreenMap {
     pub keybindings: Option<keybindings::KeybindingsMap>,
     /// The tab bar's tabs.
     pub tab_bar: Option<tab_bar::TabBarMap>,
+    /// The bottom panel's tabs and list.
+    pub panel: Option<panel::PanelMap>,
     /// The breadcrumbs' crumbs.
     pub breadcrumbs: Option<breadcrumbs::BreadcrumbsMap>,
     /// The status bar's row and each of its items' columns (with one
@@ -305,11 +308,12 @@ pub fn draw(
         _ => (main, status),
     };
 
-    // The terminal panel takes the bottom of what's left: a title row and
-    // the shell's rows, under the windows (and their status lines).
+    // The bottom panel takes the bottom of what's left: a row of tabs and
+    // the tab's rows (the shell's, for the terminal), under the windows
+    // (and their status lines).
     let mut terminal_cursor = None;
-    let (main, status) = match editor.terminal_panel() {
-        Some(terminal) => {
+    let (main, status) = match editor.panel_shown() {
+        Some(tab) => {
             let per_window = editor.options.statusline == StatuslineMode::Windows;
             let region = main.height + u16::from(per_window);
             // Room for a few rows of windows (and their status line).
@@ -330,13 +334,21 @@ pub fn draw(
                 } else {
                     status
                 };
-                let focused = editor.mode() == Mode::Terminal;
                 map.terminal = Some(panel);
-                let view = TerminalView::new(terminal, focused, &keys.terminal, theme);
-                frame.render_widget(view, panel);
-                if focused {
-                    terminal_cursor = TerminalView::cursor_position(terminal, panel);
+                match (tab, editor.terminal_panel()) {
+                    (crate::editor::panel::PanelTab::Terminal, Some(terminal)) => {
+                        let focused = editor.mode() == Mode::Terminal;
+                        let view = TerminalView::new(terminal, focused, &keys.terminal, theme);
+                        frame.render_widget(view, panel);
+                        let row = Rect::new(panel.x, panel.y, panel.width, 1);
+                        panel::draw_tabs(editor, theme, row, frame.buffer_mut());
+                        if focused {
+                            terminal_cursor = TerminalView::cursor_position(terminal, panel);
+                        }
+                    }
+                    _ => frame.render_widget(panel::PanelView::new(editor, theme), panel),
                 }
+                map.panel = Some(panel::PanelView::map(editor, panel));
                 (main, status)
             } else {
                 (main, status)

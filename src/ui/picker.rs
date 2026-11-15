@@ -112,11 +112,19 @@ impl Widget for PickerView<'_> {
 
         // Filter prompt, then a separator, then the list.
         let prefix = picker.prefix().map(String::from).unwrap_or_default();
-        let prompt = Line::from(vec![
+        let mut spans = vec![
             Span::styled("> ", self.theme.get("ui.popup.prompt")),
             Span::styled(prefix, self.theme.get("ui.popup.prompt")),
             Span::raw(picker.query()),
-        ]);
+        ];
+        // Nothing typed: what to type, dimmed (the cursor sits before it).
+        if let Some(placeholder) = picker.placeholder() {
+            spans.push(Span::styled(
+                placeholder,
+                self.theme.get("ui.input.placeholder"),
+            ));
+        }
+        let prompt = Line::from(spans);
         prompt.render(Rect::new(inner.x, inner.y, inner.width, 1), buf);
         if inner.height < 3 {
             return;

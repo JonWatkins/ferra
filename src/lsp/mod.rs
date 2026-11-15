@@ -484,6 +484,16 @@ impl Lsp {
                 self.raw_diagnostics.insert(document, raw);
             }
             (Some("$/progress"), None) => client.note_progress(&message["params"]),
+            // What a server logs: in the Output tab.
+            (Some("window/logMessage"), None) => {
+                let params = &message["params"];
+                let text = format!(
+                    "{}: {}",
+                    client.name,
+                    params["message"].as_str().unwrap_or_default()
+                );
+                editor.note_output(&text, params["type"].as_u64() == Some(1));
+            }
             (Some("window/showMessage"), None) => {
                 let params = &message["params"];
                 let text = format!(

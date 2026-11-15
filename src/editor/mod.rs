@@ -19,6 +19,7 @@ pub mod modeless;
 mod operator;
 pub mod outline;
 mod pairs;
+pub mod panel;
 pub mod picker;
 pub mod registers;
 mod replace;
@@ -231,7 +232,10 @@ pub struct Editor {
     /// The terminal panel's shell (kept while the panel's hidden), and
     /// whether the panel's open.
     terminal: Option<crate::terminal::Terminal>,
-    terminal_open: bool,
+    /// Whether the bottom panel is open (at `panel.tab`).
+    panel_open: bool,
+    /// The bottom panel: its tab, the Problems' selection, the Output.
+    panel: panel::PanelState,
     /// A plugin's popup, and whether a new one brought keys to bind.
     popup: Option<popup::Popup>,
     popup_keys_changed: bool,
@@ -737,7 +741,7 @@ impl Editor {
             }
             Mode::Find => self.find_edit(|field| field.push(c)),
             Mode::Input => self.input_box_edit(|field| field.push(c)),
-            Mode::Settings | Mode::Keybindings => {}
+            Mode::Settings | Mode::Keybindings | Mode::Panel => {}
             Mode::Normal
             | Mode::OperatorPending
             | Mode::Visual
@@ -753,6 +757,7 @@ impl Editor {
     }
 
     pub fn set_message(&mut self, message: Message) {
+        self.note_message(&message);
         if message.severity == message::Severity::Error {
             crate::log::debug("WARN", &message.text);
         }

@@ -86,6 +86,9 @@ pub struct Picker {
     quick_open: bool,
     /// What it was switched to, shown before the query (`>`, `@`).
     prefix: Option<char>,
+    /// Shown, dimmed, while nothing's typed (VS Code's "Search files by
+    /// name...").
+    placeholder: String,
 }
 
 impl Picker {
@@ -101,6 +104,7 @@ impl Picker {
             server_search: false,
             quick_open: false,
             prefix: None,
+            placeholder: String::new(),
         };
         picker.refilter();
         picker
@@ -189,6 +193,18 @@ impl Picker {
         self.keep_label_start
     }
 
+    /// The dimmed text shown while nothing's typed.
+    pub fn with_placeholder(mut self, text: impl Into<String>) -> Self {
+        self.placeholder = text.into();
+        self
+    }
+
+    /// What to show in the empty query: its placeholder (nothing once a
+    /// prefix or a character is typed).
+    pub fn placeholder(&self) -> Option<&str> {
+        (self.query.is_empty() && !self.placeholder.is_empty()).then_some(self.placeholder.as_str())
+    }
+
     /// Makes it the quick-open box, switched to `prefix` if given.
     pub fn quick_open(mut self, prefix: Option<char>) -> Self {
         self.quick_open = true;
@@ -200,6 +216,9 @@ impl Picker {
     pub fn set_quick_open(&mut self, prefix: Option<char>) {
         self.quick_open = true;
         self.prefix = prefix;
+        if prefix.is_some() {
+            self.placeholder.clear();
+        }
     }
 
     pub fn is_quick_open(&self) -> bool {

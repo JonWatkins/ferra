@@ -1201,7 +1201,7 @@ impl App {
             }
             Mode::Terminal => self.editor.terminal_paste(text),
             Mode::Settings => self.editor.settings_paste(text),
-            Mode::Keybindings => {}
+            Mode::Keybindings | Mode::Panel => {}
             Mode::Popup | Mode::Git => {}
             // Nothing to paste into.
             Mode::Sidebar => {}

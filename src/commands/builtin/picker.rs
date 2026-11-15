@@ -61,7 +61,10 @@ pub fn register(r: &mut CommandRegistry) {
             cx.editor.open_picker(
                 Picker::new("Files", Vec::new())
                     .loading_from(job)
-                    .quick_open(None),
+                    .quick_open(None)
+                    .with_placeholder(
+                        "Search files by name (> commands, @ symbols, : go to a line)",
+                    ),
             );
             cx.editor.request_file_list(FileListRequest {
                 job,

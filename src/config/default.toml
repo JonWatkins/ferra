@@ -477,6 +477,7 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.diagnostic.hint" = "#6b7280"
 "ui.statusline.diagnostic.error" = { fg = "#f7768e", modifiers = ["bold"] }
 "ui.statusline.diagnostic.warning" = { fg = "#e0af68", modifiers = ["bold"] }
+"ui.statusline.diagnostic.info" = { fg = "#7dcfff", modifiers = ["bold"] }
 "ui.wrap-marker" = "#4b5263"
 "ui.popup" = { fg = "#d4d7dd", bg = "#1f2229" }
 "ui.popup.border" = "#4b5263"
@@ -489,6 +490,9 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 # The lines under the menu bar and above the terminal panel.
 "ui.menubar.border" = { fg = "#3b4048", bg = "#16181d" }
 "ui.terminal.border" = { fg = "#3b4048" }
+"ui.panel.tab" = { fg = "#6b7280", bg = "#1f2229" }
+"ui.panel.tab.shown" = { fg = "#c0caf5", bg = "#1f2229", modifiers = ["bold"] }
+"ui.panel.detail" = "#565f89"
 "ui.menu.key" = "#6b7280"
 "ui.menu.separator" = "#3b4048"
 "ui.popup.prompt" = "#7aa2f7"
@@ -708,6 +712,30 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 ":" = "command_mode"
 "<C-p>" = "file_picker"
 "<F1>" = "command_palette"
+
+# The bottom panel's Problems and Output tabs (:problems, :output, :panel),
+# while they have focus.
+[keys.panel]
+"j" = "panel_down"
+"k" = "panel_up"
+"<Down>" = "panel_down"
+"<Up>" = "panel_up"
+"<C-d>" = "panel_page_down"
+"<C-u>" = "panel_page_up"
+"<PageDown>" = "panel_page_down"
+"<PageUp>" = "panel_page_up"
+"gg" = "panel_first"
+"G" = "panel_last"
+"<CR>" = "panel_open"
+"o" = "panel_open"
+"<Tab>" = "panel_next_tab"
+"<S-Tab>" = "panel_prev_tab"
+"<Esc>" = "panel_leave"
+"q" = "panel"
+":" = "command_mode"
+"<F1>" = "command_palette"
+"<C-p>" = "file_picker"
+"<C-j>" = "panel"
 
 # A plugin's input box (ctx:input), while it has focus. Typing edits it.
 [keys.input]

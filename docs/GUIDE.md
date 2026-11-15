@@ -578,7 +578,32 @@ in a file undoes them, and nothing's written until you save: `:wa`
 saves them all. A line that's changed since the search isn't replaced
 (`R` searches again).
 
-## The terminal panel
+## The bottom panel
+
+Under the windows, the bottom panel has three tabs, as VS Code's:
+
+```text
+ PROBLEMS 3   OUTPUT   TERMINAL               ↵ go   Tab next   Esc editor   q hide
+ ▾ src/main.rs  2
+   ⊗ mismatched types  rustc                                     [Ln 3, Col 9]
+   ⚠ unused variable: `x`  rustc                                 [Ln 7, Col 5]
+```
+
+- **Problems** (`:problems`, `Ctrl+Shift+M` with VS Code's keys, or a
+  click on the status bar's errors and warnings): every error and warning
+  in the open files, by file. `j`/`k` move, `<CR>` (or a click) goes to
+  one.
+- **Output** (`:output`, `Ctrl+Shift+U`): the messages ferra has shown,
+  timed, and what language servers log. `j`/`k` scroll back; it follows
+  the end otherwise.
+- **Terminal**: a shell, below.
+
+`:panel` (`Ctrl+J`) shows the panel at the tab it was last on, or hides
+it; `<Tab>`/`<S-Tab>` go through the tabs, as do clicks on them; `<Esc>`
+goes back to the text, leaving it open; `q` hides it. Its keys are in
+`[keys.panel]`, its height is `terminal-height`.
+
+### The terminal
 
 `<Space>t` (or `:terminal`) opens a shell in a panel under the windows, as
 in VS Code, and moves to it; the shell starts the first time. While it has

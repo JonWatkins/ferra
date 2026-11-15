@@ -314,6 +314,7 @@ impl App {
                 | Mode::Terminal
                 | Mode::Settings
                 | Mode::Keybindings
+                | Mode::Panel
         )
     }
 
@@ -400,6 +401,14 @@ impl App {
                     self.execute("popup_close", Invocation::default());
                 }
                 None => {}
+            }
+            return;
+        }
+        // The bottom panel's tabs.
+        if let Some(tab) = self.panel_tab_at(at) {
+            self.input.reset();
+            if let Err(error) = self.editor.panel_show(tab) {
+                self.editor.set_message(Message::error(error));
             }
             return;
         }
@@ -521,11 +530,7 @@ impl App {
                 self.editor.finish_command();
             }
             Hit::Sidebar => self.editor.set_mode(Mode::Sidebar),
-            Hit::Terminal => {
-                if let Err(error) = self.editor.focus_terminal() {
-                    self.editor.set_message(Message::error(error));
-                }
-            }
+            Hit::Terminal => self.panel_click(at),
             Hit::Nothing => {}
         }
     }
@@ -710,6 +715,46 @@ impl App {
             })
     }
 
+    /// The bottom panel's tab under `at`.
+    fn panel_tab_at(&self, at: Position) -> Option<crate::editor::panel::PanelTab> {
+        let map = self.screen_map.panel.as_ref()?;
+        if at.y != map.area.y {
+            return None;
+        }
+        map.tabs
+            .iter()
+            .find(|(from, to, _)| (*from..*to).contains(&at.x))
+            .map(|(_, _, tab)| *tab)
+    }
+
+    /// A click in the bottom panel: the terminal's focus, or a problem
+    /// gone to.
+    fn panel_click(&mut self, at: Position) {
+        use crate::editor::panel::PanelTab;
+        match self.editor.panel_shown() {
+            Some(PanelTab::Terminal) | None => {
+                if let Err(error) = self.editor.focus_terminal() {
+                    self.editor.set_message(Message::error(error));
+                }
+            }
+            Some(PanelTab::Problems) => {
+                self.editor.set_mode(Mode::Panel);
+                let Some(map) = self.screen_map.panel.clone() else {
+                    return;
+                };
+                if map.list.contains(at) {
+                    let index = map.first + (at.y - map.list.y) as usize;
+                    let before = self.editor.panel().selected;
+                    self.editor.panel_select(index);
+                    if self.editor.panel().selected == index || before == index {
+                        self.execute("panel_open", Invocation::default());
+                    }
+                }
+            }
+            Some(PanelTab::Output) => self.editor.set_mode(Mode::Panel),
+        }
+    }
+
     /// The status bar item under `at`.
     fn status_item_at(&self, at: Position) -> Option<crate::config::StatusElement> {
         let (row, items) = self.screen_map.status_bar.as_ref()?;
@@ -729,7 +774,7 @@ impl App {
         self.input.reset();
         let command = match element {
             E::Git => "git_branch",
-            E::Diagnostics => "diagnostics_picker",
+            E::Diagnostics => "problems",
             E::Position | E::PositionPercentage | E::TotalLines => "goto_line_prompt",
             E::FileType => "language",
             E::LspProgress => "lsp_info",
@@ -999,7 +1044,12 @@ impl App {
             Hit::SidebarLine(_) | Hit::Sidebar | Hit::SidebarTab(_) => {
                 self.editor.sidebar_move(lines);
             }
-            Hit::Terminal => self.editor.terminal_scroll_rows(-lines),
+            Hit::Terminal => match self.editor.panel_shown() {
+                Some(crate::editor::panel::PanelTab::Terminal) => {
+                    self.editor.terminal_scroll_rows(-lines);
+                }
+                _ => self.editor.panel_move(lines),
+            },
             Hit::Activity(_)
             | Hit::ActivityBar
             | Hit::SearchField

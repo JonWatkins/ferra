@@ -13,7 +13,9 @@ use crate::terminal::{Terminal, shell_program};
 impl Editor {
     /// The panel's terminal, if the panel's open.
     pub fn terminal_panel(&self) -> Option<&Terminal> {
-        self.terminal.as_ref().filter(|_| self.terminal_open)
+        self.terminal
+            .as_ref()
+            .filter(|_| self.panel_open && self.panel.tab == super::panel::PanelTab::Terminal)
     }
 
     /// Whether a shell is running (so its output is waited for).
@@ -25,7 +27,7 @@ impl Editor {
     /// isn't running); with focus already there, hides it.
     pub fn toggle_terminal(&mut self) -> Result<(), String> {
         if self.mode() == Mode::Terminal {
-            self.terminal_open = false;
+            self.panel_open = false;
             self.set_mode(Mode::Normal);
             return Ok(());
         }
@@ -44,7 +46,8 @@ impl Editor {
                 Terminal::spawn(&program, &[], &cwd, rows, 80).map_err(|e| e.to_string())?;
             self.terminal = Some(terminal);
         }
-        self.terminal_open = true;
+        self.panel_open = true;
+        self.panel.tab = super::panel::PanelTab::Terminal;
         self.set_mode(Mode::Terminal);
         Ok(())
     }
@@ -59,7 +62,7 @@ impl Editor {
     /// `:terminal-close`: ends the shell and closes the panel.
     pub fn close_terminal(&mut self) {
         self.terminal = None;
-        self.terminal_open = false;
+        self.panel_open = false;
         if self.mode() == Mode::Terminal {
             self.set_mode(Mode::Normal);
         }
@@ -105,12 +108,13 @@ impl Editor {
     /// Takes the shell's output. Returns whether there's anything new to
     /// draw. A shell that exits while the panel is hidden closes it.
     pub fn pump_terminal(&mut self) -> bool {
+        let hidden = self.terminal_panel().is_none();
         let Some(terminal) = self.terminal.as_mut() else {
             return false;
         };
         let was_running = terminal.is_running();
         let changed = terminal.pump();
-        if was_running && !terminal.is_running() && !self.terminal_open {
+        if was_running && !terminal.is_running() && hidden {
             let why = terminal.exited().unwrap_or("exited").to_string();
             self.terminal = None;
             self.set_message(Message::info(format!("The terminal's shell {why}")));

@@ -99,6 +99,9 @@ inherit = { visual = "insert" }
 "<C-b>" = "sidebar_toggle"
 "<C-S-e>" = "sidebar_focus"
 "<C-`>" = "terminal_toggle"
+"<C-j>" = "panel"
+"<C-S-m>" = "problems"
+"<C-S-u>" = "output"
 "<C-\\>" = "split_vertical"
 
 # Finding.
