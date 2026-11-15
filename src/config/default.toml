@@ -106,6 +106,10 @@ restore-session = true
 # (https://www.nerdfonts.com): VS Code's own icons in the activity bar and
 # status bar, and file and folder icons in the file tree and the picker.
 icons = "plain"
+# The colour theme: "ferra-dark" (ferra's own), or one from an installed
+# theme pack (:theme picks one, showing each as you go; :plugin_browse
+# theme lists the plugin directory's). Your [theme] goes over it.
+color-theme = "ferra-dark"
 # Rows the terminal panel (<Space>t, :terminal) takes, under the windows.
 terminal-height = 12
 # The terminal panel's shell. "" runs $SHELL (or /bin/sh).

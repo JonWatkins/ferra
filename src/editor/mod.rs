@@ -250,6 +250,8 @@ pub struct Editor {
     git: git::GitState,
     /// The full-screen git view, while it's open.
     git_gui: Option<git_gui::GitGui>,
+    /// `:theme` asked for the theme picker (the app has the themes).
+    theme_picker_wanted: bool,
     /// The quick-open box's switch, for the app; and a prefix waiting for
     /// the picker it asked for (the language server's symbols).
     quick_open_switch: Option<char>,

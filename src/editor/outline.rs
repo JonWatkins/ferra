@@ -250,3 +250,15 @@ impl Editor {
         self.reveal_cursor();
     }
 }
+
+impl Editor {
+    /// `:theme`: asks the app for the theme picker.
+    pub fn theme_picker_request(&mut self) {
+        self.theme_picker_wanted = true;
+    }
+
+    /// Whether the theme picker was asked for, for the app.
+    pub fn take_theme_picker_request(&mut self) -> bool {
+        std::mem::take(&mut self.theme_picker_wanted)
+    }
+}

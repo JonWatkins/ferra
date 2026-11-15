@@ -138,6 +138,24 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.goto_line_column(&cx.args.join(" ")),
     );
     r.register(
+        "theme",
+        "Pick a colour theme, each shown as the selection moves to it (or :color_theme id)",
+        |cx| {
+            cx.editor.theme_picker_request();
+            Ok(())
+        },
+    );
+    r.alias("themes", "theme");
+    r.register(
+        "color_theme",
+        "Use colour theme [id] (ferra-dark, or an installed theme pack's), saved to config.toml",
+        |cx| {
+            let id = cx.args.first().ok_or("Which theme? (:theme lists them)")?;
+            cx.editor
+                .set_and_save_option("color-theme", toml::Value::String(id.clone()))
+        },
+    );
+    r.register(
         "outline_go",
         "In the Outline: go to the selected symbol",
         |cx| cx.editor.outline_go(),

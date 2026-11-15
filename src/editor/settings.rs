@@ -304,6 +304,13 @@ impl Editor {
     }
 
     /// Sets `setting` to `value` (as `:set` would) and saves it.
+    /// Sets option `path` to `value` and saves it to `config.toml` (as the
+    /// settings editor does): `:color_theme`.
+    pub fn set_and_save_option(&mut self, path: &str, value: Value) -> Result<(), String> {
+        let setting = schema::find(path).ok_or_else(|| format!("Unknown option: {path}"))?;
+        self.settings_apply(setting, value)
+    }
+
     fn settings_apply(&mut self, setting: &Setting, value: Value) -> Result<(), String> {
         self.set_option(&setting.path, value.clone(), false)?;
         let shown = match &value {

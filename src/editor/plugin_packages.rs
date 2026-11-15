@@ -28,6 +28,8 @@ pub struct PackageState {
     /// `:plugin_reload` (or a change that needs one), for the app, and
     /// whether to say it's done.
     reload: Option<bool>,
+    /// `:plugin_browse tag`: only the directory's plugins with that tag.
+    browse_tag: Option<String>,
     /// Packs offered this session (each is offered once).
     offered: Vec<String>,
     /// A file to offer a pack for once the directory's been fetched.
@@ -531,7 +533,8 @@ impl Editor {
 
     /// `:plugin_browse`: fetches the plugin directory (the `plugin-index`
     /// option) in the background, then lists it (`plugin_show_index`).
-    pub fn plugin_browse(&mut self) -> Result<(), String> {
+    pub fn plugin_browse(&mut self, tag: Option<&str>) -> Result<(), String> {
+        self.packages.browse_tag = tag.map(str::to_string);
         self.require_plugin_paths()?;
         self.require_idle()?;
         let source =
@@ -555,9 +558,15 @@ impl Editor {
             self.set_message(Message::info("The plugin directory has no plugins yet"));
             return;
         }
-        let items = index
+        let tag = self.packages.browse_tag.take();
+        let title = match &tag {
+            Some(tag) => format!("Plugins: {tag}"),
+            None => "Plugins".into(),
+        };
+        let items: Vec<PickerItem> = index
             .entries
             .into_iter()
+            .filter(|entry| tag.as_ref().is_none_or(|t| entry.tags.contains(t)))
             .map(|entry| {
                 let mut detail = entry.description.clone();
                 if entry.language {
@@ -585,7 +594,13 @@ impl Editor {
                 }
             })
             .collect();
-        self.open_picker(Picker::new("Plugins", items));
+        if items.is_empty() {
+            self.set_message(Message::info(
+                "The plugin directory has nothing like that yet",
+            ));
+            return;
+        }
+        self.open_picker(Picker::new(title, items));
         self.clear_message();
         if let Some(why) = index.stale {
             self.set_message(Message::error(format!(

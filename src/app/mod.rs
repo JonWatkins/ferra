@@ -4,6 +4,7 @@
 mod background;
 pub mod crash;
 mod session;
+mod themes;
 pub use session::default_dir as session_dir;
 mod macros;
 mod mouse;
@@ -67,6 +68,10 @@ pub struct App {
     /// keys, while they have some.
     popup_keymap: Option<Keymap>,
     theme: Theme,
+    /// The themes there are, and which is in use.
+    themes: themes::Themes,
+    /// The user's own `[theme]`, laid over the chosen theme.
+    user_theme: toml::Table,
     input: InputHandler,
     /// Scroll state per window and buffer.
     views: Views,
@@ -131,6 +136,8 @@ impl App {
             last_click: None,
             pointer: "default",
             theme: config.theme,
+            themes: themes::Themes::default(),
+            user_theme: config.user_theme,
             input: InputHandler::default(),
             views: Views::default(),
             changes: ChangeRecorder::default(),
@@ -152,6 +159,10 @@ impl App {
             .set_clipboard(clipboard::for_provider(provider), mode);
         app.validate_keymap();
         app.refresh_menu_hints();
+        // ferra's own theme is in place; another waits for its pack.
+        if app.editor.options.color_theme == themes::BUILT_IN {
+            app.themes.applied = themes::BUILT_IN.into();
+        }
         // VS Code's keys start out typing.
         app.input.set_modeless(app.editor.modeless());
         app.editor.keymap_switched();
@@ -449,6 +460,14 @@ impl App {
     /// shown again after startup messages); a broken plugin doesn't stop the
     /// others, or the editor, from loading.
     pub fn load_plugins(&mut self, config_dir: &std::path::Path) -> Option<String> {
+        // Theme packs' themes come with them.
+        self.themes.installed.clear();
+        let errors = self.load_plugins_from(config_dir);
+        self.reapply_theme();
+        errors
+    }
+
+    fn load_plugins_from(&mut self, config_dir: &std::path::Path) -> Option<String> {
         self.plugin_config_dir = Some(config_dir.to_path_buf());
         let paths = self.editor.plugin_paths().cloned();
         let packages = match &paths {
@@ -525,7 +544,7 @@ impl App {
     /// its Lua. Returns what went wrong. (Commands it registers wait for
     /// `install_plugins`.)
     fn load_package(&mut self, dir: &std::path::Path) -> Vec<String> {
-        let mut errors = Vec::new();
+        let mut errors = self.add_pack_themes(dir);
         match crate::plugins::packages::Manifest::read(dir) {
             Ok(manifest) if !manifest.languages.is_empty() => {
                 let options = self.editor.global_options().clone();
@@ -1339,10 +1358,12 @@ impl App {
         } else {
             ui::TerminalKeys::default()
         };
+        // While the theme picker's open, its selection's theme.
+        let theme = self.drawing_theme().clone();
         self.screen_map = ui::draw(
             frame,
             &self.editor,
-            &self.theme,
+            &theme,
             &mut self.views,
             &pending,
             self.editor
@@ -1733,6 +1754,10 @@ impl App {
             self.editor.document.commit();
         }
         self.follow_keymap_option();
+        self.follow_theme_option();
+        if self.editor.take_theme_picker_request() {
+            self.theme_picker();
+        }
         if let Some(query) = self.editor.take_keybindings_request() {
             let rows = self.binding_rows();
             let query = (!query.is_empty()).then_some(query.as_str());

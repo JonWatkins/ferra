@@ -14,8 +14,8 @@ pub fn register(r: &mut CommandRegistry) {
     );
     r.register(
         "plugin_browse",
-        "Pick a plugin to install from the plugin directory (the plugin-index option)",
-        |cx| cx.editor.plugin_browse(),
+        "Pick a plugin to install from the plugin directory (the plugin-index option); :plugin_browse theme lists those tagged theme",
+        |cx| cx.editor.plugin_browse(cx.args.first().map(String::as_str)),
     );
     r.register(
         "plugin_update",

@@ -51,6 +51,9 @@ pub struct Config {
     /// switching `keymap` keeps them).
     #[serde(skip)]
     pub user_keys: Table,
+    /// The user's own `[theme]`, laid over whichever theme is chosen.
+    #[serde(skip)]
+    pub user_theme: Table,
 }
 
 impl Default for Config {
@@ -98,6 +101,10 @@ impl Config {
             Some(Value::Table(keys)) => keys.clone(),
             _ => Table::new(),
         };
+        let user_theme = match user.get("theme") {
+            Some(Value::Table(theme)) => theme.clone(),
+            _ => Table::new(),
+        };
         merge(&mut merged, user);
         // The keys: the chosen keymap's, then the user's over them.
         let preset = match merged
@@ -115,6 +122,7 @@ impl Config {
 
         let mut config: Config = Value::Table(merged).try_into().map_err(|e| invalid(&e))?;
         config.user_keys = user_keys;
+        config.user_theme = user_theme;
         config
             .languages
             .check_options(&config.editor)
@@ -168,6 +176,25 @@ pub fn default_path() -> Option<PathBuf> {
 pub fn keymap_for(preset: KeymapPreset, user: &Table) -> Result<Keymap, String> {
     let keys = layered_keys(preset, user)?;
     Value::Table(keys)
+        .try_into()
+        .map_err(|e: toml::de::Error| e.message().trim().to_string())
+}
+
+/// The theme: ferra's own colours (default.toml's `[theme]`), `pack`'s (a
+/// theme pack's file) over them, then `user`'s (`Config::user_theme`).
+pub fn theme_for(pack: Option<&Table>, user: &Table) -> Result<Theme, String> {
+    let defaults: Table = DEFAULT_CONFIG
+        .parse()
+        .map_err(|e: toml::de::Error| e.to_string())?;
+    let mut theme = match defaults.get("theme") {
+        Some(Value::Table(theme)) => theme.clone(),
+        _ => Table::new(),
+    };
+    if let Some(pack) = pack {
+        merge(&mut theme, pack.clone());
+    }
+    merge(&mut theme, user.clone());
+    Value::Table(theme)
         .try_into()
         .map_err(|e: toml::de::Error| e.message().trim().to_string())
 }

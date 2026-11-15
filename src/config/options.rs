@@ -70,6 +70,9 @@ pub struct EditorOptions {
     pub restore_session: bool,
     /// What icons are drawn with.
     pub icons: Icons,
+    /// The colour theme: ferra's own (`ferra-dark`), or an installed
+    /// theme pack's.
+    pub color_theme: String,
     /// Vim's keys and modes, or VS Code's (no modes).
     pub keymap: KeymapPreset,
     /// Rows the terminal panel takes (at most most of the screen).

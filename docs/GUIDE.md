@@ -1225,6 +1225,23 @@ Changes take effect at once and are saved to `config.toml`'s
 `J = ""`. A plugin's keys are changed in the plugin. Its own keys are in
 `[keys.keybindings]`.
 
+### Colour themes
+
+`:theme` (File → Color Theme…) lists the colour themes: ferra's own,
+Ferra Dark, and those of the theme packs you've installed. Each is shown
+as the selection moves to it; `<CR>` keeps it (saved to `config.toml` as
+`color-theme`), `<Esc>` puts back the one you had. The last entry, Browse
+more themes…, lists the plugin directory's theme packs
+(`:plugin_browse theme`), such as Daybreak, a light theme, and Ember, a
+warm dark one; install one and it's in the list. `:color_theme id` picks
+one by its id.
+
+A theme's colours go over ferra's own, so a pack needn't set every scope,
+and your own `[theme]` goes over the theme. To make one, see
+[Writing a plugin](https://github.com/JonWatkins/ferra-plugins#writing-a-plugin)
+in the plugin directory: a theme pack is a `ferra-plugin.toml` with
+`[themes.<id>]` and a file of `"scope" = style` lines.
+
 ### The config file
 
 Create `~/.config/ferra/config.toml` (or under `$XDG_CONFIG_HOME`).

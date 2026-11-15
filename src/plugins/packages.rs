@@ -81,6 +81,20 @@ pub struct Manifest {
     /// Tree-sitter grammars it carries, by language.
     #[serde(default)]
     pub grammars: BTreeMap<String, super::grammars::GrammarSpec>,
+    /// Colour themes it carries, by id (what `color-theme` names).
+    #[serde(default)]
+    pub themes: BTreeMap<String, ThemeSpec>,
+}
+
+/// A theme in a theme pack: its name as shown, and its file (the same
+/// `"scope" = style` lines as config's `[theme]`, laid over ferra's own).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ThemeSpec {
+    pub name: String,
+    pub file: String,
+    /// `"light"` or `"dark"`, as the picker says.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 impl Manifest {
@@ -101,6 +115,16 @@ impl Manifest {
         for (language, spec) in &manifest.grammars {
             spec.check(language)
                 .map_err(|e| format!("{MANIFEST}: {e}"))?;
+        }
+        for (id, theme) in &manifest.themes {
+            let inside = Path::new(&theme.file)
+                .components()
+                .all(|c| matches!(c, Component::Normal(_)));
+            if check_name(id).is_err() || theme.file.is_empty() || !inside {
+                return Err(format!(
+                    "{MANIFEST}: themes.{id}: an id of lowercase letters, digits and -, and a file inside the plugin"
+                ));
+            }
         }
         for language in manifest.languages.keys() {
             let ok = !language.is_empty()
@@ -124,8 +148,13 @@ impl Manifest {
             Some(main) if dir.join(main).is_file() => Ok(Some(main.clone())),
             Some(main) => Err(format!("its main file {main} is missing")),
             None if dir.join("init.lua").is_file() => Ok(Some("init.lua".into())),
-            None if !self.languages.is_empty() || !self.grammars.is_empty() => Ok(None),
-            None => Err("it has no init.lua (or main file) and adds no languages".into()),
+            None if !self.languages.is_empty()
+                || !self.grammars.is_empty()
+                || !self.themes.is_empty() =>
+            {
+                Ok(None)
+            }
+            None => Err("it has no init.lua (or main file) and adds no languages or themes".into()),
         }
     }
 

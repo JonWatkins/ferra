@@ -40,6 +40,7 @@ pub const MENUS: &[Menu] = &[
             Some(("Close Buffer", "buffer_delete")),
             Some(("Settings", "settings")),
             Some(("Keyboard Shortcuts", "keybindings")),
+            Some(("Color Theme…", "theme")),
             Some(("Edit config.toml", "open_config")),
             None,
             Some(("Quit", "quit_all")),
