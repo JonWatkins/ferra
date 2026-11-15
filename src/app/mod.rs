@@ -1191,6 +1191,28 @@ impl App {
         self.editor.end_completion_unless_used();
         self.editor.note_key_for_hover();
         self.editor.end_hover_unless_used();
+        // Several cursors: each gets the text, or (as many lines as
+        // cursors) a line each, as in VS Code.
+        if self.editor.has_extra_cursors()
+            && matches!(self.editor.mode(), Mode::Insert | Mode::Visual)
+        {
+            let lines: Vec<&str> = text.trim_end_matches('\n').split('\n').collect();
+            let each = lines.len() == self.editor.extra_cursors().len() + 1;
+            let mut order: Vec<crate::core::Position> = std::iter::once(self.editor.document.cursor())
+                .chain(self.editor.extra_cursors().iter().map(|c| c.cursor))
+                .collect();
+            order.sort();
+            let _ = self.editor.for_each_cursor(|editor| {
+                let at = editor.document.cursor();
+                let piece = match order.iter().position(|&p| p == at) {
+                    Some(i) if each => lines[i],
+                    _ => text,
+                };
+                editor.paste_over_selection(piece);
+                Ok(())
+            });
+            return;
+        }
         match self.editor.mode() {
             Mode::Insert => {
                 // On a line that's only (auto-)indentation so far, a paste
@@ -1717,6 +1739,12 @@ impl App {
                     };
                     self.execute(&command, invocation);
                 }
+                Outcome::InsertChar(c) if self.editor.has_extra_cursors() => {
+                    let _ = self.editor.for_each_cursor(|editor| {
+                        editor.insert_text_char(c);
+                        Ok(())
+                    });
+                }
                 Outcome::InsertChar(c) => self.editor.insert_text_char(c),
                 Outcome::PassThrough(keys) => self.editor.terminal_keys(&keys),
                 // Like Vim, an invalid key after an operator cancels it.
@@ -1742,6 +1770,42 @@ impl App {
         }
     }
 
+    /// Runs `command`: at each cursor, if there are several and it's one
+    /// that edits or moves (`multi_cursor::PER_CURSOR`); else once, the
+    /// extra cursors going if it moved the cursor or changed the text.
+    fn execute_at_cursors(&mut self, command: &str, invocation: Invocation) -> Result<(), String> {
+        use crate::editor::multi_cursor::{KEEPS_CURSORS, PER_CURSOR};
+        if !self.editor.has_extra_cursors() {
+            return self.commands.execute(command, &mut self.editor, invocation);
+        }
+        match command {
+            "copy" => return self.editor.copy_at_cursors(false),
+            "cut" => return self.editor.copy_at_cursors(true),
+            _ => {}
+        }
+        if PER_CURSOR.contains(&command) {
+            let commands = &self.commands;
+            return self
+                .editor
+                .for_each_cursor(|editor| commands.execute(command, editor, invocation));
+        }
+        let before = (
+            self.editor.document.id(),
+            self.editor.document.buffer().edit_seq(),
+            self.editor.document.cursor(),
+        );
+        let result = self.commands.execute(command, &mut self.editor, invocation);
+        let after = (
+            self.editor.document.id(),
+            self.editor.document.buffer().edit_seq(),
+            self.editor.document.cursor(),
+        );
+        if before != after && !KEEPS_CURSORS.contains(&command) {
+            self.editor.clear_extra_cursors();
+        }
+        result
+    }
+
     /// Runs a named command, reporting failures on the message line.
     pub fn execute(&mut self, command: &str, invocation: Invocation) {
         crate::log::note_input(|| format!("({command})"));
@@ -1761,7 +1825,7 @@ impl App {
         if grouping && self.editor.mode() == Mode::Insert {
             self.editor.document.commit();
         }
-        if let Err(error) = self.commands.execute(command, &mut self.editor, invocation) {
+        if let Err(error) = self.execute_at_cursors(command, invocation) {
             self.editor.set_message(Message::error(error));
             self.note_command_failure();
         }

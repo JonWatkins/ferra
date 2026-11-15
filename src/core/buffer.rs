@@ -256,6 +256,18 @@ impl Buffer {
         removed
     }
 
+    /// The byte offset of `pos` (as the edit log counts).
+    pub fn byte_of(&self, pos: Position) -> usize {
+        self.rope.char_to_byte(self.char_index(pos))
+    }
+
+    /// The position at byte offset `byte` (clamped to the text, and to a
+    /// char's start).
+    pub fn position_at_byte(&self, byte: usize) -> Position {
+        let byte = byte.min(self.rope.len_bytes());
+        self.position_of(self.rope.byte_to_char(byte))
+    }
+
     /// Converts a position to an index into the rope's chars.
     fn char_index(&self, pos: Position) -> usize {
         self.rope.line_to_char(pos.row) + pos.col

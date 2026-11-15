@@ -41,18 +41,25 @@ or a paste replaces a selection. `Esc` drops the selection, completion and
 search highlights. Undo takes a word at a time, and any command (a move,
 a paste) ends an undo step.
 
+With **multiple cursors**, typing, deleting, moving and selecting happen at
+each; copying gives a line per cursor, and pasting that at as many cursors
+gives each its own (a paste of as many lines as cursors, too). The real
+cursor is the newest; the others are a bar past a line's end (or on a
+space), an underline on a character.
+
 | Keys | Action |
 |------|--------|
 | arrows, `Home` `End`, `Ctrl+←` `Ctrl+→` (`⌥←` `⌥→`), `Ctrl+Home` `Ctrl+End`, `PageUp` `PageDown` | Move (`Home` goes to the first non-blank, then the line's start) |
 | `Shift` + any of those | Select on the way |
-| `Ctrl+A`, `Ctrl+L`, `Ctrl+D` | Select everything / the line (again: the next) / the word, then its next match |
+| `Ctrl+A`, `Ctrl+L`, `Ctrl+D` | Select everything / the line (again: the next) / the word, then a cursor at its next match |
+| `Ctrl+Shift+L`, `Ctrl+Shift+↑` `Ctrl+Shift+↓` (`Ctrl+Alt+↑` `Ctrl+Alt+↓`), `Ctrl+click`, `Esc` | Multiple cursors: one at every match / one above or below / one where you click (again: take it away) / back to one |
 | `Ctrl+C` `Ctrl+X` `Ctrl+V` | Copy / cut / paste with the system clipboard (nothing selected: the whole line) |
 | `Ctrl+Z`, `Ctrl+Y` (`Ctrl+Shift+Z`) | Undo / redo |
 | `Ctrl+Backspace` (`⌥Backspace`), `Ctrl+Delete` | Delete a word back / forward |
 | `Tab` `Shift+Tab` | Indent / outdent (the selected lines, with a selection) |
 | `Alt+↑` `Alt+↓`, `Shift+Alt+↑` `Shift+Alt+↓` | Move the line (or selected lines) / copy it up or down |
 | `Ctrl+Shift+K`, `Ctrl+Enter`, `Ctrl+Shift+Enter`, `Ctrl+/` | Delete the line / a new line below / above / comment in or out |
-| `Ctrl+N`, `Ctrl+S`, `Ctrl+P` (`Ctrl+O`), `Ctrl+W`, `Ctrl+Tab` `Ctrl+Shift+Tab` (`Ctrl+PageDown` `Ctrl+PageUp`), `Ctrl+Q` | A new file (saving asks its name; `Tab` completes folders and files in the box) / save / open a file / close the buffer / next and previous buffer / quit |
+| `Ctrl+N`, `Ctrl+S`, `Ctrl+P` (`Ctrl+O`), `Ctrl+W`, `Ctrl+Tab` `Ctrl+Shift+Tab` (`Ctrl+PageDown` `Ctrl+PageUp`), `Ctrl+Q` | A new file (saving asks its name; `Tab` completes folders and files in the box) / save / open a file / close the tab / the window's next and previous tab / quit |
 | `F1` (`Ctrl+Shift+P`), `F10`, `Alt` + a menu's letter, `Ctrl+G` | The command palette / the menu bar / a menu / the `:` line (`:42` goes to line 42) |
 | `Ctrl+F`, `Ctrl+H`, `Ctrl+Shift+F` | Find / replace / find in files |
 | `Ctrl+B`, `Ctrl+Shift+E`, ``Ctrl+` ``, `Ctrl+\` | The sidebar / its focus / the terminal panel / split the window |
@@ -410,8 +417,17 @@ With `mouse = true` (the default):
   goes on into the text).
 - **Drag** the sidebar's edge, the terminal panel's title row, or the line
   between two windows to resize them.
-- **Ctrl+click** (or **⌥+click**: a Mac's terminal takes Ctrl+click as a
-  right-click) on a word goes to its definition, as in VS Code.
+- **Ctrl+click** on a word goes to its definition (with VS Code's keys,
+  **Ctrl+Shift+click**: Ctrl+click adds a cursor). **⌥+click** does too, in
+  terminals that pass it on.
+- **Rest the pointer** on a word to see what the language server says about
+  it, under any problem there (`mouse-hover`, `mouse-hover-delay`); with
+  **Ctrl** held, the definition's own lines instead. Moving off it, a key or
+  a click closes it; the wheel over it scrolls it.
+- **Drag** a tab along its row to reorder it, or onto another window to move
+  it there; a file or folder in the tree onto a folder (or below the files,
+  for the project's folder) to move it, after asking; a file from the tree
+  into a window to open it there.
 - **Right-click** in the text for a menu of what can be done there (go to
   the definition or references, rename, format, code actions, cut, copy,
   paste, reveal the file in Finder, copy its path, its history); the cursor

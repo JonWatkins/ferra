@@ -43,6 +43,7 @@ pub mod input_box;
 pub mod lsp;
 pub mod menu_bar;
 pub mod mouse_hover;
+pub mod multi_cursor;
 mod plugin_packages;
 pub use plugin_packages::{PackageJob, PackageRequest};
 pub mod popup;
@@ -221,6 +222,8 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
+    /// More cursors than the one (`multi_cursor.rs`).
+    cursors: multi_cursor::MultiCursors,
     /// What the pointer rested on, for the hover it shows.
     mouse_hover: Option<mouse_hover::MouseHoverAt>,
     /// The file tree, once the sidebar's been opened, and whether it's open.

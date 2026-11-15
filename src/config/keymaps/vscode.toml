@@ -45,6 +45,11 @@ inherit = { visual = "insert" }
 "<C-a>" = "select_all"
 "<C-l>" = "select_line"
 "<C-d>" = "select_next_match"
+"<C-S-l>" = "select_all_matches"
+"<C-S-Down>" = "add_cursor_below"
+"<C-S-Up>" = "add_cursor_above"
+"<C-A-Down>" = "add_cursor_below"
+"<C-A-Up>" = "add_cursor_above"
 "<Esc>" = "escape"
 
 # Editing.

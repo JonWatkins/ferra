@@ -105,8 +105,18 @@ impl App {
                 self.pointer_moved(at, peek);
                 return;
             }
-            // Ctrl+click (or ⌥+click: a Mac's terminal takes Ctrl+click
-            // for its right-click) on a word: its definition.
+            // With VS Code's keys, Ctrl+click adds a cursor there (or
+            // takes the one there away).
+            MouseEventKind::Down(MouseButton::Left)
+                if self.editor.modeless()
+                    && event.modifiers == KeyModifiers::CONTROL
+                    && matches!(self.hit(at), Hit::Window(id) if id == self.editor.windows().active()) =>
+            {
+                self.add_cursor_at(at);
+            }
+            // Ctrl+click (Ctrl+Shift+click with VS Code's keys, or
+            // ⌥+click: a Mac's terminal can take Ctrl+click for its
+            // right-click) on a word: its definition.
             MouseEventKind::Down(MouseButton::Left)
                 if (event.modifiers.contains(KeyModifiers::CONTROL)
                     || event.modifiers.contains(KeyModifiers::ALT))
@@ -507,6 +517,7 @@ impl App {
                     self.editor.set_mode(Mode::Normal);
                 }
                 self.editor.focus_window(id);
+                self.editor.clear_extra_cursors();
                 self.put_cursor_at(id, at);
                 self.dragging = Some(Drag::Text(id));
                 match clicks {
@@ -902,6 +913,20 @@ impl App {
     fn leave_panes(&mut self) {
         if matches!(self.editor.mode(), Mode::Sidebar | Mode::Terminal) {
             self.editor.set_mode(Mode::Normal);
+        }
+    }
+
+    /// Ctrl+click in the active window: a cursor added there (or the one
+    /// there taken away).
+    fn add_cursor_at(&mut self, at: Position) {
+        let id = self.editor.windows().active();
+        let document = self.editor.document.id();
+        let Some(state) = self.views.get(&(id, document)) else {
+            return;
+        };
+        let tab_width = self.editor.options_for(id, document).tab_width;
+        if let Some(position) = state.position_at(&self.editor.document, at.x, at.y, tab_width) {
+            self.editor.toggle_cursor_at(position);
         }
     }
 

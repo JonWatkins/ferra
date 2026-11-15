@@ -115,8 +115,37 @@ pub fn register(r: &mut CommandRegistry) {
     );
     r.register(
         "select_next_match",
-        "Select the word at the cursor, or the next place the selected text is found (Ctrl+D)",
-        |cx| cx.editor.select_next_match(),
+        "Select the word at the cursor, or add a cursor at the next place the selected text is found (Ctrl+D)",
+        |cx| cx.editor.add_next_match(),
+    );
+    r.register(
+        "select_all_matches",
+        "A cursor at every place the selected text (or the word at the cursor) is found (Ctrl+Shift+L)",
+        |cx| cx.editor.select_all_matches(),
+    );
+    r.register(
+        "add_cursor_below",
+        "Add a cursor on the line below (Ctrl+Shift+Down)",
+        |cx| {
+            cx.editor.add_cursor_vertically(true);
+            Ok(())
+        },
+    );
+    r.register(
+        "add_cursor_above",
+        "Add a cursor on the line above (Ctrl+Shift+Up)",
+        |cx| {
+            cx.editor.add_cursor_vertically(false);
+            Ok(())
+        },
+    );
+    r.register(
+        "single_cursor",
+        "Back to one cursor",
+        |cx| {
+            cx.editor.clear_extra_cursors();
+            Ok(())
+        },
     );
     r.register(
         "copy",

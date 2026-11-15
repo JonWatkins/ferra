@@ -157,6 +157,8 @@ pub struct EditorView<'a> {
     options: &'a EditorOptions,
     theme: &'a Theme,
     selection: Option<Range>,
+    /// More cursors (`multi_cursor`), with their selections.
+    extra_cursors: &'a [crate::editor::multi_cursor::ExtraCursor],
     block: Option<crate::core::Block>,
     search: Option<&'a SearchPattern>,
     current_match: Option<Match>,
@@ -197,6 +199,7 @@ impl<'a> EditorView<'a> {
             options,
             theme,
             selection: None,
+            extra_cursors: &[],
             block: None,
             search: None,
             current_match: None,
@@ -425,6 +428,12 @@ impl<'a> EditorView<'a> {
         self
     }
 
+    /// Draws the extra cursors (and their selections).
+    pub fn extra_cursors(mut self, cursors: &'a [crate::editor::multi_cursor::ExtraCursor]) -> Self {
+        self.extra_cursors = cursors;
+        self
+    }
+
     /// Highlights `selection` (the visual-mode selection, if any).
     pub fn selection(mut self, selection: Option<Range>) -> Self {
         self.selection = selection;
@@ -582,6 +591,49 @@ impl StatefulWidget for EditorView<'_> {
                     },
                     last: last_part,
                 });
+                // The extra cursors on this part of the line: like the
+                // real one, a bar where there's no character (past the
+                // line's end, or a space), else the character underlined.
+                for extra in self.extra_cursors.iter().filter(|c| c.cursor.row == row) {
+                    let col = match &display {
+                        Some(d) => d.caret_at(extra.cursor.col),
+                        None => extra.cursor.col,
+                    };
+                    if wrap && crate::core::wrap::row_of(&starts, col) != part {
+                        continue;
+                    }
+                    let seg_left = if wrap {
+                        line::display_col(line_text, start, tab_width)
+                    } else if layout.wrap {
+                        0
+                    } else {
+                        left
+                    };
+                    let indent = if wrap { layout.offset(line_text, part) } else { 0 };
+                    let Some(x) = (line::display_col(line_text, col, tab_width) + indent)
+                        .checked_sub(seg_left)
+                        .filter(|&x| x < width)
+                    else {
+                        continue;
+                    };
+                    let color = self
+                        .theme
+                        .get("ui.cursor.secondary")
+                        .fg
+                        .or(self.theme.get("ui.text").fg)
+                        .unwrap_or(ratatui::style::Color::Reset);
+                    let cell = &mut buf[(text_area.x + x as u16, screen_y)];
+                    // Past the end, or on a space: the bar hides nothing.
+                    if col >= line_len || cell.symbol() == " " {
+                        cell.set_symbol("▏").set_fg(color);
+                    } else {
+                        cell.set_style(
+                            Style::new()
+                                .underline_color(color)
+                                .add_modifier(ratatui::style::Modifier::UNDERLINED),
+                        );
+                    }
+                }
                 let cursor_here = row == cursor.row
                     && (crate::core::wrap::row_of(&starts, cursor_col) == part || !wrap);
                 if cursor_here && !text_area.is_empty() {
@@ -960,6 +1012,16 @@ impl EditorView<'_> {
             && let Some((from, to)) = selection::selected_cols(range, row, line_len)
         {
             highlight(from, to, self.theme.get("ui.selection"));
+        }
+        // The extra cursors' selections (the cursors are drawn once the
+        // row's done: see `draw_extra_cursors`).
+        for extra in self.extra_cursors {
+            if let Some((start, end)) = extra.range()
+                && let Some((from, to)) =
+                    selection::selected_cols(Range::Chars { start, end }, row, line_len)
+            {
+                highlight(from, to, self.theme.get("ui.selection"));
+            }
         }
 
         // Virtual text, in its own colours, over whatever was under it.

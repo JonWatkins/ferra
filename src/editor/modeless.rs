@@ -362,8 +362,13 @@ impl Editor {
     /// `Ctrl+V`: the clipboard over the selection, or at the cursor; a
     /// whole line copied (with nothing selected) goes in above the line.
     pub fn paste_clipboard(&mut self) -> Result<(), String> {
-        let Some(value) = self.registers.read(Some(CLIPBOARD))? else {
-            return Ok(());
+        // With several cursors that copied as many pieces: this one's.
+        let value = match self.cursors.paste_piece.take() {
+            Some(piece) => Register::charwise(piece),
+            None => match self.registers.read(Some(CLIPBOARD))? {
+                Some(value) => value,
+                None => return Ok(()),
+            },
         };
         let replaced = self.delete_selection();
         let at = self.document.cursor();
@@ -570,6 +575,10 @@ impl Editor {
 
     /// `Esc`: drops the selection, completion, a hover, search highlights.
     pub fn modeless_escape(&mut self) {
+        // Several cursors: back to one, first.
+        if self.clear_extra_cursors() {
+            return;
+        }
         self.clear_selection();
         if self.completion.is_some() {
             self.cancel_completion();

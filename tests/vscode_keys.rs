@@ -154,8 +154,9 @@ fn ctrl_d_selects_the_word_then_its_next_match() {
     assert_eq!(selected(&app).as_deref(), Some("foo"));
     keys(&mut app, "<C-d>");
     assert_eq!(cursor(&app), (0, 11), "the next one");
+    // Both selected, with a cursor each: typing replaces both.
     keys(&mut app, "baz");
-    assert_eq!(text(&app), "foo bar baz");
+    assert_eq!(text(&app), "baz bar baz");
 }
 
 #[test]
@@ -293,9 +294,13 @@ fn closing_a_buffer_with_unsaved_changes_asks() {
 }
 
 #[test]
-fn ctrl_or_option_click_goes_to_the_definition() {
+fn ctrl_shift_or_option_click_goes_to_the_definition() {
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-    for modifier in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+    // (A plain Ctrl+click adds a cursor, with VS Code's keys.)
+    for modifier in [
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        KeyModifiers::ALT,
+    ] {
         let (mut app, _) = vscode("let value = other;");
         render(&mut app, 80, 10);
         let rows = render(&mut app, 80, 10).rows;

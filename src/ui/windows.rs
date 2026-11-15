@@ -159,6 +159,7 @@ pub fn draw_windows(
                 None
             })
             .block(editor.selection_block().filter(|_| active))
+            .extra_cursors(if active { editor.extra_cursors() } else { &[] })
             .search(editor.search_highlight())
             .git_changes(editor.git_hunks(document.id()))
             .conflicts(editor.git_conflicts(document.id()))

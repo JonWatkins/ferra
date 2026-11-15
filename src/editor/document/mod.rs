@@ -72,6 +72,8 @@ pub struct Document {
     /// Rows being followed through edits (`:g` visits them); `None` once
     /// a row's line is deleted.
     tracked_rows: Option<Vec<Option<usize>>>,
+    /// `commit` is held (see `hold_commits`).
+    commits_held: bool,
     /// A language server's diagnostics, moved along as the text is edited
     /// until it sends new ones.
     diagnostics: Vec<crate::editor::diagnostics::Diagnostic>,
@@ -488,7 +490,15 @@ impl Document {
 
     /// Ends the current undo step.
     pub fn commit(&mut self) {
-        self.history.commit();
+        if !self.commits_held {
+            self.history.commit();
+        }
+    }
+
+    /// While held, `commit` waits: an edit made at several cursors is one
+    /// undo step.
+    pub fn hold_commits(&mut self, hold: bool) {
+        self.commits_held = hold;
     }
 
     /// Undoes one step. Returns `false` if there was nothing to undo.
