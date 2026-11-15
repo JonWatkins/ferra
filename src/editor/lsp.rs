@@ -33,6 +33,9 @@ pub enum LspFeature {
     SignatureHelp,
     /// The buffer's symbols (functions, types...).
     DocumentSymbols,
+    /// The same, for the Outline view and the breadcrumbs (kept, not
+    /// listed in a picker).
+    Outline,
     /// The other uses of the symbol under the cursor, to highlight.
     DocumentHighlight,
     /// The project's symbols matching a query (`text`).
@@ -58,7 +61,9 @@ impl LspFeature {
             | LspFeature::ApplyCodeAction
             | LspFeature::ResolveCodeAction => "code actions",
             LspFeature::SignatureHelp => "signature help",
-            LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols => "symbols",
+            LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols | LspFeature::Outline => {
+                "symbols"
+            }
             LspFeature::DocumentHighlight => "highlights",
             LspFeature::InlayHint => "inlay hints",
         }
@@ -80,7 +85,7 @@ impl LspFeature {
             | LspFeature::ApplyCodeAction
             | LspFeature::ResolveCodeAction => "Code actions",
             LspFeature::SignatureHelp => "Signature",
-            LspFeature::DocumentSymbols => "Symbols",
+            LspFeature::DocumentSymbols | LspFeature::Outline => "Symbols",
             LspFeature::WorkspaceSymbols => "Project symbols",
             LspFeature::DocumentHighlight => "Highlights",
             LspFeature::InlayHint => "Inlay hints",

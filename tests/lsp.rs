@@ -1772,3 +1772,58 @@ fn inlay_hints_show_in_the_text_and_follow_edits() {
     keys(&mut app, ":inlay_hints<CR>");
     until(&mut app, |a| hints(a).len() == 2);
 }
+
+/// Draws, as the event loop does (which asks for the outline), until
+/// `done`.
+fn drawn_until(app: &mut App, done: impl Fn(&App) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        render(app, 90, 20);
+        app.update_lsp();
+        if done(app) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("timed out");
+}
+
+#[test]
+fn the_outline_and_the_breadcrumbs_show_the_files_symbols() {
+    let (_dir, mut app, _) = with_server_in(
+        app_with_config("[editor]\nbreadcrumbs = true\n"),
+        SHAPES,
+        true,
+    );
+    ready(&mut app);
+    drawn_until(&mut app, |a| {
+        a.editor().outline().is_some_and(|s| s.len() == 4)
+    });
+    let symbols = app.editor().outline().unwrap();
+    let names: Vec<(&str, usize)> = symbols.iter().map(|s| (s.name.as_str(), s.depth)).collect();
+    assert_eq!(
+        names,
+        [("Circle", 0), ("area", 1), ("scale", 1), ("main", 0)]
+    );
+
+    // The breadcrumbs: the file, and the symbol the cursor's on.
+    keys(&mut app, "2G0fa");
+    let screen = render(&mut app, 90, 20).rows.join("\n");
+    assert!(screen.contains("main.rs › ƒ area"), "{screen}");
+
+    // The Outline view: each symbol, nested; <CR> goes to one.
+    keys(&mut app, "<Space>e:sidebar_view outline<CR>");
+    assert!(app.editor().outline_shown());
+    let screen = render(&mut app, 90, 20).rows.join("\n");
+    assert!(screen.contains("◆ Circle"), "{screen}");
+    assert!(screen.contains("  ƒ area"), "{screen}");
+    keys(&mut app, "G<CR>");
+    assert_eq!(common::cursor(&app), (4, 3), "main");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
+
+    // An edit: asked again, and the new symbol shows.
+    keys(&mut app, "Ofn added() {}<Esc>");
+    drawn_until(&mut app, |a| {
+        a.editor().outline().is_some_and(|s| s.len() == 5)
+    });
+}

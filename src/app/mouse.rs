@@ -411,6 +411,27 @@ impl App {
             self.status_click(element, at);
             return;
         }
+        // The breadcrumbs: a folder shows in the sidebar, a symbol is gone
+        // to.
+        if let Some(crumb) = self.crumb_at(at) {
+            use crate::ui::breadcrumbs::Crumb;
+            self.input.reset();
+            match crumb {
+                Crumb::Folder(path) => self.editor.reveal_in_tree(&path),
+                Crumb::File => {
+                    if let Some(path) = self
+                        .editor
+                        .document
+                        .path()
+                        .map(std::path::Path::to_path_buf)
+                    {
+                        self.editor.reveal_in_tree(&path);
+                    }
+                }
+                Crumb::Symbol(index) => self.editor.go_to_symbol(index),
+            }
+            return;
+        }
         // The tab bar: a tab shows its buffer, its × closes it.
         if let Some((id, on_close)) = self.tab_at(at) {
             if self.editor.popup().is_some() {
@@ -719,6 +740,18 @@ impl App {
             _ => return,
         };
         self.execute(command, Invocation::default());
+    }
+
+    /// The breadcrumb under `at`.
+    fn crumb_at(&self, at: Position) -> Option<crate::ui::breadcrumbs::Crumb> {
+        let map = self.screen_map.breadcrumbs.as_ref()?;
+        if at.y != map.row.y {
+            return None;
+        }
+        map.crumbs
+            .iter()
+            .find(|(from, to, _)| (*from..*to).contains(&at.x))
+            .map(|(_, _, crumb)| crumb.clone())
     }
 
     /// The tab under `at`, and whether it's on its `×`.

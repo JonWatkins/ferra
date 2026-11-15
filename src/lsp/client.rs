@@ -172,7 +172,9 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
         }
         LspFeature::ResolveCodeAction => ("codeAction/resolve", "codeActionProvider"),
         LspFeature::SignatureHelp => ("textDocument/signatureHelp", "signatureHelpProvider"),
-        LspFeature::DocumentSymbols => ("textDocument/documentSymbol", "documentSymbolProvider"),
+        LspFeature::DocumentSymbols | LspFeature::Outline => {
+            ("textDocument/documentSymbol", "documentSymbolProvider")
+        }
         LspFeature::WorkspaceSymbols => ("workspace/symbol", "workspaceSymbolProvider"),
         LspFeature::DocumentHighlight => (
             "textDocument/documentHighlight",
@@ -504,7 +506,10 @@ impl Client {
             "position": position,
         });
         // These are about the file, or the project: no position.
-        if request.feature == LspFeature::DocumentSymbols {
+        if matches!(
+            request.feature,
+            LspFeature::DocumentSymbols | LspFeature::Outline
+        ) {
             params = json!({ "textDocument": { "uri": synced.uri } });
         } else if request.feature == LspFeature::WorkspaceSymbols {
             params = json!({ "query": request.text.clone().unwrap_or_default() });

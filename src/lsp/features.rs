@@ -375,6 +375,11 @@ pub(super) fn answer(
         editor.set_references(request.document, request.edit_seq, ranges);
         return;
     }
+    if request.feature == LspFeature::Outline {
+        let symbols = outline(editor, request.document, &result, client.encoding);
+        editor.set_outline(request.document, request.edit_seq, symbols);
+        return;
+    }
     if matches!(
         request.feature,
         LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols
@@ -513,6 +518,76 @@ fn symbols(
 }
 
 /// A short name for an LSP `SymbolKind`.
+/// The Outline's symbols from a `textDocument/documentSymbol` answer: the
+/// nested `DocumentSymbol`s in order with their depth, or the flat
+/// `SymbolInformation`s, their depth from which contain which.
+fn outline(
+    editor: &Editor,
+    document: crate::editor::DocumentId,
+    result: &Value,
+    encoding: Encoding,
+) -> Vec<crate::editor::outline::OutlineSymbol> {
+    use crate::editor::outline::OutlineSymbol;
+    let Some(buffer) = editor.document_by_id(document).map(|d| d.buffer()) else {
+        return Vec::new();
+    };
+    let position = |v: &Value| convert::from_lsp(buffer, v, encoding);
+    fn nested(
+        symbols: &[Value],
+        depth: usize,
+        position: &dyn Fn(&Value) -> crate::core::Position,
+        out: &mut Vec<OutlineSymbol>,
+    ) {
+        for symbol in symbols {
+            out.push(OutlineSymbol {
+                name: symbol["name"].as_str().unwrap_or("").to_string(),
+                kind: symbol_kind(symbol["kind"].as_u64()).to_string(),
+                depth,
+                start: position(&symbol["range"]["start"]),
+                end: position(&symbol["range"]["end"]),
+                at: position(&symbol["selectionRange"]["start"]),
+            });
+            if let Some(children) = symbol["children"].as_array() {
+                nested(children, depth + 1, position, out);
+            }
+        }
+    }
+    let list = result.as_array().map_or(&[][..], Vec::as_slice);
+    let mut out = Vec::new();
+    if list
+        .first()
+        .is_some_and(|s| s.get("selectionRange").is_some())
+    {
+        nested(list, 0, &position, &mut out);
+        return out;
+    }
+    // Flat: in order, each as deep as the symbols around it.
+    let mut flat: Vec<OutlineSymbol> = list
+        .iter()
+        .map(|symbol| {
+            let range = &symbol["location"]["range"];
+            OutlineSymbol {
+                name: symbol["name"].as_str().unwrap_or("").to_string(),
+                kind: symbol_kind(symbol["kind"].as_u64()).to_string(),
+                depth: 0,
+                start: position(&range["start"]),
+                end: position(&range["end"]),
+                at: position(&range["start"]),
+            }
+        })
+        .collect();
+    flat.sort_by_key(|s| s.start);
+    for i in 0..flat.len() {
+        let (before, rest) = flat.split_at_mut(i);
+        let symbol = &mut rest[0];
+        symbol.depth = before
+            .iter()
+            .filter(|outer| outer.start <= symbol.start && symbol.end <= outer.end)
+            .count();
+    }
+    flat
+}
+
 fn symbol_kind(kind: Option<u64>) -> &'static str {
     match kind {
         Some(1) => "file",

@@ -109,7 +109,9 @@ impl Editor {
         if self.sidebar_view >= self.builtin_views() {
             self.sidebar_view = 0;
         }
-        self.sidebar_views.clear();
+        // The Outline is ferra's own: it stays.
+        self.sidebar_views
+            .retain(|v| v.spec.name == super::outline::OUTLINE);
         self.view_keys_changed = true;
     }
 
@@ -317,6 +319,15 @@ impl Editor {
                 true
             }
             None => false,
+        }
+    }
+
+    /// Selects line `index` of view `name`.
+    pub(super) fn select_plugin_view_line(&mut self, name: &str, index: usize) {
+        if let Some(view) = self.sidebar_views.iter_mut().find(|v| v.spec.name == name)
+            && index < view.lines.len()
+        {
+            view.selected = index;
         }
     }
 

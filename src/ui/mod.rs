@@ -16,6 +16,7 @@
 //! takes the bottom of the windows' side, under their status lines.
 
 pub mod activity;
+pub mod breadcrumbs;
 mod command_line;
 mod completion_menu;
 pub mod editor_view;
@@ -103,6 +104,8 @@ pub struct ScreenMap {
     pub keybindings: Option<keybindings::KeybindingsMap>,
     /// The tab bar's tabs.
     pub tab_bar: Option<tab_bar::TabBarMap>,
+    /// The breadcrumbs' crumbs.
+    pub breadcrumbs: Option<breadcrumbs::BreadcrumbsMap>,
     /// The status bar's row and each of its items' columns (with one
     /// status bar, not one per window).
     pub status_bar: Option<(u16, Vec<StatusPlace>)>,
@@ -347,6 +350,15 @@ pub fn draw(
         let row = Rect::new(main.x, main.y, main.width, 1);
         frame.render_widget(tab_bar::TabBar::new(editor, theme), row);
         map.tab_bar = Some(tab_bar::TabBar::map(editor, row));
+        Rect::new(main.x, main.y + 1, main.width, main.height - 1)
+    } else {
+        main
+    };
+    // The breadcrumbs, under it.
+    let main = if editor.options.breadcrumbs && main.height > 4 {
+        let row = Rect::new(main.x, main.y, main.width, 1);
+        frame.render_widget(breadcrumbs::Breadcrumbs::new(editor, theme), row);
+        map.breadcrumbs = Some(breadcrumbs::Breadcrumbs::map(editor, row));
         Rect::new(main.x, main.y + 1, main.width, main.height - 1)
     } else {
         main

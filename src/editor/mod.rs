@@ -17,6 +17,7 @@ mod message;
 mod mode;
 pub mod modeless;
 mod operator;
+pub mod outline;
 mod pairs;
 pub mod picker;
 pub mod registers;
@@ -248,6 +249,8 @@ pub struct Editor {
     /// the picker it asked for (the language server's symbols).
     quick_open_switch: Option<char>,
     quick_open_waiting: Option<char>,
+    /// The buffer's symbols, for the Outline and the breadcrumbs.
+    outline: outline::Outline,
     /// The settings editor, while it's open.
     settings: Option<settings::SettingsView>,
     /// The keybinding editor, while it's open; a request to open it (for
@@ -294,11 +297,13 @@ pub struct Editor {
 
 impl Editor {
     pub fn new(options: EditorOptions) -> Self {
-        Self {
+        let mut editor = Self {
             global_options: options.clone(),
             options,
             ..Self::default()
-        }
+        };
+        editor.add_outline_view();
+        editor
     }
 
     /// The options as set in config and by `:set`, without any window's or

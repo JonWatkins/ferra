@@ -85,6 +85,10 @@ activity-bar = true
 # click one to show it, its × (or a middle click) to close it; ● marks
 # unsaved changes.
 tab-bar = true
+# Above the text, the file's path and the symbols the cursor is in (from a
+# language server), as VS Code's breadcrumbs: click a symbol to go to it, a
+# folder to show it in the sidebar.
+breadcrumbs = true
 # Started in a folder with no files named, open the files that were open
 # when ferra last quit there (with their cursors, the one shown, and the
 # sidebar if it was open).
@@ -375,6 +379,10 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.sidebar.git.header" = { fg = "#7aa2f7", modifiers = ["bold"] }
 "ui.sidebar.git.branch" = "#6b7280"
 # The full-screen git view (<Space>g).
+"ui.breadcrumbs" = { fg = "#8c93ad", bg = "#16181d" }
+"ui.breadcrumbs.file" = "#c0caf5"
+"ui.breadcrumbs.symbol" = "#a9b1d6"
+"ui.breadcrumbs.separator" = "#565f89"
 "ui.tabbar" = { bg = "#1a1c22" }
 "ui.tabbar.tab" = { fg = "#8c93ad", bg = "#1a1c22" }
 "ui.tabbar.active" = { fg = "#e6e9ef", bg = "#16181d", modifiers = ["bold"] }

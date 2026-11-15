@@ -9,7 +9,8 @@ use ferra::App;
 use ferra::editor::Mode;
 
 const W: u16 = 60;
-const H: u16 = 20;
+// Room for every icon: files, search, git, the outline, plugins', the gear.
+const H: u16 = 26;
 
 /// As shipped, but for the menu bar above (its own tests have it), so the
 /// bar's rows are where these tests count them.

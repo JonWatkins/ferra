@@ -138,6 +138,11 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.goto_line_column(&cx.args.join(" ")),
     );
     r.register(
+        "outline_go",
+        "In the Outline: go to the selected symbol",
+        |cx| cx.editor.outline_go(),
+    );
+    r.register(
         "reveal_in_file_manager",
         "Show the file in Finder (or the file manager)",
         |cx| cx.editor.reveal_in_file_manager(false),

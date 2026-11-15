@@ -417,6 +417,10 @@ impl Editor {
         }
         if self.plugin_view().is_some() {
             self.select_plugin_view_line_on_screen(row);
+            // In the Outline, a click goes to the symbol.
+            if self.outline_shown() {
+                return self.outline_go();
+            }
             return Ok(());
         }
         let explorer = self.explorer_mut();
@@ -426,6 +430,17 @@ impl Editor {
         }
         explorer.select(index);
         self.sidebar_choose()
+    }
+
+    /// Shows `path` (a file or folder) in the file tree, selected, with
+    /// focus (a breadcrumb clicked).
+    pub fn reveal_in_tree(&mut self, path: &Path) {
+        self.sidebar_open = true;
+        if !self.file_tree_shown() {
+            let _ = self.open_sidebar_view("files");
+        }
+        self.explorer_mut().reveal(path);
+        self.set_mode(Mode::Sidebar);
     }
 
     /// A right-click on the file tree's line `row` (down from the top of

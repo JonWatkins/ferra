@@ -789,6 +789,11 @@ impl App {
     /// sidebar shows, if it needs making. An error shows as its one line
     /// (and as a message).
     fn make_plugin_view(&mut self) {
+        // The Outline's lines are ferra's own.
+        if self.editor.plugin_view_to_make().as_deref() == Some(crate::editor::outline::OUTLINE) {
+            self.editor.make_outline_lines();
+            return;
+        }
         let (Some(plugins), Some(name)) = (&self.plugins, self.editor.plugin_view_to_make()) else {
             return;
         };
@@ -1279,6 +1284,8 @@ impl App {
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
+        // The Outline and breadcrumbs' symbols, asked for if out of date.
+        self.editor.ask_for_outline();
         self.update_lsp();
         self.refresh_plugin_statuses();
         self.make_plugin_view();

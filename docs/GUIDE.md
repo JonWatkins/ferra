@@ -487,6 +487,26 @@ the `ui.tabbar.*` scopes.
  ▎ main.rs × │  lib.rs ● │  Cargo.toml × │
 ```
 
+### The Outline and breadcrumbs
+
+The Outline (the activity bar's `≣`, or `:sidebar_view outline`) lists the
+file's symbols, as its language server gives them: functions, types,
+their methods and fields, nested, each with its kind's icon. The one the
+cursor's in is selected as you move; `<CR>` (or a click) goes to one.
+
+The breadcrumbs, above the text, show the file's path from the working
+folder and the symbols the cursor is in:
+
+```text
+ src › app › mod.rs › ◆ App › ƒ run
+```
+
+Click a folder (or the file) to show it in the sidebar, a symbol to go to
+it. `breadcrumbs = false` turns them off; their colours are the
+`ui.breadcrumbs.*` scopes. Both ask the language server again after an
+edit (at most twice a second); without one, the breadcrumbs show the path
+and the Outline says where symbols come from.
+
 ### The activity bar
 
 Down the left edge, always there, is the activity bar, as in VS Code: an
