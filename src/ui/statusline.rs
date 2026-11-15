@@ -42,6 +42,22 @@ impl<'a> StatusLine<'a> {
         }
     }
 
+    /// Where each item of the active status line is, drawn in `area`: its
+    /// columns, for clicks.
+    pub fn places(
+        editor: &Editor,
+        theme: &Theme,
+        pending: &str,
+        area: Rect,
+    ) -> Vec<(StatusElement, u16, u16)> {
+        Active {
+            editor,
+            theme,
+            pending,
+        }
+        .places(area)
+    }
+
     /// Another window's status line: its document and cursor.
     pub fn inactive(document: &'a Document, cursor: Position, theme: &'a Theme) -> Self {
         Self {
@@ -144,6 +160,55 @@ impl Active<'_> {
 
     fn vscode(&self) -> bool {
         self.editor.options.statusline_style == StatuslineStyle::Vscode
+    }
+
+    /// Each element's columns, laid out as `render` lays them out.
+    fn places(&self, area: Rect) -> Vec<(StatusElement, u16, u16)> {
+        let layout = &self.editor.options.statusline_layout;
+        let sections = [&layout.left, &layout.center, &layout.right];
+        let others: usize = sections
+            .iter()
+            .flat_map(|section| section.iter())
+            .filter(|&e| *e != StatusElement::FileName)
+            .map(|e| self.element(e, 0).width())
+            .sum();
+        let names = sections
+            .iter()
+            .flat_map(|section| section.iter())
+            .filter(|&e| *e == StatusElement::FileName)
+            .count();
+        let budget = (area.width as usize).saturating_sub(others + 2 * names) / names.max(1);
+        let widths = |section: &[StatusElement]| -> Vec<(StatusElement, usize)> {
+            section
+                .iter()
+                .map(|e| (e.clone(), self.element(e, budget).width()))
+                .collect()
+        };
+        let (left, center, right) = (
+            widths(&layout.left),
+            widths(&layout.center),
+            widths(&layout.right),
+        );
+        let total = |w: &[(StatusElement, usize)]| w.iter().map(|(_, n)| n).sum::<usize>();
+        let (lw, cw, rw) = (total(&left), total(&center), total(&right));
+        let mut out = Vec::new();
+        let mut put = |items: Vec<(StatusElement, usize)>, mut x: usize| {
+            for (element, width) in items {
+                if width > 0 {
+                    let from = (area.x as usize + x).min(area.right() as usize) as u16;
+                    let to = (area.x as usize + x + width).min(area.right() as usize) as u16;
+                    out.push((element, from, to));
+                }
+                x += width;
+            }
+        };
+        put(left, 0);
+        put(right, (area.width as usize).saturating_sub(rw));
+        if cw > 0 && lw + cw + rw <= area.width as usize {
+            let x = (area.width as usize - cw) / 2;
+            put(center, x.clamp(lw, area.width as usize - rw - cw));
+        }
+        out
     }
 
     /// An icon: the Nerd Font one (a VS Code codicon) with `icons =

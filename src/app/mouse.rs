@@ -23,7 +23,7 @@
 
 use std::time::{Duration, Instant};
 
-use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
 
 use super::App;
@@ -91,6 +91,17 @@ impl App {
                 self.pointer = self.pointer_for(at);
                 return;
             }
+            // Ctrl+click (or ⌥+click: a Mac's terminal takes Ctrl+click
+            // for its right-click) on a word: its definition.
+            MouseEventKind::Down(MouseButton::Left)
+                if (event.modifiers.contains(KeyModifiers::CONTROL)
+                    || event.modifiers.contains(KeyModifiers::ALT))
+                    && matches!(self.hit(at), Hit::Window(_)) =>
+            {
+                self.mouse_down(at);
+                self.dragging = None;
+                self.execute("goto_definition", Invocation::default());
+            }
             MouseEventKind::Down(MouseButton::Left) => self.mouse_down(at),
             MouseEventKind::Down(MouseButton::Right) => self.right_click(at),
             MouseEventKind::Down(MouseButton::Middle) => {
@@ -110,6 +121,14 @@ impl App {
 
     /// The pointer's shape over `at`: a CSS cursor name.
     pub fn pointer_for(&self, at: Position) -> &'static str {
+        use crate::config::StatusElement as E;
+        if let Some(element) = self.status_item_at(at) {
+            let clickable = !matches!(
+                element,
+                E::Mode | E::Modified | E::PendingKeys | E::Recording | E::Separator | E::Spacer
+            );
+            return if clickable { "pointer" } else { "default" };
+        }
         let map = &self.screen_map;
         if let Some(settings) = &map.settings
             && settings.area.contains(at)
@@ -382,6 +401,14 @@ impl App {
                 }
                 None => {}
             }
+            return;
+        }
+        // The status bar: its items do what they show.
+        if let Some(element) = self.status_item_at(at) {
+            if self.editor.popup().is_some() {
+                self.editor.close_popup();
+            }
+            self.status_click(element, at);
             return;
         }
         // The tab bar: a tab shows its buffer, its × closes it.
@@ -660,6 +687,38 @@ impl App {
                 Lookup::Command(command) => Some(command.to_string()),
                 _ => None,
             })
+    }
+
+    /// The status bar item under `at`.
+    fn status_item_at(&self, at: Position) -> Option<crate::config::StatusElement> {
+        let (row, items) = self.screen_map.status_bar.as_ref()?;
+        if at.y != *row {
+            return None;
+        }
+        items
+            .iter()
+            .find(|(_, from, to)| (*from..*to).contains(&at.x))
+            .map(|(element, _, _)| element.clone())
+    }
+
+    /// A status bar item clicked, as in VS Code.
+    fn status_click(&mut self, element: crate::config::StatusElement, at: Position) {
+        use crate::config::StatusElement as E;
+        use crate::editor::status_actions::{ENCODING_MENU, INDENT_MENU, LINE_ENDING_MENU};
+        self.input.reset();
+        let command = match element {
+            E::Git => "git_branch",
+            E::Diagnostics => "diagnostics_picker",
+            E::Position | E::PositionPercentage | E::TotalLines => "goto_line_prompt",
+            E::FileType => "language",
+            E::LspProgress => "lsp_info",
+            E::FileName | E::FileBaseName => "sidebar_focus",
+            E::Indent => return self.editor.status_menu(INDENT_MENU, at.x, at.y),
+            E::FileEncoding => return self.editor.status_menu(ENCODING_MENU, at.x, at.y),
+            E::FileLineEnding => return self.editor.status_menu(LINE_ENDING_MENU, at.x, at.y),
+            _ => return,
+        };
+        self.execute(command, Invocation::default());
     }
 
     /// The tab under `at`, and whether it's on its `×`.

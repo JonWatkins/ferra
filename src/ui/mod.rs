@@ -103,7 +103,13 @@ pub struct ScreenMap {
     pub keybindings: Option<keybindings::KeybindingsMap>,
     /// The tab bar's tabs.
     pub tab_bar: Option<tab_bar::TabBarMap>,
+    /// The status bar's row and each of its items' columns (with one
+    /// status bar, not one per window).
+    pub status_bar: Option<(u16, Vec<StatusPlace>)>,
 }
+
+/// A status bar item and its columns.
+pub type StatusPlace = (crate::config::StatusElement, u16, u16);
 
 /// A box with a list: its area, the list's rows, and the index of the item
 /// on the first.
@@ -373,6 +379,7 @@ pub fn draw(
                 None,
             );
             frame.render_widget(StatusLine::new(editor, theme, pending), status);
+            map.status_bar = Some((status.y, StatusLine::places(editor, theme, pending, status)));
             drawn
         }
     };

@@ -109,6 +109,35 @@ pub fn register(r: &mut CommandRegistry) {
         });
     }
     r.register(
+        "language",
+        "Treat the buffer as language [name] (auto: as its name says); a picker without one",
+        |cx| {
+            cx.editor
+                .choose_language(cx.args.first().map(String::as_str))
+        },
+    );
+    r.register(
+        "line_ending",
+        "Save the buffer with [lf | crlf] line endings from now on",
+        |cx| {
+            cx.editor
+                .choose_line_ending(cx.args.first().map(String::as_str))
+        },
+    );
+    r.register(
+        "goto_line_prompt",
+        "Ask for a line (and line:column) to go to (Ctrl+G with VS Code's keys)",
+        |cx| {
+            cx.editor.ask_goto_line();
+            Ok(())
+        },
+    );
+    r.register(
+        "goto_line_column",
+        "Go to the line given (12, or 12:4 for a column too)",
+        |cx| cx.editor.goto_line_column(&cx.args.join(" ")),
+    );
+    r.register(
         "reveal_in_file_manager",
         "Show the file in Finder (or the file manager)",
         |cx| cx.editor.reveal_in_file_manager(false),

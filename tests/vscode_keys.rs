@@ -291,3 +291,35 @@ fn closing_a_buffer_with_unsaved_changes_asks() {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "za\n", "saved");
     assert_ne!(app.editor().document.path(), Some(path.as_path()), "closed");
 }
+
+#[test]
+fn ctrl_or_option_click_goes_to_the_definition() {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    for modifier in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+        let (mut app, _) = vscode("let value = other;");
+        render(&mut app, 80, 10);
+        let rows = render(&mut app, 80, 10).rows;
+        let x = rows[0].find("other").unwrap() as u16;
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            app.handle_mouse(MouseEvent {
+                kind,
+                column: x + 1,
+                row: 0,
+                modifiers: modifier,
+            });
+        }
+        // The cursor on the word, and the definition asked for (with no
+        // language server here, that says so).
+        assert_eq!(cursor(&app).0, 0);
+        assert!(cursor(&app).1 >= 12, "{:?}", cursor(&app));
+        let message = app
+            .editor()
+            .message()
+            .map(|m| m.text.clone())
+            .unwrap_or_default();
+        assert!(!message.is_empty(), "goto_definition ran");
+    }
+}

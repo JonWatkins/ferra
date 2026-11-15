@@ -74,6 +74,7 @@ impl Document {
             path: Some(path.clone()),
             format,
             saved_encoding: format.encoding,
+            saved_line_ending: format.line_ending,
             disk_stamp: contents.stamp,
             ..Document::default()
         };
@@ -161,6 +162,7 @@ impl Document {
         self.disk_acknowledged = None;
         self.format = format;
         self.saved_encoding = format.encoding;
+        self.saved_line_ending = format.line_ending;
         self.detected_indent = indent::detect(&self.buffer);
         self.set_cursor(cursor);
         Ok(Some(OpenInfo {
@@ -180,6 +182,23 @@ impl Document {
     /// change: the document is modified until it's saved.
     pub fn set_encoding(&mut self, encoding: FileEncoding) {
         self.format.encoding = encoding;
+    }
+
+    /// `:line_ending`: saves with `ending` from now on (an unsaved change
+    /// until it's saved).
+    pub fn set_line_ending(&mut self, ending: crate::core::LineEnding) {
+        self.format.line_ending = ending;
+    }
+
+    /// The language chosen for it (`:language`), if any.
+    pub fn language_override(&self) -> Option<&str> {
+        self.language.as_deref()
+    }
+
+    /// `:language name`: highlights and treats it as `name` (`None`: as its
+    /// name and first line say).
+    pub fn set_language(&mut self, language: Option<String>) {
+        self.language = language;
     }
 
     /// The bytes saving would write (as plain UTF-8 if the file's
@@ -232,6 +251,7 @@ impl Document {
             self.path = Some(path.clone());
             self.saved_revision = self.history.revision();
             self.saved_encoding = self.format.encoding;
+            self.saved_line_ending = self.format.line_ending;
             self.disk_stamp = stamp;
             self.disk_acknowledged = None;
             self.saves += 1;

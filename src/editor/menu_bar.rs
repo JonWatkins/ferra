@@ -248,6 +248,12 @@ impl Editor {
         self.menu.open = None;
     }
 
+    /// Any menu of `items` at `x`, `y` (the status bar's).
+    pub fn show_menu_at(&mut self, items: &[Option<(&str, &str)>], x: u16, y: u16) {
+        self.show_menu(items, x, y);
+        self.menu.open = None;
+    }
+
     /// A right-click on the file tree's empty space.
     pub fn tree_root_menu(&mut self, x: u16, y: u16) {
         self.show_menu(TREE_ROOT_MENU, x, y);

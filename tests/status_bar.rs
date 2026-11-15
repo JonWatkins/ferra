@@ -114,3 +114,80 @@ fn nerd_icons_and_the_classic_style() {
     assert!(status.trim_end().ends_with(" 1:1"), "{status:?}");
     assert!(!status.contains("Ln "), "{status:?}");
 }
+
+/// Clicks the status bar where `text` is.
+fn click_bar(app: &mut App, text: &str) {
+    let (row, _) = bar(app);
+    let byte = row
+        .find(text)
+        .unwrap_or_else(|| panic!("{text:?} not in {row:?}"));
+    let x = row[..byte].chars().count() as u16 + 1;
+    for kind in [
+        crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+        crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
+    ] {
+        app.handle_mouse(crossterm::event::MouseEvent {
+            kind,
+            column: x,
+            row: H - 2,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+    }
+}
+
+#[test]
+fn clicking_the_position_asks_for_a_line() {
+    let mut app = app_as_shipped();
+    let _dir = open(&mut app, "notes.txt", "one\ntwo\nthree\n");
+    click_bar(&mut app, "Ln 1");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Input);
+    keys(&mut app, "3:2<CR>");
+    assert_eq!(common::cursor(&app), (2, 1));
+}
+
+#[test]
+fn clicking_the_indentation_line_endings_and_encoding_offers_others() {
+    let mut app = app_as_shipped();
+    let _dir = open(&mut app, "notes.txt", "one\n");
+    click_bar(&mut app, "Spaces: 4");
+    assert_eq!(app.editor().popup().unwrap().name, "menu");
+    keys(&mut app, "<CR>");
+    assert!(bar(&mut app).0.contains("Spaces: 2"), "{}", bar(&mut app).0);
+
+    click_bar(&mut app, " LF ");
+    keys(&mut app, "<Down><CR>");
+    assert!(bar(&mut app).0.contains("CRLF"), "{}", bar(&mut app).0);
+    assert!(app.editor().document.is_modified(), "to be saved with them");
+
+    click_bar(&mut app, "UTF-8");
+    assert_eq!(app.editor().popup().unwrap().name, "menu");
+    keys(&mut app, "<Esc>");
+}
+
+#[test]
+fn clicking_the_language_picks_another() {
+    let mut app = app_as_shipped();
+    let _dir = open(&mut app, "notes.txt", "x = 1\n");
+    assert!(bar(&mut app).0.contains("Plain Text"));
+    click_bar(&mut app, "Plain Text");
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Picker);
+    keys(&mut app, "toml<CR>");
+    assert!(bar(&mut app).0.contains("TOML"), "{}", bar(&mut app).0);
+    // And back.
+    keys(&mut app, "<C-g>language auto<CR>");
+    assert!(bar(&mut app).0.contains("Plain Text"));
+}
+
+#[test]
+fn clicking_the_problems_lists_them() {
+    let mut app = app_as_shipped();
+    let _dir = open(&mut app, "notes.txt", "x\n");
+    click_bar(&mut app, "⊗ 0");
+    // None: it says so.
+    let message = app
+        .editor()
+        .message()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
+    assert!(message.to_lowercase().contains("no "), "{message}");
+}

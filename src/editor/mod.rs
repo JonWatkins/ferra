@@ -46,6 +46,7 @@ pub mod project_search;
 mod selection;
 pub mod settings;
 pub mod sidebar_views;
+pub mod status_actions;
 mod terminal_panel;
 pub mod text_field;
 mod transform;
@@ -842,7 +843,10 @@ impl Editor {
     }
 
     /// The language `document` is in, if any (by name, extension or `#!`).
-    pub fn language_of(&self, document: &Document) -> Option<&str> {
+    pub fn language_of<'a>(&'a self, document: &'a Document) -> Option<&'a str> {
+        if let Some(language) = document.language_override() {
+            return Some(language);
+        }
         self.languages
             .detect(document.path(), &document.buffer().line(0))
     }

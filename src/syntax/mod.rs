@@ -80,7 +80,10 @@ impl SyntaxEngine {
         trees: &SyntaxTrees,
         rows: Range<usize>,
     ) -> Option<&Highlights> {
-        let name = languages.detect(document.path(), &document.buffer().line(0));
+        // The language chosen for it (`:language`), else its name's.
+        let name = document
+            .language_override()
+            .or_else(|| languages.detect(document.path(), &document.buffer().line(0)));
         self.highlight_as(document, name, languages, trees, rows)
     }
 

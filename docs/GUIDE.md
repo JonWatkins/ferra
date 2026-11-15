@@ -395,6 +395,8 @@ With `mouse = true` (the default):
   goes on into the text).
 - **Drag** the sidebar's edge, the terminal panel's title row, or the line
   between two windows to resize them.
+- **Ctrl+click** (or **⌥+click**: a Mac's terminal takes Ctrl+click as a
+  right-click) on a word goes to its definition, as in VS Code.
 - **Right-click** in the text for a menu of what can be done there (go to
   the definition or references, rename, format, code actions, cut, copy,
   paste, reveal the file in Finder, copy its path, its history); the cursor
@@ -801,6 +803,15 @@ language:
 ```text
  NORMAL  ⎇ main  ⊗ 0  ⚠ 1  src/main.rs ●    Ln 12, Col 5  Spaces: 4  UTF-8  LF  Rust
 ```
+
+Its items do things when clicked, as in VS Code: the branch picks
+another, the errors and warnings list them, `Ln 12, Col 5` asks for a
+line to go to (`12`, or `12:5`), `Spaces: 4` changes the indentation,
+`UTF-8` the encoding the file is saved in, `LF` its line endings
+(`:line_ending crlf`), and the language picks another for the buffer
+(`:language toml`; `:language auto` goes back to what its name says). The
+file's name shows it in the sidebar, and a language server's progress
+opens `:lsp`.
 
 With `icons = "nerd"` its icons are VS Code's own. Its colour is the
 `ui.statusbar` scope.

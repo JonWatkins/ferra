@@ -45,6 +45,12 @@ pub struct Document {
     /// The encoding the file on disk is in; a different one in `format`
     /// (from `:fileencoding`) is an unsaved change.
     saved_encoding: crate::core::FileEncoding,
+    /// The line endings the file on disk has; others in `format` (from
+    /// `:line_ending`) are an unsaved change.
+    saved_line_ending: crate::core::LineEnding,
+    /// The language chosen for it (`:language`), over the one its name
+    /// and first line give.
+    language: Option<String>,
     /// The file's modified time when last read or written, to detect
     /// changes made by other programs.
     disk_stamp: Option<crate::files::FileStamp>,
@@ -130,6 +136,7 @@ impl Document {
         self.history.has_pending()
             || self.history.revision() != self.saved_revision
             || self.format.encoding != self.saved_encoding
+            || self.format.line_ending != self.saved_line_ending
     }
 
     pub fn id(&self) -> DocumentId {
