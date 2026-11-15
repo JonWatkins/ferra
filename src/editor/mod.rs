@@ -33,6 +33,7 @@ mod comment;
 mod confirm;
 pub mod conflicts;
 mod crash_report;
+mod doc_comments;
 pub mod diagnostics;
 pub mod explorer;
 pub mod find;

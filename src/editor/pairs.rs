@@ -37,6 +37,10 @@ impl Editor {
         if !self.options.auto_pairs || self.replacing.is_some() {
             return false;
         }
+        // `/**`: closed with ` */`.
+        if self.close_doc_comment(c) {
+            return true;
+        }
         let (before, after) = self.around_cursor();
         // `)` (or a quote) with the same next: over it.
         if after == Some(c) && (matches!(c, ')' | ']' | '}') || is_quote(c)) {

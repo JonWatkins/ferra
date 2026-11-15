@@ -180,6 +180,18 @@ impl Languages {
         })
     }
 
+    /// Whether `language` has C's `/* ... */` comments (its line comment is
+    /// `//`, or its block comment is `/*`): for doc comments' `*`s.
+    pub fn has_c_comments(&self, language: &str) -> bool {
+        self.0.get(language).is_some_and(|file_type| {
+            file_type.comment.as_deref() == Some("//")
+                || file_type
+                    .block_comment
+                    .as_ref()
+                    .is_some_and(|[start, _]| start == "/*")
+        })
+    }
+
     /// Adds a plugin's language. One of ferra's own (in its default
     /// config) can't be replaced: the config is where they change. One the
     /// user's config already has (to set its options, say) takes the

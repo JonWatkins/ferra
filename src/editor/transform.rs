@@ -472,6 +472,9 @@ impl Editor {
     /// Between a pair of brackets (`{|}`), the closing one goes on a line
     /// of its own too, with the cursor on an indented line between.
     pub fn insert_line_break(&mut self) {
+        if self.doc_comment_line_break() {
+            return;
+        }
         let cursor = self.document.cursor();
         let line = self.document.buffer().line(cursor.row).into_owned();
         let before = cursor
