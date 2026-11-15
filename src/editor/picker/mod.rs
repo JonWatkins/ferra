@@ -81,6 +81,11 @@ pub struct Picker {
     /// The items come from a language server searching for the query (the
     /// project's symbols): asked again as it changes.
     server_search: bool,
+    /// It's the quick-open box (Ctrl+P): `>`, `@` or `:` typed first
+    /// switches it to commands, symbols or a line, as in VS Code.
+    quick_open: bool,
+    /// What it was switched to, shown before the query (`>`, `@`).
+    prefix: Option<char>,
 }
 
 impl Picker {
@@ -94,6 +99,8 @@ impl Picker {
             keep_label_start: false,
             loading: None,
             server_search: false,
+            quick_open: false,
+            prefix: None,
         };
         picker.refilter();
         picker
@@ -180,6 +187,29 @@ impl Picker {
 
     pub fn keeps_label_start(&self) -> bool {
         self.keep_label_start
+    }
+
+    /// Makes it the quick-open box, switched to `prefix` if given.
+    pub fn quick_open(mut self, prefix: Option<char>) -> Self {
+        self.quick_open = true;
+        self.prefix = prefix;
+        self
+    }
+
+    /// Makes it the quick-open box switched to `prefix` (once open).
+    pub fn set_quick_open(&mut self, prefix: Option<char>) {
+        self.quick_open = true;
+        self.prefix = prefix;
+    }
+
+    pub fn is_quick_open(&self) -> bool {
+        self.quick_open
+    }
+
+    /// `>` or `@` when the quick-open box was switched to commands or
+    /// symbols.
+    pub fn prefix(&self) -> Option<char> {
+        self.prefix
     }
 
     pub fn title(&self) -> &str {

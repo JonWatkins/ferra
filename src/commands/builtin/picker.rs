@@ -58,8 +58,11 @@ pub fn register(r: &mut CommandRegistry) {
             let given = (!cx.args.is_empty()).then(|| PathBuf::from(cx.args.join(" ")));
             let root = given.clone().unwrap_or_else(|| PathBuf::from("."));
             let job = cx.editor.new_job_id();
-            cx.editor
-                .open_picker(Picker::new("Files", Vec::new()).loading_from(job));
+            cx.editor.open_picker(
+                Picker::new("Files", Vec::new())
+                    .loading_from(job)
+                    .quick_open(None),
+            );
             cx.editor.request_file_list(FileListRequest {
                 job,
                 root,
@@ -84,7 +87,10 @@ pub fn register(r: &mut CommandRegistry) {
                 action: PickerAction::RunCommand(c.name.clone()),
             })
             .collect();
-        cx.editor.open_picker(Picker::new("Commands", items));
+        // The quick-open box with `>` in, as VS Code's (Backspace on it:
+        // files).
+        cx.editor
+            .open_picker(Picker::new("Commands", items).quick_open(Some('>')));
         Ok(())
     });
 
@@ -129,6 +135,16 @@ pub fn register(r: &mut CommandRegistry) {
         "picker_backspace",
         "Delete the last filter character",
         |cx| {
+            // Backspace on the quick-open box's `>` or `@`: back to files.
+            let back = cx
+                .editor
+                .picker()
+                .is_some_and(|p| p.is_quick_open() && p.prefix().is_some() && p.query().is_empty());
+            if back {
+                return cx
+                    .registry
+                    .execute("file_picker", cx.editor, Invocation::default());
+            }
             if let Some(picker) = cx.editor.picker_mut() {
                 picker.pop();
             }

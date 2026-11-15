@@ -76,7 +76,8 @@ impl<'a> PickerView<'a> {
     /// Where the terminal cursor goes: after the typed filter.
     pub fn cursor_position(picker: &Picker, area: Rect) -> Position {
         let inner = Block::bordered().inner(area);
-        let x = inner.x as usize + 2 + picker.query().width();
+        let prefix = usize::from(picker.prefix().is_some());
+        let x = inner.x as usize + 2 + prefix + picker.query().width();
         let x = x.min(inner.right().saturating_sub(1) as usize);
         Position::new(x as u16, inner.y)
     }
@@ -110,8 +111,10 @@ impl Widget for PickerView<'_> {
         }
 
         // Filter prompt, then a separator, then the list.
+        let prefix = picker.prefix().map(String::from).unwrap_or_default();
         let prompt = Line::from(vec![
             Span::styled("> ", self.theme.get("ui.popup.prompt")),
+            Span::styled(prefix, self.theme.get("ui.popup.prompt")),
             Span::raw(picker.query()),
         ]);
         prompt.render(Rect::new(inner.x, inner.y, inner.width, 1), buf);

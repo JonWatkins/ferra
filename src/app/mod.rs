@@ -166,6 +166,41 @@ impl App {
         app
     }
 
+    /// `>`, `@` or `:` typed first in the quick-open box (Ctrl+P): the
+    /// command palette, the file's symbols, or a line to go to, as in VS
+    /// Code. Backspace on the `>` or `@` goes back to files.
+    fn follow_quick_open(&mut self) {
+        let Some(prefix) = self.editor.take_quick_open_switch() else {
+            return;
+        };
+        match prefix {
+            '>' => {
+                self.execute("command_palette", Invocation::default());
+                if let Some(picker) = self.editor.picker_mut() {
+                    picker.set_quick_open(Some('>'));
+                }
+            }
+            '@' => {
+                // The language server sends them; the picker opens then.
+                self.editor.set_mode(Mode::Normal);
+                self.editor.quick_open_waits_for('@');
+                self.execute("symbol_picker", Invocation::default());
+                if self
+                    .editor
+                    .message()
+                    .is_some_and(|m| m.severity == crate::editor::Severity::Error)
+                {
+                    self.editor.quick_open_gave_up();
+                }
+            }
+            ':' => {
+                self.editor.set_mode(Mode::Normal);
+                self.editor.ask_goto_line();
+            }
+            _ => {}
+        }
+    }
+
     /// The mode the editor rests in: normal with Vim's keys, insert with
     /// VS Code's. Its keys are the ones shown in menus and the splash.
     fn home_mode(&self) -> Mode {
@@ -1605,6 +1640,7 @@ impl App {
         };
         let outcomes = self.input.handle(key, mode, keymap);
         self.apply_outcomes(outcomes);
+        self.follow_quick_open();
         self.after_popup_key();
         self.editor.end_completion_unless_used();
         self.editor.end_hover_unless_used();

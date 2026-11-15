@@ -369,7 +369,13 @@ order before the sorted ones, and `//` is the last search.
 | `:wa`, `:wqa` | Write all / write all and quit |
 
 In a picker, type to fuzzy-filter, move with `<C-n>`/`<C-p>` (or arrows,
-`<Tab>`), `<CR>` to choose, `<Esc>` to close. Each buffer keeps its own
+`<Tab>`), `<CR>` to choose, `<Esc>` to close.
+
+The file picker is the quick-open box (`Ctrl+P` with VS Code's keys), as
+VS Code's: typed first, `>` switches it to the commands (the command
+palette opens that way, `F1`), `@` to the file's symbols, and `:` to a
+line to go to (`42`, or `42:7`). Backspace on the `>` or `@` goes back to
+files. Each buffer keeps its own
 cursor, scroll position and undo history. `:e path` opens another buffer
 without closing the current one, and `:q` refuses while *any* buffer has
 unsaved changes.

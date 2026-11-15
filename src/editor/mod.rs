@@ -244,6 +244,10 @@ pub struct Editor {
     git: git::GitState,
     /// The full-screen git view, while it's open.
     git_gui: Option<git_gui::GitGui>,
+    /// The quick-open box's switch, for the app; and a prefix waiting for
+    /// the picker it asked for (the language server's symbols).
+    quick_open_switch: Option<char>,
+    quick_open_waiting: Option<char>,
     /// The settings editor, while it's open.
     settings: Option<settings::SettingsView>,
     /// The keybinding editor, while it's open; a request to open it (for
@@ -711,6 +715,17 @@ impl Editor {
                 self.update_search_preview();
             }
             Mode::Picker => {
+                // `>`, `@` or `:` first in the quick-open box: commands,
+                // symbols or a line (the app switches it).
+                if let Some(picker) = &self.picker
+                    && picker.is_quick_open()
+                    && picker.prefix().is_none()
+                    && picker.query().is_empty()
+                    && matches!(c, '>' | '@' | ':')
+                {
+                    self.quick_open_switch = Some(c);
+                    return;
+                }
                 if let Some(picker) = &mut self.picker {
                     picker.push(c);
                 }
@@ -746,7 +761,30 @@ impl Editor {
     /// Opens `picker` as a popup, in picker mode.
     pub fn open_picker(&mut self, picker: picker::Picker) {
         self.set_mode(Mode::Picker);
+        // The symbols asked for from the quick-open box (`@`), arriving.
+        let picker = match self.quick_open_waiting.take() {
+            Some(prefix) => picker.quick_open(Some(prefix)),
+            None => picker,
+        };
         self.picker = Some(picker);
+    }
+
+    /// What the quick-open box is to switch to: `>`, `@`, `:`, or `f`
+    /// (back to files), for the app.
+    pub fn take_quick_open_switch(&mut self) -> Option<char> {
+        self.quick_open_switch.take()
+    }
+
+    /// The symbols asked for from the quick-open box never came (no
+    /// language server): the next picker is an ordinary one.
+    pub fn quick_open_gave_up(&mut self) {
+        self.quick_open_waiting = None;
+    }
+
+    /// A picker opening later (the language server's symbols) is the
+    /// quick-open box switched to `prefix`.
+    pub fn quick_open_waits_for(&mut self, prefix: char) {
+        self.quick_open_waiting = Some(prefix);
     }
 
     pub fn picker(&self) -> Option<&picker::Picker> {
