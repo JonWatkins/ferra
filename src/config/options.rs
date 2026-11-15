@@ -58,6 +58,8 @@ pub struct EditorOptions {
     pub activity_bar: bool,
     /// A tab for each open buffer, along the top of the windows.
     pub tab_bar: bool,
+    /// Started with no files, open what was open when it last quit here.
+    pub restore_session: bool,
     /// What icons are drawn with.
     pub icons: Icons,
     /// Vim's keys and modes, or VS Code's (no modes).

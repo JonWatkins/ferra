@@ -3,6 +3,8 @@
 
 mod background;
 pub mod crash;
+mod session;
+pub use session::default_dir as session_dir;
 mod macros;
 mod mouse;
 mod normal;
@@ -79,6 +81,8 @@ pub struct App {
     /// The user's own `[keys]`, for building the keys again when `keymap`
     /// changes, and the keymap they were built for.
     user_keys: toml::Table,
+    /// Where sessions are kept (`restore-session`), if anywhere.
+    session_dir: Option<std::path::PathBuf>,
     keymap_preset: crate::config::KeymapPreset,
     config_hooks: HashMap<EventKind, Vec<String>>,
     /// The config's languages, before plugins add theirs.
@@ -116,6 +120,7 @@ impl App {
             keymap: config.keys.clone(),
             config_keys: config.keys,
             user_keys: config.user_keys,
+            session_dir: None,
             keymap_preset: config.editor.keymap,
             config_hooks: config.hooks,
             config_languages: config.languages,
@@ -963,6 +968,10 @@ impl App {
                 handled += 1;
             }
             deadline = self.key_deadline();
+        }
+        // What's open, for the next start here.
+        if let Err(error) = self.save_session() {
+            crate::log::error(&format!("saving the session: {error}"));
         }
         self.lsp.borrow_mut().shutdown();
         if enhanced_keys {

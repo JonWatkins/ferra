@@ -45,7 +45,11 @@ fn main() -> color_eyre::Result<ExitCode> {
     }
     // Plugins load before files open, so their `opened` hooks see them.
     let plugin_error = ferra::config::config_dir().and_then(|dir| app.load_plugins(&dir));
-    app.open_all(&files);
+    app.set_session_dir(ferra::app::session_dir());
+    // No files named: what was open when ferra last quit here.
+    if !(files.is_empty() && app.restore_session()) {
+        app.open_all(&files);
+    }
     if let Some(error) = plugin_error {
         app.editor_mut().set_message(Message::error(error));
     }

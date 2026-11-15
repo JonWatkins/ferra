@@ -14,7 +14,11 @@ ferra            # start on the splash screen
 Save with `Ctrl+S` and quit with `Ctrl+Q` (with Vim's keys, `:w` and
 `:q`, or `ZZ` to save and quit).
 
-Started without a file, ferra shows a splash screen: the logo, the version
+Started in a folder with no files named, ferra opens what was open when
+it last quit there: the files, each at its cursor, the one that was
+shown, and the sidebar if it was open (`restore-session = false` turns
+that off; sessions are kept in `~/.local/state/ferra/sessions/`).
+Otherwise, started without a file, ferra shows a splash screen: the logo, the version
 and a few ways to begin (`:e <file>`, finding a file, every command, `:q`).
 The keys listed are the ones actually bound, so your own bindings show up
 there. It goes away once you type, open a file or split the window.
