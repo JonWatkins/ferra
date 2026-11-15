@@ -568,12 +568,24 @@ impl Editor {
             .into_iter()
             .filter(|entry| tag.as_ref().is_none_or(|t| entry.tags.contains(t)))
             .map(|entry| {
-                let mut detail = entry.description.clone();
-                if entry.language {
-                    detail = format!("[language] {detail}");
-                }
-                if !entry.tags.is_empty() {
-                    detail = format!("{detail}  #{}", entry.tags.join(" #"));
+                // A table: ✓ if installed, what it is, what it does, and
+                // any other tags (light, dark...).
+                let kind = if entry.language || entry.tags.iter().any(|t| t == "language") {
+                    "language"
+                } else if entry.tags.iter().any(|t| t == "theme") {
+                    "theme"
+                } else {
+                    "plugin"
+                };
+                let others: Vec<&str> = entry
+                    .tags
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|t| !matches!(*t, "language" | "theme"))
+                    .collect();
+                let mut description = entry.description.clone();
+                if !others.is_empty() {
+                    description = format!("{description} · {}", others.join(", "));
                 }
                 let source = match &directory {
                     Some(directory) => entry.source(directory),
@@ -581,15 +593,13 @@ impl Editor {
                 };
                 let same =
                     |w: &packages::Wanted| Source::parse(&source).is_ok_and(|s| s.same_as(w));
-                if installed
+                let is_installed = installed
                     .iter()
-                    .any(|(name, w)| *name == entry.name || same(w))
-                {
-                    detail = format!("(installed) {detail}");
-                }
+                    .any(|(name, w)| *name == entry.name || same(w));
+                let mark = if is_installed { "✓" } else { " " };
                 PickerItem {
                     label: entry.name,
-                    detail: detail.trim().to_string(),
+                    detail: format!("{mark} {kind:<9} {description}"),
                     action: PickerAction::RunWith("plugin_install".into(), vec![source]),
                 }
             })
@@ -600,7 +610,12 @@ impl Editor {
             ));
             return;
         }
-        self.open_picker(Picker::new(title, items));
+        self.open_picker(
+            Picker::new(title, items)
+                .aligned_details()
+                .keep_label_start()
+                .with_placeholder("Search plugins by name (✓ installed)"),
+        );
         self.clear_message();
         if let Some(why) = index.stale {
             self.set_message(Message::error(format!(
@@ -708,35 +723,40 @@ impl Editor {
             ));
             return Ok(());
         }
+        // A table: name, version, what it is, what it does; where it's
+        // from, dimmed, last.
         let width = listed.iter().map(|p| p.name.len()).max().unwrap_or(0);
+        let version_width = listed
+            .iter()
+            .map(|p| p.version.as_deref().unwrap_or("").len())
+            .max()
+            .unwrap_or(0);
         let mut lines = Vec::new();
         for plugin in &listed {
-            let mut line = vec![span(
-                &format!("{:width$}", plugin.name),
-                Some("ui.popup.title"),
-            )];
-            if let Some(version) = &plugin.version {
-                line.push(span(&format!("  {version}"), None));
-            }
-            line.push(span(&format!("  {}", plugin.source), Some("comment")));
-            if let Some(commit) = &plugin.commit {
-                line.push(span(&format!(" {}", short(commit)), Some("comment")));
-            }
-            if !plugin.languages.is_empty() {
-                line.push(span(
-                    &format!("  [{}]", plugin.languages.join(", ")),
-                    Some("type"),
-                ));
-            }
+            let kind = if !plugin.languages.is_empty() {
+                "language"
+            } else if !plugin.themes.is_empty() {
+                "theme"
+            } else {
+                "plugin"
+            };
+            let version = plugin.version.as_deref().unwrap_or("");
+            let mut line = vec![
+                span(&format!("{:width$}", plugin.name), Some("ui.popup.title")),
+                span(&format!("  {version:version_width$}"), None),
+                span(&format!("  {kind:<8}"), Some("ui.popup.detail")),
+            ];
             match &plugin.problem {
                 Some(problem) => {
                     line.push(span(&format!("  ({problem})"), Some("ui.decoration.error")))
                 }
-                None if !plugin.description.is_empty() => {
-                    line.push(span(&format!("  {}", plugin.description), None));
-                }
-                None => {}
+                None => line.push(span(&format!("  {}", plugin.description), None)),
             }
+            let mut from = format!("    {}", plugin.source);
+            if let Some(commit) = &plugin.commit {
+                from = format!("{from} {}", short(commit));
+            }
+            line.push(span(&from, Some("comment")));
             lines.push(line);
         }
         self.open_popup(Popup {

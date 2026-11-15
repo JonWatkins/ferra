@@ -667,8 +667,8 @@ fn browse_lists_the_directory_and_installs_the_choice() {
     assert_eq!(
         picker_items(&app),
         [
-            ("hello".to_string(), "Says hello".to_string()),
-            ("other".to_string(), "(installed) Another".to_string()),
+            ("hello".to_string(), "  plugin    Says hello".to_string()),
+            ("other".to_string(), "✓ plugin    Another".to_string()),
         ]
     );
     assert_eq!(message(&app), "");
@@ -1184,7 +1184,7 @@ fn the_directory_lists_its_own_plugins_by_folder() {
     app.wait_for_background();
     assert_eq!(
         picker_items(&app)[0],
-        ("hello".to_string(), "Says hello".to_string())
+        ("hello".to_string(), "  plugin    Says hello".to_string())
     );
     keys(&mut app, "hello<CR>");
     assert!(
@@ -1202,7 +1202,7 @@ fn the_directory_lists_its_own_plugins_by_folder() {
 
     keys(&mut app, ":plugin_browse<CR>");
     app.wait_for_background();
-    assert_eq!(picker_items(&app)[0].1, "(installed) Says hello");
+    assert_eq!(picker_items(&app)[0].1, "✓ plugin    Says hello");
 }
 
 #[test]

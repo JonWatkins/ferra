@@ -76,8 +76,7 @@ impl<'a> PickerView<'a> {
     /// Where the terminal cursor goes: after the typed filter.
     pub fn cursor_position(picker: &Picker, area: Rect) -> Position {
         let inner = Block::bordered().inner(area);
-        let prefix = usize::from(picker.prefix().is_some());
-        let x = inner.x as usize + 2 + prefix + picker.query().width();
+        let x = inner.x as usize + 2 + picker.query().width();
         let x = x.min(inner.right().saturating_sub(1) as usize);
         Position::new(x as u16, inner.y)
     }
@@ -111,10 +110,13 @@ impl Widget for PickerView<'_> {
         }
 
         // Filter prompt, then a separator, then the list.
-        let prefix = picker.prefix().map(String::from).unwrap_or_default();
+        // The quick-open box's prefix (`>` for commands) is the prompt's
+        // mark, as VS Code's: `> writ`, not `> >writ`.
+        let mark = picker
+            .prefix()
+            .map_or_else(|| "> ".to_string(), |p| format!("{p} "));
         let mut spans = vec![
-            Span::styled("> ", self.theme.get("ui.popup.prompt")),
-            Span::styled(prefix, self.theme.get("ui.popup.prompt")),
+            Span::styled(mark, self.theme.get("ui.popup.prompt")),
             Span::raw(picker.query()),
         ];
         // Nothing typed: what to type, dimmed (the cursor sits before it).
@@ -170,6 +172,29 @@ impl Widget for PickerView<'_> {
                 }
                 None => line_area,
             };
+            if picker.has_aligned_details() {
+                // A table: the details start in a column after the
+                // widest label (at most a third of the row).
+                // A label wider than that runs on, the detail after it.
+                let column = (picker.widest_label() + 3)
+                    .min(line_area.width as usize / 3)
+                    .max(item.label.width() + 2)
+                    .min(line_area.width as usize);
+                render_item(
+                    buf,
+                    Rect::new(line_area.x, y, column as u16, 1),
+                    &item.label,
+                    &found.positions,
+                    "",
+                    true,
+                    self.theme,
+                );
+                let x = line_area.x + column as u16 + 1;
+                let room = line_area.right().saturating_sub(x + 1) as usize;
+                let detail = truncate_end(&item.detail, room);
+                buf.set_stringn(x, y, &detail, room, self.theme.get("ui.popup.detail"));
+                continue;
+            }
             render_item(
                 buf,
                 line_area,

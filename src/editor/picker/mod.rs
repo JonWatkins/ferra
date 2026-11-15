@@ -89,6 +89,9 @@ pub struct Picker {
     /// Shown, dimmed, while nothing's typed (VS Code's "Search files by
     /// name...").
     placeholder: String,
+    /// The details start in a column after the labels (a table), rather
+    /// than at the right.
+    aligned: bool,
 }
 
 impl Picker {
@@ -105,6 +108,7 @@ impl Picker {
             quick_open: false,
             prefix: None,
             placeholder: String::new(),
+            aligned: false,
         };
         picker.refilter();
         picker
@@ -191,6 +195,22 @@ impl Picker {
 
     pub fn keeps_label_start(&self) -> bool {
         self.keep_label_start
+    }
+
+    /// The details in a column after the labels, left-aligned, as a table.
+    pub fn aligned_details(mut self) -> Self {
+        self.aligned = true;
+        self
+    }
+
+    pub fn has_aligned_details(&self) -> bool {
+        self.aligned
+    }
+
+    /// The widest label, for the details' column.
+    pub fn widest_label(&self) -> usize {
+        use unicode_width::UnicodeWidthStr;
+        self.items.iter().map(|i| i.label.width()).max().unwrap_or(0)
     }
 
     /// The dimmed text shown while nothing's typed.

@@ -190,7 +190,7 @@ fn command_palette_shows_descriptions_and_highlights_matches() {
     assert!(popup.contains("buffer_next"), "{popup}");
     assert!(popup.contains("Switch to the next buffer"), "{popup}");
     // The quick-open box with `>` in, as VS Code's.
-    assert!(popup.contains("> >bufnext"), "{popup}");
+    assert!(popup.contains("> bufnext"), "{popup}");
 }
 
 #[test]

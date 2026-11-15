@@ -25,7 +25,7 @@ fn greater_than_switches_to_commands_and_backspace_back() {
     keys(&mut app, ">writ");
     assert_eq!(picker(&app), ("Commands".into(), Some('>'), "writ".into()));
     let shown = render(&mut app, 80, 20).rows.join("\n");
-    assert!(shown.contains("> >writ"), "{shown}");
+    assert!(shown.contains("> writ"), "{shown}");
     let selected = app
         .editor()
         .picker()

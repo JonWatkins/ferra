@@ -531,6 +531,8 @@ pub struct Listed {
     pub description: String,
     /// The languages it adds.
     pub languages: Vec<String>,
+    /// The colour themes it carries.
+    pub themes: Vec<String>,
     pub commit: Option<String>,
     /// Why it can't be loaded (not cloned, a broken manifest).
     pub problem: Option<String>,
@@ -545,20 +547,22 @@ pub fn list(paths: &PluginPaths) -> Result<Vec<Listed>, String> {
             let source = Source::from_wanted(&wanted);
             let manifest = Manifest::read(&paths.root(&name, &wanted));
             let commit = lock.get(&name).map(|l| l.commit.clone());
-            let (version, description, languages, problem) = match manifest {
+            let (version, description, languages, themes, problem) = match manifest {
                 Ok(m) => (
                     Some(m.version),
                     m.description,
                     m.languages.into_keys().collect(),
+                    m.themes.into_keys().collect(),
                     None,
                 ),
                 Err(_) if !paths.dir(&name).is_dir() => (
                     None,
                     String::new(),
                     Vec::new(),
+                    Vec::new(),
                     Some("not installed".to_string()),
                 ),
-                Err(e) => (None, String::new(), Vec::new(), Some(e)),
+                Err(e) => (None, String::new(), Vec::new(), Vec::new(), Some(e)),
             };
             Listed {
                 name,
@@ -566,6 +570,7 @@ pub fn list(paths: &PluginPaths) -> Result<Vec<Listed>, String> {
                 version,
                 description,
                 languages,
+                themes,
                 commit,
                 problem,
             }
