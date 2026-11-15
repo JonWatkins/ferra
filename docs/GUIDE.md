@@ -172,6 +172,15 @@ That only goes one way: paste with your terminal (Cmd/Ctrl+Shift+V).
 terminal (Cmd/Ctrl+V) inserts the text exactly as copied, with no
 auto-indent, as one undo step. `.` and macros repeat pastes too.
 
+**Guides and bracket colours:** faint lines mark each level of
+indentation (the block the cursor's in, a little brighter), carried
+through blank lines inside a block (`indent-guides`). Brackets are
+coloured by how deeply they're nested, in three colours that go round,
+skipping those in strings and comments (`bracket-colors`, the
+`ui.bracket.1` to `.3` scopes). With the cursor on a bracket (or just
+after one, typing), it and its pair are highlighted (`match-brackets`,
+`ui.bracket.match`). All three are on as shipped.
+
 **Brackets and quotes:** typing `(`, `[`, `{`, `"`, `'` or `` ` `` puts
 in its closer after the cursor (before a space, the line's end or a
 closing bracket; a quote not straight after a letter, so `don't` and

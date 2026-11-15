@@ -338,7 +338,8 @@ pub fn draw(
                 match (tab, editor.terminal_panel()) {
                     (crate::editor::panel::PanelTab::Terminal, Some(terminal)) => {
                         let focused = editor.mode() == Mode::Terminal;
-                        let view = TerminalView::new(terminal, focused, &keys.terminal, theme);
+                        let view =
+                            TerminalView::new(terminal, focused, &keys.terminal, theme).tabbed();
                         frame.render_widget(view, panel);
                         let row = Rect::new(panel.x, panel.y, panel.width, 1);
                         panel::draw_tabs(editor, theme, row, frame.buffer_mut());

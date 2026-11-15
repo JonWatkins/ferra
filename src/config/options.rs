@@ -35,6 +35,12 @@ pub struct EditorOptions {
     /// Shown at the start of a wrapped line's continued rows.
     pub wrap_marker: String,
     pub cursorline: bool,
+    /// Faint lines at each level of indentation.
+    pub indent_guides: bool,
+    /// Brackets coloured by how deeply they're nested.
+    pub bracket_colors: bool,
+    /// The bracket matching the one at the cursor highlighted.
+    pub match_brackets: bool,
     /// A status line under every window, or one for the whole screen.
     pub statusline: StatuslineMode,
     /// How the status line looks.

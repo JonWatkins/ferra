@@ -64,7 +64,10 @@ fn category_of(path: &str) -> &'static str {
         | "wrap-marker"
         | "cursorline"
         | "scroll-off"
-        | "syntax-highlighting" => "Display",
+        | "syntax-highlighting"
+        | "indent-guides"
+        | "bracket-colors"
+        | "match-brackets" => "Display",
         "menu-bar" | "activity-bar" | "tab-bar" | "breadcrumbs" | "restore-session" | "icons"
         | "sidebar-width" | "statusline" | "statusline-style" | "statusline-layout" => "Workbench",
         "search" => "Search",

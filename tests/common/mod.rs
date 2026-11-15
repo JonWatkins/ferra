@@ -22,6 +22,9 @@ fn with_classic_chrome(toml: &str) -> String {
         "tab-bar",
         "breadcrumbs",
         "auto-pairs",
+        "indent-guides",
+        "bracket-colors",
+        "match-brackets",
     ] {
         editor.entry(key).or_insert(toml::Value::Boolean(false));
     }

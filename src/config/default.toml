@@ -49,6 +49,15 @@ wrap-indent = true
 wrap-marker = "↪ "
 # Highlight the line the cursor is on.
 cursorline = true
+# Faint lines at each level of indentation (the block the cursor's in a
+# little brighter), as VS Code draws them.
+indent-guides = true
+# Brackets coloured by how deeply they're nested, in three colours that go
+# round (ui.bracket.1 to .3); those in strings and comments aren't.
+bracket-colors = true
+# With the cursor on a bracket (or just after one, typing), it and its pair
+# are highlighted (ui.bracket.match).
+match-brackets = true
 # "global": one status bar along the bottom of the screen, as VS Code's.
 # "windows": a status line under every window, the active one highlighted
 # (Neovim's default).
@@ -379,6 +388,12 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.sidebar.git.header" = { fg = "#7aa2f7", modifiers = ["bold"] }
 "ui.sidebar.git.branch" = "#6b7280"
 # The full-screen git view (<Space>g).
+"ui.indent-guide" = "#2a2e38"
+"ui.indent-guide.active" = "#4b5263"
+"ui.bracket.1" = "#e0af68"
+"ui.bracket.2" = "#bb9af7"
+"ui.bracket.3" = "#7aa2f7"
+"ui.bracket.match" = { bg = "#3b4261", modifiers = ["bold"] }
 "ui.breadcrumbs" = { fg = "#8c93ad", bg = "#16181d" }
 "ui.breadcrumbs.file" = "#c0caf5"
 "ui.breadcrumbs.symbol" = "#a9b1d6"

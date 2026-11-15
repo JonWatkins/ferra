@@ -6,6 +6,7 @@
 //! eventually build on.
 
 mod block;
+pub mod brackets;
 mod buffer;
 pub mod columns;
 pub mod fold;

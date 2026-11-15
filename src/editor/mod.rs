@@ -28,6 +28,7 @@ pub mod server_completion;
 pub mod signature;
 pub use search::{SearchDone, SearchHit};
 mod block;
+mod brackets;
 mod comment;
 mod confirm;
 pub mod conflicts;
@@ -253,6 +254,8 @@ pub struct Editor {
     /// the picker it asked for (the language server's symbols).
     quick_open_switch: Option<char>,
     quick_open_waiting: Option<char>,
+    /// Each buffer's bracket nesting by line, for bracket pair colours.
+    brackets: brackets::BracketCache,
     /// The buffer's symbols, for the Outline and the breadcrumbs.
     outline: outline::Outline,
     /// The settings editor, while it's open.

@@ -145,6 +145,18 @@ pub struct EditorView<'a> {
     cursor: Option<TextPosition>,
     /// Only the active window shows the cursor line.
     active: bool,
+    /// Bracket pair colours: each line's starting state, and the
+    /// language's comments.
+    brackets: Option<(
+        std::rc::Rc<Vec<crate::core::brackets::LineState>>,
+        crate::core::brackets::Comments,
+    )>,
+    /// Indent guides: a level's width in columns.
+    indent_guides: Option<usize>,
+    /// The guide of the block the cursor's in: its column, and the rows.
+    active_guide: Option<(usize, usize, usize)>,
+    /// The bracket at the cursor and its pair, highlighted.
+    bracket_pair: Option<(TextPosition, TextPosition)>,
 }
 
 impl<'a> EditorView<'a> {
@@ -165,7 +177,133 @@ impl<'a> EditorView<'a> {
             diagnostics: &[],
             cursor: None,
             active: true,
+            brackets: None,
+            indent_guides: None,
+            active_guide: None,
+            bracket_pair: None,
         }
+    }
+
+    /// Colours brackets by depth (`bracket-colors`), from `states`.
+    pub fn brackets(
+        mut self,
+        states: std::rc::Rc<Vec<crate::core::brackets::LineState>>,
+        comments: crate::core::brackets::Comments,
+    ) -> Self {
+        self.brackets = Some((states, comments));
+        self
+    }
+
+    /// Draws indent guides every `width` columns (`indent-guides`).
+    pub fn indent_guides(mut self, width: usize) -> Self {
+        self.indent_guides = Some(width.max(1));
+        self
+    }
+
+    /// The indentation of `row` in columns; for a blank line, the less of
+    /// the lines above and below it that aren't (so guides carry through).
+    fn indent_of(&self, row: usize) -> usize {
+        let text = self.document.buffer();
+        let tab = self.options.tab_width.max(1);
+        let measure = |row: usize| -> Option<usize> {
+            let line = text.line(row);
+            if line.trim().is_empty() {
+                return None;
+            }
+            let mut width = 0;
+            for c in line.chars() {
+                match c {
+                    ' ' => width += 1,
+                    '\t' => width += tab - width % tab,
+                    _ => break,
+                }
+            }
+            Some(width)
+        };
+        if let Some(width) = measure(row) {
+            return width;
+        }
+        let up = (row.saturating_sub(100)..row)
+            .rev()
+            .find_map(measure)
+            .unwrap_or(0);
+        let down = (row + 1..(row + 100).min(text.line_count()))
+            .find_map(measure)
+            .unwrap_or(0);
+        up.min(down)
+    }
+
+    /// The guide of the block the cursor's in: its column, and the rows
+    /// from and to.
+    fn find_active_guide(
+        &self,
+        cursor: TextPosition,
+        unit: usize,
+    ) -> Option<(usize, usize, usize)> {
+        let indent = self.indent_of(cursor.row);
+        if indent < unit {
+            return None;
+        }
+        let level = indent - (indent - unit) % unit - unit;
+        let rows = self.document.buffer().line_count();
+        let inside = |row: usize| self.indent_of(row) > level;
+        let mut first = cursor.row;
+        while first > 0 && inside(first - 1) && cursor.row - first < 2000 {
+            first -= 1;
+        }
+        let mut last = cursor.row;
+        while last + 1 < rows && inside(last + 1) && last - cursor.row < 2000 {
+            last += 1;
+        }
+        Some((level, first, last))
+    }
+
+    /// The bracket at (or, typing, just before) `cursor`, and its pair.
+    fn find_bracket_pair(&self, cursor: TextPosition) -> Option<(TextPosition, TextPosition)> {
+        let text = self.document.buffer();
+        let line: Vec<char> = text.line(cursor.row).chars().collect();
+        let is_bracket = |c: Option<&char>| c.is_some_and(|c| "()[]{}".contains(*c));
+        let at = if is_bracket(line.get(cursor.col)) {
+            cursor
+        } else if cursor.col > 0 && is_bracket(line.get(cursor.col - 1)) {
+            cursor.with_col(cursor.col - 1)
+        } else {
+            return None;
+        };
+        // With the brackets' depths (strings and comments skipped), the
+        // pair is the next closer, or the last opener, at the same depth.
+        if let Some((states, comments)) = &self.brackets {
+            let brackets_on = |row: usize| {
+                let mut state = states.get(row).copied().unwrap_or_default();
+                crate::core::brackets::scan(&text.line(row), &mut state, comments)
+            };
+            let here = brackets_on(at.row).into_iter().find(|b| b.col == at.col)?;
+            let found = if here.open {
+                (at.row..text.line_count().min(at.row + 5000)).find_map(|row| {
+                    brackets_on(row)
+                        .into_iter()
+                        .find(|b| {
+                            (row > at.row || b.col > at.col) && !b.open && b.depth == here.depth
+                        })
+                        .map(|b| TextPosition::new(row, b.col))
+                })
+            } else {
+                (at.row.saturating_sub(5000)..=at.row)
+                    .rev()
+                    .find_map(|row| {
+                        brackets_on(row)
+                            .into_iter()
+                            .rev()
+                            .find(|b| {
+                                (row < at.row || b.col < at.col) && b.open && b.depth == here.depth
+                            })
+                            .map(|b| TextPosition::new(row, b.col))
+                    })
+            };
+            return found.map(|other| (at, other));
+        }
+        let other = crate::core::motion::matching_bracket(text, at)?;
+        Some((at, other))
     }
 
     /// Colours the text with syntax highlights, if any.
@@ -266,15 +404,21 @@ impl<'a> EditorView<'a> {
 impl StatefulWidget for EditorView<'_> {
     type State = ViewState;
 
-    fn render(self, area: Rect, buf: &mut Buffer, state: &mut ViewState) {
+    fn render(mut self, area: Rect, buf: &mut Buffer, state: &mut ViewState) {
         state.cursor = None;
         state.rows.clear();
         if area.is_empty() {
             return;
         }
 
-        let text = self.document.buffer();
         let cursor = self.cursor.unwrap_or_else(|| self.document.cursor());
+        if self.active && self.options.match_brackets {
+            self.bracket_pair = self.find_bracket_pair(cursor);
+        }
+        if let Some(unit) = self.indent_guides {
+            self.active_guide = self.find_active_guide(cursor, unit);
+        }
+        let text = self.document.buffer();
         let tab_width = self.options.tab_width;
         let line_numbers = self.options.line_numbers;
 
@@ -623,6 +767,31 @@ impl EditorView<'_> {
         let visible = line::visible_slice(&line_text[..upto], left, width, tab_width);
         buf.set_stringn(text_area.x, y, visible, width, text_style);
 
+        // Indent guides, in the indentation's blank cells (on a line's
+        // first row; through blank lines inside a block).
+        if let Some(unit) = self.indent_guides.filter(|_| first) {
+            let indent = self.indent_of(row);
+            let mut col = 0;
+            while col < indent {
+                if col >= left && col - left < width {
+                    let x = text_area.x + (col - left) as u16;
+                    let cell = &mut buf[(x, y)];
+                    if cell.symbol() == " " {
+                        let active = self
+                            .active_guide
+                            .is_some_and(|(at, from, to)| at == col && (from..=to).contains(&row));
+                        let scope = if active {
+                            "ui.indent-guide.active"
+                        } else {
+                            "ui.indent-guide"
+                        };
+                        cell.set_symbol("│").set_style(self.theme.get(scope));
+                    }
+                }
+                col += unit;
+            }
+        }
+
         // Highlights come in the buffer's columns.
         let line_len = real_line.chars().count();
         let mut paint = |from: usize, to: usize, to_end: bool, style: Style| {
@@ -661,6 +830,37 @@ impl EditorView<'_> {
         if let Some(syntax) = self.syntax {
             for span in syntax.line(row) {
                 highlight(span.start, span.end, syntax_styles[span.highlight]);
+            }
+        }
+        // Brackets by depth, over the syntax's colours (not in strings or
+        // comments, as the highlighting says where they are).
+        if let Some((states, comments)) = &self.brackets {
+            let mut state = states.get(row).copied().unwrap_or_default();
+            let in_text = |col: usize| {
+                self.syntax.is_some_and(|syntax| {
+                    syntax.line(row).iter().any(|span| {
+                        span.start <= col
+                            && col < span.end
+                            && (span.name().starts_with("string")
+                                || span.name().starts_with("comment"))
+                    })
+                })
+            };
+            for bracket in crate::core::brackets::scan(real_line, &mut state, comments) {
+                if in_text(bracket.col) {
+                    continue;
+                }
+                let scope =
+                    ["ui.bracket.1", "ui.bracket.2", "ui.bracket.3"][bracket.depth as usize % 3];
+                highlight(bracket.col, bracket.col + 1, self.theme.get(scope));
+            }
+        }
+        if let Some((a, b)) = self.bracket_pair {
+            let style = self.theme.get("ui.bracket.match");
+            for at in [a, b] {
+                if at.row == row {
+                    highlight(at.col, at.col + 1, style);
+                }
             }
         }
         // Plugins' highlighted ranges (decorations).
@@ -1018,6 +1218,77 @@ mod tests {
     /// The default config's theme, which has the diagnostic styles.
     fn theme() -> Theme {
         crate::config::Config::default().theme
+    }
+
+    /// Draws `doc` with indent guides (4 wide), bracket colours and the
+    /// pair at the cursor, no line numbers.
+    fn render_decorated(doc: &Document, w: u16, h: u16) -> Buffer {
+        let area = Rect::new(0, 0, w, h);
+        let mut buf = Buffer::empty(area);
+        let options = EditorOptions {
+            match_brackets: true,
+            ..options(LineNumbers::None)
+        };
+        let comments = crate::core::brackets::Comments {
+            line: Some("//".into()),
+            block: None,
+        };
+        let states = crate::core::brackets::line_states(
+            (0..doc.buffer().line_count()).map(|r| doc.buffer().line(r)),
+            &comments,
+        );
+        EditorView::new(doc, &options, &theme())
+            .indent_guides(4)
+            .brackets(std::rc::Rc::new(states), comments)
+            .render(area, &mut buf, &mut ViewState::default());
+        buf
+    }
+
+    #[test]
+    fn indent_guides_go_in_the_indentation_and_through_blank_lines() {
+        let doc = Document::with_text("fn f() {\n    if x {\n        y\n\n        z\n    }\n}");
+        let buf = render_decorated(&doc, 20, 8);
+        assert_eq!(row_text(&buf, 0).trim_end(), "fn f() {");
+        assert_eq!(row_text(&buf, 1).trim_end(), "│   if x {");
+        assert_eq!(row_text(&buf, 2).trim_end(), "│   │   y");
+        assert_eq!(row_text(&buf, 3).trim_end(), "│   │", "a blank line inside");
+        assert_eq!(row_text(&buf, 5).trim_end(), "│   }");
+        // The cursor's block (row 0 here is outside every block): no
+        // guide is the active one.
+        let guide = theme().get("ui.indent-guide");
+        assert_eq!(buf[(0, 1)].fg, guide.fg.unwrap());
+    }
+
+    #[test]
+    fn the_cursors_block_has_the_brighter_guide() {
+        let mut doc = Document::with_text("{\n    a\n    b\n}\n{\n    c\n}");
+        doc.set_cursor(TextPos::new(2, 4));
+        let buf = render_decorated(&doc, 20, 8);
+        let active = theme().get("ui.indent-guide.active").fg.unwrap();
+        let plain = theme().get("ui.indent-guide").fg.unwrap();
+        assert_eq!(buf[(0, 1)].fg, active);
+        assert_eq!(buf[(0, 2)].fg, active);
+        assert_eq!(buf[(0, 5)].fg, plain, "another block's");
+    }
+
+    #[test]
+    fn brackets_are_coloured_by_depth_and_the_pair_at_the_cursor_marked() {
+        let mut doc = Document::with_text("f(a[0], \"(\") // (");
+        doc.set_cursor(TextPos::new(0, 1));
+        let buf = render_decorated(&doc, 30, 2);
+        let colour = |n: usize| theme().get(&format!("ui.bracket.{n}")).fg.unwrap();
+        assert_eq!(buf[(1, 0)].fg, colour(1), "(");
+        assert_eq!(buf[(3, 0)].fg, colour(2), "[");
+        assert_eq!(buf[(5, 0)].fg, colour(2), "]");
+        assert_eq!(buf[(11, 0)].fg, colour(1), ")");
+        // In a string or a comment: not a bracket.
+        assert_ne!(buf[(9, 0)].fg, colour(2));
+        assert_ne!(buf[(16, 0)].fg, colour(1));
+        // The cursor's on `(`: it and its `)` are marked.
+        let matched = theme().get("ui.bracket.match").bg.unwrap();
+        assert_eq!(buf[(1, 0)].bg, matched);
+        assert_eq!(buf[(11, 0)].bg, matched);
+        assert_ne!(buf[(3, 0)].bg, matched);
     }
 
     fn underlined(buf: &Buffer, y: u16) -> String {

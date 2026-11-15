@@ -151,6 +151,19 @@ pub fn draw_windows(
             })
             .syntax(highlights)
             .diagnostics(editor.diagnostics(document.id()));
+        let view = if options.bracket_colors {
+            view.brackets(
+                editor.bracket_states(document),
+                editor.comments_of(document),
+            )
+        } else {
+            view
+        };
+        let view = if options.indent_guides {
+            view.indent_guides(editor.indent_width_of(document, &options))
+        } else {
+            view
+        };
         frame.render_stateful_widget(view, rect, state);
         windows.note_top(id, state.viewport.top);
         if active {

@@ -35,6 +35,8 @@ pub struct TerminalView<'a> {
     focused: bool,
     keys: &'a TerminalKeys,
     theme: &'a Theme,
+    /// Drawn in the bottom panel, under its tabs (no title of its own).
+    tabbed: bool,
 }
 
 /// The shell's part of the panel's area: under the title row, a column
@@ -69,7 +71,14 @@ impl<'a> TerminalView<'a> {
             focused,
             keys,
             theme,
+            tabbed: false,
         }
+    }
+
+    /// In the bottom panel: its tabs are drawn over the title row.
+    pub fn tabbed(mut self) -> Self {
+        self.tabbed = true;
+        self
     }
 
     /// Where the terminal cursor goes: the shell's cursor, while the panel
@@ -120,9 +129,12 @@ impl<'a> TerminalView<'a> {
         let right = right.filter(|(text, _)| text.width() + 12 <= width);
         let right_width = right.as_ref().map_or(0, |(text, _)| text.width());
 
-        let left = format!(" TERMINAL  {}", self.terminal.title());
-        let left = truncate_end(&left, width.saturating_sub(right_width + 1));
-        buf.set_string(area.x, area.y, &left, title_style);
+        // In the bottom panel its tabs say what it is: no title of its own.
+        if !self.tabbed {
+            let left = format!(" TERMINAL  {}", self.terminal.title());
+            let left = truncate_end(&left, width.saturating_sub(right_width + 1));
+            buf.set_string(area.x, area.y, &left, title_style);
+        }
         if let Some((text, style)) = right {
             buf.set_string(area.right() - right_width as u16, area.y, text, style);
         }
