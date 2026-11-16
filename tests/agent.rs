@@ -84,15 +84,29 @@ fn serve(mut input: BufReader<io::PipeReader>, mut out: io::PipeWriter) {
                     json!({"protocolVersion": 1, "agentInfo": {"name": "fake", "version": "1.0"}}),
                 );
             }
-            "session/new" => reply(
-                &mut out,
-                json!({"sessionId": "s1", "modes": {"currentModeId": "default",
-                       "availableModes": [{"id": "default", "name": "Default"},
-                                          {"id": "acceptEdits", "name": "Accept edits"}]}}),
-            ),
+            "session/new" => {
+                // ferra's tools, to be started through its bridge.
+                let tools = &message["params"]["mcpServers"][0];
+                assert_eq!(tools["name"], "ferra");
+                assert_eq!(tools["args"][0], "--mcp-bridge");
+                reply(
+                    &mut out,
+                    json!({"sessionId": "s1", "modes": {"currentModeId": "default",
+                           "availableModes": [{"id": "default", "name": "Default"},
+                                              {"id": "acceptEdits", "name": "Accept edits"}]}}),
+                );
+            }
             "session/prompt" => {
-                let asked = message["params"]["prompt"][0]["text"]
-                    .as_str()
+                let blocks = message["params"]["prompt"].as_array().cloned().unwrap_or_default();
+                // What was typed: the text that isn't the editor's note.
+                let typed = |b: &&Value| {
+                    b["type"] == "text"
+                        && !b["text"].as_str().unwrap_or_default().starts_with("<editor-context>")
+                };
+                let asked = blocks
+                    .iter()
+                    .find(typed)
+                    .and_then(|b| b["text"].as_str())
                     .unwrap_or_default()
                     .to_string();
                 match asked.split_whitespace().next().unwrap_or_default() {
@@ -142,6 +156,22 @@ fn serve(mut input: BufReader<io::PipeReader>, mut out: io::PipeWriter) {
                                    "content": [{"type": "content",
                                                 "content": {"type": "text", "text": format!("chose {chosen}")}}]}),
                         );
+                    }
+                    "blocks" => {
+                        // What came: each block's type, the note, the links.
+                        let kinds: Vec<&str> = blocks.iter().filter_map(|b| b["type"].as_str()).collect();
+                        text(&mut out, &kinds.join(","));
+                        for block in &blocks {
+                            if let Some(note) = block["text"]
+                                .as_str()
+                                .filter(|t| t.starts_with("<editor-context>"))
+                            {
+                                text(&mut out, &format!("|{note}"));
+                            }
+                            if let Some(uri) = block["uri"].as_str() {
+                                text(&mut out, &format!("|{uri}"));
+                            }
+                        }
                     }
                     "slow" => {
                         // Until it's cancelled.
@@ -381,4 +411,109 @@ fn an_agent_that_isnt_installed_says_so() {
         app.editor().agent_chat().status,
         AgentStatus::Stopped(_)
     ));
+}
+
+#[test]
+fn messages_say_whats_open_and_carry_the_files_mentioned() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    fs::write(&path, "one\ntwo\n").unwrap();
+    fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+    let mut app = app();
+    app.open(&path);
+    keys(&mut app, "j");
+    // Mentions are found from the project's folder (this test's).
+    let mentioned = dir.path().join("b.txt");
+    keys(
+        &mut app,
+        &format!(":agent_ask blocks @{} please<CR>", mentioned.display()),
+    );
+    until(&mut app, |a| ready(a) && said(a).contains("|file:"));
+    let said = said(&app);
+    assert!(said.starts_with("text,text,resource_link"), "{said}");
+    assert!(said.contains("a.txt:2:1"), "the file and cursor: {said}");
+    assert!(said.contains("b.txt"), "{said}");
+}
+
+#[test]
+fn at_in_the_box_picks_a_file_to_mention() {
+    let mut app = app();
+    keys(&mut app, ":agent<CR>see @");
+    assert_eq!(app.editor().mode(), Mode::Picker);
+    assert_eq!(app.editor().picker().map(|p| p.title()), Some("Mention a file"));
+    // None picked: back to the box, the @ kept.
+    keys(&mut app, "<Esc>");
+    assert_eq!(app.editor().mode(), Mode::Agent);
+    assert_eq!(app.editor().agent_chat().input.text(), "see @");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_editors_tools_are_served_to_the_agent() {
+    use std::os::unix::net::UnixStream;
+    use std::sync::mpsc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    fs::write(&path, "one\ntwo\n").unwrap();
+    let other = dir.path().join("b.txt");
+    fs::write(&other, "x\ny\nz\n").unwrap();
+    let mut app = app();
+    app.open(&path);
+    keys(&mut app, ":agent<CR>");
+    until(&mut app, ready);
+    // Talked to as the bridge does: JSON-RPC lines over the socket.
+    let socket = app.agents_mut().mcp_socket().expect("served").to_path_buf();
+    let stream = UnixStream::connect(&socket).unwrap();
+    let mut writer = stream.try_clone().unwrap();
+    let (sender, answers) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stream);
+        while let Ok(Some(message)) = read_message(&mut reader) {
+            let _ = sender.send(message);
+        }
+    });
+    let mut ask = |app: &mut App, id: i64, method: &str, params: Value| -> Value {
+        let request = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        write_message(&mut writer, &request).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            app.update_agents();
+            if let Ok(answer) = answers.try_recv() {
+                assert_eq!(answer["id"], id);
+                return answer["result"].clone();
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        panic!("no answer to {method}");
+    };
+    let started = ask(&mut app, 1, "initialize", json!({"protocolVersion": "2025-06-18"}));
+    assert_eq!(started["serverInfo"]["name"], "ferra");
+    assert_eq!(started["protocolVersion"], "2025-06-18");
+    let listed = ask(&mut app, 2, "tools/list", json!({}));
+    let names: Vec<&str> = listed["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(names.contains(&"editor_state") && names.contains(&"lsp_definition"), "{names:?}");
+
+    let call = |name: &str, arguments: Value| json!({"name": name, "arguments": arguments});
+    let state = ask(&mut app, 3, "tools/call", call("editor_state", json!({})));
+    let state = state["content"][0]["text"].as_str().unwrap().to_string();
+    assert!(state.contains("a.txt (cursor at line 1, column 1)"), "{state}");
+    let problems = ask(&mut app, 4, "tools/call", call("get_diagnostics", json!({})));
+    assert_eq!(problems["content"][0]["text"], "No diagnostics");
+    let opened = ask(
+        &mut app,
+        5,
+        "tools/call",
+        call("open_file", json!({"path": other, "line": 2})),
+    );
+    assert_eq!(opened["isError"], false, "{opened}");
+    assert!(app.editor().document.name().ends_with("b.txt"));
+    assert_eq!(app.editor().document.cursor().row, 1);
+    let wrong = ask(&mut app, 6, "tools/call", call("nope", json!({})));
+    assert_eq!(wrong["isError"], true);
 }

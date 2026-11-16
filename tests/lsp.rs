@@ -1902,3 +1902,51 @@ fn the_outline_and_the_breadcrumbs_show_the_files_symbols() {
         a.editor().outline().is_some_and(|s| s.len() == 5)
     });
 }
+
+/// The coding agent's question for a server (as its tools ask): the answer
+/// comes back as text, for it, and nothing shows on the screen.
+fn agent_asks(
+    app: &mut App,
+    feature: ferra::editor::lsp::LspFeature,
+    path: &Path,
+    place: (Option<usize>, Option<&str>, Option<usize>),
+) -> Result<String, String> {
+    let path = path.to_str().unwrap();
+    app.editor_mut()
+        .agent_ask_lsp(7, feature, Some(path), place, None)
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        app.update_lsp();
+        if let Some((call, answer)) = app.editor_mut().take_agent_lsp_answers().pop() {
+            assert_eq!(call, 7);
+            return answer;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("no answer");
+}
+
+#[test]
+fn the_agent_asks_servers_and_gets_text() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("fn bad() {}\nbad();\nlet x = bad;\n", true);
+    ready(&mut app);
+    let path = dir.path().join("main.rs");
+    let uses = agent_asks(&mut app, LspFeature::References, &path, (Some(3), Some("bad"), None));
+    let uses = uses.unwrap();
+    assert!(uses.contains("main.rs:1:4  fn bad() {}"), "{uses}");
+    assert!(uses.contains("main.rs:3:9  let x = bad;"), "{uses}");
+    assert!(app.editor().picker().is_none(), "nothing shown");
+    let found = agent_asks(&mut app, LspFeature::Definition, &path, (Some(2), None, Some(1)));
+    assert!(found.unwrap().contains("main.rs:1:4"));
+    // A symbol that isn't on the line is said to be missing at once.
+    let missing = app.editor_mut().agent_ask_lsp(
+        8,
+        LspFeature::Hover,
+        Some(path.to_str().unwrap()),
+        (Some(1), Some("nope"), None),
+        None,
+    );
+    assert!(missing.unwrap_err().contains("isn't on line 1"));
+}

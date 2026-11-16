@@ -4,6 +4,18 @@ use ferra::cli::{self, CliAction};
 use ferra::{App, Config, editor::Message};
 
 fn main() -> color_eyre::Result<ExitCode> {
+    // Started by a coding agent for ferra's tools: only passes messages
+    // between it and the editor (see `agent::mcp`).
+    let mut args = std::env::args_os().skip(1);
+    if args.next().is_some_and(|a| a == "--mcp-bridge") {
+        let Some(socket) = args.next() else {
+            return Ok(ExitCode::from(2));
+        };
+        return Ok(match ferra::agent::mcp::bridge(std::path::Path::new(&socket)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::FAILURE,
+        });
+    }
     color_eyre::install()?;
 
     let files = match cli::parse(std::env::args_os().skip(1)) {

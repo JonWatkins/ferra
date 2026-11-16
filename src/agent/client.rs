@@ -61,9 +61,11 @@ pub struct AgentClient {
     pending: HashMap<i64, Pending>,
     session: Option<String>,
     /// Prompts sent before the session was ready.
-    queued: Vec<String>,
+    queued: Vec<Vec<Value>>,
     /// It stopped reading (or was stopped).
     stopped: bool,
+    /// The MCP servers it's given with its session (ferra's own tools).
+    mcp_servers: Value,
 }
 
 /// One JSON message, on its own line.
@@ -94,8 +96,15 @@ pub fn read_message(input: &mut impl BufRead) -> io::Result<Option<Value>> {
 
 impl AgentClient {
     /// Talks to the agent on `streams`, its messages going to `sender`,
-    /// and starts the session in `root`.
-    pub fn start(name: &str, streams: Streams, root: &Path, sender: Sender<Incoming>) -> Self {
+    /// and starts the session in `root`, giving it `mcp_servers` (ACP's
+    /// `McpServer`s) for tools.
+    pub fn start(
+        name: &str,
+        streams: Streams,
+        root: &Path,
+        sender: Sender<Incoming>,
+        mcp_servers: Value,
+    ) -> Self {
         let Streams {
             mut reader,
             writer,
@@ -126,6 +135,7 @@ impl AgentClient {
             session: None,
             queued: Vec::new(),
             stopped: false,
+            mcp_servers,
         };
         client.request(
             "initialize",
@@ -175,15 +185,15 @@ impl AgentClient {
         self.stopped
     }
 
-    /// Sends a prompt (once the session's ready).
-    pub fn prompt(&mut self, text: &str) {
+    /// Sends a prompt, its content blocks (once the session's ready).
+    pub fn prompt(&mut self, blocks: Vec<Value>) {
         let Some(session) = self.session.clone() else {
-            self.queued.push(text.to_string());
+            self.queued.push(blocks);
             return;
         };
         self.request(
             "session/prompt",
-            json!({ "sessionId": session, "prompt": [{ "type": "text", "text": text }] }),
+            json!({ "sessionId": session, "prompt": blocks }),
             Pending::Prompt,
         );
     }
@@ -263,7 +273,7 @@ impl AgentClient {
                 let cwd = self.root.to_string_lossy().into_owned();
                 self.request(
                     "session/new",
-                    json!({ "cwd": cwd, "mcpServers": [] }),
+                    json!({ "cwd": cwd, "mcpServers": self.mcp_servers.clone() }),
                     Pending::NewSession,
                 );
                 vec![AgentEvent::Started(started)]
@@ -278,8 +288,8 @@ impl AgentClient {
                 if !queued.is_empty() {
                     events.push(AgentEvent::Status(AgentStatus::Busy));
                 }
-                for text in queued {
-                    self.prompt(&text);
+                for blocks in queued {
+                    self.prompt(blocks);
                 }
                 events
             }

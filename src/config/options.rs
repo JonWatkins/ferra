@@ -88,6 +88,9 @@ pub struct EditorOptions {
     pub agent: String,
     /// Columns the agent sidebar takes, right of the windows.
     pub agent_width: u16,
+    /// Each message to the agent says what's open: the file, the cursor,
+    /// the selection.
+    pub agent_context: bool,
     /// The plugin directory `:plugin_browse` lists (a git source).
     pub plugin_index: String,
     /// Offer the directory's language pack for files of unknown types.

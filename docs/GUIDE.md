@@ -685,6 +685,21 @@ show as buttons above the box: click one, or press its number with nothing
 typed. Files it reads come from their buffers, so it sees unsaved changes.
 `:agent_stop` (Agent ▸ Stop Agent) ends the agent's program.
 
+Each message tells the agent what you're looking at: the file and where
+the cursor is, what's selected (in visual mode, or a VS Code selection),
+and the other files open (`agent-context = false` stops this). Type `@` in
+the box to pick a file to mention: its path goes in, and the file goes with
+the message.
+
+ferra also gives the agent tools of its own, as Claude Code's IDE
+extensions do: `editor_state` (what's open and selected), `get_diagnostics`
+(the language servers' errors and warnings), `lsp_definition`,
+`lsp_references`, `lsp_hover` and `lsp_symbols` (the language servers'
+answers about a symbol, so it needn't search or read files to find one),
+and `open_file` (to show you a file). They're served while the agent runs,
+on a socket only you can use, through `ferra --mcp-bridge`, which the agent
+starts; the agent asks your permission to use them as for its own tools.
+
 ## Git
 
 In a git repository, the gutter marks what's changed since you last

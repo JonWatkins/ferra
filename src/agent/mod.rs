@@ -9,6 +9,8 @@
 //! and hands back what the agent said.
 
 pub mod client;
+pub mod mcp;
+pub mod tools;
 
 use std::collections::HashMap;
 use std::io::{self, BufReader};
@@ -74,6 +76,13 @@ pub struct Agents {
     spawner: Box<dyn Spawner>,
     client: Option<AgentClient>,
     receiver: Option<Receiver<Incoming>>,
+    /// ferra's tools for it (`tools.rs`), served while it runs.
+    #[cfg(unix)]
+    mcp: Option<mcp::McpServer>,
+    /// Tool calls waiting for a language server: by call, the connection
+    /// and the request's id.
+    waiting: HashMap<u64, (u64, Value)>,
+    next_call: u64,
 }
 
 impl Default for Agents {
@@ -89,6 +98,124 @@ impl Agents {
             spawner: Box::new(ProcessSpawner),
             client: None,
             receiver: None,
+            #[cfg(unix)]
+            mcp: None,
+            waiting: HashMap::new(),
+            next_call: 0,
+        }
+    }
+
+    /// The socket ferra's tools are served on, while the agent runs.
+    pub fn mcp_socket(&self) -> Option<&Path> {
+        #[cfg(unix)]
+        return self.mcp.as_ref().map(mcp::McpServer::path);
+        #[cfg(not(unix))]
+        None
+    }
+
+    /// The tools, as the session's MCP servers: the bridge to start.
+    fn mcp_servers(&mut self) -> Value {
+        #[cfg(unix)]
+        {
+            if self.mcp.is_none() {
+                self.mcp = mcp::McpServer::start().ok();
+            }
+            let (Some(server), Ok(exe)) = (&self.mcp, std::env::current_exe()) else {
+                return json!([]);
+            };
+            json!([{
+                "name": "ferra",
+                "command": exe.to_string_lossy(),
+                "args": ["--mcp-bridge", server.path().to_string_lossy()],
+                "env": [],
+            }])
+        }
+        #[cfg(not(unix))]
+        json!([])
+    }
+
+    /// Answers what came over MCP, and the language servers' answers to
+    /// tool calls. Returns whether anything did.
+    fn update_tools(&mut self, editor: &mut Editor) -> bool {
+        let mut changed = false;
+        #[cfg(unix)]
+        while let Some(incoming) = self.mcp.as_ref().and_then(mcp::McpServer::try_recv) {
+            changed = true;
+            match incoming {
+                mcp::McpIncoming::Message(conn, message) => self.handle_mcp(conn, message, editor),
+                mcp::McpIncoming::Closed(conn) => {
+                    if let Some(server) = &self.mcp {
+                        server.forget(conn);
+                    }
+                    self.waiting.retain(|_, (c, _)| *c != conn);
+                }
+            }
+        }
+        for (call, answer) in editor.take_agent_lsp_answers() {
+            changed = true;
+            if let Some((conn, id)) = self.waiting.remove(&call) {
+                self.reply(conn, id, tool_result(answer));
+            }
+        }
+        changed
+    }
+
+    fn reply(&self, conn: u64, id: Value, result: Value) {
+        #[cfg(unix)]
+        if let Some(server) = &self.mcp {
+            server.send(conn, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+        }
+        #[cfg(not(unix))]
+        let _ = (conn, id, result);
+    }
+
+    fn reply_error(&self, conn: u64, id: Value, code: i64, message: &str) {
+        #[cfg(unix)]
+        if let Some(server) = &self.mcp {
+            server.send(
+                conn,
+                &json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }),
+            );
+        }
+        #[cfg(not(unix))]
+        let _ = (conn, id, code, message);
+    }
+
+    /// An MCP request (or notification) from the agent.
+    fn handle_mcp(&mut self, conn: u64, message: Value, editor: &mut Editor) {
+        let Some(id) = message.get("id").cloned().filter(|id| !id.is_null()) else {
+            // A notification (`notifications/initialized`...): nothing to say.
+            return;
+        };
+        let params = &message["params"];
+        match message["method"].as_str().unwrap_or_default() {
+            "initialize" => {
+                let version = params["protocolVersion"].as_str().unwrap_or("2025-06-18");
+                self.reply(
+                    conn,
+                    id,
+                    json!({
+                        "protocolVersion": version,
+                        "capabilities": { "tools": { "listChanged": false } },
+                        "serverInfo": { "name": "ferra", "version": env!("CARGO_PKG_VERSION") },
+                        "instructions": tools::INSTRUCTIONS,
+                    }),
+                );
+            }
+            "ping" => self.reply(conn, id, json!({})),
+            "tools/list" => self.reply(conn, id, json!({ "tools": tools::list() })),
+            "tools/call" => {
+                let call = self.next_call;
+                self.next_call += 1;
+                let name = params["name"].as_str().unwrap_or_default();
+                match tools::call(editor, call, name, &params["arguments"]) {
+                    tools::Called::Done(answer) => self.reply(conn, id, tool_result(answer)),
+                    tools::Called::Waiting => {
+                        self.waiting.insert(call, (conn, id));
+                    }
+                }
+            }
+            _ => self.reply_error(conn, id, -32601, "Method not found"),
         }
     }
 
@@ -109,7 +236,7 @@ impl Agents {
     /// Sends what the editor wants sent, and hands it what the agent said.
     /// Returns whether anything changed.
     pub fn update(&mut self, editor: &mut Editor) -> bool {
-        let mut changed = false;
+        let mut changed = self.update_tools(editor);
         for request in editor.take_agent_requests() {
             changed = true;
             self.send(request, editor);
@@ -154,7 +281,8 @@ impl Agents {
         match self.spawner.spawn(&config, &root) {
             Ok(streams) => {
                 let (sender, receiver) = channel();
-                self.client = Some(AgentClient::start(&name, streams, &root, sender));
+                let servers = self.mcp_servers();
+                self.client = Some(AgentClient::start(&name, streams, &root, sender, servers));
                 self.receiver = Some(receiver);
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => editor.agent_failed(format!(
@@ -175,10 +303,14 @@ impl Agents {
                 self.receiver = None;
                 self.start(editor);
             }
-            AgentRequest::Prompt(text) => {
+            AgentRequest::Prompt {
+                text,
+                context,
+                files,
+            } => {
                 self.start(editor);
                 if let Some(client) = &mut self.client {
-                    client.prompt(&text);
+                    client.prompt(prompt_blocks(&text, context.as_deref(), &files));
                 }
             }
             AgentRequest::Cancel => {
@@ -205,6 +337,11 @@ impl Agents {
                     client.stop();
                 }
                 self.receiver = None;
+                self.waiting.clear();
+                #[cfg(unix)]
+                {
+                    self.mcp = None;
+                }
                 editor.agent_event(AgentEvent::Status(AgentStatus::Stopped("stopped".into())));
             }
         }
@@ -246,6 +383,37 @@ impl Agents {
             (None, None) => {}
         }
     }
+}
+
+/// A tool's answer, as MCP gives it: text, marked if it's an error.
+fn tool_result(answer: Result<String, String>) -> Value {
+    let (text, error) = match answer {
+        Ok(text) => (text, false),
+        Err(text) => (text, true),
+    };
+    json!({ "content": [{ "type": "text", "text": text }], "isError": error })
+}
+
+/// A prompt's content blocks: a note of what's open in the editor (if
+/// any), what was typed, and a link to each file it mentions.
+pub fn prompt_blocks(text: &str, context: Option<&str>, files: &[PathBuf]) -> Vec<Value> {
+    let mut blocks = Vec::new();
+    if let Some(context) = context {
+        blocks.push(json!({
+            "type": "text",
+            "text": format!("<editor-context>\n{context}\n</editor-context>"),
+        }));
+    }
+    blocks.push(json!({ "type": "text", "text": text }));
+    for file in files {
+        let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        blocks.push(json!({
+            "type": "resource_link",
+            "uri": crate::lsp::convert::path_to_uri(file),
+            "name": name,
+        }));
+    }
+    blocks
 }
 
 /// `fs/read_text_file`: the file's text (from its buffer, if it's open, so

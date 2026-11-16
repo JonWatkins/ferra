@@ -165,6 +165,7 @@ impl Editor {
             item: None,
             text: None,
             end: at,
+            agent: None,
         };
         if !rest.problems.is_empty() {
             let problems = rest.problems.clone();

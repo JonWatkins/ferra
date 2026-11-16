@@ -113,7 +113,13 @@ pub enum AgentRequest {
     Start,
     /// Stop the one running (quietly) and start the chat's agent.
     Restart,
-    Prompt(String),
+    /// A message: what was typed, a note of what's open in the editor,
+    /// and the files it mentions (`@src/main.rs`).
+    Prompt {
+        text: String,
+        context: Option<String>,
+        files: Vec<std::path::PathBuf>,
+    },
     /// Stop the turn it's working on.
     Cancel,
     /// The answer to a permission request: the option chosen, or `None`
@@ -195,6 +201,8 @@ pub struct AgentChat {
     pub expanded: HashSet<String>,
     /// All of them opened (`<C-o>`).
     pub expand_all: bool,
+    /// A file's being picked to mention (`@`): it goes in the box.
+    pub(super) mentioning: bool,
     requests: Vec<AgentRequest>,
 }
 
@@ -318,9 +326,12 @@ impl Editor {
         self.agent_start();
         self.agent.open = true;
         self.agent.entries.push(ChatEntry::User(text.to_string()));
-        self.agent
-            .requests
-            .push(AgentRequest::Prompt(text.to_string()));
+        let request = AgentRequest::Prompt {
+            text: text.to_string(),
+            context: self.agent_context(),
+            files: mentioned_files(text),
+        };
+        self.agent.requests.push(request);
         if self.agent.status == AgentStatus::Ready {
             self.agent.status = AgentStatus::Busy;
         }
@@ -390,6 +401,39 @@ impl Editor {
             return;
         }
         self.agent.input.push(c);
+    }
+
+    /// `@` in the box: the files to pick one to mention (its path goes in
+    /// after the `@`, and the agent's sent the file with the message).
+    pub fn agent_mention(&mut self) {
+        let job = self.new_job_id();
+        self.agent.input.push('@');
+        self.agent.mentioning = true;
+        self.open_picker(
+            Picker::new("Mention a file", Vec::new())
+                .loading_from(job)
+                .with_placeholder("Search files by name"),
+        );
+        self.request_file_list(super::FileListRequest {
+            job,
+            root: std::path::PathBuf::from("."),
+            base: None,
+            options: self.options.file_picker.into(),
+        });
+    }
+
+    /// The picker the mention was picked in, closed: the file chosen (if
+    /// one was) goes in the box, which has focus again.
+    pub(super) fn agent_mentioned(&mut self, action: Option<&PickerAction>) {
+        self.agent.mentioning = false;
+        if let Some(PickerAction::OpenFile(path)) = action {
+            let path = path.to_string_lossy();
+            let path = path.strip_prefix("./").unwrap_or(&path);
+            path.chars().for_each(|c| self.agent.input.push(c));
+            self.agent.input.push(' ');
+        }
+        self.agent.open = true;
+        self.set_mode(Mode::Agent);
     }
 
     /// Text pasted into the box, newlines and all.
@@ -875,11 +919,29 @@ fn diff_lines(diff: &ToolDiff, lines: &mut Vec<ChatLine>) {
     }
 }
 
+/// The files `text` mentions, as `@path` (that are files, from the
+/// project's folder).
+fn mentioned_files(text: &str) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    for word in text.split_whitespace() {
+        let Some(path) = word.strip_prefix('@') else {
+            continue;
+        };
+        let path = path.trim_end_matches([',', '.', ';', ':', ')', '?', '!']);
+        let full = std::env::current_dir().unwrap_or_default().join(path);
+        if full.is_file() && !files.contains(&full) {
+            files.push(full);
+        }
+    }
+    files
+}
+
 /// A path as it's shown: relative to the project's folder, if it's in it.
-fn short_path(path: &str) -> String {
+pub(crate) fn short_path(path: &str) -> String {
     let path = std::path::Path::new(path);
     std::env::current_dir()
         .ok()
+        .and_then(|here| std::fs::canonicalize(&here).ok().or(Some(here)))
         .and_then(|here| {
             path.strip_prefix(here)
                 .ok()
@@ -999,7 +1061,14 @@ mod tests {
         e.agent_prompt("fix it").unwrap();
         assert_eq!(
             e.take_agent_requests(),
-            [AgentRequest::Start, AgentRequest::Prompt("fix it".into())]
+            [
+                AgentRequest::Start,
+                AgentRequest::Prompt {
+                    text: "fix it".into(),
+                    context: None,
+                    files: Vec::new()
+                }
+            ]
         );
         e.agent_event(AgentEvent::Status(AgentStatus::Busy));
         e.agent_event(AgentEvent::Text("Looking".into()));

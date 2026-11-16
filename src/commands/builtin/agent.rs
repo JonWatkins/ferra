@@ -104,6 +104,14 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "agent_mention",
+        "Agent sidebar: mention a file (@, then pick it); it's sent with the message",
+        |cx| {
+            cx.editor.agent_mention();
+            Ok(())
+        },
+    );
+    r.register(
         "agent_newline",
         "Agent sidebar: a new line in the box",
         |cx| {

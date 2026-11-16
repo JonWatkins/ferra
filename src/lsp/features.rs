@@ -89,6 +89,7 @@ impl Lsp {
             item: None,
             text: None,
             end: editor.document.cursor(),
+            agent: None,
         };
         let options = &editor.options;
         let (name, encoding, client_id) = (client.name.clone(), client.encoding, client.id);
@@ -153,6 +154,18 @@ impl Lsp {
                 .iter_mut()
                 .find(|c| c.has_document(request.document) && c.state == State::Ready);
             let Some(client) = client else {
+                if let Some(call) = request.agent {
+                    let starting = self.clients.iter().any(|c| {
+                        c.state == State::Starting && Some(&c.language) == language.as_ref()
+                    });
+                    let text = if starting {
+                        "The language server is still starting: try again in a moment"
+                    } else {
+                        "No language server for this file"
+                    };
+                    editor.agent_lsp_answer(call, Err(text.into()));
+                    continue;
+                }
                 // Completing as you type stays quiet about it.
                 if !request.manual {
                     continue;
@@ -188,6 +201,11 @@ impl Lsp {
                 continue;
             }
             if !client.supports(request.feature) {
+                if let Some(call) = request.agent {
+                    let text = format!("{} doesn't offer {}", client.name, request.feature.noun());
+                    editor.agent_lsp_answer(call, Err(text));
+                    continue;
+                }
                 if !request.manual {
                     continue;
                 }
@@ -277,6 +295,15 @@ pub(super) fn answer(
     result: Result<Value, ResponseError>,
     stashes: Stashes,
 ) {
+    // The coding agent's: the answer as text, back to it.
+    if let Some(call) = request.agent {
+        let text = match result {
+            Ok(result) => Ok(agent_answer(editor, &request, &result, client.encoding)),
+            Err(error) => Err(format!("{}: {}", client.name, error.message)),
+        };
+        editor.agent_lsp_answer(call, text);
+        return;
+    }
     let stash = stashes.completions;
     let current = match request.feature {
         LspFeature::Completion => editor.still_completing(&request),
@@ -460,6 +487,51 @@ pub(super) fn answer(
     }
     if let Err(error) = editor.show_locations(request.feature, locations) {
         editor.set_message(Message::info(error));
+    }
+}
+
+/// A server's answer for the coding agent, as text: places as
+/// `path:line:column  text`, a hover's Markdown, symbols with where they are.
+fn agent_answer(editor: &Editor, request: &LspRequest, result: &Value, encoding: Encoding) -> String {
+    let place = |l: &Location| {
+        let path = crate::editor::agent::short_path(&l.path.to_string_lossy());
+        format!(
+            "{path}:{}:{}  {}",
+            l.position.row + 1,
+            l.position.col + 1,
+            l.line.trim()
+        )
+    };
+    let listed = |lines: Vec<String>, none: &str| {
+        if lines.is_empty() {
+            none.to_string()
+        } else {
+            lines.join("\n")
+        }
+    };
+    match request.feature {
+        LspFeature::Hover => {
+            let markdown = crate::editor::lsp::without_html(&hover_markdown(&result["contents"]));
+            if markdown.trim().is_empty() {
+                "No hover information there".into()
+            } else {
+                markdown
+            }
+        }
+        LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols => {
+            let found = symbols(editor, request.document, result, encoding);
+            let lines = found
+                .iter()
+                .take(200)
+                .map(|(name, detail, l)| format!("{name} ({detail})  {}", place(l)))
+                .collect();
+            listed(lines, "No symbols found")
+        }
+        _ => {
+            let found = locations(editor, result, encoding);
+            let lines = found.iter().take(200).map(place).collect();
+            listed(lines, "Nothing found")
+        }
     }
 }
 
@@ -1226,6 +1298,7 @@ mod tests {
             item: None,
             text: None,
             end: editor.document.cursor(),
+            agent: None,
         };
         let range = |from: u64| {
             json!({"start": {"line": 0, "character": from},

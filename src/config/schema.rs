@@ -79,7 +79,7 @@ fn category_of(path: &str) -> &'static str {
         "keymap" | "mouse" | "mouse-hover" | "mouse-hover-delay" | "kitty-keyboard"
         | "key-timeout" | "clipboard" | "clipboard-provider" => "Keyboard and mouse",
         "terminal-height" | "shell" => "Terminal",
-        "agent" | "agent-width" => "Agent",
+        "agent" | "agent-width" | "agent-context" => "Agent",
         "cursor-shape" => "Cursor shape",
         "plugin-index" | "plugin-suggestions" => "Plugins",
         _ => "Other",

@@ -41,6 +41,7 @@ mod git;
 pub mod git_gui;
 pub use git::GitRow;
 pub mod agent;
+mod agent_tools;
 pub mod input_box;
 pub mod lsp;
 pub mod menu_bar;
@@ -226,6 +227,8 @@ pub struct Editor {
     hover_used: bool,
     /// The coding agent's chat (`agent.rs`).
     agent: agent::AgentChat,
+    /// Language servers' answers to the agent's tool calls, to send it.
+    agent_lsp_answers: Vec<(u64, Result<String, String>)>,
     /// More cursors than the one (`multi_cursor.rs`).
     cursors: multi_cursor::MultiCursors,
     /// What the pointer rested on, for the hover it shows.
@@ -574,6 +577,11 @@ impl Editor {
 
     /// Switches mode, applying Vim's transition rules.
     pub fn set_mode(&mut self, mode: Mode) {
+        // The file to mention to the agent not picked: back to its box.
+        if self.mode == Mode::Picker && mode != Mode::Picker && self.agent.mentioning {
+            self.agent_mentioned(None);
+            return;
+        }
         // With the git view open, leaving a box or the `:` line asked from
         // it goes back to it, not to the text behind.
         // The settings editor, open, is what's in the windows' place.
@@ -831,6 +839,11 @@ impl Editor {
             .as_ref()
             .and_then(|p| p.selected_item())
             .map(|item| item.action.clone());
+        // A file to mention to the agent: into its box.
+        if self.agent.mentioning {
+            self.agent_mentioned(action.as_ref());
+            return None;
+        }
         self.set_mode(Mode::Normal);
         action
     }

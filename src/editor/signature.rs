@@ -76,6 +76,7 @@ impl Editor {
             item: None,
             text: None,
             end: cursor,
+            agent: None,
         });
         Ok(())
     }

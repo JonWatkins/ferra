@@ -163,6 +163,7 @@ impl Editor {
             item: None,
             text: None,
             end: cursor,
+            agent: None,
         });
         Ok(())
     }
@@ -358,6 +359,7 @@ impl Editor {
                 item: Some(resolve),
                 text: None,
                 end: self.document.cursor(),
+                agent: None,
             });
         }
         // A snippet's cursor place: counted from the completion's start

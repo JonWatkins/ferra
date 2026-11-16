@@ -116,6 +116,9 @@ pub struct LspRequest {
     pub text: Option<String>,
     /// For code actions: the end of the range they're for.
     pub end: Position,
+    /// Asked by the coding agent (its tool call, by number): the answer
+    /// goes back to it, not on the screen.
+    pub agent: Option<u64>,
 }
 
 /// A place a server pointed to: a file, and a row and char column in it.
@@ -406,6 +409,7 @@ impl Editor {
             item: None,
             text: None,
             end: self.document.cursor(),
+            agent: None,
         });
         Ok(())
     }
@@ -556,6 +560,7 @@ impl Editor {
             item: Some((answer, index)),
             text: None,
             end: self.document.cursor(),
+            agent: None,
         });
     }
 

@@ -137,6 +137,7 @@ impl Editor {
             item: None,
             text: None,
             end: Position::default(),
+            agent: None,
         });
     }
 

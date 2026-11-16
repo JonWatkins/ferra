@@ -125,6 +125,9 @@ agent = "claude"
 # Columns the agent sidebar (Ctrl+Alt+B, :agent) takes, right of the
 # windows. It never takes more than half the screen.
 agent-width = 50
+# Each message to the agent says what you're looking at: the file and
+# where the cursor is, what's selected, the other files open.
+agent-context = true
 # The plugin directory :plugin_browse lists: a git repository with an
 # index.toml (owner/repo on GitHub, or any git URL or path).
 plugin-index = "JonWatkins/ferra-plugins"
@@ -851,6 +854,7 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 # answer it.
 [keys.agent]
 "<CR>" = "agent_send"
+"@" = "agent_mention"
 "<S-CR>" = "agent_newline"
 "<A-CR>" = "agent_newline"
 "<C-j>" = "agent_newline"
