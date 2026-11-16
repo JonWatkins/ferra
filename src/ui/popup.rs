@@ -58,7 +58,7 @@ impl<'a> PopupView<'a> {
         let width = popup
             .width
             .unwrap_or((content + 4).min(u16::MAX as usize) as u16)
-            .clamp(screen.width.min(16), max_width);
+            .clamp(screen.width.min(16).min(max_width), max_width);
         let max_height = screen.height.saturating_sub(2).max(screen.height.min(3));
         let height = popup
             .height

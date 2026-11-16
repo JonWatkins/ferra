@@ -320,7 +320,8 @@ pub fn draw(
     let mut agent_cursor = None;
     let (main, status) = if editor.agent_sidebar_shown() && main.width >= 40 {
         let per_window = editor.options.statusline == StatuslineMode::Windows;
-        let width = editor.options.agent_width.clamp(24, main.width / 2);
+        // At least 24 columns, given room; at most half of what there is.
+        let width = editor.options.agent_width.max(24).min(main.width / 2);
         let height = main.height + u16::from(per_window);
         let side = Rect::new(main.right() - width, main.y, width, height);
         let edge = Rect::new(side.x - 1, main.y, 1, height);

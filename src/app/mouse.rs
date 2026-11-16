@@ -493,6 +493,12 @@ impl App {
             }
             return;
         }
+        // An open menu, popup, picker or input box over the windows: it
+        // takes the click before what's under it (the tab bar, the
+        // breadcrumbs...).
+        if self.over_focused_box(at) && self.click_in_box(at) {
+            return;
+        }
         // The bottom panel's tabs.
         if let Some(tab) = self.panel_tab_at(at) {
             self.input.reset();
@@ -815,6 +821,18 @@ impl App {
             }
             // The `:` line, or an operator waiting: clicks wait too.
             Mode::Command | Mode::OperatorPending => true,
+            _ => false,
+        }
+    }
+
+    /// Whether `at` is on the box that has focus: a popup (a menu...), the
+    /// picker or an input box.
+    fn over_focused_box(&self, at: Position) -> bool {
+        let map = &self.screen_map;
+        match self.editor.mode() {
+            Mode::Popup => map.popup.as_ref().is_some_and(|p| p.area.contains(at)),
+            Mode::Picker => map.picker.as_ref().is_some_and(|p| p.area.contains(at)),
+            Mode::Input => map.input.is_some_and(|(area, _)| area.contains(at)),
             _ => false,
         }
     }

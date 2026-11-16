@@ -182,3 +182,33 @@ fn the_agent_menu_toggles_its_sidebar() {
         assert_eq!(app.editor().mode(), Mode::Agent, "click: {by_click}");
     }
 }
+
+#[test]
+fn the_agent_toggle_works_after_a_click_in_the_text() {
+    // A file open (so the window has breadcrumbs, under the menu's first
+    // item) and the tree shown.
+    let mut app = app_as_shipped();
+    keys(&mut app, ":e Cargo.toml<CR>");
+    keys(&mut app, "<C-b>");
+    for via_menu in [false, true] {
+        for _ in 0..2 {
+            // A click in the text, then the toggle.
+            click(&mut app, 40, 5);
+            let before = app.editor().agent_sidebar_shown();
+            if via_menu {
+                let (x, y) = find(&mut app, "Agent");
+                click(&mut app, x, y);
+                let (x, y) = find(&mut app, "Toggle Agent Sidebar");
+                click(&mut app, x, y);
+            } else {
+                keys(&mut app, "<C-A-b>");
+            }
+            assert_ne!(
+                app.editor().agent_sidebar_shown(),
+                before,
+                "menu: {via_menu}, mode {:?}",
+                app.editor().mode()
+            );
+        }
+    }
+}
