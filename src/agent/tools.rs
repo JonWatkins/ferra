@@ -25,6 +25,7 @@ pub fn list() -> Value {
                 "line": { "type": "integer", "description": "The line the symbol is on, from 1" },
                 "symbol": { "type": "string", "description": format!("The symbol {what}, as written on that line") },
                 "column": { "type": "integer", "description": "Instead of symbol: its column, from 1" },
+                "occurrence": { "type": "integer", "description": "Which of the symbol's places on the line, from 1 (1 if left out)" },
             },
             "required": ["path", "line"],
         })
@@ -59,7 +60,7 @@ pub fn list() -> Value {
         },
         {
             "name": "edit_buffer",
-            "description": "Replace old_text with new_text in a file, in the editor: shown as it happens, undoable, saved unless the user has unsaved changes there. old_text must be there exactly once (with its whitespace), unless replace_all. Use instead of Edit, for existing files.",
+            "description": "Replace old_text with new_text in a file, in the editor: shown as it happens, undoable, saved unless the user has unsaved changes there; the result says what's wrong in the file after. old_text must be there exactly once (with its whitespace), unless replace_all. For several changes to a file at once, give edits (a list of old_text/new_text) instead: one undo step, all or none. Use instead of Edit.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -67,8 +68,29 @@ pub fn list() -> Value {
                     "old_text": { "type": "string" },
                     "new_text": { "type": "string" },
                     "replace_all": { "type": "boolean" },
+                    "edits": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "old_text": { "type": "string" },
+                                "new_text": { "type": "string" },
+                                "replace_all": { "type": "boolean" },
+                            },
+                            "required": ["old_text", "new_text"],
+                        },
+                    },
                 },
-                "required": ["path", "old_text", "new_text"],
+                "required": ["path"],
+            },
+        },
+        {
+            "name": "create_file",
+            "description": "Make a new file with this text (not one that exists), through the editor; the result says what's wrong in it. Use instead of Write for new files.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" }, "text": { "type": "string" } },
+                "required": ["path", "text"],
             },
         },
         {
@@ -130,6 +152,15 @@ pub fn list() -> Value {
             },
         },
         {
+            "name": "close_file",
+            "description": "Close a file's buffer in the editor (one you opened for the user and they're done with). Files you only read or edited close by themselves when your turn ends.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "path": { "type": "string" } },
+                "required": ["path"],
+            },
+        },
+        {
             "name": "open_file",
             "description": "Show the user a file in the editor, at a line. Only when it helps them to see it.",
             "inputSchema": {
@@ -167,15 +198,22 @@ fn with_name(mut schema: Value) -> Value {
 pub enum Called {
     Done(Result<String, String>),
     Waiting,
+    /// A file changed: the answer, once its language server has had a
+    /// moment to say what's wrong in it now.
+    Changed(String, Vec<crate::editor::DocumentId>),
 }
 
 /// Runs tool `name` with `args`, as call `call`.
 pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called {
     let text = |key: &str| args[key].as_str().filter(|s| !s.is_empty());
     let number = |key: &str| args[key].as_u64().map(|n| n as usize);
-    let flag = |key: &str| args[key].as_bool().unwrap_or(false);
     let ask = |editor: &mut Editor, feature, path, query| {
-        let place = (number("line"), text("symbol"), number("column"));
+        let place = (
+            number("line"),
+            text("symbol"),
+            number("column"),
+            number("occurrence"),
+        );
         match editor.agent_ask_lsp(call, feature, path, place, query) {
             Ok(()) => Called::Waiting,
             Err(error) => Called::Done(Err(error)),
@@ -192,11 +230,42 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
             Some(path) => Called::Done(editor.agent_read_buffer(path, number("line"), number("limit"))),
             None => Called::Done(Err("Which file? (path)".into())),
         },
-        "edit_buffer" => match (text("path"), args["old_text"].as_str(), args["new_text"].as_str()) {
-            (Some(path), Some(old), Some(new)) => {
-                Called::Done(editor.agent_edit_buffer(path, old, new, flag("replace_all")))
+        "edit_buffer" => {
+            let Some(path) = text("path") else {
+                return Called::Done(Err("Which file? (path)".into()));
+            };
+            // One replacement, or several (`edits`).
+            let one = |e: &Value| -> Option<(String, String, bool)> {
+                Some((
+                    e["old_text"].as_str()?.to_string(),
+                    e["new_text"].as_str()?.to_string(),
+                    e["replace_all"].as_bool().unwrap_or(false),
+                ))
+            };
+            let replacements: Option<Vec<_>> = match args["edits"].as_array() {
+                Some(edits) => edits.iter().map(one).collect(),
+                None => one(args).map(|r| vec![r]),
+            };
+            match replacements {
+                Some(replacements) => match editor.agent_edit_buffer(path, &replacements) {
+                    Ok((text, id)) => Called::Changed(text, id),
+                    Err(error) => Called::Done(Err(error)),
+                },
+                None => Called::Done(Err(
+                    "Give old_text and new_text (or edits: a list of them)".into(),
+                )),
             }
-            _ => Called::Done(Err("Give path, old_text and new_text".into())),
+        }
+        "create_file" => match (text("path"), args["text"].as_str()) {
+            (Some(path), Some(content)) => match editor.agent_create_file(path, content) {
+                Ok((text, id)) => Called::Changed(text, id),
+                Err(error) => Called::Done(Err(error)),
+            },
+            _ => Called::Done(Err("Give path and text".into())),
+        },
+        "close_file" => match text("path") {
+            Some(path) => Called::Done(editor.agent_close_file(path)),
+            None => Called::Done(Err("Which file? (path)".into())),
         },
         "lsp_rename" => match (text("path"), text("new_name")) {
             (Some(path), Some(name)) => ask(editor, LspFeature::Rename, Some(path), Some(name)),

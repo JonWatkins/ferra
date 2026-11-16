@@ -91,10 +91,10 @@ impl Lsp {
             end: editor.document.cursor(),
             agent: None,
         };
-        let options = &editor.options;
+        let (tab_size, spaces) = editor.format_indent(document);
         let (name, encoding, client_id) = (client.name.clone(), client.encoding, client.id);
         let edit_seq = request.edit_seq;
-        let id = client.request_format(request, options.tab_width, options.expand_tab);
+        let id = client.request_format(request, tab_size, spaces);
 
         self.formatted = None;
         let deadline = std::time::Instant::now() + FORMAT_TIMEOUT;
@@ -232,8 +232,10 @@ impl Lsp {
                     && made
                 {
                     let title = action["title"].as_str().unwrap_or("the action");
-                    let saved = editor.agent_save_changed(&before);
-                    editor.agent_lsp_answer(call, Ok(format!("Made {title}{saved}")));
+                    let (saved, changed) = editor.agent_save_changed(&before);
+                    let names = editor.agent_names(&changed);
+                    let text = format!("Made {title} in {names}{saved}");
+                    editor.agent_lsp_changed(call, text, changed);
                     continue;
                 }
                 if !made {
@@ -254,8 +256,8 @@ impl Lsp {
             // The agent's formatting: answered in `answer` (the app's own
             // waits for its answer when saving).
             if request.feature == LspFeature::Format {
-                let options = &editor.options;
-                client.request_format(request, options.tab_width, options.expand_tab);
+                let (tab_size, spaces) = editor.format_indent(request.document);
+                client.request_format(request, tab_size, spaces);
                 continue;
             }
             if request.feature == LspFeature::CodeAction {
@@ -305,9 +307,17 @@ impl Lsp {
 /// Shows the server's answer to `request`, unless the editor has moved on
 /// since (another buffer, an edit, the cursor moved).
 /// What answers are kept in, to act on later.
+/// The agent's two code action lists for one call, as they come: at the
+/// symbol, and for the whole line.
+pub(super) type AgentActions = (Option<Vec<Value>>, Option<Vec<Value>>);
+
 pub(super) struct Stashes<'a> {
     pub completions: &'a mut Stash,
     pub actions: &'a mut Stash,
+    /// The agent's code action lists so far, by its call: it asks twice,
+    /// at the symbol and for the whole line, and gets them merged (the
+    /// symbol's first, so the numbers are the same each time).
+    pub agent_actions: &'a mut HashMap<u64, AgentActions>,
 }
 
 pub(super) fn answer(
@@ -318,11 +328,76 @@ pub(super) fn answer(
     stashes: Stashes,
 ) {
     // The coding agent's: the answer as text, back to it.
+    if let Some(call) = request.agent
+        && request.feature == LspFeature::CodeAction
+    {
+        let list: Vec<Value> = result
+            .as_ref()
+            .ok()
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|a| a.get("disabled").is_none())
+            .cloned()
+            .collect();
+        let (at_symbol, for_line) = stashes.agent_actions.entry(call).or_default();
+        if request.word_start == request.end {
+            *at_symbol = Some(list);
+        } else {
+            *for_line = Some(list);
+        }
+        if at_symbol.is_none() || for_line.is_none() {
+            return;
+        }
+        let (at_symbol, for_line) = stashes.agent_actions.remove(&call).unwrap_or_default();
+        let mut list = at_symbol.unwrap_or_default();
+        for action in for_line.unwrap_or_default() {
+            if !list.iter().any(|a| a["title"] == action["title"]) {
+                list.push(action);
+            }
+        }
+        editor.agent_lsp_answer(call, Ok(agent_actions_list(list, stashes.actions)));
+        return;
+    }
     if let Some(call) = request.agent {
         let text = match result {
-            Ok(result) => agent_change(editor, client, &request, &result, stashes.actions)
-                .unwrap_or_else(|| Ok(agent_answer(editor, &request, &result, client.encoding))),
-            Err(error) => Err(format!("{}: {}", client.name, error.message)),
+            Ok(result) => match agent_change(editor, client, &request, &result) {
+                Some(Ok((text, changed))) if !changed.is_empty() => {
+                    editor.agent_lsp_changed(call, text, changed);
+                    return;
+                }
+                Some(answer) => answer.map(|(text, _)| text),
+                None => {
+                    let text = agent_answer(editor, &request, &result, client.encoding);
+                    // Nothing about the project, from a server still at
+                    // work: maybe not yet.
+                    let project_wide = matches!(
+                        request.feature,
+                        LspFeature::References
+                            | LspFeature::WorkspaceSymbols
+                            | LspFeature::Implementation
+                    );
+                    match client.busy_with() {
+                        Some(work) if project_wide && NOTHING.contains(&text.as_str()) => {
+                            Ok(format!(
+                                "{text}, but {} is busy ({work}): it may know more in a moment",
+                                client.name
+                            ))
+                        }
+                        _ => Ok(text),
+                    }
+                }
+            },
+            Err(error) => {
+                let mut text = format!("{}: {}", client.name, error.message);
+                if matches!(
+                    request.feature,
+                    LspFeature::ApplyCodeAction | LspFeature::ResolveCodeAction
+                ) {
+                    text.push_str(" (the file may have changed since: run lsp_code_actions again)");
+                }
+                Err(text)
+            }
         };
         editor.agent_lsp_answer(call, text);
         return;
@@ -513,6 +588,9 @@ pub(super) fn answer(
     }
 }
 
+/// What `agent_answer` says when the server found nothing.
+const NOTHING: [&str; 3] = ["Nothing found", "No symbols found", "No hover information there"];
+
 /// A server's answer that changes things, for the coding agent: a rename,
 /// formatting, a code action (resolved), made; the code actions there are,
 /// kept to make one. `None` for an answer that's only told.
@@ -521,8 +599,7 @@ fn agent_change(
     client: &mut Client,
     request: &LspRequest,
     result: &Value,
-    actions: &mut Stash,
-) -> Option<Result<String, String>> {
+) -> Option<Result<(String, Vec<crate::editor::DocumentId>), String>> {
     let before = editor.agent_unsaved();
     let done = match request.feature {
         LspFeature::Rename => {
@@ -554,49 +631,53 @@ fn agent_change(
                     (start, end, e["newText"].as_str().unwrap_or("").to_string())
                 })
                 .collect();
+            let name = editor.agent_names(&[request.document]);
             if edits.is_empty() {
-                return Some(Ok("Already formatted".into()));
+                return Some(Ok((format!("{name} is already formatted"), Vec::new())));
             }
             let count = edits.len();
             editor.edit_document(request.document, edits);
-            format!("Formatted ({count} changes)")
+            let changes = if count == 1 { "1 change".to_string() } else { format!("{count} changes") };
+            format!("Formatted {name} ({changes})")
         }
         LspFeature::ResolveCodeAction => {
             make_code_action(editor, client, result);
             let title = result["title"].as_str().unwrap_or("the action");
             format!("Made {title}")
         }
-        LspFeature::CodeAction => {
-            let list: Vec<Value> = result
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|a| a.get("disabled").is_none())
-                .cloned()
-                .collect();
-            if list.is_empty() {
-                return Some(Ok("No code actions there".into()));
-            }
-            let lines: Vec<String> = list
-                .iter()
-                .enumerate()
-                .map(|(i, a)| {
-                    let title = a["title"].as_str().unwrap_or("(untitled)");
-                    match a["kind"].as_str().filter(|k| !k.is_empty()) {
-                        Some(kind) => format!("{}. {title} ({kind})", i + 1),
-                        None => format!("{}. {title}", i + 1),
-                    }
-                })
-                .collect();
-            let kept = actions.keep(list);
-            return Some(Ok(format!(
-                "{}\nTo make one: lsp_apply_code_action with list {kept}, its number and this path.",
-                lines.join("\n")
-            )));
-        }
         _ => return None,
     };
-    Some(Ok(format!("{done}{}", editor.agent_save_changed(&before))))
+    let (saved, changed) = editor.agent_save_changed(&before);
+    let done = if request.feature == LspFeature::ResolveCodeAction && !changed.is_empty() {
+        format!("{done} in {}", editor.agent_names(&changed))
+    } else {
+        done
+    };
+    Some(Ok((format!("{done}{saved}"), changed)))
+}
+
+/// The code actions there are, for the agent: numbered, and kept to make
+/// one.
+fn agent_actions_list(list: Vec<Value>, actions: &mut Stash) -> String {
+    if list.is_empty() {
+        return "No code actions there".into();
+    }
+    let lines: Vec<String> = list
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let title = a["title"].as_str().unwrap_or("(untitled)");
+            match a["kind"].as_str().filter(|k| !k.is_empty()) {
+                Some(kind) => format!("{}. {title} ({kind})", i + 1),
+                None => format!("{}. {title}", i + 1),
+            }
+        })
+        .collect();
+    let kept = actions.keep(list);
+    format!(
+        "{}\nTo make one: lsp_apply_code_action with list {kept}, its number and this path.",
+        lines.join("\n")
+    )
 }
 
 /// A server's answer for the coding agent, as text: places as
@@ -637,7 +718,11 @@ fn agent_answer(editor: &Editor, request: &LspRequest, result: &Value, encoding:
             listed(lines, "No symbols found")
         }
         _ => {
-            let found = locations(editor, result, encoding);
+            let mut found = locations(editor, result, encoding);
+            // By file and place (servers give them in their own order).
+            if request.feature == LspFeature::References {
+                found.sort_by(|a, b| (&a.path, a.position).cmp(&(&b.path, b.position)));
+            }
             let lines = found.iter().take(200).map(place).collect();
             listed(lines, "Nothing found")
         }

@@ -11,6 +11,15 @@ use super::{DocumentId, Editor};
 use super::lsp::{LspFeature, LspRequest};
 use crate::core::{Position, Range};
 
+/// A language server's answer to one of the agent's tool calls: what to
+/// tell it, and the buffers it changed (whose problems are waited for).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentAnswer {
+    pub call: u64,
+    pub answer: Result<String, String>,
+    pub changed: Vec<DocumentId>,
+}
+
 /// At most this much of a selection goes with a prompt.
 const SELECTION_CHARS: usize = 4000;
 /// Lines `read_buffer` gives at most, unless asked for more.
@@ -105,13 +114,34 @@ impl Editor {
             .chain(&self.background)
             .filter_map(|d| {
                 let path = d.path()?;
-                Some(format!(
-                    "- {}{}",
-                    shown(path),
-                    if d.is_modified() { " (unsaved)" } else { "" }
-                ))
+                let note = if d.is_modified() {
+                    " (unsaved)"
+                } else if self.agent.opened.contains(&d.id()) {
+                    " (opened for your tools: closes when your turn ends)"
+                } else {
+                    ""
+                };
+                Some(format!("- {}{note}", shown(path)))
             })
             .collect();
+        let splits = self.windows().layout().windows();
+        if splits.len() > 1 {
+            let shows: Vec<String> = splits
+                .iter()
+                .map(|&w| {
+                    let name = self
+                        .window_view(w)
+                        .and_then(|(d, _)| d.path().map(shown))
+                        .unwrap_or_else(|| "an unnamed buffer".into());
+                    if w == self.windows().active() {
+                        format!("{name} (focused)")
+                    } else {
+                        name
+                    }
+                })
+                .collect();
+            lines.push(format!("{} splits, showing: {}", splits.len(), shows.join(", ")));
+        }
         if !open.is_empty() {
             lines.push(format!("Open files:\n{}", open.join("\n")));
         }
@@ -155,7 +185,7 @@ impl Editor {
                     shown(path),
                     d.start.row + 1,
                     d.start.col + 1,
-                    d.describe()
+                    full_message(d)
                 )
             })
             .collect::<Vec<_>>()
@@ -199,7 +229,10 @@ impl Editor {
         let first = line.unwrap_or(1).max(1) - 1;
         let limit = limit.unwrap_or(READ_LINES);
         let lines: Vec<&str> = text.lines().collect();
-        if first >= lines.len().max(1) {
+        if lines.is_empty() {
+            return Ok("(empty file)".into());
+        }
+        if first >= lines.len() {
             return Err(format!("{path} has {} lines", lines.len()));
         }
         let mut out = String::new();
@@ -220,66 +253,276 @@ impl Editor {
         Ok(out)
     }
 
-    /// The `edit_buffer` tool: `old` replaced by `new` in the file's buffer
-    /// (opened if it isn't), as one undo step, shown as it happens. `old`
-    /// must be there once (or `all` replaces every one). The file's saved
-    /// if it had no unsaved changes, so the disk keeps up.
+    /// The `edit_buffer` tool: each `(old, new, all)` replacement made in
+    /// the file's buffer (opened if it isn't), together as one undo step,
+    /// shown as it happens. Each `old` must be there once (or `all`
+    /// replaces every one), checked before any is made, and they mustn't
+    /// overlap. The file's saved if it had no unsaved changes, so the disk
+    /// keeps up. Returns what was done and the buffer, for its diagnostics.
     pub fn agent_edit_buffer(
         &mut self,
         path: &str,
-        old: &str,
-        new: &str,
-        all: bool,
-    ) -> Result<String, String> {
-        if old.is_empty() {
-            return Err("old_text is empty: give the text to replace (for a new file, use your own Write tool)".into());
-        }
-        if old == new {
-            return Err("old_text and new_text are the same".into());
+        replacements: &[(String, String, bool)],
+    ) -> Result<(String, Vec<DocumentId>), String> {
+        if replacements.is_empty() {
+            return Err("No edits given".into());
         }
         let full = absolute(Path::new(path));
         if !full.is_file() {
-            return Err(format!("{path} isn't a file (for a new one, use your own Write tool)"));
+            return Err(format!("{path} isn't a file (create_file makes a new one)"));
         }
-        let id = self.buffer_for_path(&full)?;
+        let id = self.agent_buffer(&full)?;
         let document = self.document_by_id(id).ok_or("No such buffer")?;
         let buffer = document.buffer();
-        let text = buffer.text();
-        let found: Vec<usize> = text.match_indices(old).map(|(at, _)| at).collect();
-        match found.len() {
-            0 => {
-                return Err(format!(
-                    "old_text isn't in {path} (as the editor has it: read_buffer shows it, \
-                     whitespace and all)"
-                ));
+        // The file's last newline isn't in the buffer (it's put back when
+        // it's saved), but the agent sees it in the file: matched too.
+        let text = format!("{}\n", buffer.text());
+        let end = text.len() - 1;
+        let several = replacements.len() > 1;
+        // Each match: where, its new text, and which edit (from 0).
+        let mut spans: Vec<(usize, usize, String, usize)> = Vec::new();
+        for (i, (old, new, all)) in replacements.iter().enumerate() {
+            let which = if several {
+                format!("edit {}: ", i + 1)
+            } else {
+                String::new()
+            };
+            if old.is_empty() {
+                return Err(format!("{which}old_text is empty: give the text to replace"));
             }
-            n if n > 1 && !all => {
-                return Err(format!(
-                    "old_text is in {path} {n} times: give more of the text around it, or replace_all"
-                ));
+            if old == new {
+                return Err(format!("{which}old_text and new_text are the same"));
             }
-            _ => {}
+            let found: Vec<usize> = text.match_indices(old.as_str()).map(|(at, _)| at).collect();
+            match found.len() {
+                0 => {
+                    return Err(format!(
+                        "{which}old_text isn't in {path} (as the editor has it: read_buffer \
+                         shows it, whitespace and all). Nothing was changed."
+                    ));
+                }
+                n if n > 1 && !all => {
+                    return Err(format!(
+                        "{which}old_text is in {path} {n} times: give more of the text around \
+                         it, or replace_all. Nothing was changed."
+                    ));
+                }
+                _ => {}
+            }
+            for at in found {
+                let mut to = at + old.len();
+                let mut new = new.clone();
+                // Through the last newline: it stays.
+                if to > end {
+                    to = end;
+                    if new.ends_with('\n') {
+                        new.pop();
+                    }
+                }
+                spans.push((at.min(end), to, new, i));
+            }
         }
-        let edits = found
-            .iter()
-            .map(|&at| {
-                (
-                    buffer.position_at_byte(at),
-                    buffer.position_at_byte(at + old.len()),
-                    new.to_string(),
-                )
+        spans.sort_by_key(|&(from, ..)| from);
+        if let Some(pair) = spans.windows(2).find(|w| w[0].1 > w[1].0) {
+            let (a, b) = (pair[0].3.min(pair[1].3), pair[0].3.max(pair[1].3));
+            return Err(if a == b {
+                format!("Edit {}'s places overlap: nothing was changed", a + 1)
+            } else {
+                format!("Edits {} and {} overlap: nothing was changed", a + 1, b + 1)
+            });
+        }
+        let count = spans.len();
+        let edits = spans
+            .into_iter()
+            .map(|(from, to, new, _)| {
+                (buffer.position_at_byte(from), buffer.position_at_byte(to), new)
             })
             .collect();
         let before = self.agent_unsaved();
         self.edit_document(id, edits);
-        let saved = self.agent_save_changed(&before);
-        let count = found.len();
+        let (saved, _) = self.agent_save_changed(&before);
         let what = if count == 1 {
             "1 replacement".to_string()
         } else {
             format!("{count} replacements")
         };
-        Ok(format!("Edited {}: {what}{saved}", shown(&full)))
+        Ok((format!("Edited {}: {what}{saved}", named(path)), vec![id]))
+    }
+
+    /// The `create_file` tool: a new file with `text` (its folders made),
+    /// opened in a buffer (for its language server), not shown.
+    pub fn agent_create_file(
+        &mut self,
+        path: &str,
+        text: &str,
+    ) -> Result<(String, Vec<DocumentId>), String> {
+        let full = absolute(Path::new(path));
+        if full.exists() {
+            return Err(format!("{path} already exists: edit_buffer changes it"));
+        }
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{path}: {e}"))?;
+        }
+        std::fs::write(&full, text).map_err(|e| format!("{path}: {e}"))?;
+        let id = self.agent_buffer(&absolute(&full))?;
+        Ok((format!("Created {}", named(path)), vec![id]))
+    }
+
+    /// The `close_file` tool: closes `path`'s buffer (not one with unsaved
+    /// changes, or shown in a split other than the one in use).
+    pub fn agent_close_file(&mut self, path: &str) -> Result<String, String> {
+        let full = absolute(Path::new(path));
+        let Some(id) = self.find_open_path(&full) else {
+            return Ok(format!("{path} isn't open"));
+        };
+        let document = self.document_by_id(id).ok_or("No such buffer")?;
+        if document.is_modified() {
+            return Err(format!("{path} has unsaved changes: left open for the user"));
+        }
+        if id == self.document.id() {
+            if self.in_other_window(id) {
+                return Err(format!("{path} is in another split too: left open for the user"));
+            }
+            if self.background.is_empty() {
+                return Err(format!("{path} is the only file open: left open for the user"));
+            }
+            self.close_buffer();
+        } else {
+            if self.shown_in_a_window(id) {
+                return Err(format!("{path} is shown in a split: left open for the user"));
+            }
+            self.forget_tab(id);
+            self.close_hidden_buffer(id);
+        }
+        self.agent.opened.remove(&id);
+        Ok(format!("Closed {}", named(path)))
+    }
+
+    /// `path`'s buffer, opened (and noted as the agent's, to be closed when
+    /// its turn ends) if it isn't open.
+    fn agent_buffer(&mut self, path: &Path) -> Result<DocumentId, String> {
+        if let Some(id) = self.find_open_path(path) {
+            return Ok(id);
+        }
+        let id = self.buffer_for_path(path)?;
+        self.agent.opened.insert(id);
+        Ok(id)
+    }
+
+    /// The agent's turn ended: the buffers it opened to read or ask about
+    /// go, unless they're shown, in a tab, or have unsaved changes.
+    pub fn agent_close_its_buffers(&mut self) {
+        for id in std::mem::take(&mut self.agent.opened) {
+            let clean = self.document_by_id(id).is_some_and(|d| !d.is_modified());
+            if clean {
+                self.close_hidden_buffer(id);
+            }
+        }
+    }
+
+    /// The problems the language servers now report in the buffers the
+    /// agent changed: errors and warnings, or that there are none.
+    pub fn agent_problems(&self, ids: &[DocumentId]) -> String {
+        let mut out = String::new();
+        for &id in ids {
+            let Some(document) = self.document_by_id(id) else {
+                continue;
+            };
+            let name = document.path().map(shown).unwrap_or_default();
+            let all = document.diagnostics();
+            let unsaved = document.is_modified();
+            // rust-analyzer's own guess where rustc says the same, dropped.
+            let said_by_rustc = |d: &super::diagnostics::Diagnostic| {
+                d.source.as_deref() == Some("rust-analyzer")
+                    && all
+                        .iter()
+                        .any(|o| o.start == d.start && o.source.as_deref() == Some("rustc"))
+            };
+            let problems: Vec<String> = all
+                .iter()
+                .filter(|d| d.severity <= super::diagnostics::Severity::Warning)
+                .filter(|d| !said_by_rustc(d))
+                .take(20)
+                .map(|d| {
+                    let mut line =
+                        format!("  {}:{}  {}", d.start.row + 1, d.start.col + 1, full_message(d));
+                    // Unsaved: what cargo check says is about the saved file.
+                    if unsaved && on_save(d) {
+                        line.truncate(line.len() - 1);
+                        line.push_str(", from the saved file)");
+                    }
+                    line
+                })
+                .collect();
+            if problems.is_empty() {
+                out.push_str(&format!("\nNo errors or warnings in {name}."));
+            } else {
+                out.push_str(&format!("\nProblems in {name}:\n{}", problems.join("\n")));
+            }
+            // Not saved: checks run on save (cargo check) still describe
+            // the file on disk.
+            if unsaved && all.iter().any(on_save) {
+                out.push_str(&format!(
+                    "\n({name} isn't saved: those marked \"from the saved file\" come from a \
+                     check that runs on save, like cargo check, so they may not match the editor's \
+                     text.)"
+                ));
+            }
+        }
+        out
+    }
+
+    /// How many times buffer `id`'s diagnostics have been set (they're
+    /// waited for after the agent's edit).
+    pub fn diagnostics_version(&self, id: DocumentId) -> u64 {
+        self.diagnostics_versions.get(&id).map_or(0, |v| v.0)
+    }
+
+    /// What a language server's formatting is told about buffer `id`'s
+    /// indentation (`tabSize`, `insertSpaces`): its own (chosen or as the
+    /// file has it), else its settings'.
+    pub fn format_indent(&self, id: DocumentId) -> (usize, bool) {
+        let options = self.options_for(self.windows.active(), id);
+        let Some(document) = self.document_by_id(id) else {
+            return (options.tab_width, options.expand_tab);
+        };
+        let unit = document
+            .chosen_indent()
+            .or_else(|| document.detected_indent().filter(|_| options.detect_indent));
+        match unit {
+            Some(crate::core::indent::IndentUnit::Spaces(n)) => (n.max(1), true),
+            Some(crate::core::indent::IndentUnit::Tabs) => (options.tab_width, false),
+            None => (options.tab_width, options.expand_tab),
+        }
+    }
+
+    /// Whether buffer `id`'s language has a language server set up (one
+    /// may be about to open it).
+    pub fn has_language_server(&self, id: DocumentId) -> bool {
+        self.options.lsp
+            && self
+                .document_by_id(id)
+                .and_then(|d| self.language_of(d))
+                .is_some_and(|language| self.languages.server(language).is_some())
+    }
+
+    /// When buffer `id`'s diagnostics were last set.
+    pub fn diagnostics_set_at(&self, id: DocumentId) -> Option<std::time::Instant> {
+        self.diagnostics_versions.get(&id).map(|v| v.1)
+    }
+
+    /// The language servers' state, from the app: the ready server each
+    /// buffer's open in, and what it's busy with.
+    pub fn set_lsp_checks(&mut self, checks: HashMap<DocumentId, (String, Option<String>)>) {
+        self.lsp_checks = checks;
+    }
+
+    /// The ready language server buffer `id` is open in (it reports its
+    /// problems), and what it's busy with, if anything.
+    pub fn lsp_check(&self, id: DocumentId) -> Option<(&str, Option<&str>)> {
+        self.lsp_checks
+            .get(&id)
+            .map(|(name, busy)| (name.as_str(), busy.as_deref()))
     }
 
     /// Each buffer's text (its edit count) and whether it had unsaved
@@ -294,7 +537,10 @@ impl Editor {
     /// After the agent's changes: the files they changed that had no
     /// unsaved changes before are saved (so what the agent runs sees
     /// them); the others are left to the user. Says which, for the agent.
-    pub fn agent_save_changed(&mut self, before: &HashMap<DocumentId, (u64, bool)>) -> String {
+    pub fn agent_save_changed(
+        &mut self,
+        before: &HashMap<DocumentId, (u64, bool)>,
+    ) -> (String, Vec<DocumentId>) {
         // Those the agent changed (opened for it, or edited since).
         let changed: Vec<(DocumentId, bool)> = std::iter::once(&self.document)
             .chain(&self.background)
@@ -305,6 +551,8 @@ impl Editor {
                 None => Some((d.id(), false)),
             })
             .collect();
+        let ids: Vec<DocumentId> = changed.iter().map(|&(id, _)| id).collect();
+        let ids_count = ids.len();
         let mut left = Vec::new();
         let mut failed = Vec::new();
         for (id, unsaved) in changed {
@@ -319,7 +567,9 @@ impl Editor {
             }
         }
         let mut note = String::new();
-        if !left.is_empty() {
+        if left.len() == ids_count && ids_count > 0 {
+            note.push_str(". Not saved, as the user has unsaved changes there too");
+        } else if !left.is_empty() {
             note.push_str(&format!(
                 ". Not saved, as the user has unsaved changes there too: {}",
                 left.join(", ")
@@ -328,7 +578,16 @@ impl Editor {
         if !failed.is_empty() {
             note.push_str(&format!(". Couldn't save: {}", failed.join(", ")));
         }
-        note
+        (note, ids)
+    }
+
+    /// Buffers' files, named for the agent (`src/a.rs, src/b.rs`).
+    pub fn agent_names(&self, ids: &[DocumentId]) -> String {
+        let names: Vec<String> = ids
+            .iter()
+            .filter_map(|&id| self.document_by_id(id)?.path().map(shown))
+            .collect();
+        names.join(", ")
     }
 
     /// The `lsp_apply_code_action` tool: action `number` (from 1) of the
@@ -340,8 +599,11 @@ impl Editor {
         list: u64,
         number: usize,
     ) -> Result<(), String> {
+        if !self.options.lsp {
+            return Err("Language servers are off in this editor (lsp = false)".into());
+        }
         let full = absolute(Path::new(path));
-        let id = self.buffer_for_path(&full)?;
+        let id = self.agent_buffer(&full)?;
         let buffer = self.document_by_id(id).ok_or("No such buffer")?.buffer();
         let position = Position::new(0, 0);
         self.lsp_requests.push(LspRequest {
@@ -370,7 +632,7 @@ impl Editor {
         call: u64,
         feature: LspFeature,
         path: Option<&str>,
-        place: (Option<usize>, Option<&str>, Option<usize>),
+        place: (Option<usize>, Option<&str>, Option<usize>, Option<usize>),
         query: Option<&str>,
     ) -> Result<(), String> {
         if !self.options.lsp {
@@ -382,7 +644,7 @@ impl Editor {
                 if !path.is_file() {
                     return Err(format!("{} isn't a file", path.display()));
                 }
-                self.buffer_for_path(&path)?
+                self.agent_buffer(&path)?
             }
             // The project's symbols: asked of the server for any open file.
             None => std::iter::once(&self.document)
@@ -393,7 +655,7 @@ impl Editor {
         };
         let document = self.document_by_id(id).ok_or("No such buffer")?;
         let buffer = document.buffer();
-        let (line, symbol, column) = place;
+        let (line, symbol, column, occurrence) = place;
         let row = line.unwrap_or(1).saturating_sub(1);
         if row >= buffer.line_count() {
             return Err(format!(
@@ -405,15 +667,33 @@ impl Editor {
         let text = buffer.line(row).to_string();
         let col = match (symbol, column) {
             (Some(symbol), _) => {
-                let byte = find_word(&text, symbol)
-                    .ok_or_else(|| format!("\"{symbol}\" isn't on line {}", row + 1))?;
+                let nth = occurrence.unwrap_or(1).max(1);
+                let byte = find_word(&text, symbol, nth).ok_or_else(|| {
+                    let times = text.matches(symbol).count();
+                    if times == 0 {
+                        format!("\"{symbol}\" isn't on line {}", row + 1)
+                    } else if times == 1 {
+                        format!("\"{symbol}\" is on line {} only once", row + 1)
+                    } else {
+                        format!("\"{symbol}\" is on line {} only {times} times", row + 1)
+                    }
+                })?;
                 text[..byte].chars().count()
             }
-            (None, Some(column)) => column.saturating_sub(1),
+            (None, Some(column)) => {
+                let width = text.trim_end_matches(['\n', '\r']).chars().count();
+                if column == 0 || column > width + 1 {
+                    return Err(format!(
+                        "Column {column} is past the end of line {} ({width} columns)",
+                        row + 1
+                    ));
+                }
+                column - 1
+            }
             (None, None) => text.chars().take_while(|c| c.is_whitespace()).count(),
         };
         let position = Position::new(row, col);
-        self.lsp_requests.push(LspRequest {
+        let request = LspRequest {
             feature,
             document: id,
             position,
@@ -426,31 +706,62 @@ impl Editor {
             text: query.map(str::to_string),
             end: position,
             agent: Some(call),
-        });
+        };
+        // Code actions: asked at the symbol (its own refactors), and for
+        // the whole line with every problem on it (a fix can hang on a hint
+        // beside the error); the two lists are merged.
+        if feature == LspFeature::CodeAction {
+            self.lsp_requests.push(LspRequest {
+                word_start: Position::new(row, 0),
+                end: buffer.line_end(row),
+                ..request.clone()
+            });
+        }
+        self.lsp_requests.push(request);
         Ok(())
     }
 
     /// A language server's answer to the agent's tool call `call`.
     pub fn agent_lsp_answer(&mut self, call: u64, answer: Result<String, String>) {
-        self.agent_lsp_answers.push((call, answer));
+        self.agent_lsp_answers.push(AgentAnswer {
+            call,
+            answer,
+            changed: Vec::new(),
+        });
+    }
+
+    /// The same, for an answer that changed buffers `changed`.
+    pub fn agent_lsp_changed(&mut self, call: u64, text: String, changed: Vec<DocumentId>) {
+        self.agent_lsp_answers.push(AgentAnswer {
+            call,
+            answer: Ok(text),
+            changed,
+        });
     }
 
     /// The answers that came, for the app to send the agent.
-    pub fn take_agent_lsp_answers(&mut self) -> Vec<(u64, Result<String, String>)> {
+    pub fn take_agent_lsp_answers(&mut self) -> Vec<AgentAnswer> {
         std::mem::take(&mut self.agent_lsp_answers)
     }
 }
 
-/// Where `word` is in `line` as a whole word (or, failing that, anywhere):
-/// its byte offset.
-fn find_word(line: &str, word: &str) -> Option<usize> {
+/// Where the `nth` (from 1) `word` is in `line` as a whole word (or, if
+/// it's nowhere whole, as part of one): its byte offset.
+fn find_word(line: &str, word: &str, nth: usize) -> Option<usize> {
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
-    let whole = line.match_indices(word).find(|&(at, _)| {
-        let before = line[..at].chars().next_back();
-        let after = line[at + word.len()..].chars().next();
-        !before.is_some_and(is_word) && !after.is_some_and(is_word)
-    });
-    whole.map(|(at, _)| at).or_else(|| line.find(word))
+    let whole: Vec<usize> = line
+        .match_indices(word)
+        .filter(|&(at, _)| {
+            let before = line[..at].chars().next_back();
+            let after = line[at + word.len()..].chars().next();
+            !before.is_some_and(is_word) && !after.is_some_and(is_word)
+        })
+        .map(|(at, _)| at)
+        .collect();
+    if whole.is_empty() {
+        return line.match_indices(word).nth(nth - 1).map(|(at, _)| at);
+    }
+    whole.get(nth - 1).copied()
 }
 
 /// A path made absolute (from the current folder), as servers give them.
@@ -463,9 +774,52 @@ fn absolute(path: &Path) -> PathBuf {
     std::fs::canonicalize(&path).unwrap_or(path)
 }
 
+/// A path the agent gave, as it's told back: relative to the project if
+/// it's in it, else as given (not as the file system resolves it).
+fn named(given: &str) -> String {
+    let full = absolute(Path::new(given));
+    let relative = shown(&full);
+    if Path::new(&relative).is_absolute() {
+        given.to_string()
+    } else {
+        relative
+    }
+}
+
 /// A path as the agent's told it: relative to the project, if it's in it.
 fn shown(path: &Path) -> String {
     super::agent::short_path(&absolute(path).to_string_lossy())
+}
+
+/// Whether a diagnostic comes from a check that runs on save (cargo
+/// check's rustc and clippy), so it's about the saved file.
+fn on_save(d: &super::diagnostics::Diagnostic) -> bool {
+    matches!(d.source.as_deref(), Some("rustc" | "clippy" | "cargo"))
+}
+
+/// A diagnostic, its message's first two lines joined (rustc's second
+/// says what was expected and found), cut short if long; lines like
+/// `#[warn(dead_code)] on by default` left out.
+fn full_message(d: &super::diagnostics::Diagnostic) -> String {
+    const MOST: usize = 200;
+    let lines: Vec<&str> = d
+        .message
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.ends_with("on by default"))
+        .collect();
+    let mut message = lines.iter().take(2).copied().collect::<Vec<_>>().join(" / ");
+    let cut = lines.len() > 2 || message.chars().count() > MOST;
+    if let Some((at, _)) = message.char_indices().nth(MOST) {
+        message.truncate(at);
+    }
+    if cut {
+        message.push_str(" …");
+    }
+    match &d.source {
+        Some(source) => format!("{}: {message} ({source})", d.severity.id()),
+        None => format!("{}: {message}", d.severity.id()),
+    }
 }
 
 fn clipped(text: &str, most: usize) -> String {
@@ -481,9 +835,35 @@ mod tests {
 
     #[test]
     fn words_are_found_whole() {
-        assert_eq!(find_word("let area = area_of(c);", "area"), Some(4));
-        assert_eq!(find_word("fn area_of()", "area"), Some(3));
-        assert_eq!(find_word("x", "y"), None);
+        assert_eq!(find_word("let area = area_of(c);", "area", 1), Some(4));
+        assert_eq!(find_word("a + a", "a", 2), Some(4));
+        assert_eq!(find_word("a + a", "a", 3), None);
+        assert_eq!(find_word("fn area_of()", "area", 1), Some(3));
+        assert_eq!(find_word("x", "y", 1), None);
+    }
+
+    #[test]
+    fn diagnostics_are_told_in_two_lines_at_most() {
+        use super::super::diagnostics::{Diagnostic, Severity};
+        let d = |message: &str| Diagnostic {
+            start: Position::new(0, 0),
+            end: Position::new(0, 1),
+            severity: Severity::Error,
+            message: message.into(),
+            source: Some("rustc".into()),
+        };
+        assert_eq!(
+            full_message(&d("mismatched types\nexpected `String`, found `u32`")),
+            "error: mismatched types / expected `String`, found `u32` (rustc)"
+        );
+        assert_eq!(
+            full_message(&d("cannot multiply\nthe trait is not implemented\n`&u32` implements Mul")),
+            "error: cannot multiply / the trait is not implemented … (rustc)"
+        );
+        assert_eq!(
+            full_message(&d("never used\n#[warn(dead_code)] (part of #[warn(unused)]) on by default")),
+            "error: never used (rustc)"
+        );
     }
 
     #[test]

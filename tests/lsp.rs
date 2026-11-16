@@ -1909,7 +1909,7 @@ fn agent_asks(
     app: &mut App,
     feature: ferra::editor::lsp::LspFeature,
     path: &Path,
-    place: (Option<usize>, Option<&str>, Option<usize>),
+    place: (Option<usize>, Option<&str>, Option<usize>, Option<usize>),
 ) -> Result<String, String> {
     let path = path.to_str().unwrap();
     app.editor_mut()
@@ -1918,9 +1918,9 @@ fn agent_asks(
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
         app.update_lsp();
-        if let Some((call, answer)) = app.editor_mut().take_agent_lsp_answers().pop() {
-            assert_eq!(call, 7);
-            return answer;
+        if let Some(answer) = app.editor_mut().take_agent_lsp_answers().pop() {
+            assert_eq!(answer.call, 7);
+            return answer.answer;
         }
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -1933,22 +1933,30 @@ fn the_agent_asks_servers_and_gets_text() {
     let (dir, mut app, _) = with_server("fn bad() {}\nbad();\nlet x = bad;\n", true);
     ready(&mut app);
     let path = dir.path().join("main.rs");
-    let uses = agent_asks(&mut app, LspFeature::References, &path, (Some(3), Some("bad"), None));
+    let uses = agent_asks(&mut app, LspFeature::References, &path, (Some(3), Some("bad"), None, None));
     let uses = uses.unwrap();
     assert!(uses.contains("main.rs:1:4  fn bad() {}"), "{uses}");
     assert!(uses.contains("main.rs:3:9  let x = bad;"), "{uses}");
     assert!(app.editor().picker().is_none(), "nothing shown");
-    let found = agent_asks(&mut app, LspFeature::Definition, &path, (Some(2), None, Some(1)));
+    let found = agent_asks(&mut app, LspFeature::Definition, &path, (Some(2), None, Some(1), None));
     assert!(found.unwrap().contains("main.rs:1:4"));
     // A symbol that isn't on the line is said to be missing at once.
     let missing = app.editor_mut().agent_ask_lsp(
         8,
         LspFeature::Hover,
         Some(path.to_str().unwrap()),
-        (Some(1), Some("nope"), None),
+        (Some(1), Some("nope"), None, None),
         None,
     );
     assert!(missing.unwrap_err().contains("isn't on line 1"));
+    let past = app.editor_mut().agent_ask_lsp(
+        9,
+        LspFeature::Hover,
+        Some(path.to_str().unwrap()),
+        (Some(1), None, Some(500), None),
+        None,
+    );
+    assert_eq!(past.unwrap_err(), "Column 500 is past the end of line 1 (11 columns)");
 }
 
 /// The answer to the agent's call `call`, once it comes.
@@ -1956,9 +1964,9 @@ fn agent_answer(app: &mut App, call: u64) -> Result<String, String> {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
         app.update_lsp();
-        if let Some((from, answer)) = app.editor_mut().take_agent_lsp_answers().pop() {
-            assert_eq!(from, call);
-            return answer;
+        if let Some(answer) = app.editor_mut().take_agent_lsp_answers().pop() {
+            assert_eq!(answer.call, call);
+            return answer.answer;
         }
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -1977,26 +1985,27 @@ fn the_agent_renames_formats_and_makes_code_actions() {
     // The fixes for the problem on line 2, then the first made: saved, as
     // the file had no unsaved changes.
     app.editor_mut()
-        .agent_ask_lsp(1, LspFeature::CodeAction, Some(file), (Some(2), Some("bad"), None), None)
+        .agent_ask_lsp(1, LspFeature::CodeAction, Some(file), (Some(2), Some("bad"), None, None), None)
         .unwrap();
     let listed = agent_answer(&mut app, 1).unwrap();
     assert!(listed.starts_with("1. Replace with good (quickfix)"), "{listed}");
     let list: u64 = listed.split("list ").nth(1).unwrap().split(',').next().unwrap().parse().unwrap();
     app.editor_mut().agent_apply_code_action(2, file, list, 1).unwrap();
     let made = agent_answer(&mut app, 2).unwrap();
-    assert_eq!(made, "Made Replace with good");
+    assert!(made.starts_with("Made Replace with good in ") && made.ends_with("main.rs"), "{made}");
     assert_eq!(fs::read_to_string(&path).unwrap(), "fn bad() {}\nlet  x =  good;\n");
 
     app.editor_mut()
-        .agent_ask_lsp(3, LspFeature::Format, Some(file), (None, None, None), None)
+        .agent_ask_lsp(3, LspFeature::Format, Some(file), (None, None, None, None), None)
         .unwrap();
-    assert_eq!(agent_answer(&mut app, 3).unwrap(), "Formatted (1 changes)");
+    let formatted = agent_answer(&mut app, 3).unwrap();
+    assert!(formatted.starts_with("Formatted ") && formatted.ends_with("main.rs (1 change)"), "{formatted}");
     assert_eq!(fs::read_to_string(&path).unwrap(), "fn bad() {}\nlet x = good;\n");
 
     // With unsaved changes of the user's, the rename's left unsaved.
     keys(&mut app, "ggA // mine<Esc>");
     app.editor_mut()
-        .agent_ask_lsp(4, LspFeature::Rename, Some(file), (Some(1), Some("bad"), None), Some("worse"))
+        .agent_ask_lsp(4, LspFeature::Rename, Some(file), (Some(1), Some("bad"), None, None), Some("worse"))
         .unwrap();
     let renamed = agent_answer(&mut app, 4).unwrap();
     assert!(renamed.starts_with("Renamed to worse: 1 change in 1 file"), "{renamed}");
@@ -2006,4 +2015,25 @@ fn the_agent_renames_formats_and_makes_code_actions() {
     // Undone as the user's own changes are.
     keys(&mut app, "u");
     assert_eq!(text(&app), "fn bad() {} // mine\nlet x = good;");
+}
+
+#[test]
+fn after_the_agents_edit_its_new_problems_are_told() {
+    let (dir, mut app, _) = with_server("fine\n", true);
+    ready(&mut app);
+    let path = dir.path().join("main.rs");
+    let id = doc(&app);
+    // The report on the file as it opened, first.
+    until(&mut app, |a| a.editor().diagnostics_version(id) > 0);
+    let version = app.editor().diagnostics_version(id);
+    assert!(app.editor().lsp_check(id).is_some(), "a server has it open");
+    let (done, edited) = app
+        .editor_mut()
+        .agent_edit_buffer(path.to_str().unwrap(), &[("fine".into(), "bad".into(), false)])
+        .unwrap();
+    assert_eq!(edited, [id]);
+    assert!(done.ends_with("1 replacement"), "{done}");
+    until(&mut app, |a| a.editor().diagnostics_version(id) > version);
+    let problems = app.editor().agent_problems(&[id]);
+    assert!(problems.contains("1:1  error: bad word (fake)"), "{problems}");
 }

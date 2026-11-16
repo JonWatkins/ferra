@@ -50,6 +50,8 @@ pub struct Lsp {
     completions: features::Stash,
     /// The last few code action lists, to make the one chosen.
     actions: features::Stash,
+    /// The agent's code action lists, as its two asks come in.
+    agent_actions: HashMap<u64, features::AgentActions>,
     /// Each document's diagnostics as its server sent them, to send back
     /// with code action requests.
     raw_diagnostics: HashMap<DocumentId, Vec<Value>>,
@@ -85,6 +87,7 @@ impl Default for Lsp {
             enabled: false,
             completions: features::Stash::default(),
             actions: features::Stash::default(),
+            agent_actions: HashMap::new(),
             raw_diagnostics: HashMap::new(),
             formatted: None,
             resting: None,
@@ -155,6 +158,16 @@ impl Lsp {
         self.ask_about_resting_cursor(editor);
         self.ask_for_inlay_hints(editor);
         let asked = self.send_requests(editor);
+        // Which files a ready server has open, and whether it's busy, for
+        // the agent's wait for diagnostics after an edit.
+        let mut checks = HashMap::new();
+        for client in self.clients.iter().filter(|c| c.state == State::Ready) {
+            let busy = client.busy_with();
+            for (document, _) in client.document_uris() {
+                checks.insert(document, (client.name.clone(), busy.clone()));
+            }
+        }
+        editor.set_lsp_checks(checks);
         let status = self.status();
         // The first server busy with something, for the status line.
         let progress = self
@@ -382,6 +395,7 @@ impl Lsp {
                         let stashes = features::Stashes {
                             completions: &mut self.completions,
                             actions: &mut self.actions,
+                            agent_actions: &mut self.agent_actions,
                         };
                         features::answer(editor, client, request, result, stashes);
                     }

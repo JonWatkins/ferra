@@ -17,6 +17,7 @@ use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{Receiver, channel};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -83,6 +84,106 @@ pub struct Agents {
     /// and the request's id.
     waiting: HashMap<u64, (u64, Value)>,
     next_call: u64,
+    /// Edits answered once their file's language server has said what's
+    /// wrong in it now (or a moment's passed).
+    after_edits: Vec<AfterEdit>,
+}
+
+/// A change's answer, waiting for what the language servers find wrong in
+/// the files it changed.
+struct AfterEdit {
+    conn: u64,
+    id: Value,
+    text: String,
+    /// The files, and their diagnostics' version when it was made.
+    documents: Vec<(crate::editor::DocumentId, u64)>,
+    started: Instant,
+    /// When a server was last seen busy (checking, indexing).
+    last_busy: Option<Instant>,
+}
+
+/// How long a change's answer waits for its files' diagnostics, at most.
+const DIAGNOSTICS_WAIT: Duration = Duration::from_secs(30);
+/// How long the servers must have been quiet (no new diagnostics, not
+/// busy) before what they've said counts: rust-analyzer starts `cargo
+/// check` a moment after a save, and reports the old check's results
+/// (moved) before the new one's.
+const SETTLED: Duration = Duration::from_millis(1000);
+/// A server that hasn't said anything new this long after the change (or
+/// after it was last busy) has nothing new to say.
+const SILENT: Duration = Duration::from_secs(4);
+
+/// What came of waiting on a change's diagnostics.
+enum Settled {
+    Waiting,
+    /// What the servers say now.
+    Reported,
+    /// Nothing checks these files.
+    Unchecked,
+    /// Still checking when the wait ran out: which server.
+    StillChecking(String),
+}
+
+impl AfterEdit {
+    fn new(conn: u64, id: Value, text: String, documents: &[crate::editor::DocumentId], editor: &Editor) -> Self {
+        Self {
+            conn,
+            id,
+            text,
+            documents: documents
+                .iter()
+                .map(|&d| (d, editor.diagnostics_version(d)))
+                .collect(),
+            started: Instant::now(),
+            last_busy: None,
+        }
+    }
+
+    /// Whether the servers have had their say about the changed files.
+    fn settled(&mut self, editor: &Editor) -> Settled {
+        let now = Instant::now();
+        let checked: Vec<_> = self
+            .documents
+            .iter()
+            .filter_map(|&(d, version)| editor.lsp_check(d).map(|check| (d, version, check)))
+            .collect();
+        if checked.is_empty() {
+            // A server may yet open the file it was just given.
+            let maybe = self.documents.iter().any(|&(d, _)| editor.has_language_server(d));
+            return if !maybe || now - self.started >= SETTLED {
+                Settled::Unchecked
+            } else {
+                Settled::Waiting
+            };
+        }
+        if let Some((_, _, (_, Some(_)))) = checked.iter().find(|(_, _, (_, busy))| busy.is_some()) {
+            self.last_busy = Some(now);
+        }
+        let quiet = |at: Option<Instant>| at.is_none_or(|at| now - at >= SETTLED);
+        let busy_now = checked.iter().any(|(_, _, (_, busy))| busy.is_some());
+        let reported = checked
+            .iter()
+            .all(|&(d, version, _)| editor.diagnostics_version(d) > version);
+        let last_report = checked
+            .iter()
+            .filter_map(|&(d, _, _)| editor.diagnostics_set_at(d))
+            .max();
+        if !busy_now && quiet(self.last_busy) && quiet(last_report) {
+            if reported {
+                return Settled::Reported;
+            }
+            // Nothing new for a while since the change (or since it was
+            // last busy): nothing new to say.
+            if now - self.last_busy.unwrap_or(self.started) >= SILENT {
+                return Settled::Reported;
+            }
+        }
+        if now - self.started >= DIAGNOSTICS_WAIT {
+            let (_, _, (server, _)) = checked[0];
+            return Settled::StillChecking(server.to_string());
+        }
+        Settled::Waiting
+    }
 }
 
 impl Default for Agents {
@@ -102,6 +203,7 @@ impl Agents {
             mcp: None,
             waiting: HashMap::new(),
             next_call: 0,
+            after_edits: Vec::new(),
         }
     }
 
@@ -148,15 +250,44 @@ impl Agents {
                         server.forget(conn);
                     }
                     self.waiting.retain(|_, (c, _)| *c != conn);
+                    self.after_edits.retain(|e| e.conn != conn);
                 }
             }
         }
-        for (call, answer) in editor.take_agent_lsp_answers() {
+        for answer in editor.take_agent_lsp_answers() {
             changed = true;
-            if let Some((conn, id)) = self.waiting.remove(&call) {
-                self.reply(conn, id, tool_result(answer));
+            let Some((conn, id)) = self.waiting.remove(&answer.call) else {
+                continue;
+            };
+            match answer.answer {
+                Ok(text) if !answer.changed.is_empty() => {
+                    let edit = AfterEdit::new(conn, id, text, &answer.changed, editor);
+                    self.after_edits.push(edit);
+                }
+                answer => self.reply(conn, id, tool_result(answer)),
             }
         }
+        // Changes whose files' servers have had their say (or that waited
+        // long enough).
+        let mut waiting = Vec::new();
+        for mut edit in std::mem::take(&mut self.after_edits) {
+            let ids: Vec<_> = edit.documents.iter().map(|&(d, _)| d).collect();
+            let text = match edit.settled(editor) {
+                Settled::Waiting => {
+                    waiting.push(edit);
+                    continue;
+                }
+                Settled::Reported => format!("{}{}", edit.text, editor.agent_problems(&ids)),
+                Settled::Unchecked => edit.text,
+                Settled::StillChecking(server) => format!(
+                    "{}\n{server} is still checking: get_diagnostics will say what's wrong in a moment.",
+                    edit.text
+                ),
+            };
+            changed = true;
+            self.reply(edit.conn, edit.id, tool_result(Ok(text)));
+        }
+        self.after_edits = waiting;
         changed
     }
 
@@ -212,6 +343,9 @@ impl Agents {
                     tools::Called::Done(answer) => self.reply(conn, id, tool_result(answer)),
                     tools::Called::Waiting => {
                         self.waiting.insert(call, (conn, id));
+                    }
+                    tools::Called::Changed(text, documents) => {
+                        self.after_edits.push(AfterEdit::new(conn, id, text, &documents, editor));
                     }
                 }
             }
@@ -338,6 +472,7 @@ impl Agents {
                 }
                 self.receiver = None;
                 self.waiting.clear();
+                self.after_edits.clear();
                 #[cfg(unix)]
                 {
                     self.mcp = None;

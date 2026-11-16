@@ -532,6 +532,12 @@ fn the_editors_tools_are_served_to_the_agent() {
     let edited = edited["content"][0]["text"].as_str().unwrap().to_string();
     assert!(edited.ends_with("b.txt: 1 replacement"), "saved, nothing else said: {edited}");
     assert_eq!(fs::read_to_string(&other).unwrap(), "x\nwhy\nz\n");
+    // The file's last line, with its newline (as the file has it).
+    let last = ask(&mut app, 18, "tools/call", edit("z\n", "zz\n"));
+    assert_eq!(last["isError"], false, "{last}");
+    assert_eq!(fs::read_to_string(&other).unwrap(), "x\nwhy\nzz\n");
+    let back = ask(&mut app, 19, "tools/call", edit("zz", "z"));
+    assert_eq!(back["isError"], false, "{back}");
     let missing = ask(&mut app, 10, "tools/call", edit("nowhere", "x"));
     assert_eq!(missing["isError"], true);
     // a.txt, with the user's change unsaved: edited, but left unsaved.
@@ -542,4 +548,43 @@ fn the_editors_tools_are_served_to_the_agent() {
     assert_eq!(common::text(&app), "oneX\n2");
     keys(&mut app, "u");
     assert_eq!(common::text(&app), "oneX\ntwo", "the agent's edit undone alone");
+
+    // Several changes at once: all checked first, then made as one.
+    let edits = |list: Value| call("edit_buffer", json!({"path": other, "edits": list}));
+    let bad = ask(&mut app, 12, "tools/call", edits(json!([
+        {"old_text": "x", "new_text": "ex"}, {"old_text": "nowhere", "new_text": "?"}])));
+    assert!(bad["content"][0]["text"].as_str().unwrap().starts_with("edit 2: "), "{bad}");
+    assert_eq!(fs::read_to_string(&other).unwrap(), "x\nwhy\nz\n", "none made");
+    let both = ask(&mut app, 13, "tools/call", edits(json!([
+        {"old_text": "x", "new_text": "ex"}, {"old_text": "z", "new_text": "zed"}])));
+    assert!(both["content"][0]["text"].as_str().unwrap().ends_with("2 replacements"), "{both}");
+    assert_eq!(fs::read_to_string(&other).unwrap(), "ex\nwhy\nzed\n");
+
+    // A new file; not over an old one.
+    let new = dir.path().join("sub/c.txt");
+    let made = ask(&mut app, 14, "tools/call", call("create_file", json!({"path": new, "text": ""})));
+    assert_eq!(made["isError"], false, "{made}");
+    let again = ask(&mut app, 15, "tools/call", call("create_file", json!({"path": new, "text": "x"})));
+    assert_eq!(again["isError"], true);
+    let empty = ask(&mut app, 16, "tools/call", call("read_buffer", json!({"path": new})));
+    assert_eq!(empty["content"][0]["text"], "(empty file)");
+
+    // The buffers it opened go when its turn ends; those with tabs stay
+    // (b.txt was opened for the user, above).
+    assert!(app.editor().find_open_path(&new).is_some());
+    keys(&mut app, ":agent_ask hello<CR>");
+    until(&mut app, |a| ready(a) && said(a).contains("Hi there."));
+    assert!(app.editor().find_open_path(&new).is_none(), "closed");
+    assert!(app.editor().find_open_path(&other).is_some(), "a tab: kept");
+    assert!(app.editor().find_open_path(&path).is_some(), "shown: kept");
+    let closed = ask(&mut app, 17, "tools/call", call("close_file", json!({"path": path})));
+    assert!(closed["content"][0]["text"].as_str().unwrap().contains("unsaved"), "{closed}");
+
+    // Saved, and in two splits: left for the user (not closed in both).
+    keys(&mut app, ":w<CR>:vsplit<CR>");
+    let state = ask(&mut app, 20, "tools/call", call("editor_state", json!({})));
+    assert!(state["content"][0]["text"].as_str().unwrap().contains("2 splits, showing: "), "{state}");
+    let split = ask(&mut app, 21, "tools/call", call("close_file", json!({"path": path})));
+    assert!(split["content"][0]["text"].as_str().unwrap().contains("another split"), "{split}");
+    assert!(app.editor().document.name().ends_with("a.txt"), "still shown");
 }

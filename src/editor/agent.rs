@@ -203,6 +203,8 @@ pub struct AgentChat {
     pub expand_all: bool,
     /// A file's being picked to mention (`@`): it goes in the box.
     pub(super) mentioning: bool,
+    /// Buffers opened for the agent's tools, closed when its turn ends.
+    pub(super) opened: HashSet<super::DocumentId>,
     requests: Vec<AgentRequest>,
 }
 
@@ -665,6 +667,9 @@ impl Editor {
                 }
             }
             AgentEvent::TurnEnded(reason) => {
+                // What it opened to read or ask about goes.
+                self.agent_close_its_buffers();
+                let chat = &mut self.agent;
                 if chat.status == AgentStatus::Busy {
                     chat.status = AgentStatus::Ready;
                 }

@@ -698,15 +698,17 @@ extensions do:
 |------|--------------|
 | `editor_state` | What's open and selected |
 | `read_buffer` | A file as the editor has it, unsaved changes and all |
-| `edit_buffer` | Replaces text in a file's buffer: you see it as it happens, `u` undoes it, and it's saved unless you had unsaved changes there |
+| `edit_buffer` | Replaces text in a file's buffer (one change, or several as one): you see it as it happens, `u` undoes it, and it's saved unless you had unsaved changes there. Its answer says what the language server finds wrong in the file afterwards |
+| `create_file`, `close_file` | Makes a new file; closes a file's buffer |
 | `get_diagnostics` | The language servers' errors and warnings |
 | `lsp_definition` | Where a symbol's defined (or its type, implementations, declaration) |
 | `lsp_references`, `lsp_hover`, `lsp_symbols` | Its uses, its type and docs, a file's or the project's symbols |
 | `lsp_rename`, `lsp_code_actions`, `lsp_apply_code_action`, `lsp_format` | Renaming everywhere, fixes and refactors, formatting, by the language server |
 | `open_file` | Shows you a file |
 
-The agent's told to prefer them to its own Read and Edit tools and to
-searching. The chat names them in words ("References to area",
+The agent's told to prefer them to its own Read, Edit and Write tools and
+to searching. Files it opened only to read or ask about close when its turn
+ends (not ones with tabs or unsaved changes). The chat names them in words ("References to area",
 "Edit src/main.rs"). They're served while the agent runs,
 on a socket only you can use, through `ferra --mcp-bridge`, which the agent
 starts; the agent asks your permission to use them as for its own tools.

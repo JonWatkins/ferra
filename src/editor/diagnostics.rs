@@ -151,6 +151,9 @@ impl Editor {
     pub fn set_diagnostics(&mut self, id: DocumentId, diagnostics: Vec<Diagnostic>) {
         if let Some(document) = self.document_by_id_mut(id) {
             document.set_diagnostics(diagnostics);
+            let now = std::time::Instant::now();
+            let entry = self.diagnostics_versions.entry(id).or_insert((0, now));
+            *entry = (entry.0 + 1, now);
         }
     }
 

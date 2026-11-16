@@ -617,6 +617,32 @@ impl Editor {
         }
     }
 
+    /// Whether buffer `id` is shown or has a tab, in any window.
+    pub fn buffer_in_a_window(&self, id: DocumentId) -> bool {
+        id == self.document.id()
+            || self
+                .windows
+                .windows
+                .iter()
+                .any(|w| w.document == id || w.tabs.contains(&id))
+    }
+
+    /// Whether buffer `id` is what a window shows.
+    pub fn shown_in_a_window(&self, id: DocumentId) -> bool {
+        id == self.document.id() || self.windows.windows.iter().any(|w| w.document == id)
+    }
+
+    /// Closes buffer `id` if it isn't shown or in a tab anywhere (one
+    /// opened only to be read or asked about). Returns whether it was.
+    pub fn close_hidden_buffer(&mut self, id: DocumentId) -> bool {
+        if self.buffer_in_a_window(id) {
+            return false;
+        }
+        let before = self.background.len();
+        self.background.retain(|d| d.id() != id);
+        before != self.background.len()
+    }
+
     /// Buffer `id` closed: its tabs go.
     pub(super) fn forget_tab(&mut self, id: DocumentId) {
         for window in &mut self.windows.windows {

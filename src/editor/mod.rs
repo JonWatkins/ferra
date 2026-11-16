@@ -228,7 +228,13 @@ pub struct Editor {
     /// The coding agent's chat (`agent.rs`).
     agent: agent::AgentChat,
     /// Language servers' answers to the agent's tool calls, to send it.
-    agent_lsp_answers: Vec<(u64, Result<String, String>)>,
+    agent_lsp_answers: Vec<agent_tools::AgentAnswer>,
+    /// How many times each buffer's diagnostics have been set, and when
+    /// last.
+    diagnostics_versions: HashMap<DocumentId, (u64, std::time::Instant)>,
+    /// The ready language server each buffer is open in, and what it's
+    /// busy with, if anything.
+    lsp_checks: HashMap<DocumentId, (String, Option<String>)>,
     /// More cursors than the one (`multi_cursor.rs`).
     cursors: multi_cursor::MultiCursors,
     /// What the pointer rested on, for the hover it shows.
