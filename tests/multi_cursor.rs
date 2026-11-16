@@ -12,9 +12,8 @@ use ferra::clipboard::MemoryClipboard;
 /// An app with VS Code's keys, `content` in, the cursor at the start.
 fn with_text(content: &str) -> (App, MemoryClipboard) {
     let clipboard = MemoryClipboard::default();
-    let mut app = app_with_config(
-        "[editor]\nkeymap = \"vscode\"\nauto-indent = false\nauto-pairs = false\n",
-    );
+    let mut app =
+        app_with_config("[editor]\nkeymap = \"vscode\"\nauto-indent = false\nauto-pairs = false\n");
     app.use_clipboard(Box::new(clipboard.clone()));
     for (i, line) in content.split('\n').enumerate() {
         if i > 0 {

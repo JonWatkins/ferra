@@ -139,14 +139,10 @@ pub fn register(r: &mut CommandRegistry) {
             Ok(())
         },
     );
-    r.register(
-        "single_cursor",
-        "Back to one cursor",
-        |cx| {
-            cx.editor.clear_extra_cursors();
-            Ok(())
-        },
-    );
+    r.register("single_cursor", "Back to one cursor", |cx| {
+        cx.editor.clear_extra_cursors();
+        Ok(())
+    });
     r.register(
         "copy",
         "Copy the selection (or the line) to the clipboard (Ctrl+C)",

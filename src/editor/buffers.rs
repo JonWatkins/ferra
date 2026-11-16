@@ -113,7 +113,10 @@ impl Editor {
             .tab_to_show_after_closing()
             .and_then(|id| self.background.iter().position(|d| d.id() == id));
         let alone = beside.is_none() && self.windows.count() > 1 && !self.tab_open_elsewhere();
-        let next = match beside.map(|i| self.background.remove(i)).or_else(|| self.background.pop()) {
+        let next = match beside
+            .map(|i| self.background.remove(i))
+            .or_else(|| self.background.pop())
+        {
             Some(document) => document,
             None => {
                 let mut scratch = Document::default();

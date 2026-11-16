@@ -439,8 +439,16 @@ fn the_tree_shows_files_made_and_deleted_outside_ferra() {
     // As the agent (or a command) would.
     fs::write(project.path("new.md"), "# new\n").unwrap();
     app.check_files_while_idle();
-    assert!(names(&app).contains(&"new.md".to_string()), "{:?}", names(&app));
+    assert!(
+        names(&app).contains(&"new.md".to_string()),
+        "{:?}",
+        names(&app)
+    );
     fs::remove_file(project.path("a.txt")).unwrap();
     app.check_files_while_idle();
-    assert!(!names(&app).contains(&"a.txt".to_string()), "{:?}", names(&app));
+    assert!(
+        !names(&app).contains(&"a.txt".to_string()),
+        "{:?}",
+        names(&app)
+    );
 }

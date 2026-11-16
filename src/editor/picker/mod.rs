@@ -210,7 +210,11 @@ impl Picker {
     /// The widest label, for the details' column.
     pub fn widest_label(&self) -> usize {
         use unicode_width::UnicodeWidthStr;
-        self.items.iter().map(|i| i.label.width()).max().unwrap_or(0)
+        self.items
+            .iter()
+            .map(|i| i.label.width())
+            .max()
+            .unwrap_or(0)
     }
 
     /// The dimmed text shown while nothing's typed.

@@ -685,15 +685,18 @@ fn placed_in_unsaved(
     let Some(saved_text) = saved_text else {
         return to_diagnostics(buffer, list, encoding);
     };
-    let (saved, own): (Vec<Value>, Vec<Value>) =
-        items.iter().cloned().partition(from_saved_file);
+    let (saved, own): (Vec<Value>, Vec<Value>) = items.iter().cloned().partition(from_saved_file);
     let mut diagnostics = to_diagnostics(buffer, &Value::Array(own), encoding);
     let saved_buffer = crate::core::Buffer::from_text(&saved_text);
     let current = buffer.text();
     let rows = saved_rows_now(&saved_text, &current);
     let place = |p: crate::core::Position| {
         let row = rows.get(p.row).copied().unwrap_or(buffer.line_count() - 1);
-        let width = buffer.line(row).trim_end_matches(['\n', '\r']).chars().count();
+        let width = buffer
+            .line(row)
+            .trim_end_matches(['\n', '\r'])
+            .chars()
+            .count();
         crate::core::Position::new(row, p.col.min(width))
     };
     for mut d in to_diagnostics(&saved_buffer, &Value::Array(saved), encoding) {

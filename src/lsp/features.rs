@@ -589,7 +589,11 @@ pub(super) fn answer(
 }
 
 /// What `agent_answer` says when the server found nothing.
-const NOTHING: [&str; 3] = ["Nothing found", "No symbols found", "No hover information there"];
+const NOTHING: [&str; 3] = [
+    "Nothing found",
+    "No symbols found",
+    "No hover information there",
+];
 
 /// A server's answer that changes things, for the coding agent: a rename,
 /// formatting, a code action (resolved), made; the code actions there are,
@@ -605,7 +609,9 @@ fn agent_change(
         LspFeature::Rename => {
             let name = request.text.clone().unwrap_or_default();
             match apply_workspace_edit(editor, result, client.encoding) {
-                Ok(Applied { changes: 0, .. }) => return Some(Err("Nothing to rename there".into())),
+                Ok(Applied { changes: 0, .. }) => {
+                    return Some(Err("Nothing to rename there".into()));
+                }
                 Ok(applied) => {
                     let mut done = applied;
                     // Saved below, not left for :wa.
@@ -637,7 +643,11 @@ fn agent_change(
             }
             let count = edits.len();
             editor.edit_document(request.document, edits);
-            let changes = if count == 1 { "1 change".to_string() } else { format!("{count} changes") };
+            let changes = if count == 1 {
+                "1 change".to_string()
+            } else {
+                format!("{count} changes")
+            };
             format!("Formatted {name} ({changes})")
         }
         LspFeature::ResolveCodeAction => {
@@ -682,7 +692,12 @@ fn agent_actions_list(list: Vec<Value>, actions: &mut Stash) -> String {
 
 /// A server's answer for the coding agent, as text: places as
 /// `path:line:column  text`, a hover's Markdown, symbols with where they are.
-fn agent_answer(editor: &Editor, request: &LspRequest, result: &Value, encoding: Encoding) -> String {
+fn agent_answer(
+    editor: &Editor,
+    request: &LspRequest,
+    result: &Value,
+    encoding: Encoding,
+) -> String {
     let place = |l: &Location| {
         let path = crate::editor::agent::short_path(&l.path.to_string_lossy());
         format!(

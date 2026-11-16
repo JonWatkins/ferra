@@ -11,10 +11,12 @@ fn main() -> color_eyre::Result<ExitCode> {
         let Some(socket) = args.next() else {
             return Ok(ExitCode::from(2));
         };
-        return Ok(match ferra::agent::mcp::bridge(std::path::Path::new(&socket)) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(_) => ExitCode::FAILURE,
-        });
+        return Ok(
+            match ferra::agent::mcp::bridge(std::path::Path::new(&socket)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::FAILURE,
+            },
+        );
     }
     color_eyre::install()?;
 

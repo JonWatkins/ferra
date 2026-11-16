@@ -168,10 +168,7 @@ fn halves(app: &mut App) -> (String, String) {
     let row = rows.iter().find(|r| r.contains('×')).unwrap();
     let chars: Vec<char> = row.chars().collect();
     let mid = chars.len() / 2;
-    (
-        chars[..mid].iter().collect(),
-        chars[mid..].iter().collect(),
-    )
+    (chars[..mid].iter().collect(), chars[mid..].iter().collect())
 }
 
 #[test]
@@ -184,7 +181,10 @@ fn each_window_has_its_own_tabs() {
     run(&mut app, "split_vertical");
     let (left, right) = halves(&mut app);
     assert!(left.contains("a.txt") && left.contains("b.txt"), "{left}");
-    assert!(right.contains("▎ b.txt") && !right.contains("a.txt"), "{right}");
+    assert!(
+        right.contains("▎ b.txt") && !right.contains("a.txt"),
+        "{right}"
+    );
 
     // Opened in a window: a tab there only, after the shown one.
     app.open(&paths[2]);
@@ -217,7 +217,10 @@ fn closing_a_tab_open_in_another_window_keeps_the_buffer() {
     // b.txt is in both windows: closing it here leaves the left one's.
     keys(&mut app, "x");
     run(&mut app, "tab_close");
-    assert!(app.editor().popup().is_none(), "nothing to ask: it stays open");
+    assert!(
+        app.editor().popup().is_none(),
+        "nothing to ask: it stays open"
+    );
     // That was the window's only tab: it closes.
     assert_eq!(app.editor().windows().count(), 1);
     assert_eq!(text(&app), "xb.txt");
@@ -241,15 +244,24 @@ fn files_opened_after_splitting_the_starting_buffer_stay_in_their_window() {
     run(&mut app, "split_vertical");
     app.open(&paths[0]);
     let (left, right) = halves(&mut app);
-    assert!(right.contains("a.txt") && !left.contains("a.txt"), "{left}|{right}");
+    assert!(
+        right.contains("a.txt") && !left.contains("a.txt"),
+        "{left}|{right}"
+    );
     // The untouched starting buffer's tab gave way to it.
-    assert!(!right.contains("[scratch]") && !right.contains("untitled"), "{right}");
+    assert!(
+        !right.contains("[scratch]") && !right.contains("untitled"),
+        "{right}"
+    );
 
     app.editor_mut().focus_window(ferra::editor::WindowId(0));
     app.open(&paths[1]);
     let (left, right) = halves(&mut app);
     assert!(left.contains("b.txt") && !left.contains("a.txt"), "{left}");
-    assert!(right.contains("a.txt") && !right.contains("b.txt"), "{right}");
+    assert!(
+        right.contains("a.txt") && !right.contains("b.txt"),
+        "{right}"
+    );
 }
 
 fn drag(app: &mut App, from: (u16, u16), to: (u16, u16)) {
@@ -277,7 +289,10 @@ fn tabs_are_dragged_along_and_to_other_windows() {
     drag(&mut app, from, (cx + 6, y));
     let row = bar(&mut app);
     let at = |name: &str| row.find(name).unwrap();
-    assert!(at("b.txt") < at("c.txt") && at("c.txt") < at("a.txt"), "{row}");
+    assert!(
+        at("b.txt") < at("c.txt") && at("c.txt") < at("a.txt"),
+        "{row}"
+    );
     assert_eq!(text(&app), "a.txt");
 
     // b.txt dragged into a new window's text: it moves there.

@@ -54,7 +54,9 @@ impl Editor {
         let line = self.document.buffer().line(at.row).into_owned();
         let before: String = line.chars().take(at.col).collect();
         let after: String = line.chars().skip(at.col).collect();
-        if !before.trim_start().ends_with("/*") || before.ends_with("//*") || !after.trim().is_empty()
+        if !before.trim_start().ends_with("/*")
+            || before.ends_with("//*")
+            || !after.trim().is_empty()
         {
             return false;
         }
@@ -75,7 +77,10 @@ impl Editor {
         let line = self.document.buffer().line(at.row).into_owned();
         let before: String = line.chars().take(at.col).collect();
         let after: String = line.chars().skip(at.col).collect();
-        let indent: String = line.chars().take_while(|c| matches!(c, ' ' | '\t')).collect();
+        let indent: String = line
+            .chars()
+            .take_while(|c| matches!(c, ' ' | '\t'))
+            .collect();
         let trimmed = before.trim_start();
 
         // `/**| */` (or `/*| */`): opened out.
@@ -148,7 +153,11 @@ mod tests {
         let at = editor.document.cursor();
         let mut lines: Vec<String> = text.split('\n').map(String::from).collect();
         let line: Vec<char> = lines[at.row].chars().collect();
-        lines[at.row] = line[..at.col].iter().chain(['|'].iter()).chain(line[at.col..].iter()).collect();
+        lines[at.row] = line[..at.col]
+            .iter()
+            .chain(['|'].iter())
+            .chain(line[at.col..].iter())
+            .collect();
         text = lines.join("\n");
         text
     }

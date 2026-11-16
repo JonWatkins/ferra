@@ -129,7 +129,9 @@ impl Windows {
         self.sizes()
             .into_iter()
             .find(|(window, _)| *window == id)
-            .map_or(0, |(_, area)| (area.height - self.chrome_for(area.height)) as usize)
+            .map_or(0, |(_, area)| {
+                (area.height - self.chrome_for(area.height)) as usize
+            })
     }
 
     /// Records the first row window `id` showed when drawn (the UI calls

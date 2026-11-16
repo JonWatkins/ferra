@@ -92,10 +92,11 @@ pub fn register(r: &mut CommandRegistry) {
             .collect();
         // The quick-open box with `>` in, as VS Code's (Backspace on it:
         // files).
-        cx.editor
-            .open_picker(Picker::new("Commands", items)
+        cx.editor.open_picker(
+            Picker::new("Commands", items)
                 .quick_open(Some('>'))
-                .aligned_details());
+                .aligned_details(),
+        );
         Ok(())
     });
 

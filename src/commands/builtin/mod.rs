@@ -3,6 +3,7 @@
 //! Each submodule exposes a `register` function. Command names are
 //! `snake_case` and are the identifiers used in keybinding config.
 
+mod agent;
 mod buffers;
 mod command_line;
 mod editing;
@@ -25,7 +26,6 @@ mod modes;
 mod motions;
 mod operators;
 mod options;
-mod agent;
 mod panel;
 mod picker;
 mod plugins;

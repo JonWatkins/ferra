@@ -230,8 +230,7 @@ impl Editor {
             Some(document) => {
                 let buffer = document.buffer();
                 let end = buffer.line_count().min(row + PEEK_LINES * 2);
-                let lines: Vec<String> =
-                    (row..end).map(|r| buffer.line(r).to_string()).collect();
+                let lines: Vec<String> = (row..end).map(|r| buffer.line(r).to_string()).collect();
                 (lines, self.language_of(document).map(str::to_string))
             }
             None => {

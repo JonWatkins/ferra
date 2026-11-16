@@ -115,11 +115,8 @@ impl ViewState {
             Some(d) => std::borrow::Cow::Borrowed(d.text.as_str()),
             None => document.buffer().line(drawn.row),
         };
-        let col = crate::core::columns::char_col_at(
-            &line,
-            drawn.left + (x as usize - start),
-            tab_width,
-        );
+        let col =
+            crate::core::columns::char_col_at(&line, drawn.left + (x as usize - start), tab_width);
         if col < drawn.start || col >= drawn.end || col >= line.chars().count() {
             return None;
         }
@@ -429,7 +426,10 @@ impl<'a> EditorView<'a> {
     }
 
     /// Draws the extra cursors (and their selections).
-    pub fn extra_cursors(mut self, cursors: &'a [crate::editor::multi_cursor::ExtraCursor]) -> Self {
+    pub fn extra_cursors(
+        mut self,
+        cursors: &'a [crate::editor::multi_cursor::ExtraCursor],
+    ) -> Self {
         self.extra_cursors = cursors;
         self
     }
@@ -609,7 +609,11 @@ impl StatefulWidget for EditorView<'_> {
                     } else {
                         left
                     };
-                    let indent = if wrap { layout.offset(line_text, part) } else { 0 };
+                    let indent = if wrap {
+                        layout.offset(line_text, part)
+                    } else {
+                        0
+                    };
                     let Some(x) = (line::display_col(line_text, col, tab_width) + indent)
                         .checked_sub(seg_left)
                         .filter(|&x| x < width)

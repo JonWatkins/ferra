@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::{DocumentId, Editor};
 use super::lsp::{LspFeature, LspRequest};
+use super::{DocumentId, Editor};
 use crate::core::{Position, Range};
 
 /// A language server's answer to one of the agent's tool calls: what to
@@ -140,7 +140,11 @@ impl Editor {
                     }
                 })
                 .collect();
-            lines.push(format!("{} splits, showing: {}", splits.len(), shows.join(", ")));
+            lines.push(format!(
+                "{} splits, showing: {}",
+                splits.len(),
+                shows.join(", ")
+            ));
         }
         if !open.is_empty() {
             lines.push(format!("Open files:\n{}", open.join("\n")));
@@ -288,7 +292,9 @@ impl Editor {
                 String::new()
             };
             if old.is_empty() {
-                return Err(format!("{which}old_text is empty: give the text to replace"));
+                return Err(format!(
+                    "{which}old_text is empty: give the text to replace"
+                ));
             }
             if old == new {
                 return Err(format!("{which}old_text and new_text are the same"));
@@ -339,7 +345,11 @@ impl Editor {
                 // share at either end is left), so diagnostics and marks in
                 // it stay put. (Overlaps were checked on the whole spans.)
                 let (from, to, new) = trimmed(&text, from, to, &new);
-                (buffer.position_at_byte(from), buffer.position_at_byte(to), new)
+                (
+                    buffer.position_at_byte(from),
+                    buffer.position_at_byte(to),
+                    new,
+                )
             })
             .collect();
         let before = self.agent_unsaved();
@@ -381,19 +391,27 @@ impl Editor {
         };
         let document = self.document_by_id(id).ok_or("No such buffer")?;
         if document.is_modified() {
-            return Err(format!("{path} has unsaved changes: left open for the user"));
+            return Err(format!(
+                "{path} has unsaved changes: left open for the user"
+            ));
         }
         if id == self.document.id() {
             if self.in_other_window(id) {
-                return Err(format!("{path} is in another split too: left open for the user"));
+                return Err(format!(
+                    "{path} is in another split too: left open for the user"
+                ));
             }
             if self.background.is_empty() {
-                return Err(format!("{path} is the only file open: left open for the user"));
+                return Err(format!(
+                    "{path} is the only file open: left open for the user"
+                ));
             }
             self.close_buffer();
         } else {
             if self.shown_in_a_window(id) {
-                return Err(format!("{path} is shown in a split: left open for the user"));
+                return Err(format!(
+                    "{path} is shown in a split: left open for the user"
+                ));
             }
             self.forget_tab(id);
             self.close_hidden_buffer(id);
@@ -456,8 +474,12 @@ impl Editor {
                 })
                 .take(20)
                 .map(|d| {
-                    let mut line =
-                        format!("  {}:{}  {}", d.start.row + 1, d.start.col + 1, full_message(d));
+                    let mut line = format!(
+                        "  {}:{}  {}",
+                        d.start.row + 1,
+                        d.start.col + 1,
+                        full_message(d)
+                    );
                     // Unsaved: what cargo check says is about the saved file.
                     if unsaved && on_save(d) {
                         line.truncate(line.len() - 1);
@@ -845,7 +867,12 @@ fn full_message(d: &super::diagnostics::Diagnostic) -> String {
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.ends_with("on by default"))
         .collect();
-    let mut message = lines.iter().take(2).copied().collect::<Vec<_>>().join(" / ");
+    let mut message = lines
+        .iter()
+        .take(2)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" / ");
     let cut = lines.len() > 2 || message.chars().count() > MOST;
     if let Some((at, _)) = message.char_indices().nth(MOST) {
         message.truncate(at);
@@ -894,11 +921,15 @@ mod tests {
             "error: mismatched types / expected `String`, found `u32` (rustc)"
         );
         assert_eq!(
-            full_message(&d("cannot multiply\nthe trait is not implemented\n`&u32` implements Mul")),
+            full_message(&d(
+                "cannot multiply\nthe trait is not implemented\n`&u32` implements Mul"
+            )),
             "error: cannot multiply / the trait is not implemented … (rustc)"
         );
         assert_eq!(
-            full_message(&d("never used\n#[warn(dead_code)] (part of #[warn(unused)]) on by default")),
+            full_message(&d(
+                "never used\n#[warn(dead_code)] (part of #[warn(unused)]) on by default"
+            )),
             "error: never used (rustc)"
         );
     }
@@ -906,7 +937,10 @@ mod tests {
     #[test]
     fn only_what_changes_is_replaced() {
         let text = " */\nfn area";
-        assert_eq!(trimmed(text, 0, text.len(), " */\n// probe\nfn area"), (4, 4, "// probe\n".into()));
+        assert_eq!(
+            trimmed(text, 0, text.len(), " */\n// probe\nfn area"),
+            (4, 4, "// probe\n".into())
+        );
         assert_eq!(trimmed("w * h", 0, 5, "w * hh"), (5, 5, "h".into()));
         assert_eq!(trimmed("é1é", 0, 5, "é2é"), (2, 3, "2".into()));
     }

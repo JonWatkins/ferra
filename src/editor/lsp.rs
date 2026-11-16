@@ -149,9 +149,9 @@ pub struct Hover {
 /// The HTML tags docs use (VS Code draws them): taken out of a hover, as
 /// a terminal can't, keeping their text. Others (`Vec<T>`) are text.
 const HTML_TAGS: &[&str] = &[
-    "a", "b", "br", "code", "del", "details", "div", "em", "font", "h1", "h2", "h3", "h4",
-    "h5", "h6", "hr", "i", "img", "kbd", "li", "ol", "p", "pre", "s", "small", "span",
-    "strong", "sub", "summary", "sup", "table", "tbody", "td", "th", "thead", "tr", "u", "ul",
+    "a", "b", "br", "code", "del", "details", "div", "em", "font", "h1", "h2", "h3", "h4", "h5",
+    "h6", "hr", "i", "img", "kbd", "li", "ol", "p", "pre", "s", "small", "span", "strong", "sub",
+    "summary", "sup", "table", "tbody", "td", "th", "thead", "tr", "u", "ul",
 ];
 
 /// `markdown` without HTML tags and with its entities (`&quot;`) made
@@ -213,7 +213,10 @@ fn decode_entities(line: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         let after = &rest[at + 1..];
-        let entity = after.find(';').filter(|&end| end <= 8).map(|end| &after[..end]);
+        let entity = after
+            .find(';')
+            .filter(|&end| end <= 8)
+            .map(|end| &after[..end]);
         let decoded = entity.and_then(|e| match e {
             "quot" => Some('"'),
             "amp" => Some('&'),
@@ -766,7 +769,10 @@ mod tests {
         let shown = super::without_html(
             "<span style=\"color: #F15D22\"><b>Finished</b></span> &quot;x&quot; &amp; Vec<T> &#39;\n```html\n<b>kept</b>\n```",
         );
-        assert_eq!(shown, "Finished \"x\" & Vec<T> '\n```html\n<b>kept</b>\n```");
+        assert_eq!(
+            shown,
+            "Finished \"x\" & Vec<T> '\n```html\n<b>kept</b>\n```"
+        );
     }
     use super::*;
 

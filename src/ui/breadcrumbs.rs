@@ -15,8 +15,8 @@ use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::Theme;
-use crate::editor::{Editor, WindowId};
 use crate::editor::outline::kind_icon;
+use crate::editor::{Editor, WindowId};
 
 /// What a crumb is, for a click.
 #[derive(Debug, Clone, PartialEq, Eq)]

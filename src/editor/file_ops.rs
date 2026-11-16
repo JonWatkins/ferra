@@ -245,7 +245,11 @@ impl Editor {
         if folder.starts_with(&from) {
             return Err("A folder can't be moved into itself".into());
         }
-        if self.explorer.as_ref().is_some_and(|e| canonical(e.root()) == from) {
+        if self
+            .explorer
+            .as_ref()
+            .is_some_and(|e| canonical(e.root()) == from)
+        {
             return Err("The project's folder can't be moved here".into());
         }
         let name = from

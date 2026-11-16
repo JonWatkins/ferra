@@ -65,7 +65,11 @@ impl App {
         if self.editor.end_mouse_hover() {
             self.hover_changed = true;
         }
-        if word.is_some() && self.hover_wait.is_some_and(|w| Some((w.word, w.peek)) == word) {
+        if word.is_some()
+            && self
+                .hover_wait
+                .is_some_and(|w| Some((w.word, w.peek)) == word)
+        {
             return;
         }
         let delay = Duration::from_millis(self.editor.options.mouse_hover_delay);
@@ -94,7 +98,11 @@ impl App {
         if Word::at(&line, wait.at) != Some(wait.word) {
             return;
         }
-        self.editor
-            .mouse_hover_at(wait.at, wait.word, (wait.screen.x, wait.screen.y), wait.peek);
+        self.editor.mouse_hover_at(
+            wait.at,
+            wait.word,
+            (wait.screen.x, wait.screen.y),
+            wait.peek,
+        );
     }
 }

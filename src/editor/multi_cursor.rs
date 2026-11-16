@@ -220,7 +220,12 @@ impl Editor {
             let seq = buffer.edit_seq();
             let bytes: Vec<(usize, Option<usize>)> = all
                 .iter()
-                .map(|c| (buffer.byte_of(c.cursor), c.anchor.map(|a| buffer.byte_of(a))))
+                .map(|c| {
+                    (
+                        buffer.byte_of(c.cursor),
+                        c.anchor.map(|a| buffer.byte_of(a)),
+                    )
+                })
                 .collect();
             self.load(all[i]);
             self.cursors.paste_piece = paste_each
@@ -326,10 +331,7 @@ impl Editor {
         };
         let rest = all
             .into_iter()
-            .map(|c| ExtraCursor {
-                anchor: None,
-                ..c
-            })
+            .map(|c| ExtraCursor { anchor: None, ..c })
             .collect();
         self.set_cursors(new, rest);
         self.cursors.vertical_col = Some(wanted);
@@ -510,7 +512,10 @@ mod tests {
     fn next_match_and_all_matches() {
         let mut e = editor("cat dog cat cat");
         e.add_next_match().unwrap();
-        assert_eq!(e.primary().range(), Some((Position::new(0, 0), Position::new(0, 3))));
+        assert_eq!(
+            e.primary().range(),
+            Some((Position::new(0, 0), Position::new(0, 3)))
+        );
         e.add_next_match().unwrap();
         assert_eq!(cursors(&e), [(0, 3), (0, 11)]);
         e.select_all_matches().unwrap();

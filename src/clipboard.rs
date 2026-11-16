@@ -69,7 +69,9 @@ fn png_of(width: usize, height: usize, rgba: &[u8]) -> Result<Vec<u8>, String> {
     writer
         .write_image_data(rgba)
         .map_err(|e| format!("Clipboard image: {e}"))?;
-    writer.finish().map_err(|e| format!("Clipboard image: {e}"))?;
+    writer
+        .finish()
+        .map_err(|e| format!("Clipboard image: {e}"))?;
     Ok(out)
 }
 

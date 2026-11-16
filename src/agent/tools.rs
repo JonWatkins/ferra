@@ -227,7 +227,9 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
             None => Called::Done(Err("Which file? (path)".into())),
         },
         "read_buffer" => match text("path") {
-            Some(path) => Called::Done(editor.agent_read_buffer(path, number("line"), number("limit"))),
+            Some(path) => {
+                Called::Done(editor.agent_read_buffer(path, number("line"), number("limit")))
+            }
             None => Called::Done(Err("Which file? (path)".into())),
         },
         "edit_buffer" => {
@@ -252,7 +254,7 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
                     Err(error) => Called::Done(Err(error)),
                 },
                 None => Called::Done(Err(
-                    "Give old_text and new_text (or edits: a list of them)".into(),
+                    "Give old_text and new_text (or edits: a list of them)".into()
                 )),
             }
         }
@@ -276,10 +278,12 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
             None => Called::Done(Err("Which file? (path)".into())),
         },
         "lsp_apply_code_action" => match (text("path"), args["list"].as_u64(), number("number")) {
-            (Some(path), Some(list), Some(n)) => match editor.agent_apply_code_action(call, path, list, n) {
-                Ok(()) => Called::Waiting,
-                Err(error) => Called::Done(Err(error)),
-            },
+            (Some(path), Some(list), Some(n)) => {
+                match editor.agent_apply_code_action(call, path, list, n) {
+                    Ok(()) => Called::Waiting,
+                    Err(error) => Called::Done(Err(error)),
+                }
+            }
             _ => Called::Done(Err("Give path, list and number".into())),
         },
         "lsp_definition" | "lsp_references" | "lsp_hover" | "lsp_code_actions" => {
@@ -300,7 +304,9 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
         "lsp_symbols" => match (text("path"), text("query")) {
             (Some(path), _) => ask(editor, LspFeature::DocumentSymbols, Some(path), None),
             (None, Some(query)) => ask(editor, LspFeature::WorkspaceSymbols, None, Some(query)),
-            (None, None) => Called::Done(Err("Give a file (path) or a name to find (query)".into())),
+            (None, None) => {
+                Called::Done(Err("Give a file (path) or a name to find (query)".into()))
+            }
         },
         other => Called::Done(Err(format!("No tool named {other}"))),
     }
