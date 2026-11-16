@@ -373,7 +373,9 @@ impl Lsp {
                     Answer::Failed(error) => {
                         editor.set_message(Message::error(format!("{}: {error}", client.name)));
                     }
-                    Answer::Feature(request, result) if request.feature == LspFeature::Format => {
+                    Answer::Feature(request, result)
+                        if request.feature == LspFeature::Format && request.agent.is_none() =>
+                    {
                         self.formatted = Some(result);
                     }
                     Answer::Feature(request, result) => {

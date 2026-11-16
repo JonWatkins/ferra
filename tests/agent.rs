@@ -516,4 +516,30 @@ fn the_editors_tools_are_served_to_the_agent() {
     assert_eq!(app.editor().document.cursor().row, 1);
     let wrong = ask(&mut app, 6, "tools/call", call("nope", json!({})));
     assert_eq!(wrong["isError"], true);
+
+    // Reading and editing through the editor: unsaved changes are seen;
+    // an edit is made in the buffer, undoable, saved when it was clean.
+    let path_text = path.to_str().unwrap();
+    keys(&mut app, &format!(":e {path_text}<CR>ggAX<Esc>"));
+    let read = ask(&mut app, 7, "tools/call", call("read_buffer", json!({"path": path_text})));
+    let read = read["content"][0]["text"].as_str().unwrap().to_string();
+    assert!(read.contains("unsaved changes"), "{read}");
+    assert!(read.contains("     1\toneX\n     2\ttwo"), "{read}");
+    let edit = |old: &str, new: &str| call("edit_buffer", json!({"path": other, "old_text": old, "new_text": new}));
+    let twice = ask(&mut app, 8, "tools/call", call("edit_buffer", json!({"path": path_text, "old_text": "o", "new_text": "0"})));
+    assert!(twice["content"][0]["text"].as_str().unwrap().contains("2 times"), "{twice}");
+    let edited = ask(&mut app, 9, "tools/call", edit("y\n", "why\n"));
+    let edited = edited["content"][0]["text"].as_str().unwrap().to_string();
+    assert!(edited.ends_with("b.txt: 1 replacement"), "saved, nothing else said: {edited}");
+    assert_eq!(fs::read_to_string(&other).unwrap(), "x\nwhy\nz\n");
+    let missing = ask(&mut app, 10, "tools/call", edit("nowhere", "x"));
+    assert_eq!(missing["isError"], true);
+    // a.txt, with the user's change unsaved: edited, but left unsaved.
+    let mine = ask(&mut app, 11, "tools/call", call("edit_buffer", json!({"path": path_text, "old_text": "two", "new_text": "2"})));
+    let mine = mine["content"][0]["text"].as_str().unwrap().to_string();
+    assert!(mine.contains("Not saved"), "{mine}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "one\ntwo\n");
+    assert_eq!(common::text(&app), "oneX\n2");
+    keys(&mut app, "u");
+    assert_eq!(common::text(&app), "oneX\ntwo", "the agent's edit undone alone");
 }

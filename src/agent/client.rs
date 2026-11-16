@@ -324,6 +324,69 @@ fn modes_event(modes: &Value) -> AgentEvent {
     AgentEvent::Modes(list, modes["currentModeId"].as_str().map(str::to_string))
 }
 
+/// A tool call's title as shown: an MCP tool's (`mcp__ferra__open_file`)
+/// said in words from what it was given ("Open src/main.rs:12"); others
+/// as the agent put them.
+pub fn tool_title(title: &str, input: &Value) -> String {
+    let Some(rest) = title.strip_prefix("mcp__") else {
+        return title.to_string();
+    };
+    let Some((server, tool)) = rest.split_once("__") else {
+        return title.to_string();
+    };
+    let text = |key: &str| input[key].as_str().filter(|s| !s.is_empty());
+    let path = text("path").map(crate::editor::agent::short_path);
+    let line = input["line"].as_u64();
+    let place = match (&path, line) {
+        (Some(path), Some(line)) => format!("{path}:{line}"),
+        (Some(path), None) => path.clone(),
+        (None, _) => String::new(),
+    };
+    let about = |what: &str| match text("symbol") {
+        Some(symbol) => format!("{what} {symbol}"),
+        None if !place.is_empty() => format!("{what} {place}"),
+        None => what.to_string(),
+    };
+    if server != "ferra" {
+        return format!("{} ({server})", tool.replace('_', " "));
+    }
+    match tool {
+        "editor_state" => "Look at the editor".into(),
+        "get_diagnostics" => match &path {
+            Some(path) => format!("Diagnostics in {path}"),
+            None => "Diagnostics".into(),
+        },
+        "read_buffer" => format!("Read {place}"),
+        "edit_buffer" => format!("Edit {}", path.unwrap_or_default()),
+        "lsp_definition" => match text("kind") {
+            Some("type") => about("Type of"),
+            Some("implementation") => about("Implementations of"),
+            Some("declaration") => about("Declaration of"),
+            _ => about("Definition of"),
+        },
+        "lsp_references" => about("References to"),
+        "lsp_hover" => about("Describe"),
+        "lsp_symbols" => match (&path, text("query")) {
+            (Some(path), _) => format!("Symbols in {path}"),
+            (None, Some(query)) => format!("Find symbol {query}"),
+            (None, None) => "Symbols".into(),
+        },
+        "lsp_rename" => match (text("symbol"), text("new_name")) {
+            (Some(old), Some(new)) => format!("Rename {old} to {new}"),
+            (_, Some(new)) => format!("Rename to {new}"),
+            _ => "Rename".into(),
+        },
+        "lsp_code_actions" => format!("Code actions at {place}"),
+        "lsp_apply_code_action" => match input["number"].as_u64() {
+            Some(n) => format!("Make code action {n}"),
+            None => "Make a code action".into(),
+        },
+        "lsp_format" => format!("Format {}", path.unwrap_or_default()),
+        "open_file" => format!("Open {place}"),
+        other => other.replace('_', " "),
+    }
+}
+
 fn tool_status(value: &Value) -> Option<ToolStatus> {
     Some(match value.as_str()? {
         "pending" => ToolStatus::Pending,
@@ -386,7 +449,7 @@ pub fn update_event(update: &Value) -> Option<AgentEvent> {
                 .collect();
             AgentEvent::ToolStarted(ToolCall {
                 id: update["toolCallId"].as_str()?.to_string(),
-                title: update["title"].as_str().unwrap_or("Tool").to_string(),
+                title: tool_title(update["title"].as_str().unwrap_or("Tool"), &update["rawInput"]),
                 kind: update["kind"].as_str().unwrap_or("other").to_string(),
                 status: tool_status(&update["status"]).unwrap_or_default(),
                 text,
@@ -399,7 +462,9 @@ pub fn update_event(update: &Value) -> Option<AgentEvent> {
             let (text, diffs) = tool_content(&update["content"]);
             AgentEvent::ToolUpdated {
                 id: update["toolCallId"].as_str()?.to_string(),
-                title: update["title"].as_str().map(str::to_string),
+                title: update["title"]
+                    .as_str()
+                    .map(|t| tool_title(t, &update["rawInput"])),
                 status: tool_status(&update["status"]),
                 text: has_content.then_some(text),
                 diffs: has_content.then_some(diffs),
@@ -491,5 +556,16 @@ mod tests {
         assert_eq!(call.diffs[0].new, "y");
         assert_eq!(call.locations, [("/p/a.rs".to_string(), Some(3))]);
         assert_eq!(update_event(&json!({"sessionUpdate": "usage_update"})), None);
+    }
+
+    #[test]
+    fn mcp_tools_are_named_in_words() {
+        let input = json!({"path": "/no/such/main.rs", "line": 12, "symbol": "area"});
+        assert_eq!(tool_title("mcp__ferra__open_file", &input), "Open /no/such/main.rs:12");
+        assert_eq!(tool_title("mcp__ferra__lsp_references", &input), "References to area");
+        let kind = json!({"symbol": "Shape", "kind": "implementation"});
+        assert_eq!(tool_title("mcp__ferra__lsp_definition", &kind), "Implementations of Shape");
+        assert_eq!(tool_title("mcp__github__list_issues", &json!({})), "list issues (github)");
+        assert_eq!(tool_title("Read main.rs", &json!({})), "Read main.rs");
     }
 }

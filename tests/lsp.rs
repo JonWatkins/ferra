@@ -1950,3 +1950,60 @@ fn the_agent_asks_servers_and_gets_text() {
     );
     assert!(missing.unwrap_err().contains("isn't on line 1"));
 }
+
+/// The answer to the agent's call `call`, once it comes.
+fn agent_answer(app: &mut App, call: u64) -> Result<String, String> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        app.update_lsp();
+        if let Some((from, answer)) = app.editor_mut().take_agent_lsp_answers().pop() {
+            assert_eq!(from, call);
+            return answer;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("no answer");
+}
+
+#[test]
+fn the_agent_renames_formats_and_makes_code_actions() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    ready(&mut app);
+    until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
+    let path = dir.path().join("main.rs");
+    let file = path.to_str().unwrap();
+
+    // The fixes for the problem on line 2, then the first made: saved, as
+    // the file had no unsaved changes.
+    app.editor_mut()
+        .agent_ask_lsp(1, LspFeature::CodeAction, Some(file), (Some(2), Some("bad"), None), None)
+        .unwrap();
+    let listed = agent_answer(&mut app, 1).unwrap();
+    assert!(listed.starts_with("1. Replace with good (quickfix)"), "{listed}");
+    let list: u64 = listed.split("list ").nth(1).unwrap().split(',').next().unwrap().parse().unwrap();
+    app.editor_mut().agent_apply_code_action(2, file, list, 1).unwrap();
+    let made = agent_answer(&mut app, 2).unwrap();
+    assert_eq!(made, "Made Replace with good");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "fn bad() {}\nlet  x =  good;\n");
+
+    app.editor_mut()
+        .agent_ask_lsp(3, LspFeature::Format, Some(file), (None, None, None), None)
+        .unwrap();
+    assert_eq!(agent_answer(&mut app, 3).unwrap(), "Formatted (1 changes)");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "fn bad() {}\nlet x = good;\n");
+
+    // With unsaved changes of the user's, the rename's left unsaved.
+    keys(&mut app, "ggA // mine<Esc>");
+    app.editor_mut()
+        .agent_ask_lsp(4, LspFeature::Rename, Some(file), (Some(1), Some("bad"), None), Some("worse"))
+        .unwrap();
+    let renamed = agent_answer(&mut app, 4).unwrap();
+    assert!(renamed.starts_with("Renamed to worse: 1 change in 1 file"), "{renamed}");
+    assert!(renamed.contains("Not saved"), "{renamed}");
+    assert_eq!(text(&app), "fn worse() {} // mine\nlet x = good;");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "fn bad() {}\nlet x = good;\n");
+    // Undone as the user's own changes are.
+    keys(&mut app, "u");
+    assert_eq!(text(&app), "fn bad() {} // mine\nlet x = good;");
+}

@@ -4,14 +4,17 @@
 //! become `LspRequest`s whose answers come back here, as text, instead of
 //! being shown). The tools themselves are served in `agent/tools.rs`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::Editor;
+use super::{DocumentId, Editor};
 use super::lsp::{LspFeature, LspRequest};
 use crate::core::{Position, Range};
 
 /// At most this much of a selection goes with a prompt.
 const SELECTION_CHARS: usize = 4000;
+/// Lines `read_buffer` gives at most, unless asked for more.
+const READ_LINES: usize = 2000;
 
 impl Editor {
     /// A short note of what's open, for a prompt (`agent-context`): the
@@ -171,6 +174,191 @@ impl Editor {
         }
         self.goto_location(&location)?;
         Ok(format!("Opened {path} for the user"))
+    }
+
+    /// The `read_buffer` tool: a file's text as the editor has it (unsaved
+    /// changes and all), its lines numbered, from `line` (from 1) for
+    /// `limit` lines.
+    pub fn agent_read_buffer(
+        &self,
+        path: &str,
+        line: Option<usize>,
+        limit: Option<usize>,
+    ) -> Result<String, String> {
+        let full = absolute(Path::new(path));
+        let (text, unsaved) = match self
+            .find_open_path(&full)
+            .and_then(|id| self.document_by_id(id))
+        {
+            Some(document) => (document.buffer().text(), document.is_modified()),
+            None => (
+                std::fs::read_to_string(&full).map_err(|e| format!("{path}: {e}"))?,
+                false,
+            ),
+        };
+        let first = line.unwrap_or(1).max(1) - 1;
+        let limit = limit.unwrap_or(READ_LINES);
+        let lines: Vec<&str> = text.lines().collect();
+        if first >= lines.len().max(1) {
+            return Err(format!("{path} has {} lines", lines.len()));
+        }
+        let mut out = String::new();
+        if unsaved {
+            out.push_str("(Open in the editor with unsaved changes: this is the editor's text.)\n");
+        }
+        for (i, line) in lines.iter().enumerate().skip(first).take(limit) {
+            out.push_str(&format!("{:>6}\t{line}\n", i + 1));
+        }
+        let shown = first + limit;
+        if shown < lines.len() {
+            out.push_str(&format!(
+                "… {} more lines (read from line {})",
+                lines.len() - shown,
+                shown + 1
+            ));
+        }
+        Ok(out)
+    }
+
+    /// The `edit_buffer` tool: `old` replaced by `new` in the file's buffer
+    /// (opened if it isn't), as one undo step, shown as it happens. `old`
+    /// must be there once (or `all` replaces every one). The file's saved
+    /// if it had no unsaved changes, so the disk keeps up.
+    pub fn agent_edit_buffer(
+        &mut self,
+        path: &str,
+        old: &str,
+        new: &str,
+        all: bool,
+    ) -> Result<String, String> {
+        if old.is_empty() {
+            return Err("old_text is empty: give the text to replace (for a new file, use your own Write tool)".into());
+        }
+        if old == new {
+            return Err("old_text and new_text are the same".into());
+        }
+        let full = absolute(Path::new(path));
+        if !full.is_file() {
+            return Err(format!("{path} isn't a file (for a new one, use your own Write tool)"));
+        }
+        let id = self.buffer_for_path(&full)?;
+        let document = self.document_by_id(id).ok_or("No such buffer")?;
+        let buffer = document.buffer();
+        let text = buffer.text();
+        let found: Vec<usize> = text.match_indices(old).map(|(at, _)| at).collect();
+        match found.len() {
+            0 => {
+                return Err(format!(
+                    "old_text isn't in {path} (as the editor has it: read_buffer shows it, \
+                     whitespace and all)"
+                ));
+            }
+            n if n > 1 && !all => {
+                return Err(format!(
+                    "old_text is in {path} {n} times: give more of the text around it, or replace_all"
+                ));
+            }
+            _ => {}
+        }
+        let edits = found
+            .iter()
+            .map(|&at| {
+                (
+                    buffer.position_at_byte(at),
+                    buffer.position_at_byte(at + old.len()),
+                    new.to_string(),
+                )
+            })
+            .collect();
+        let before = self.agent_unsaved();
+        self.edit_document(id, edits);
+        let saved = self.agent_save_changed(&before);
+        let count = found.len();
+        let what = if count == 1 {
+            "1 replacement".to_string()
+        } else {
+            format!("{count} replacements")
+        };
+        Ok(format!("Edited {}: {what}{saved}", shown(&full)))
+    }
+
+    /// Each buffer's text (its edit count) and whether it had unsaved
+    /// changes, before the agent changes any.
+    pub fn agent_unsaved(&self) -> HashMap<DocumentId, (u64, bool)> {
+        std::iter::once(&self.document)
+            .chain(&self.background)
+            .map(|d| (d.id(), (d.buffer().edit_seq(), d.is_modified())))
+            .collect()
+    }
+
+    /// After the agent's changes: the files they changed that had no
+    /// unsaved changes before are saved (so what the agent runs sees
+    /// them); the others are left to the user. Says which, for the agent.
+    pub fn agent_save_changed(&mut self, before: &HashMap<DocumentId, (u64, bool)>) -> String {
+        // Those the agent changed (opened for it, or edited since).
+        let changed: Vec<(DocumentId, bool)> = std::iter::once(&self.document)
+            .chain(&self.background)
+            .filter(|d| d.is_modified() && d.path().is_some())
+            .filter_map(|d| match before.get(&d.id()) {
+                Some(&(seq, _)) if seq == d.buffer().edit_seq() => None,
+                Some(&(_, unsaved)) => Some((d.id(), unsaved)),
+                None => Some((d.id(), false)),
+            })
+            .collect();
+        let mut left = Vec::new();
+        let mut failed = Vec::new();
+        for (id, unsaved) in changed {
+            let Some(document) = self.document_by_id_mut(id) else {
+                continue;
+            };
+            let name = document.path().map(shown).unwrap_or_default();
+            if unsaved {
+                left.push(name);
+            } else if let Err(error) = document.save(None, false) {
+                failed.push(format!("{name} ({error})"));
+            }
+        }
+        let mut note = String::new();
+        if !left.is_empty() {
+            note.push_str(&format!(
+                ". Not saved, as the user has unsaved changes there too: {}",
+                left.join(", ")
+            ));
+        }
+        if !failed.is_empty() {
+            note.push_str(&format!(". Couldn't save: {}", failed.join(", ")));
+        }
+        note
+    }
+
+    /// The `lsp_apply_code_action` tool: action `number` (from 1) of the
+    /// list `list` that `lsp_code_actions` gave, for `path`.
+    pub fn agent_apply_code_action(
+        &mut self,
+        call: u64,
+        path: &str,
+        list: u64,
+        number: usize,
+    ) -> Result<(), String> {
+        let full = absolute(Path::new(path));
+        let id = self.buffer_for_path(&full)?;
+        let buffer = self.document_by_id(id).ok_or("No such buffer")?.buffer();
+        let position = Position::new(0, 0);
+        self.lsp_requests.push(LspRequest {
+            feature: LspFeature::ApplyCodeAction,
+            document: id,
+            position,
+            buffer_id: buffer.id(),
+            edit_seq: buffer.edit_seq(),
+            manual: true,
+            trigger: None,
+            word_start: position,
+            item: Some((list, number.saturating_sub(1))),
+            text: None,
+            end: position,
+            agent: Some(call),
+        });
+        Ok(())
     }
 
     /// A language server question for tool call `call`: `feature` at

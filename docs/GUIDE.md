@@ -692,11 +692,22 @@ the box to pick a file to mention: its path goes in, and the file goes with
 the message.
 
 ferra also gives the agent tools of its own, as Claude Code's IDE
-extensions do: `editor_state` (what's open and selected), `get_diagnostics`
-(the language servers' errors and warnings), `lsp_definition`,
-`lsp_references`, `lsp_hover` and `lsp_symbols` (the language servers'
-answers about a symbol, so it needn't search or read files to find one),
-and `open_file` (to show you a file). They're served while the agent runs,
+extensions do:
+
+| Tool | What it does |
+|------|--------------|
+| `editor_state` | What's open and selected |
+| `read_buffer` | A file as the editor has it, unsaved changes and all |
+| `edit_buffer` | Replaces text in a file's buffer: you see it as it happens, `u` undoes it, and it's saved unless you had unsaved changes there |
+| `get_diagnostics` | The language servers' errors and warnings |
+| `lsp_definition` | Where a symbol's defined (or its type, implementations, declaration) |
+| `lsp_references`, `lsp_hover`, `lsp_symbols` | Its uses, its type and docs, a file's or the project's symbols |
+| `lsp_rename`, `lsp_code_actions`, `lsp_apply_code_action`, `lsp_format` | Renaming everywhere, fixes and refactors, formatting, by the language server |
+| `open_file` | Shows you a file |
+
+The agent's told to prefer them to its own Read and Edit tools and to
+searching. The chat names them in words ("References to area",
+"Edit src/main.rs"). They're served while the agent runs,
 on a socket only you can use, through `ferra --mcp-bridge`, which the agent
 starts; the agent asks your permission to use them as for its own tools.
 

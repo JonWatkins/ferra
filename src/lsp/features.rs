@@ -219,10 +219,23 @@ impl Lsp {
             if request.feature == LspFeature::ApplyCodeAction {
                 let action = request.item.and_then(|i| self.actions.item(i)).cloned();
                 let Some(action) = action else {
-                    editor.set_message(Message::info("That list of code actions is too old"));
+                    let text = "That list of code actions is too old (or has no such number)";
+                    match request.agent {
+                        Some(call) => editor.agent_lsp_answer(call, Err(text.into())),
+                        None => editor.set_message(Message::info(text)),
+                    }
                     continue;
                 };
+                let before = editor.agent_unsaved();
                 let made = make_code_action(editor, client, &action);
+                if let Some(call) = request.agent
+                    && made
+                {
+                    let title = action["title"].as_str().unwrap_or("the action");
+                    let saved = editor.agent_save_changed(&before);
+                    editor.agent_lsp_answer(call, Ok(format!("Made {title}{saved}")));
+                    continue;
+                }
                 if !made {
                     if client.resolves_code_actions() || action.get("data").is_some() {
                         let request = LspRequest {
@@ -230,10 +243,19 @@ impl Lsp {
                             ..request
                         };
                         client.resolve_code_action(request, action);
+                    } else if let Some(call) = request.agent {
+                        editor.agent_lsp_answer(call, Err("That code action does nothing".into()));
                     } else {
                         editor.set_message(Message::info("That code action does nothing"));
                     }
                 }
+                continue;
+            }
+            // The agent's formatting: answered in `answer` (the app's own
+            // waits for its answer when saving).
+            if request.feature == LspFeature::Format {
+                let options = &editor.options;
+                client.request_format(request, options.tab_width, options.expand_tab);
                 continue;
             }
             if request.feature == LspFeature::CodeAction {
@@ -298,7 +320,8 @@ pub(super) fn answer(
     // The coding agent's: the answer as text, back to it.
     if let Some(call) = request.agent {
         let text = match result {
-            Ok(result) => Ok(agent_answer(editor, &request, &result, client.encoding)),
+            Ok(result) => agent_change(editor, client, &request, &result, stashes.actions)
+                .unwrap_or_else(|| Ok(agent_answer(editor, &request, &result, client.encoding))),
             Err(error) => Err(format!("{}: {}", client.name, error.message)),
         };
         editor.agent_lsp_answer(call, text);
@@ -488,6 +511,92 @@ pub(super) fn answer(
     if let Err(error) = editor.show_locations(request.feature, locations) {
         editor.set_message(Message::info(error));
     }
+}
+
+/// A server's answer that changes things, for the coding agent: a rename,
+/// formatting, a code action (resolved), made; the code actions there are,
+/// kept to make one. `None` for an answer that's only told.
+fn agent_change(
+    editor: &mut Editor,
+    client: &mut Client,
+    request: &LspRequest,
+    result: &Value,
+    actions: &mut Stash,
+) -> Option<Result<String, String>> {
+    let before = editor.agent_unsaved();
+    let done = match request.feature {
+        LspFeature::Rename => {
+            let name = request.text.clone().unwrap_or_default();
+            match apply_workspace_edit(editor, result, client.encoding) {
+                Ok(Applied { changes: 0, .. }) => return Some(Err("Nothing to rename there".into())),
+                Ok(applied) => {
+                    let mut done = applied;
+                    // Saved below, not left for :wa.
+                    done.others = 0;
+                    format!("Renamed to {name}: {}", done.describe())
+                }
+                Err(error) => return Some(Err(error)),
+            }
+        }
+        LspFeature::Format => {
+            let document = editor.document_by_id(request.document)?;
+            let buffer = document.buffer();
+            if buffer.edit_seq() != request.edit_seq {
+                return Some(Err("The text changed while formatting: try again".into()));
+            }
+            let edits: Vec<_> = result
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|e| {
+                    let start = convert::from_lsp(buffer, &e["range"]["start"], client.encoding);
+                    let end = convert::from_lsp(buffer, &e["range"]["end"], client.encoding);
+                    (start, end, e["newText"].as_str().unwrap_or("").to_string())
+                })
+                .collect();
+            if edits.is_empty() {
+                return Some(Ok("Already formatted".into()));
+            }
+            let count = edits.len();
+            editor.edit_document(request.document, edits);
+            format!("Formatted ({count} changes)")
+        }
+        LspFeature::ResolveCodeAction => {
+            make_code_action(editor, client, result);
+            let title = result["title"].as_str().unwrap_or("the action");
+            format!("Made {title}")
+        }
+        LspFeature::CodeAction => {
+            let list: Vec<Value> = result
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|a| a.get("disabled").is_none())
+                .cloned()
+                .collect();
+            if list.is_empty() {
+                return Some(Ok("No code actions there".into()));
+            }
+            let lines: Vec<String> = list
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    let title = a["title"].as_str().unwrap_or("(untitled)");
+                    match a["kind"].as_str().filter(|k| !k.is_empty()) {
+                        Some(kind) => format!("{}. {title} ({kind})", i + 1),
+                        None => format!("{}. {title}", i + 1),
+                    }
+                })
+                .collect();
+            let kept = actions.keep(list);
+            return Some(Ok(format!(
+                "{}\nTo make one: lsp_apply_code_action with list {kept}, its number and this path.",
+                lines.join("\n")
+            )));
+        }
+        _ => return None,
+    };
+    Some(Ok(format!("{done}{}", editor.agent_save_changed(&before))))
 }
 
 /// A server's answer for the coding agent, as text: places as
