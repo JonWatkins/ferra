@@ -46,6 +46,22 @@ pub fn set_mouse_capture(on: bool) -> io::Result<()> {
     }
 }
 
+/// Reads and drops the input the terminal has sent (mouse reports still
+/// on their way after the mouse was turned off), until none comes for a
+/// moment, so it isn't echoed into the shell after ferra quits. Must be in
+/// raw mode.
+pub fn drain_input() {
+    use crossterm::event::{poll, read};
+    use std::time::{Duration, Instant};
+    // Long enough for reports in flight; never long, whatever comes.
+    let give_up = Instant::now() + Duration::from_millis(250);
+    while Instant::now() < give_up && poll(Duration::from_millis(30)).unwrap_or(false) {
+        if read().is_err() {
+            break;
+        }
+    }
+}
+
 /// Sets the mouse pointer's shape (`"pointer"`, `"text"`, `"ew-resize"`...,
 /// CSS names) with OSC 22. kitty, Ghostty, WezTerm and foot take CSS names;
 /// iTerm2 only takes X11 ones (and only from 3.7 while the mouse is

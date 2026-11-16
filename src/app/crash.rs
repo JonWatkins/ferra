@@ -80,6 +80,7 @@ fn restore_terminal() {
     let _ = super::terminal::disable_keyboard_enhancement();
     let _ = super::terminal::set_pointer_shape("default");
     let _ = super::terminal::restore_cursor_shape();
+    super::terminal::drain_input();
 }
 
 /// Runs `f`, catching a panic in it: `Err` with the panic's message (the

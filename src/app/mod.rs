@@ -1056,6 +1056,13 @@ impl App {
             redraw |= std::mem::take(&mut self.hover_changed);
             deadline = self.key_deadline();
         }
+        // No more reports from the terminal first: the mouse's would come
+        // in while the rest is done, and be echoed into the shell once ferra's
+        // gone (`0;9;18m` after the prompt).
+        if mouse {
+            terminal::set_mouse_capture(false)?;
+        }
+        terminal::disable_focus_reporting()?;
         // What's open, for the next start here.
         if let Err(error) = self.save_session() {
             crate::log::error(&format!("saving the session: {error}"));
@@ -1064,15 +1071,14 @@ impl App {
         if enhanced_keys {
             terminal::disable_keyboard_enhancement()?;
         }
-        if mouse {
-            terminal::set_mouse_capture(false)?;
-        }
         if pointer != "default" {
             terminal::set_pointer_shape("default")?;
         }
-        terminal::disable_focus_reporting()?;
         terminal::disable_bracketed_paste()?;
-        terminal::restore_cursor_shape()
+        terminal::restore_cursor_shape()?;
+        // What was already on its way, read and dropped.
+        terminal::drain_input();
+        Ok(())
     }
 
     /// Handles `event`, reporting a panic on the message line rather than
