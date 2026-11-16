@@ -141,6 +141,14 @@ impl Registers {
         self.mode = mode;
     }
 
+    /// An image on the system clipboard, as PNG (for the agent's box).
+    pub fn clipboard_image(&mut self) -> Result<Option<Vec<u8>>, String> {
+        match &mut self.clipboard {
+            Some(clipboard) => clipboard.image(),
+            None => Ok(None),
+        }
+    }
+
     /// The last clipboard write that failed, if any (taken once).
     pub fn take_clipboard_error(&mut self) -> Option<String> {
         self.clipboard_error.take()

@@ -108,6 +108,7 @@ impl App {
             return;
         }
         let at = Position::new(event.column, event.row);
+        self.pointer_at = Some(at);
         match event.kind {
             MouseEventKind::Moved => {
                 self.pointer = self.pointer_for(at);

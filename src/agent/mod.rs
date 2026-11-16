@@ -441,10 +441,19 @@ impl Agents {
                 text,
                 context,
                 files,
+                images,
             } => {
                 self.start(editor);
                 if let Some(client) = &mut self.client {
-                    client.prompt(prompt_blocks(&text, context.as_deref(), &files));
+                    let mut blocks = prompt_blocks(&text, context.as_deref(), &files);
+                    for (mime, data) in images {
+                        blocks.push(json!({
+                            "type": "image",
+                            "mimeType": mime,
+                            "data": crate::clipboard::base64(&data),
+                        }));
+                    }
+                    client.prompt(blocks);
                 }
             }
             AgentRequest::Cancel => {

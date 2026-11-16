@@ -276,7 +276,10 @@ impl AgentClient {
                     json!({ "cwd": cwd, "mcpServers": self.mcp_servers.clone() }),
                     Pending::NewSession,
                 );
-                vec![AgentEvent::Started(started)]
+                let images = result["agentCapabilities"]["promptCapabilities"]["image"]
+                    .as_bool()
+                    .unwrap_or(false);
+                vec![AgentEvent::Started(started), AgentEvent::TakesImages(images)]
             }
             Pending::NewSession => {
                 self.session = result["sessionId"].as_str().map(str::to_string);

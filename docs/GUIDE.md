@@ -691,6 +691,14 @@ and the other files open (`agent-context = false` stops this). Type `@` in
 the box to pick a file to mention: its path goes in, and the file goes with
 the message.
 
+Images go with a message too, for agents that take them (Claude Code
+does). `<C-v>` in the box pastes an image from the clipboard (a screenshot
+copied with ⌃⇧⌘4, say); drop an image file on the sidebar (the terminal
+pastes its path) and it goes in the same way. Either shows in the box as
+`[Image #1]`: take that out and the image isn't sent. Another file dropped
+on the sidebar is mentioned (`@path`). Image files dropped anywhere go to
+the agent's box while its sidebar is shown. An image can be 5 MB at most.
+
 ferra also gives the agent tools of its own, as Claude Code's IDE
 extensions do:
 

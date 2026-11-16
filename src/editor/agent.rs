@@ -119,6 +119,8 @@ pub enum AgentRequest {
         text: String,
         context: Option<String>,
         files: Vec<std::path::PathBuf>,
+        /// Images put in the box: their type (`image/png`) and data.
+        images: Vec<(String, Vec<u8>)>,
     },
     /// Stop the turn it's working on.
     Cancel,
@@ -156,6 +158,8 @@ pub enum AgentEvent {
     Mode(String),
     /// Its slash commands: name and description.
     Commands(Vec<(String, String)>),
+    /// Whether it takes images in a message.
+    TakesImages(bool),
     Permission(PermissionAsk),
     /// The turn ended: why (`end_turn`, `cancelled`, `refusal`...).
     TurnEnded(String),
@@ -173,6 +177,22 @@ pub struct ChatLine {
     pub fill: Option<String>,
     /// A click on it opens or closes this tool call.
     pub tool: Option<String>,
+}
+
+/// An image put in the agent's box (pasted or dropped).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Image {
+    /// Its number, shown in the box as `[Image #n]`.
+    pub number: usize,
+    /// `image/png`, `image/jpeg`...
+    pub mime: String,
+    pub data: Vec<u8>,
+}
+
+impl Image {
+    pub fn label(&self) -> String {
+        format!("[Image #{}]", self.number)
+    }
 }
 
 /// The chat with the agent.
@@ -205,6 +225,10 @@ pub struct AgentChat {
     pub(super) mentioning: bool,
     /// Buffers opened for the agent's tools, closed when its turn ends.
     pub(super) opened: HashSet<super::DocumentId>,
+    /// Whether the agent takes images (it says as it starts).
+    pub takes_images: Option<bool>,
+    /// Images put in the box, each shown there as `[Image #n]`.
+    pub images: Vec<Image>,
     requests: Vec<AgentRequest>,
 }
 
@@ -328,10 +352,17 @@ impl Editor {
         self.agent_start();
         self.agent.open = true;
         self.agent.entries.push(ChatEntry::User(text.to_string()));
+        // The images whose `[Image #n]` is still in what's sent.
+        let images = std::mem::take(&mut self.agent.images)
+            .into_iter()
+            .filter(|image| text.contains(&image.label()))
+            .map(|image| (image.mime, image.data))
+            .collect();
         let request = AgentRequest::Prompt {
             text: text.to_string(),
             context: self.agent_context(),
             files: mentioned_files(text),
+            images,
         };
         self.agent.requests.push(request);
         if self.agent.status == AgentStatus::Ready {
@@ -438,10 +469,79 @@ impl Editor {
         self.set_mode(Mode::Agent);
     }
 
-    /// Text pasted into the box, newlines and all.
+    /// Text pasted into the box, newlines and all. Files dropped on the
+    /// terminal (which pastes their paths) go in as images, if they are
+    /// some, or mentions (`@path`).
     pub fn agent_paste(&mut self, text: &str) {
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        if let Some(paths) = dropped_files(&text) {
+            for path in paths {
+                if let Some(mime) = image_type(&path) {
+                    match std::fs::read(&path) {
+                        Ok(data) => {
+                            if let Err(error) = self.agent_attach(mime, data) {
+                                self.set_message(Message::error(error));
+                            }
+                        }
+                        Err(e) => self.set_message(Message::error(format!(
+                            "{}: {e}",
+                            path.display()
+                        ))),
+                    }
+                } else {
+                    let shown = short_path(&path.to_string_lossy());
+                    format!("@{shown} ")
+                        .chars()
+                        .for_each(|c| self.agent.input.push(c));
+                }
+            }
+            return;
+        }
         text.chars().for_each(|c| self.agent.input.push(c));
+    }
+
+    /// `<C-v>` in the box: an image on the clipboard goes in as one; text,
+    /// as text.
+    pub fn agent_paste_clipboard(&mut self) -> Result<(), String> {
+        if let Some(png) = self.registers.clipboard_image()? {
+            return self.agent_attach("image/png", png);
+        }
+        let text = self
+            .registers
+            .read(Some('+'))?
+            .map(|r| r.text)
+            .unwrap_or_default();
+        if text.is_empty() {
+            return Err("Nothing on the clipboard".into());
+        }
+        self.agent_paste(&text);
+        Ok(())
+    }
+
+    /// An image for the next message: `[Image #n]` goes in the box.
+    pub fn agent_attach(&mut self, mime: &str, data: Vec<u8>) -> Result<(), String> {
+        /// The most an image can be (the agents' own limit is about this).
+        const MOST: usize = 5 * 1024 * 1024;
+        if self.agent.takes_images == Some(false) {
+            return Err(format!("{} doesn't take images", self.agent.title()));
+        }
+        if data.len() > MOST {
+            return Err(format!(
+                "That image is {:.1} MB: the most is 5 MB",
+                data.len() as f64 / (1024.0 * 1024.0)
+            ));
+        }
+        let number = self.agent.images.iter().map(|i| i.number).max().unwrap_or(0) + 1;
+        let image = Image {
+            number,
+            mime: mime.to_string(),
+            data,
+        };
+        format!("{} ", image.label())
+            .chars()
+            .for_each(|c| self.agent.input.push(c));
+        self.agent.images.push(image);
+        Ok(())
     }
 
     /// Scrolls the chat: `rows` up (or down, negative).
@@ -654,6 +754,7 @@ impl Editor {
             }
             AgentEvent::Mode(mode) => chat.mode = Some(mode),
             AgentEvent::Commands(commands) => chat.commands = commands,
+            AgentEvent::TakesImages(takes) => chat.takes_images = Some(takes),
             AgentEvent::Permission(ask) => {
                 // A question wants seeing (focus stays where it is).
                 let title = ask.title.clone();
@@ -924,6 +1025,69 @@ fn diff_lines(diff: &ToolDiff, lines: &mut Vec<ChatLine>) {
     }
 }
 
+/// The files a paste names, if it's only that: a file dropped on the
+/// terminal pastes its path (shell-quoted: `a\ b.png`, `'a b.png'`), and
+/// several, theirs with spaces between.
+fn dropped_files(text: &str) -> Option<Vec<std::path::PathBuf>> {
+    let text = text.trim();
+    if text.is_empty() || text.contains('\n') {
+        return None;
+    }
+    let mut paths = Vec::new();
+    let mut word = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = text.chars();
+    let push = |word: &mut String, paths: &mut Vec<String>| {
+        if !word.is_empty() {
+            paths.push(std::mem::take(word));
+        }
+    };
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (None, '\\') => word.extend(chars.next()),
+            (None, '\'' | '"') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, ' ') => push(&mut word, &mut paths),
+            (_, c) => word.push(c),
+        }
+    }
+    push(&mut word, &mut paths);
+    let here = std::env::current_dir().unwrap_or_default();
+    let files: Vec<std::path::PathBuf> = paths
+        .iter()
+        .map(|p| {
+            let p = p.strip_prefix("file://").unwrap_or(p);
+            match p.strip_prefix("~/") {
+                Some(rest) => std::env::var_os("HOME").map_or_else(|| here.join(p), |home| {
+                    std::path::PathBuf::from(home).join(rest)
+                }),
+                None => here.join(p),
+            }
+        })
+        .collect();
+    // Absolute, and all files: a drop (not a word that happens to be one).
+    let dropped = paths.iter().all(|p| p.starts_with('/') || p.starts_with("file://") || p.starts_with('~'))
+        && files.iter().all(|f| f.is_file());
+    dropped.then_some(files)
+}
+
+/// Whether a paste is only image files dropped on the terminal.
+pub fn only_images(text: &str) -> bool {
+    dropped_files(text).is_some_and(|files| files.iter().all(|f| image_type(f).is_some()))
+}
+
+/// The image type of a file, by its name.
+fn image_type(path: &std::path::Path) -> Option<&'static str> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    Some(match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => return None,
+    })
+}
+
 /// The files `text` mentions, as `@path` (that are files, from the
 /// project's folder).
 fn mentioned_files(text: &str) -> Vec<std::path::PathBuf> {
@@ -1071,7 +1235,8 @@ mod tests {
                 AgentRequest::Prompt {
                     text: "fix it".into(),
                     context: None,
-                    files: Vec::new()
+                    files: Vec::new(),
+                    images: Vec::new(),
                 }
             ]
         );
@@ -1174,6 +1339,41 @@ mod tests {
             Some("ui.sidebar.agent.bold")
         );
         assert_eq!(lines[2].indent, 2);
+    }
+
+    #[test]
+    fn dropped_paths_are_read_as_the_shell_quotes_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a b.png");
+        let c = dir.path().join("c.txt");
+        std::fs::write(&a, "").unwrap();
+        std::fs::write(&c, "").unwrap();
+        let escaped = a.display().to_string().replace(' ', "\\ ");
+        let found = dropped_files(&format!("{escaped} '{}'", c.display())).unwrap();
+        assert_eq!(found, [a.clone(), c]);
+        assert!(only_images(&escaped));
+        // Words, or a path that isn't there: text.
+        assert_eq!(dropped_files("hello world"), None);
+        assert_eq!(dropped_files("/no/such/file.png"), None);
+        assert_eq!(dropped_files("src/main.rs"), None, "not absolute: typed, not dropped");
+    }
+
+    #[test]
+    fn images_removed_from_the_box_arent_sent() {
+        let mut e = Editor::default();
+        e.agent_attach("image/png", vec![1]).unwrap();
+        e.agent_attach("image/png", vec![2]).unwrap();
+        assert_eq!(e.agent_chat().input.text(), "[Image #1] [Image #2] ");
+        e.agent_input_edit(|f| f.delete_to_start());
+        "see [Image #2]".chars().for_each(|c| e.agent_type(c));
+        e.agent_send().unwrap();
+        let sent = e.take_agent_requests().into_iter().find_map(|r| match r {
+            AgentRequest::Prompt { images, .. } => Some(images),
+            _ => None,
+        });
+        assert_eq!(sent, Some(vec![("image/png".to_string(), vec![2])]));
+        e.agent_event(AgentEvent::TakesImages(false));
+        assert!(e.agent_attach("image/png", vec![3]).is_err());
     }
 
     #[test]

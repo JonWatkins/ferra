@@ -855,6 +855,7 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 [keys.agent]
 "<CR>" = "agent_send"
 "@" = "agent_mention"
+"<C-v>" = "agent_paste"
 "<S-CR>" = "agent_newline"
 "<A-CR>" = "agent_newline"
 "<C-j>" = "agent_newline"

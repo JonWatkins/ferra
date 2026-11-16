@@ -600,6 +600,7 @@ dependencies = [
  "ignore",
  "libloading",
  "mlua",
+ "png",
  "portable-pty",
  "ratatui",
  "regex",

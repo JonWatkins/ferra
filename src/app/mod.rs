@@ -65,6 +65,9 @@ pub struct App {
     last_click: Option<(Instant, ratatui::layout::Position, u8)>,
     /// The mouse pointer's shape wanted over what's under it (a CSS name).
     pointer: &'static str,
+    /// Where the pointer last was, for a paste (a file dropped on the
+    /// terminal pastes its path) to go where it was dropped.
+    pointer_at: Option<ratatui::layout::Position>,
     /// Where the pointer's resting, until its hover's due.
     hover_wait: Option<mouse_hover::HoverWait>,
     /// The pointer's moving changed what's shown (its hover went).
@@ -144,6 +147,7 @@ impl App {
             dragging: None,
             last_click: None,
             pointer: "default",
+            pointer_at: None,
             hover_wait: None,
             hover_changed: false,
             theme: config.theme,
@@ -1184,6 +1188,18 @@ impl App {
     /// and `<PasteEnd>`, and put it in the same way when replayed.
     pub fn handle_paste(&mut self, text: &str) {
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        // Dropped on the agent sidebar (or images, with it shown): into
+        // its box.
+        let over_agent = self
+            .pointer_at
+            .zip(self.screen_map.agent.as_ref())
+            .is_some_and(|(at, agent)| agent.area.contains(at));
+        if self.editor.agent_sidebar_shown()
+            && self.editor.mode() != Mode::Agent
+            && (over_agent || crate::editor::agent::only_images(&text))
+        {
+            self.editor.set_mode(Mode::Agent);
+        }
         let keys = paste_keys(&text);
         for &key in &keys {
             self.record_macro_key(key);

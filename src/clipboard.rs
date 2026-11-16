@@ -15,6 +15,11 @@ use serde::{Deserialize, Serialize};
 pub trait Clipboard {
     fn get(&mut self) -> Result<String, String>;
     fn set(&mut self, text: &str) -> Result<(), String>;
+    /// An image on the clipboard, as PNG, if there is one (only the
+    /// system's clipboard can have one).
+    fn image(&mut self) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
+    }
 }
 
 /// The operating system's clipboard (macOS, Windows, X11/Wayland).
@@ -42,6 +47,30 @@ impl Clipboard for SystemClipboard {
             .set_text(text.to_string())
             .map_err(|e| format!("Clipboard: {e}"))
     }
+
+    fn image(&mut self) -> Result<Option<Vec<u8>>, String> {
+        match self.inner.get_image() {
+            Ok(image) => png_of(image.width, image.height, &image.bytes).map(Some),
+            Err(arboard::Error::ContentNotAvailable) => Ok(None),
+            Err(e) => Err(format!("Clipboard: {e}")),
+        }
+    }
+}
+
+/// RGBA pixels, `width` by `height`, as a PNG.
+fn png_of(width: usize, height: usize, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, width as u32, height as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|e| format!("Clipboard image: {e}"))?;
+    writer
+        .write_image_data(rgba)
+        .map_err(|e| format!("Clipboard image: {e}"))?;
+    writer.finish().map_err(|e| format!("Clipboard image: {e}"))?;
+    Ok(out)
 }
 
 /// The system clipboard, connected on first use, so starting the editor (or
@@ -67,6 +96,10 @@ impl Clipboard for LazySystemClipboard {
 
     fn set(&mut self, text: &str) -> Result<(), String> {
         self.connect()?.set(text)
+    }
+
+    fn image(&mut self) -> Result<Option<Vec<u8>>, String> {
+        self.connect()?.image()
     }
 }
 
@@ -148,7 +181,7 @@ pub fn osc52(text: &str) -> String {
 }
 
 /// Standard base64, with padding.
-fn base64(bytes: &[u8]) -> String {
+pub fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -200,6 +233,13 @@ impl Clipboard for AutoClipboard {
         }
         self.system.set(text).or_else(|_| self.terminal.set(text))
     }
+
+    fn image(&mut self) -> Result<Option<Vec<u8>>, String> {
+        if self.over_ssh {
+            return Ok(None);
+        }
+        self.system.image()
+    }
 }
 
 /// A clipboard kept in memory. Clones share the same contents, so a test can
@@ -207,6 +247,7 @@ impl Clipboard for AutoClipboard {
 #[derive(Debug, Default, Clone)]
 pub struct MemoryClipboard {
     contents: Rc<RefCell<String>>,
+    image: Rc<RefCell<Option<Vec<u8>>>>,
 }
 
 impl MemoryClipboard {
@@ -216,6 +257,11 @@ impl MemoryClipboard {
 
     pub fn set_contents(&self, text: &str) {
         *self.contents.borrow_mut() = text.to_string();
+    }
+
+    /// Puts an image (PNG) on it, or takes it off.
+    pub fn set_image(&self, png: Option<Vec<u8>>) {
+        *self.image.borrow_mut() = png;
     }
 }
 
@@ -227,6 +273,10 @@ impl Clipboard for MemoryClipboard {
     fn set(&mut self, text: &str) -> Result<(), String> {
         self.set_contents(text);
         Ok(())
+    }
+
+    fn image(&mut self) -> Result<Option<Vec<u8>>, String> {
+        Ok(self.image.borrow().clone())
     }
 }
 

@@ -104,6 +104,11 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "agent_paste",
+        "Agent sidebar: paste an image from the clipboard (or its text)",
+        |cx| cx.editor.agent_paste_clipboard(),
+    );
+    r.register(
         "agent_mention",
         "Agent sidebar: mention a file (@, then pick it); it's sent with the message",
         |cx| {

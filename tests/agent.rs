@@ -81,7 +81,8 @@ fn serve(mut input: BufReader<io::PipeReader>, mut out: io::PipeWriter) {
                 );
                 reply(
                     &mut out,
-                    json!({"protocolVersion": 1, "agentInfo": {"name": "fake", "version": "1.0"}}),
+                    json!({"protocolVersion": 1, "agentInfo": {"name": "fake", "version": "1.0"},
+                           "agentCapabilities": {"promptCapabilities": {"image": true}}}),
                 );
             }
             "session/new" => {
@@ -170,6 +171,10 @@ fn serve(mut input: BufReader<io::PipeReader>, mut out: io::PipeWriter) {
                             }
                             if let Some(uri) = block["uri"].as_str() {
                                 text(&mut out, &format!("|{uri}"));
+                            }
+                            if block["type"] == "image" {
+                                let (mime, data) = (&block["mimeType"], &block["data"]);
+                                text(&mut out, &format!("|{} {}", mime.as_str().unwrap(), data.as_str().unwrap()));
                             }
                         }
                     }
@@ -591,4 +596,53 @@ fn the_editors_tools_are_served_to_the_agent() {
     let split = ask(&mut app, 21, "tools/call", call("close_file", json!({"path": path})));
     assert!(split["content"][0]["text"].as_str().unwrap().contains("another split"), "{split}");
     assert!(app.editor().document.name().ends_with("a.txt"), "still shown");
+}
+
+#[test]
+fn images_dropped_or_pasted_go_with_the_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let shot = dir.path().join("Screen Shot 1.png");
+    fs::write(&shot, b"PNG1").unwrap();
+    let notes = dir.path().join("notes.txt");
+    fs::write(&notes, "n").unwrap();
+    let clipboard = ferra::clipboard::MemoryClipboard::default();
+    clipboard.set_image(Some(b"PNG2".to_vec()));
+    let mut app = app();
+    app.use_clipboard(Box::new(clipboard.clone()));
+    keys(&mut app, ":agent<CR>");
+    until(&mut app, ready);
+    keys(&mut app, "blocks ");
+    // Dropped on the terminal: a path, shell-quoted. The image goes in;
+    // another file's mentioned.
+    let dropped = format!("{} {}", shot.display().to_string().replace(' ', "\\ "), notes.display());
+    app.handle_paste(&dropped);
+    keys(&mut app, "<C-v>");
+    let typed = app.editor().agent_chat().input.text().to_string();
+    assert!(typed.starts_with("blocks [Image #1] @"), "{typed}");
+    assert!(typed.ends_with("notes.txt [Image #2] "), "{typed}");
+    keys(&mut app, "<CR>");
+    until(&mut app, |a| ready(a) && said(a).contains("image/png"));
+    let said = said(&app);
+    assert!(said.starts_with("text,resource_link,image,image"), "{said}");
+    // Base64 of the files' bytes.
+    assert!(said.contains("|image/png UE5HMQ=="), "{said}");
+    assert!(said.contains("|image/png UE5HMg=="), "{said}");
+    assert!(app.editor().agent_chat().images.is_empty(), "sent, and gone");
+}
+
+#[test]
+fn image_files_dropped_anywhere_go_to_the_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let shot = dir.path().join("shot.png");
+    fs::write(&shot, b"PNG").unwrap();
+    let mut app = app();
+    keys(&mut app, ":agent<CR><Esc>");
+    assert_ne!(app.editor().mode(), Mode::Agent);
+    app.handle_paste(&shot.display().to_string());
+    assert_eq!(app.editor().mode(), Mode::Agent);
+    assert_eq!(app.editor().agent_chat().input.text(), "[Image #1] ");
+    // Text pasted in the editor stays there.
+    keys(&mut app, "<Esc>");
+    app.handle_paste("hello");
+    assert_eq!(app.editor().agent_chat().input.text(), "[Image #1] ");
 }
