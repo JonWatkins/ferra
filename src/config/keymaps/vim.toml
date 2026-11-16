@@ -26,6 +26,8 @@
 "©" = "menu_git"
 "<A-t>" = "menu_terminal"
 "†" = "menu_terminal"
+"<A-a>" = "menu_agent"
+"å" = "menu_agent"
 "<A-h>" = "menu_help"
 "˙" = "menu_help"
 "<Esc>" = "clear_search_highlight"

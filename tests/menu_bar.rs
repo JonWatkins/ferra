@@ -52,7 +52,7 @@ fn the_bar_is_along_the_top_and_the_rest_under_it() {
     let mut app = app_as_shipped();
     let rows = screen(&mut app);
     assert!(
-        rows[0].starts_with("  File  Edit  View  Go  Git  Terminal  Help"),
+        rows[0].starts_with("  File  Edit  View  Go  Git  Terminal  Agent  Help"),
         "{:?}",
         rows[0]
     );

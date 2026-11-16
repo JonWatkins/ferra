@@ -1,0 +1,274 @@
+//! The coding agent over ACP, end to end, with a fake agent running in this
+//! process: starting it, a turn streaming in, a file read from its buffer,
+//! a permission asked and answered, a turn cancelled, and an agent that
+//! isn't installed.
+
+mod common;
+
+use std::fs;
+use std::io::{self, BufReader, Write};
+use std::path::Path;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use common::{app_with_config, keys};
+use ferra::App;
+use ferra::agent::client::{Streams, read_message, write_message};
+use ferra::agent::{AgentConfig, Spawner};
+use ferra::editor::agent::{AgentStatus, ChatEntry, ToolStatus};
+use serde_json::{Value, json};
+
+/// An agent in a thread, answering as a real one would (see `serve`).
+struct FakeAgent;
+
+impl Spawner for FakeAgent {
+    fn spawn(&self, _: &AgentConfig, _: &Path) -> io::Result<Streams> {
+        let (client_reads, agent_writes) = io::pipe()?;
+        let (agent_reads, client_writes) = io::pipe()?;
+        thread::spawn(move || serve(BufReader::new(agent_reads), agent_writes));
+        Ok(Streams {
+            reader: Box::new(BufReader::new(client_reads)),
+            writer: Box::new(client_writes),
+            child: None,
+        })
+    }
+}
+
+fn send(out: &mut impl Write, message: Value) {
+    let _ = write_message(out, &message);
+}
+
+fn update(out: &mut impl Write, update: Value) {
+    send(
+        out,
+        json!({"jsonrpc": "2.0", "method": "session/update",
+               "params": {"sessionId": "s1", "update": update}}),
+    );
+}
+
+fn text(out: &mut impl Write, text: &str) {
+    update(
+        out,
+        json!({"sessionUpdate": "agent_message_chunk",
+               "content": {"type": "text", "text": text}}),
+    );
+}
+
+/// Reads until the answer to request `id` (ferra's answer to ours).
+fn answer_to(input: &mut impl io::BufRead, id: i64) -> Value {
+    while let Ok(Some(message)) = read_message(input) {
+        if message["id"] == json!(id) && message.get("method").is_none() {
+            return message;
+        }
+    }
+    Value::Null
+}
+
+fn serve(mut input: BufReader<io::PipeReader>, mut out: io::PipeWriter) {
+    while let Ok(Some(message)) = read_message(&mut input) {
+        let id = message["id"].clone();
+        let reply = |out: &mut io::PipeWriter, result: Value| {
+            send(out, json!({"jsonrpc": "2.0", "id": id, "result": result}));
+        };
+        match message["method"].as_str().unwrap_or_default() {
+            "initialize" => {
+                assert_eq!(message["params"]["protocolVersion"], 1);
+                assert_eq!(message["params"]["clientCapabilities"]["fs"]["readTextFile"], true);
+                reply(
+                    &mut out,
+                    json!({"protocolVersion": 1, "agentInfo": {"name": "fake", "version": "1.0"}}),
+                );
+            }
+            "session/new" => reply(
+                &mut out,
+                json!({"sessionId": "s1", "modes": {"currentModeId": "default",
+                       "availableModes": [{"id": "default", "name": "Default"},
+                                          {"id": "acceptEdits", "name": "Accept edits"}]}}),
+            ),
+            "session/prompt" => {
+                let asked = message["params"]["prompt"][0]["text"].as_str().unwrap_or_default().to_string();
+                match asked.split_whitespace().next().unwrap_or_default() {
+                    "hello" => {
+                        text(&mut out, "Hi ");
+                        text(&mut out, "there.");
+                        update(
+                            &mut out,
+                            json!({"sessionUpdate": "plan", "entries": [
+                                {"content": "Say hi", "priority": "high", "status": "completed"}]}),
+                        );
+                    }
+                    "read" => {
+                        let path = asked.split_whitespace().nth(1).unwrap_or_default();
+                        send(
+                            &mut out,
+                            json!({"jsonrpc": "2.0", "id": 100, "method": "fs/read_text_file",
+                                   "params": {"sessionId": "s1", "path": path, "line": 2, "limit": 1}}),
+                        );
+                        let answer = answer_to(&mut input, 100);
+                        let content = answer["result"]["content"].as_str().unwrap_or("?");
+                        text(&mut out, &format!("Line 2 is {}", content.trim()));
+                    }
+                    "permission" => {
+                        update(
+                            &mut out,
+                            json!({"sessionUpdate": "tool_call", "toolCallId": "t1",
+                                   "title": "Run cargo test", "kind": "execute", "status": "pending"}),
+                        );
+                        send(
+                            &mut out,
+                            json!({"jsonrpc": "2.0", "id": 101, "method": "session/request_permission",
+                                   "params": {"sessionId": "s1",
+                                              "toolCall": {"toolCallId": "t1", "title": "Run cargo test"},
+                                              "options": [
+                                                {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                                                {"optionId": "reject", "name": "Reject", "kind": "reject_once"}]}}),
+                        );
+                        let answer = answer_to(&mut input, 101);
+                        let chosen = answer["result"]["outcome"]["optionId"].as_str().unwrap_or("none");
+                        update(
+                            &mut out,
+                            json!({"sessionUpdate": "tool_call_update", "toolCallId": "t1",
+                                   "status": "completed",
+                                   "content": [{"type": "content",
+                                                "content": {"type": "text", "text": format!("chose {chosen}")}}]}),
+                        );
+                    }
+                    "slow" => {
+                        // Until it's cancelled.
+                        while let Ok(Some(next)) = read_message(&mut input) {
+                            if next["method"] == "session/cancel" {
+                                break;
+                            }
+                        }
+                        reply(&mut out, json!({"stopReason": "cancelled"}));
+                        continue;
+                    }
+                    _ => {}
+                }
+                reply(&mut out, json!({"stopReason": "end_turn"}));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn app() -> App {
+    let mut app = app_with_config("[editor]\nagent = \"fake\"\n[agents.fake]\ncommand = \"fake-agent\"\n");
+    app.agents_mut().set_spawner(Box::new(FakeAgent));
+    app
+}
+
+/// Lets the agent's messages through until `done`, or two seconds pass.
+fn until(app: &mut App, done: impl Fn(&App) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        app.update_agents();
+        if done(app) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    panic!("timed out: {:?}", app.editor().agent_chat().entries);
+}
+
+fn said(app: &App) -> String {
+    app.editor()
+        .agent_chat()
+        .entries
+        .iter()
+        .filter_map(|e| match e {
+            ChatEntry::Agent(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn ready(app: &App) -> bool {
+    app.editor().agent_chat().status == AgentStatus::Ready
+}
+
+#[test]
+fn a_turn_streams_in_and_ends() {
+    let mut app = app();
+    keys(&mut app, ":agent_ask hello there<CR>");
+    until(&mut app, |a| ready(a) && said(a) == "Hi there.");
+    let chat = app.editor().agent_chat();
+    assert_eq!(chat.agent_info.as_deref(), Some("fake 1.0"));
+    assert_eq!(chat.mode.as_deref(), Some("default"));
+    assert_eq!(chat.modes.len(), 2);
+    assert!(matches!(&chat.entries[0], ChatEntry::User(t) if t == "hello there"));
+    assert!(chat.entries.iter().any(|e| matches!(e, ChatEntry::Plan(p) if p[0].status == "completed")));
+    // The chat's shown.
+    assert_eq!(app.editor().popup().map(|p| p.name.as_str()), Some("agent"));
+}
+
+#[test]
+fn files_are_read_from_their_buffers() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    fs::write(&path, "one\ntwo\nthree\n").unwrap();
+    let mut app = app();
+    app.open(&path);
+    // Unsaved: what the agent reads is the buffer's.
+    keys(&mut app, "jcwTWO<Esc>");
+    let path = fs::canonicalize(&path).unwrap();
+    keys(&mut app, &format!(":agent_ask read {}<CR>", path.display()));
+    until(&mut app, |a| said(a).starts_with("Line 2"));
+    assert_eq!(said(&app), "Line 2 is TWO");
+}
+
+#[test]
+fn permission_is_asked_and_the_answer_goes_back() {
+    let mut app = app();
+    keys(&mut app, ":agent_ask permission<CR>");
+    until(&mut app, |a| a.editor().agent_chat().permission.is_some());
+    let shown: String = app
+        .editor()
+        .popup()
+        .unwrap()
+        .lines
+        .iter()
+        .map(|l| l.iter().map(|s| s.text.as_str()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(shown.contains("1 Allow") && shown.contains("2 Reject"), "{shown}");
+    keys(&mut app, "2");
+    until(&mut app, |a| {
+        a.editor().agent_chat().entries.iter().any(|e| {
+            matches!(e, ChatEntry::Tool(t) if t.status == ToolStatus::Done && t.text == "chose reject")
+        })
+    });
+}
+
+#[test]
+fn a_turn_is_cancelled() {
+    let mut app = app();
+    keys(&mut app, ":agent_ask slow<CR>");
+    until(&mut app, |a| a.editor().agent_chat().status == AgentStatus::Busy);
+    keys(&mut app, "c");
+    until(&mut app, ready);
+    assert!(
+        app.editor()
+            .agent_chat()
+            .entries
+            .iter()
+            .any(|e| matches!(e, ChatEntry::Notice(n) if n == "Stopped"))
+    );
+}
+
+#[test]
+fn an_agent_that_isnt_installed_says_so() {
+    let mut app = app_with_config(
+        "[editor]\nagent = \"nope\"\n[agents.nope]\ncommand = \"ferra-no-such-agent\"\n",
+    );
+    keys(&mut app, ":agent<CR>");
+    app.update_agents();
+    assert!(matches!(
+        &app.editor().agent_chat().status,
+        AgentStatus::Stopped(why) if why.contains("ferra-no-such-agent isn't installed")
+    ));
+    keys(&mut app, "<Esc>:agent_ask hi<CR>");
+    app.update_agents();
+    assert!(matches!(app.editor().agent_chat().status, AgentStatus::Stopped(_)));
+}

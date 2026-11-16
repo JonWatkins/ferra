@@ -126,6 +126,17 @@ pub const MENUS: &[Menu] = &[
         ],
     },
     Menu {
+        title: "Agent",
+        letter: 'a',
+        items: &[
+            Some(("Show Agent", "agent")),
+            Some(("Ask…", "agent_ask")),
+            None,
+            Some(("Stop Turn", "agent_cancel")),
+            Some(("Stop Agent", "agent_stop")),
+        ],
+    },
+    Menu {
         title: "Help",
         letter: 'h',
         items: &[
@@ -150,6 +161,7 @@ pub const MAC_OPTION_LETTERS: &[(char, char)] = &[
     ('o', 'ø'),
     ('g', '©'),
     ('t', '†'),
+    ('a', 'å'),
     ('h', '˙'),
 ];
 

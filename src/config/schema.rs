@@ -48,6 +48,7 @@ pub const CATEGORIES: &[&str] = &[
     "Language servers",
     "Keyboard and mouse",
     "Terminal",
+    "Agent",
     "Cursor shape",
     "Plugins",
 ];
@@ -78,6 +79,7 @@ fn category_of(path: &str) -> &'static str {
         "keymap" | "mouse" | "mouse-hover" | "mouse-hover-delay" | "kitty-keyboard" | "key-timeout" | "clipboard"
         | "clipboard-provider" => "Keyboard and mouse",
         "terminal-height" | "shell" => "Terminal",
+        "agent" => "Agent",
         "cursor-shape" => "Cursor shape",
         "plugin-index" | "plugin-suggestions" => "Plugins",
         _ => "Other",

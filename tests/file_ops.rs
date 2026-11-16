@@ -420,3 +420,27 @@ fn a_file_dragged_from_the_tree_opens_in_that_window() {
     assert_eq!(text(&app), "b");
     assert_ne!(app.editor().windows().active(), ferra::editor::WindowId(0));
 }
+
+#[test]
+fn the_tree_shows_files_made_and_deleted_outside_ferra() {
+    let project = project(&[("a.txt", "a\n")]);
+    let mut app = app();
+    keys(&mut app, "<Space>e");
+    let names = |app: &App| -> Vec<String> {
+        app.editor()
+            .sidebar()
+            .unwrap()
+            .rows()
+            .iter()
+            .map(|r| r.name.clone())
+            .collect()
+    };
+    assert!(!names(&app).contains(&"new.md".to_string()));
+    // As the agent (or a command) would.
+    fs::write(project.path("new.md"), "# new\n").unwrap();
+    app.check_files_while_idle();
+    assert!(names(&app).contains(&"new.md".to_string()), "{:?}", names(&app));
+    fs::remove_file(project.path("a.txt")).unwrap();
+    app.check_files_while_idle();
+    assert!(!names(&app).contains(&"a.txt".to_string()), "{:?}", names(&app));
+}

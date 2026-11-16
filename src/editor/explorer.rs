@@ -37,6 +37,9 @@ pub struct Explorer {
     root: PathBuf,
     open: HashSet<PathBuf>,
     listings: HashMap<PathBuf, Vec<DirEntry>>,
+    /// Each listed folder's modified time when it was listed: a file made,
+    /// deleted or renamed in it (by the agent, a command, git) changes it.
+    stamps: HashMap<PathBuf, Option<std::time::SystemTime>>,
     rows: Vec<TreeRow>,
     selected: usize,
     /// The first row shown (the view scrolls to keep the selected one in
@@ -74,10 +77,34 @@ impl Explorer {
     }
 
     fn listing(&mut self, dir: &Path) -> Vec<DirEntry> {
+        if !self.listings.contains_key(dir) {
+            self.stamps.insert(dir.to_path_buf(), modified(dir));
+        }
         self.listings
             .entry(dir.to_path_buf())
             .or_insert_with(|| list_dir(dir))
             .clone()
+    }
+
+    /// Lists again the folders whose contents changed on disk since they
+    /// were listed. Returns whether any had.
+    pub fn refresh_if_changed(&mut self) -> bool {
+        let changed: Vec<PathBuf> = self
+            .stamps
+            .iter()
+            .filter(|(dir, stamp)| modified(dir) != **stamp)
+            .map(|(dir, _)| dir.clone())
+            .collect();
+        if changed.is_empty() {
+            return false;
+        }
+        for dir in &changed {
+            self.listings.remove(dir);
+            self.stamps.remove(dir);
+        }
+        self.open.retain(|p| p.is_dir());
+        self.rebuild();
+        true
     }
 
     /// Lists the rows again from the open folders, keeping the selected path
@@ -225,6 +252,7 @@ impl Explorer {
     /// Lists the open folders again from disk (`R`, and after file changes).
     pub fn refresh(&mut self) {
         self.listings.clear();
+        self.stamps.clear();
         self.open.retain(|p| p.is_dir());
         self.rebuild();
     }
@@ -240,6 +268,7 @@ impl Explorer {
             .is_none_or(|entries| entries.iter().any(|e| e.path == path));
         if !known {
             self.listings.remove(dir);
+            self.stamps.remove(dir);
             self.rebuild();
         }
     }
@@ -526,6 +555,21 @@ impl Editor {
         }
         self.explorer_mut().refresh();
         self.set_message(Message::info("Files listed again"));
+    }
+}
+
+/// A folder's modified time (`None` if it can't be read, or is gone).
+fn modified(dir: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(dir).and_then(|m| m.modified()).ok()
+}
+
+impl Editor {
+    /// The file tree, listed again where folders changed on disk. Returns
+    /// whether any had.
+    pub fn refresh_tree_if_changed(&mut self) -> bool {
+        self.explorer
+            .as_mut()
+            .is_some_and(Explorer::refresh_if_changed)
     }
 }
 

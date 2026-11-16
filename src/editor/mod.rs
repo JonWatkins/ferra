@@ -42,6 +42,7 @@ pub mod git_gui;
 pub use git::GitRow;
 pub mod input_box;
 pub mod lsp;
+pub mod agent;
 pub mod menu_bar;
 pub mod mouse_hover;
 pub mod multi_cursor;
@@ -223,6 +224,8 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
+    /// The coding agent's chat (`agent.rs`).
+    agent: agent::AgentChat,
     /// More cursors than the one (`multi_cursor.rs`).
     cursors: multi_cursor::MultiCursors,
     /// What the pointer rested on, for the hover it shows.

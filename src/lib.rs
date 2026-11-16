@@ -20,6 +20,7 @@
 //! - [`ui`]: rendering, including the custom editor pane widget.
 //! - [`app`]: wires everything together and owns the event loop.
 
+pub mod agent;
 pub mod app;
 pub mod cli;
 pub mod clipboard;

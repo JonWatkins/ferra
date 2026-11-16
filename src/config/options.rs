@@ -84,6 +84,8 @@ pub struct EditorOptions {
     pub terminal_height: u16,
     /// The terminal panel's shell ("": `$SHELL`, else `/bin/sh`).
     pub shell: String,
+    /// The coding agent `:agent` talks to (a name in `[agents]`).
+    pub agent: String,
     /// The plugin directory `:plugin_browse` lists (a git source).
     pub plugin_index: String,
     /// Offer the directory's language pack for files of unknown types.

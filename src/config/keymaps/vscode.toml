@@ -99,6 +99,7 @@ inherit = { visual = "insert" }
 "<A-o>" = "menu_go"
 "<A-g>" = "menu_git"
 "<A-t>" = "menu_terminal"
+"<A-a>" = "menu_agent"
 "<A-h>" = "menu_help"
 "<C-g>" = "command_mode"
 "<C-b>" = "sidebar_toggle"

@@ -19,7 +19,7 @@ pub mod transport;
 
 mod features;
 
-pub use client::{ProcessSpawner, Spawner, State, Streams};
+pub use client::{ProcessSpawner, Spawner, State, Streams, find_program};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

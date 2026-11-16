@@ -111,6 +111,8 @@ pub struct App {
     /// Language servers for the open files.
     /// Shared with the editor's formatter, which waits on it mid-command.
     lsp: std::rc::Rc<std::cell::RefCell<crate::lsp::Lsp>>,
+    /// The coding agent (`agent`), talked to over ACP.
+    agents: crate::agent::Agents,
 }
 
 impl Default for App {
@@ -156,6 +158,7 @@ impl App {
             background: background::Background::default(),
             plugin_status_errors: HashMap::new(),
             lsp: Default::default(),
+            agents: crate::agent::Agents::new(config.agents.clone()),
         };
         let formatter = crate::lsp::LspFormatter::new(std::rc::Rc::clone(&app.lsp));
         app.editor.set_formatter(Box::new(formatter));
@@ -970,6 +973,8 @@ impl App {
             // keep checking while any are running.
             let busy = self.background.busy()
                 || self.lsp.borrow().active()
+                || self.agents.running()
+                || self.editor.agent_wants_attention()
                 || self.editor.terminal_running()
                 || self.editor.git_job_running()
                 || self.editor.git_gui_diff_loading()
@@ -1005,6 +1010,7 @@ impl App {
             }
             if !input_ready {
                 redraw |= self.update_lsp();
+                redraw |= self.update_agents();
                 if deadline.is_some_and(|due| Instant::now() >= due) {
                     self.handle_key_timeout();
                     deadline = None;
@@ -1159,6 +1165,11 @@ impl App {
         if self.editor.options.watch_files && resting {
             self.editor.check_disk_changes();
             self.dispatch_events();
+        }
+        // Files made or deleted outside ferra (by the agent, a command):
+        // the tree shows them.
+        if self.editor.options.watch_files {
+            self.editor.refresh_tree_if_changed();
         }
     }
 
@@ -1326,6 +1337,21 @@ impl App {
     }
 
     /// The language servers, to replace how they're started (tests).
+    /// Sends the agent what the editor wants sent, and takes in what it
+    /// said. Public so tests can drive it. Returns whether anything
+    /// changed.
+    pub fn update_agents(&mut self) -> bool {
+        let changed = self.agents.update(&mut self.editor);
+        // The chat popup, shown again with new keys (an answer's).
+        self.after_background_popup();
+        changed
+    }
+
+    /// The agents (tests give them a fake one).
+    pub fn agents_mut(&mut self) -> &mut crate::agent::Agents {
+        &mut self.agents
+    }
+
     pub fn lsp_mut(&mut self) -> std::cell::RefMut<'_, crate::lsp::Lsp> {
         self.lsp.borrow_mut()
     }
@@ -1341,6 +1367,7 @@ impl App {
         // The Outline and breadcrumbs' symbols, asked for if out of date.
         self.editor.ask_for_outline();
         self.update_lsp();
+        self.update_agents();
         self.refresh_plugin_statuses();
         self.make_plugin_view();
         self.editor.update_git_changes();

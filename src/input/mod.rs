@@ -126,6 +126,10 @@ impl InputHandler {
             && let Some(digit) = key.as_digit()
             // A leading `0` is a command (go to line start), not a count.
             && (digit != 0 || self.count.is_some())
+            // A digit bound in this mode (a popup's `1` for its first
+            // choice) is that, unless a count's already begun.
+            && (self.count.is_some()
+                || !matches!(keymap.lookup(mode, &[key]), Lookup::Command(_)))
         {
             let count = self.count.unwrap_or(0).saturating_mul(10);
             self.count = Some(count.saturating_add(digit));

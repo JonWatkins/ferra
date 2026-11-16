@@ -43,6 +43,9 @@ pub struct Config {
     pub editor: EditorOptions,
     /// Which files are in which language.
     pub languages: Languages,
+    /// Coding agents, by name: how to start each (`[agents.claude]`).
+    #[serde(default)]
+    pub agents: HashMap<String, crate::agent::AgentConfig>,
     pub theme: Theme,
     pub keys: Keymap,
     /// Commands to run when events fire: `before-save = ["trim_trailing_whitespace"]`.

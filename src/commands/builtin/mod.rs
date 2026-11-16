@@ -25,6 +25,7 @@ mod modes;
 mod motions;
 mod operators;
 mod options;
+mod agent;
 mod panel;
 mod picker;
 mod plugins;
@@ -72,6 +73,7 @@ pub(super) fn register_all(registry: &mut CommandRegistry) {
     plugins::register(registry);
     menu::register(registry);
     panel::register(registry);
+    agent::register(registry);
     file_ops::register(registry);
     keybindings::register(registry);
     modeless::register(registry);
