@@ -12,8 +12,18 @@
 //! │ Run cargo test?                    │  its question, and the options
 //! │ [1 Allow] [2 Always] [3 Reject]    │
 //! │ ────────────────────────────────── │
-//! │ Ask Claude…                        │  the box (it grows as you type)
+//! │ Ask Claude…                        │  the box (it grows as you type),
+//! │ Opus 5.5 ▾  High effort ▾  42k/200k│  its settings, its context used
 //! │ ⏎ send  ⇧⏎ new line  ⇧⇥ mode       │
+//! ```
+//!
+//! `/` at the start of the box lists the agent's commands over the chat:
+//!
+//! ```text
+//! │ /compact   Clear history, keep a … │
+//! │ /review    Review a pull request   │
+//! │ ────────────────────────────────── │
+//! │ /                                  │
 //! ```
 
 use ratatui::{
@@ -25,6 +35,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::config::Theme;
 use crate::editor::agent::AgentStatus;
+use crate::editor::agent_session::SLASH_ROWS;
 use crate::editor::{Editor, Mode};
 
 /// Rows the box grows to, at most.
@@ -49,6 +60,10 @@ pub struct AgentMap {
     pub options: Vec<(Rect, usize)>,
     /// The box (a click focuses it).
     pub input: Rect,
+    /// The settings' chips under the box, and which (its id).
+    pub chips: Vec<(Rect, String)>,
+    /// The slash menu's rows, and which command (its row in the list).
+    pub slash: Vec<(Rect, usize)>,
 }
 
 /// The frame of the spinner shown while the agent works.
@@ -176,6 +191,12 @@ pub fn draw(
         bottom -= pad;
     }
 
+    // The box's last row: the settings (chips), and the context used.
+    let chips = editor.agent_chips();
+    let chips_row = u16::from(area.height >= 12 && (!chips.is_empty() || chat.usage.is_some()));
+    // Rows they take: theirs, and a gap above it (given room).
+    let chips_rows = chips_row * (1 + pad);
+
     let (input_rows, cursor_at) = wrap_input(
         chat.input.text(),
         chat.input.cursor(),
@@ -184,15 +205,41 @@ pub fn draw(
     let shown = input_rows.len().clamp(1, INPUT_ROWS);
     // Rows above the cursor's, scrolled out of the box.
     let first = cursor_at.0.saturating_sub(shown - 1);
-    let input_top = bottom.saturating_sub(shown as u16 + pad);
+    let input_top = bottom.saturating_sub(shown as u16 + pad + chips_rows);
     let input = Rect::new(
         area.x,
         input_top - pad,
         area.width,
-        shown as u16 + 2 * pad,
+        shown as u16 + 2 * pad + chips_rows,
     );
-    buf.set_style(input, base.patch(theme.get("ui.sidebar.agent.input")));
+    let input_style = base.patch(theme.get("ui.sidebar.agent.input"));
+    buf.set_style(input, input_style);
     map.input = input;
+    if chips_row == 1 {
+        // In line with what's typed: `Opus 5.5 ▾  High effort ▾    42k / 200k`.
+        let y = bottom - pad - 1;
+        let right = area.right() - 1;
+        let hint = input_style.patch(theme.get("ui.sidebar.agent.hint"));
+        let mut x = inner_x;
+        for (id, chip) in chips {
+            let w = width_of(&chip) as u16 + 2;
+            if x + w > right {
+                break;
+            }
+            let end = put(buf, x, y, &chip, input_style, right);
+            let end = put(buf, end + 1, y, "▾", hint, right);
+            map.chips.push((Rect::new(x, y, end - x, 1), id));
+            x = end + 2;
+        }
+        // The longest of its labels that fits.
+        let labels = chat.usage.as_ref().map(|u| u.labels()).unwrap_or_default();
+        if let Some(usage) = labels
+            .iter()
+            .find(|l| !l.is_empty() && x + width_of(l) as u16 <= right)
+        {
+            put(buf, right - width_of(usage) as u16, y, usage, hint, right);
+        }
+    }
     if chat.input.text().is_empty() {
         let placeholder = format!(
             "Ask {}…",
@@ -229,6 +276,18 @@ pub fn draw(
     let line_y = input.y.saturating_sub(1);
     line(buf, area.x, line_y, area.width, border);
     bottom = line_y;
+    // `/name ` typed: what the command takes, after the cursor.
+    if let Some(hint) = editor.agent_input_hint() {
+        let at = inner_x + cursor_at.1 as u16;
+        put(
+            buf,
+            at,
+            input_top + (cursor_at.0 - first) as u16,
+            &hint,
+            theme.get("ui.input.placeholder"),
+            area.right() - 1,
+        );
+    }
     let cursor = focused.then(|| {
         Position::new(
             inner_x + cursor_at.1 as u16,
@@ -316,6 +375,7 @@ pub fn draw(
                 y += 1;
             }
         }
+        draw_slash(buf, editor, theme, chat_area, &mut map);
         return (map, cursor);
     }
     let mut rows: Vec<(Row, Option<Style>, Option<&str>)> = Vec::new();
@@ -362,7 +422,55 @@ pub fn draw(
             .set_symbol("↓")
             .set_style(theme.get("ui.sidebar.agent.hint"));
     }
+    draw_slash(buf, editor, theme, chat_area, &mut map);
     (map, cursor)
+}
+
+/// The slash menu, over the foot of the chat (`chat`): a row a command,
+/// its name then what it does.
+fn draw_slash(buf: &mut Buffer, editor: &Editor, theme: &Theme, chat: Rect, map: &mut AgentMap) {
+    let matches = editor.agent_slash_matches();
+    if matches.is_empty() || chat.height == 0 {
+        return;
+    }
+    let selected = editor.agent_slash_selected();
+    let rows = matches.len().min(SLASH_ROWS).min(chat.height as usize);
+    let first = (selected + 1).saturating_sub(rows);
+    let name_w = matches
+        .iter()
+        .map(|c| width_of(&c.name) + 1)
+        .max()
+        .unwrap_or(0)
+        .min(chat.width as usize / 2);
+    let normal = theme.get("ui.popup");
+    let chosen = normal.patch(theme.get("ui.popup.selected"));
+    let detail = theme.get("ui.popup.detail");
+    // The sidebar's full width (its padding column each side too).
+    let x0 = chat.x.saturating_sub(1);
+    let width = chat.width + 2;
+    let top = chat.bottom() - rows as u16;
+    for (i, command) in matches.iter().enumerate().skip(first).take(rows) {
+        let y = top + (i - first) as u16;
+        let style = if i == selected { chosen } else { normal };
+        let row = Rect::new(x0, y, width, 1);
+        buf.set_style(row, style);
+        // Clear what the chat drew there.
+        for x in row.left()..row.right() {
+            buf[(x, y)].set_symbol(" ");
+        }
+        let limit = row.right() - 1;
+        let name = format!("/{}", command.name);
+        put(buf, chat.x, y, &name, style, limit);
+        let at = chat.x + name_w as u16 + 2;
+        let mut text = command.description.clone();
+        if let Some(hint) = &command.hint
+            && text.is_empty()
+        {
+            text = hint.clone();
+        }
+        put(buf, at, y, &text, style.patch(detail), limit);
+        map.slash.push((row, i));
+    }
 }
 
 /// "Claude Agent 0.107.0" → "Claude Agent" (for the box's placeholder).

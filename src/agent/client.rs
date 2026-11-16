@@ -23,6 +23,7 @@ use crate::editor::agent::{
     AgentEvent, AgentStatus, PermissionAsk, PermissionOption, PlanStep, ToolCall, ToolDiff,
     ToolStatus,
 };
+use crate::editor::agent_session::{AgentCommand, Usage, config_options};
 
 /// The protocol version ferra speaks.
 pub const PROTOCOL_VERSION: u64 = 1;
@@ -49,6 +50,8 @@ enum Pending {
     NewSession,
     Prompt,
     SetMode,
+    SetConfig,
+    CloseSession,
 }
 
 pub struct AgentClient {
@@ -60,6 +63,10 @@ pub struct AgentClient {
     next_id: i64,
     pending: HashMap<i64, Pending>,
     session: Option<String>,
+    /// Sessions it had before (`/clear`): what they still send is dropped.
+    old_sessions: Vec<String>,
+    /// It closes sessions (`session/close`).
+    closes_sessions: bool,
     /// Prompts sent before the session was ready.
     queued: Vec<Vec<Value>>,
     /// It stopped reading (or was stopped).
@@ -133,6 +140,8 @@ impl AgentClient {
             next_id: 1,
             pending: HashMap::new(),
             session: None,
+            old_sessions: Vec::new(),
+            closes_sessions: false,
             queued: Vec::new(),
             stopped: false,
             mcp_servers,
@@ -216,6 +225,48 @@ impl AgentClient {
         }
     }
 
+    /// Whether a `session/update` for `session` is the one ferra's in
+    /// (not a session it closed, or a subagent's).
+    pub fn is_current(&self, session: Option<&str>) -> bool {
+        match (session, &self.session) {
+            (None, _) => true,
+            (Some(id), Some(current)) => id == current,
+            (Some(id), None) => !self.old_sessions.iter().any(|old| old == id),
+        }
+    }
+
+    /// Sets the session's setting `id` (`session/set_config_option`).
+    pub fn set_config(&mut self, id: &str, value: Value) {
+        if let Some(session) = self.session.clone() {
+            self.request(
+                "session/set_config_option",
+                json!({ "sessionId": session, "configId": id, "value": value }),
+                Pending::SetConfig,
+            );
+        }
+    }
+
+    /// A new session in place of the one there is (closed, if the agent
+    /// can).
+    pub fn new_session(&mut self) {
+        if let Some(old) = self.session.take() {
+            if self.closes_sessions {
+                self.request(
+                    "session/close",
+                    json!({ "sessionId": old }),
+                    Pending::CloseSession,
+                );
+            }
+            self.old_sessions.push(old);
+        }
+        let cwd = self.root.to_string_lossy().into_owned();
+        self.request(
+            "session/new",
+            json!({ "cwd": cwd, "mcpServers": self.mcp_servers.clone() }),
+            Pending::NewSession,
+        );
+    }
+
     /// Stops the agent's process.
     pub fn stop(&mut self) {
         self.stopped = true;
@@ -241,13 +292,23 @@ impl AgentClient {
                     } else {
                         String::new()
                     };
-                    vec![AgentEvent::Status(AgentStatus::Stopped(format!("{text}{hint}")))]
+                    vec![AgentEvent::Status(AgentStatus::Stopped(format!(
+                        "{text}{hint}"
+                    )))]
                 }
                 Pending::Prompt => vec![
                     AgentEvent::Notice(format!("Error: {text}")),
                     AgentEvent::TurnEnded("end_turn".into()),
                 ],
-                Pending::SetMode => vec![AgentEvent::Notice(format!("Couldn't change mode: {text}"))],
+                Pending::SetMode => {
+                    vec![AgentEvent::Notice(format!("Couldn't change mode: {text}"))]
+                }
+                Pending::SetConfig => {
+                    vec![AgentEvent::Notice(format!(
+                        "Couldn't change that setting: {text}"
+                    ))]
+                }
+                Pending::CloseSession => Vec::new(),
             };
         }
         let result = &message["result"];
@@ -270,22 +331,26 @@ impl AgentClient {
                     Some(version) => format!("{name} {version}"),
                     None => name,
                 };
-                let cwd = self.root.to_string_lossy().into_owned();
-                self.request(
-                    "session/new",
-                    json!({ "cwd": cwd, "mcpServers": self.mcp_servers.clone() }),
-                    Pending::NewSession,
-                );
+                self.closes_sessions = result["agentCapabilities"]["sessionCapabilities"]
+                    .get("close")
+                    .is_some_and(|c| !c.is_null());
+                self.new_session();
                 let images = result["agentCapabilities"]["promptCapabilities"]["image"]
                     .as_bool()
                     .unwrap_or(false);
-                vec![AgentEvent::Started(started), AgentEvent::TakesImages(images)]
+                vec![
+                    AgentEvent::Started(started),
+                    AgentEvent::TakesImages(images),
+                ]
             }
             Pending::NewSession => {
                 self.session = result["sessionId"].as_str().map(str::to_string);
                 let mut events = vec![AgentEvent::Status(AgentStatus::Ready)];
                 if let Some(modes) = result.get("modes").filter(|m| !m.is_null()) {
                     events.push(modes_event(modes));
+                }
+                if let Some(options) = result.get("configOptions").filter(|o| o.is_array()) {
+                    events.push(AgentEvent::Config(config_options(options)));
                 }
                 let queued = std::mem::take(&mut self.queued);
                 if !queued.is_empty() {
@@ -300,7 +365,11 @@ impl AgentClient {
                 let reason = result["stopReason"].as_str().unwrap_or("end_turn");
                 vec![AgentEvent::TurnEnded(reason.to_string())]
             }
-            Pending::SetMode => Vec::new(),
+            Pending::SetConfig => match result.get("configOptions").filter(|o| o.is_array()) {
+                Some(options) => vec![AgentEvent::Config(config_options(options))],
+                None => Vec::new(),
+            },
+            Pending::SetMode | Pending::CloseSession => Vec::new(),
         }
     }
 }
@@ -452,7 +521,10 @@ pub fn update_event(update: &Value) -> Option<AgentEvent> {
                 .collect();
             AgentEvent::ToolStarted(ToolCall {
                 id: update["toolCallId"].as_str()?.to_string(),
-                title: tool_title(update["title"].as_str().unwrap_or("Tool"), &update["rawInput"]),
+                title: tool_title(
+                    update["title"].as_str().unwrap_or("Tool"),
+                    &update["rawInput"],
+                ),
                 kind: update["kind"].as_str().unwrap_or("other").to_string(),
                 status: tool_status(&update["status"]).unwrap_or_default(),
                 text,
@@ -490,14 +562,24 @@ pub fn update_event(update: &Value) -> Option<AgentEvent> {
                 .into_iter()
                 .flatten()
                 .filter_map(|c| {
-                    Some((
-                        c["name"].as_str()?.to_string(),
-                        c["description"].as_str().unwrap_or_default().to_string(),
-                    ))
+                    Some(AgentCommand {
+                        name: c["name"].as_str()?.to_string(),
+                        description: c["description"].as_str().unwrap_or_default().to_string(),
+                        hint: c["input"]["hint"].as_str().map(str::to_string),
+                    })
                 })
                 .collect(),
         ),
         "current_mode_update" => AgentEvent::Mode(update["currentModeId"].as_str()?.to_string()),
+        "config_option_update" => AgentEvent::Config(config_options(&update["configOptions"])),
+        "usage_update" => AgentEvent::Usage(Usage {
+            used: update["used"].as_u64()?,
+            size: update["size"].as_u64()?,
+            cost: update["cost"]["amount"].as_f64().map(|amount| {
+                let currency = update["cost"]["currency"].as_str().unwrap_or("USD");
+                (amount, currency.to_string())
+            }),
+        }),
         _ => return None,
     })
 }
@@ -538,7 +620,10 @@ mod tests {
         write_message(&mut wire, &json!({"b": 2})).unwrap();
         assert_eq!(String::from_utf8(wire.clone()).unwrap().lines().count(), 2);
         let mut input = io::Cursor::new(wire);
-        assert_eq!(read_message(&mut input).unwrap(), Some(json!({"a": "x\ny"})));
+        assert_eq!(
+            read_message(&mut input).unwrap(),
+            Some(json!({"a": "x\ny"}))
+        );
         assert_eq!(read_message(&mut input).unwrap(), Some(json!({"b": 2})));
         assert_eq!(read_message(&mut input).unwrap(), None);
     }
@@ -558,17 +643,46 @@ mod tests {
         };
         assert_eq!(call.diffs[0].new, "y");
         assert_eq!(call.locations, [("/p/a.rs".to_string(), Some(3))]);
-        assert_eq!(update_event(&json!({"sessionUpdate": "usage_update"})), None);
+        assert_eq!(
+            update_event(&json!({"sessionUpdate": "usage_update"})),
+            None
+        );
+        let usage = json!({"sessionUpdate": "usage_update", "used": 42000, "size": 200000,
+                           "cost": {"amount": 0.5, "currency": "USD"}});
+        let Some(AgentEvent::Usage(usage)) = update_event(&usage) else {
+            panic!()
+        };
+        assert_eq!(usage.label(), "42k / 200k · $0.50");
+        let commands = json!({"sessionUpdate": "available_commands_update", "availableCommands": [
+            {"name": "review", "description": "Review", "input": {"hint": "[branch]"}},
+            {"name": "compact", "description": "Compact", "input": null}]});
+        let Some(AgentEvent::Commands(commands)) = update_event(&commands) else {
+            panic!()
+        };
+        assert_eq!(commands[0].hint.as_deref(), Some("[branch]"));
+        assert_eq!(commands[1].hint, None);
     }
 
     #[test]
     fn mcp_tools_are_named_in_words() {
         let input = json!({"path": "/no/such/main.rs", "line": 12, "symbol": "area"});
-        assert_eq!(tool_title("mcp__ferra__open_file", &input), "Open /no/such/main.rs:12");
-        assert_eq!(tool_title("mcp__ferra__lsp_references", &input), "References to area");
+        assert_eq!(
+            tool_title("mcp__ferra__open_file", &input),
+            "Open /no/such/main.rs:12"
+        );
+        assert_eq!(
+            tool_title("mcp__ferra__lsp_references", &input),
+            "References to area"
+        );
         let kind = json!({"symbol": "Shape", "kind": "implementation"});
-        assert_eq!(tool_title("mcp__ferra__lsp_definition", &kind), "Implementations of Shape");
-        assert_eq!(tool_title("mcp__github__list_issues", &json!({})), "list issues (github)");
+        assert_eq!(
+            tool_title("mcp__ferra__lsp_definition", &kind),
+            "Implementations of Shape"
+        );
+        assert_eq!(
+            tool_title("mcp__github__list_issues", &json!({})),
+            "list issues (github)"
+        );
         assert_eq!(tool_title("Read main.rs", &json!({})), "Read main.rs");
     }
 }

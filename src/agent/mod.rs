@@ -125,7 +125,13 @@ enum Settled {
 }
 
 impl AfterEdit {
-    fn new(conn: u64, id: Value, text: String, documents: &[crate::editor::DocumentId], editor: &Editor) -> Self {
+    fn new(
+        conn: u64,
+        id: Value,
+        text: String,
+        documents: &[crate::editor::DocumentId],
+        editor: &Editor,
+    ) -> Self {
         Self {
             conn,
             id,
@@ -149,14 +155,18 @@ impl AfterEdit {
             .collect();
         if checked.is_empty() {
             // A server may yet open the file it was just given.
-            let maybe = self.documents.iter().any(|&(d, _)| editor.has_language_server(d));
+            let maybe = self
+                .documents
+                .iter()
+                .any(|&(d, _)| editor.has_language_server(d));
             return if !maybe || now - self.started >= SETTLED {
                 Settled::Unchecked
             } else {
                 Settled::Waiting
             };
         }
-        if let Some((_, _, (_, Some(_)))) = checked.iter().find(|(_, _, (_, busy))| busy.is_some()) {
+        if let Some((_, _, (_, Some(_)))) = checked.iter().find(|(_, _, (_, busy))| busy.is_some())
+        {
             self.last_busy = Some(now);
         }
         let quiet = |at: Option<Instant>| at.is_none_or(|at| now - at >= SETTLED);
@@ -294,7 +304,10 @@ impl Agents {
     fn reply(&self, conn: u64, id: Value, result: Value) {
         #[cfg(unix)]
         if let Some(server) = &self.mcp {
-            server.send(conn, &json!({ "jsonrpc": "2.0", "id": id, "result": result }));
+            server.send(
+                conn,
+                &json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+            );
         }
         #[cfg(not(unix))]
         let _ = (conn, id, result);
@@ -345,7 +358,8 @@ impl Agents {
                         self.waiting.insert(call, (conn, id));
                     }
                     tools::Called::Changed(text, documents) => {
-                        self.after_edits.push(AfterEdit::new(conn, id, text, &documents, editor));
+                        self.after_edits
+                            .push(AfterEdit::new(conn, id, text, &documents, editor));
                     }
                 }
             }
@@ -475,6 +489,15 @@ impl Agents {
                     client.set_mode(&mode);
                 }
             }
+            AgentRequest::SetConfig { id, value } => {
+                if let Some(client) = &mut self.client {
+                    client.set_config(&id, value);
+                }
+            }
+            AgentRequest::NewSession => match &mut self.client {
+                Some(client) => client.new_session(),
+                None => self.start(editor),
+            },
             AgentRequest::Stop => {
                 if let Some(mut client) = self.client.take() {
                     client.stop();
@@ -500,6 +523,9 @@ impl Agents {
         let id = message.get("id").cloned().filter(|id| !id.is_null());
         match (method.as_deref(), id) {
             (Some("session/update"), None) => {
+                if !client.is_current(message["params"]["sessionId"].as_str()) {
+                    return;
+                }
                 if let Some(event) = update_event(&message["params"]["update"]) {
                     editor.agent_event(event);
                 }
@@ -542,15 +568,26 @@ fn tool_result(answer: Result<String, String>) -> Value {
 /// any), what was typed, and a link to each file it mentions.
 pub fn prompt_blocks(text: &str, context: Option<&str>, files: &[PathBuf]) -> Vec<Value> {
     let mut blocks = Vec::new();
+    let typed = json!({ "type": "text", "text": text });
+    // A slash command must be the first text (agents look for it there).
+    let command = text.starts_with('/');
+    if command {
+        blocks.push(typed.clone());
+    }
     if let Some(context) = context {
         blocks.push(json!({
             "type": "text",
             "text": format!("<editor-context>\n{context}\n</editor-context>"),
         }));
     }
-    blocks.push(json!({ "type": "text", "text": text }));
+    if !command {
+        blocks.push(typed);
+    }
     for file in files {
-        let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = file
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         blocks.push(json!({
             "type": "resource_link",
             "uri": crate::lsp::convert::path_to_uri(file),

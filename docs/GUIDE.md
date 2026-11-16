@@ -674,8 +674,9 @@ it (`agent-width`, 50 columns).
 | `<S-Tab>` | The agent's next mode (Claude Code's: Default, Accept Edits, Plan...) |
 | `<C-c>` | Stop the turn it's working on |
 | `<C-o>` | Show every tool call's output and changes (again: hide them) |
-| `<Up>` `<Down>` `<PageUp>` `<PageDown>` | Scroll the chat (or the wheel) |
-| `<Esc>` | Back to the text (the sidebar stays) |
+| `<Up>` `<Down>` `<PageUp>` `<PageDown>` | Scroll the chat (or the wheel); with the slash list shown, Up and Down move through it |
+| `<Tab>` | Fill in the slash command chosen in the list |
+| `<Esc>` | Put the slash list away; else back to the text (the sidebar stays) |
 
 The chat shows what you asked, what the agent says, its plan, and each tool
 call it makes (✓ done, ◐ running, ✗ failed) with the files it changed and
@@ -684,6 +685,23 @@ line. When the agent asks permission (to run a command, say), its options
 show as buttons above the box: click one, or press its number with nothing
 typed. Files it reads come from their buffers, so it sees unsaved changes.
 `:agent_stop` (Agent ▸ Stop Agent) ends the agent's program.
+
+Type `/` at the start of the box for the agent's slash commands (Claude
+Code's `/compact`, `/review`, your own commands and skills...): a list over
+the chat, narrowed as you type, each with what it does. `<CR>` runs the one
+chosen, or, for one that takes something after its name, fills it in with a
+hint of what to type (`/review [branch]`); `<Tab>` fills it in either way;
+click a row to choose it. A few are ferra's own: `/clear` (or
+`:agent_new`, Agent ▸ New Conversation) starts a new conversation, the
+agent forgetting this one and the chat clearing; `/model` and `/effort`
+list the agent's models and how hard it thinks.
+
+Under the box are the agent's settings as chips, its model and effort
+(and others it has, such as Claude Code's Fast mode): click one, or use
+`:agent_model` (Agent ▸ Choose Model) or `:agent_config` (Agent ▸ Agent
+Settings), to change it. On the right is how much of its context the
+conversation fills, and what it's cost so far, as the agent reports them
+(`42k / 200k · $0.31`).
 
 Each message tells the agent what you're looking at: the file and where
 the cursor is, what's selected (in visual mode, or a VS Code selection),

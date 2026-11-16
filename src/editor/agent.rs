@@ -10,6 +10,7 @@
 use std::cell::Cell;
 use std::collections::HashSet;
 
+use super::agent_session::{AgentCommand, ConfigOption, Usage};
 use super::picker::{Picker, PickerAction, PickerItem};
 use super::popup::PopupSpan;
 use super::text_field::TextField;
@@ -131,6 +132,13 @@ pub enum AgentRequest {
         option: Option<String>,
     },
     SetMode(String),
+    /// Set one of the session's settings (`session/set_config_option`).
+    SetConfig {
+        id: String,
+        value: serde_json::Value,
+    },
+    /// A new session, in place of the one there is (`/clear`).
+    NewSession,
     /// Stop the agent.
     Stop,
 }
@@ -156,8 +164,12 @@ pub enum AgentEvent {
     /// The modes it has (id and name) and the one it's in.
     Modes(Vec<(String, String)>, Option<String>),
     Mode(String),
-    /// Its slash commands: name and description.
-    Commands(Vec<(String, String)>),
+    /// Its slash commands.
+    Commands(Vec<AgentCommand>),
+    /// The session's settings (all of them, each time).
+    Config(Vec<ConfigOption>),
+    /// How much of its context it's used.
+    Usage(Usage),
     /// Whether it takes images in a message.
     TakesImages(bool),
     Permission(PermissionAsk),
@@ -207,7 +219,15 @@ pub struct AgentChat {
     pub permission: Option<PermissionAsk>,
     pub modes: Vec<(String, String)>,
     pub mode: Option<String>,
-    pub commands: Vec<(String, String)>,
+    pub commands: Vec<AgentCommand>,
+    /// The session's settings: model, effort...
+    pub config: Vec<ConfigOption>,
+    /// How much of its context it's used, once it's said.
+    pub usage: Option<Usage>,
+    /// The slash menu's selected row.
+    pub(super) slash_selected: usize,
+    /// What was in the box when the slash menu was put away (`<Esc>`).
+    pub(super) slash_closed: Option<String>,
     /// The agents there are (`[agents]`), by name.
     pub available: Vec<String>,
     /// The sidebar's shown.
@@ -229,7 +249,7 @@ pub struct AgentChat {
     pub takes_images: Option<bool>,
     /// Images put in the box, each shown there as `[Image #n]`.
     pub images: Vec<Image>,
-    requests: Vec<AgentRequest>,
+    pub(super) requests: Vec<AgentRequest>,
 }
 
 impl AgentChat {
@@ -325,8 +345,12 @@ impl Editor {
         }
     }
 
-    /// Focus back to the text (the sidebar stays).
+    /// Focus back to the text (the sidebar stays); with the slash menu
+    /// shown, it's put away instead.
     pub fn agent_leave(&mut self) {
+        if self.agent_slash_close() {
+            return;
+        }
         if self.mode() == Mode::Agent {
             self.set_mode(Mode::Normal);
         }
@@ -334,6 +358,9 @@ impl Editor {
 
     /// `<CR>` in the box: sends what's typed.
     pub fn agent_send(&mut self) -> Result<(), String> {
+        if self.agent_slash_enter()? {
+            return Ok(());
+        }
         let text = self.agent.input.text().to_string();
         self.agent_prompt(&text)?;
         self.agent.input = TextField::default();
@@ -345,6 +372,9 @@ impl Editor {
         let text = text.trim();
         if text.is_empty() {
             return Err("Nothing to ask".into());
+        }
+        if self.agent_local_command(text)? {
+            return Ok(());
         }
         if self.agent.status == AgentStatus::Busy {
             return Err("The agent is still working (Ctrl+C stops it)".into());
@@ -419,6 +449,7 @@ impl Editor {
     /// Edits the box (`edit` is one of `TextField`'s).
     pub fn agent_input_edit(&mut self, edit: impl FnOnce(&mut TextField)) {
         edit(&mut self.agent.input);
+        self.agent.slash_selected = 0;
     }
 
     /// A char typed in the box. With a question asked and nothing typed,
@@ -434,6 +465,7 @@ impl Editor {
             return;
         }
         self.agent.input.push(c);
+        self.agent.slash_selected = 0;
     }
 
     /// `@` in the box: the files to pick one to mention (its path goes in
@@ -483,10 +515,9 @@ impl Editor {
                                 self.set_message(Message::error(error));
                             }
                         }
-                        Err(e) => self.set_message(Message::error(format!(
-                            "{}: {e}",
-                            path.display()
-                        ))),
+                        Err(e) => {
+                            self.set_message(Message::error(format!("{}: {e}", path.display())))
+                        }
                     }
                 } else {
                     let shown = short_path(&path.to_string_lossy());
@@ -531,7 +562,14 @@ impl Editor {
                 data.len() as f64 / (1024.0 * 1024.0)
             ));
         }
-        let number = self.agent.images.iter().map(|i| i.number).max().unwrap_or(0) + 1;
+        let number = self
+            .agent
+            .images
+            .iter()
+            .map(|i| i.number)
+            .max()
+            .unwrap_or(0)
+            + 1;
         let image = Image {
             number,
             mime: mime.to_string(),
@@ -680,6 +718,8 @@ impl Editor {
         self.agent.modes.clear();
         self.agent.mode = None;
         self.agent.commands.clear();
+        self.agent.config.clear();
+        self.agent.usage = None;
         self.agent.open = true;
         Ok(())
     }
@@ -754,6 +794,8 @@ impl Editor {
             }
             AgentEvent::Mode(mode) => chat.mode = Some(mode),
             AgentEvent::Commands(commands) => chat.commands = commands,
+            AgentEvent::Config(options) => chat.config = options,
+            AgentEvent::Usage(usage) => chat.usage = Some(usage),
             AgentEvent::TakesImages(takes) => chat.takes_images = Some(takes),
             AgentEvent::Permission(ask) => {
                 // A question wants seeing (focus stays where it is).
@@ -1058,15 +1100,18 @@ fn dropped_files(text: &str) -> Option<Vec<std::path::PathBuf>> {
         .map(|p| {
             let p = p.strip_prefix("file://").unwrap_or(p);
             match p.strip_prefix("~/") {
-                Some(rest) => std::env::var_os("HOME").map_or_else(|| here.join(p), |home| {
-                    std::path::PathBuf::from(home).join(rest)
-                }),
+                Some(rest) => std::env::var_os("HOME").map_or_else(
+                    || here.join(p),
+                    |home| std::path::PathBuf::from(home).join(rest),
+                ),
                 None => here.join(p),
             }
         })
         .collect();
     // Absolute, and all files: a drop (not a word that happens to be one).
-    let dropped = paths.iter().all(|p| p.starts_with('/') || p.starts_with("file://") || p.starts_with('~'))
+    let dropped = paths
+        .iter()
+        .all(|p| p.starts_with('/') || p.starts_with("file://") || p.starts_with('~'))
         && files.iter().all(|f| f.is_file());
     dropped.then_some(files)
 }
@@ -1355,7 +1400,11 @@ mod tests {
         // Words, or a path that isn't there: text.
         assert_eq!(dropped_files("hello world"), None);
         assert_eq!(dropped_files("/no/such/file.png"), None);
-        assert_eq!(dropped_files("src/main.rs"), None, "not absolute: typed, not dropped");
+        assert_eq!(
+            dropped_files("src/main.rs"),
+            None,
+            "not absolute: typed, not dropped"
+        );
     }
 
     #[test]

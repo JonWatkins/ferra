@@ -851,7 +851,8 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 
 # The agent sidebar's box (Ctrl+Alt+B, :agent), while it has focus. Typing
 # goes in the box; with the agent asking something and nothing typed, 1 to 4
-# answer it.
+# answer it. / at the start lists the agent's commands: Up/Down choose, Tab
+# fills one in, Enter runs it, Esc puts the list away.
 [keys.agent]
 "<CR>" = "agent_send"
 "@" = "agent_mention"
@@ -876,8 +877,9 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "<C-a>" = "agent_home"
 "<End>" = "agent_end"
 "<C-e>" = "agent_end"
-"<Up>" = "agent_scroll_up"
-"<Down>" = "agent_scroll_down"
+"<Up>" = "agent_up"
+"<Down>" = "agent_down"
+"<Tab>" = "agent_complete"
 "<PageUp>" = "agent_page_up"
 "<PageDown>" = "agent_page_down"
 

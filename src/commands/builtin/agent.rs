@@ -124,6 +124,49 @@ pub fn register(r: &mut CommandRegistry) {
             Ok(())
         },
     );
+    r.register(
+        "agent_new",
+        "Start a new conversation with the coding agent (/clear)",
+        |cx| cx.editor.agent_new_session(),
+    );
+    r.register("agent_model", "Choose the coding agent's model", |cx| {
+        cx.editor.agent_config_picker(Some("model"))
+    });
+    r.register(
+        "agent_config",
+        "Change one of the coding agent's settings: model, effort... (a setting's id, or a list of them)",
+        |cx| cx.editor.agent_config_picker(cx.args.first().map(String::as_str)),
+    );
+    r.register(
+        "agent_set_config",
+        "Set one of the coding agent's settings: its id, then the value",
+        |cx| match cx.args {
+            [id, value, ..] => cx.editor.agent_set_config(id, value),
+            [id] => cx.editor.agent_config_picker(Some(id)),
+            [] => cx.editor.agent_config_picker(None),
+        },
+    );
+    r.register(
+        "agent_complete",
+        "Agent sidebar: fill in the slash command chosen in the list",
+        |cx| cx.editor.agent_complete(),
+    );
+    r.register(
+        "agent_up",
+        "Agent sidebar: up the slash command list (or scroll the chat up)",
+        |cx| {
+            cx.editor.agent_up_down(false);
+            Ok(())
+        },
+    );
+    r.register(
+        "agent_down",
+        "Agent sidebar: down the slash command list (or scroll the chat down)",
+        |cx| {
+            cx.editor.agent_up_down(true);
+            Ok(())
+        },
+    );
     let scrolls: [(&str, &str, isize); 4] = [
         ("agent_scroll_up", "Agent sidebar: scroll the chat up", 3),
         (

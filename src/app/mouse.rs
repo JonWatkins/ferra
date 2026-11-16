@@ -90,9 +90,12 @@ enum Hit {
     Sidebar,
     /// The agent sidebar's name (lists the agents), its mode (lists the
     /// modes), a tool call's row (opens it), one of its question's
-    /// options, its box, and the rest of it.
+    /// options, its box, a setting's chip under the box (lists its
+    /// values), a row of the slash menu, and the rest of it.
     AgentTitle,
     AgentMode,
+    AgentChip(String),
+    AgentSlash(usize),
     AgentTool(String),
     AgentOption(usize),
     AgentInput,
@@ -238,6 +241,8 @@ impl App {
             | Hit::SearchToggle(_)
             | Hit::AgentTitle
             | Hit::AgentMode
+            | Hit::AgentChip(_)
+            | Hit::AgentSlash(_)
             | Hit::AgentTool(_)
             | Hit::AgentOption(_) => "pointer",
             Hit::AgentInput => "text",
@@ -312,6 +317,12 @@ impl App {
         {
             if let Some(&(_, n)) = agent.options.iter().find(|(r, _)| r.contains(at)) {
                 return Hit::AgentOption(n);
+            }
+            if let Some(&(_, i)) = agent.slash.iter().find(|(r, _)| r.contains(at)) {
+                return Hit::AgentSlash(i);
+            }
+            if let Some((_, id)) = agent.chips.iter().find(|(r, _)| r.contains(at)) {
+                return Hit::AgentChip(id.clone());
             }
             if agent.mode.is_some_and(|r| r.contains(at)) {
                 return Hit::AgentMode;
@@ -623,6 +634,16 @@ impl App {
             Hit::Sidebar => self.editor.set_mode(Mode::Sidebar),
             Hit::AgentTitle => self.agent_click("agent_choose"),
             Hit::AgentMode => self.agent_click("agent_mode"),
+            Hit::AgentChip(id) => {
+                if let Err(error) = self.editor.agent_config_picker(Some(&id)) {
+                    self.editor.set_message(Message::error(error));
+                }
+            }
+            Hit::AgentSlash(i) => {
+                if let Err(error) = self.editor.agent_slash_pick(i) {
+                    self.editor.set_message(Message::error(error));
+                }
+            }
             Hit::AgentTool(id) => self.editor.agent_toggle_tool(&id),
             Hit::AgentOption(n) => {
                 if let Err(error) = self.editor.agent_choose(n) {
@@ -1353,6 +1374,8 @@ impl App {
             | Hit::SearchToggle(_)
             | Hit::AgentTitle
             | Hit::AgentMode
+            | Hit::AgentChip(_)
+            | Hit::AgentSlash(_)
             | Hit::AgentTool(_)
             | Hit::AgentOption(_)
             | Hit::AgentInput

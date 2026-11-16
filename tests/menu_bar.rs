@@ -163,3 +163,22 @@ fn it_can_be_turned_off() {
     keys(&mut app, "<F10>");
     assert_eq!(open_menu(&app), Some("File"));
 }
+
+#[test]
+fn the_agent_menu_toggles_its_sidebar() {
+    for by_click in [false, true] {
+        let mut app = app_as_shipped();
+        let (x, y) = find(&mut app, "Agent");
+        click(&mut app, x, y);
+        assert_eq!(open_menu(&app), Some("Agent"));
+        if by_click {
+            let (x, y) = find(&mut app, "Toggle Agent Sidebar");
+            click(&mut app, x, y);
+        } else {
+            keys(&mut app, "<CR>");
+        }
+        assert_eq!(open_menu(&app), None);
+        assert!(app.editor().agent_sidebar_shown(), "click: {by_click}");
+        assert_eq!(app.editor().mode(), Mode::Agent, "click: {by_click}");
+    }
+}
