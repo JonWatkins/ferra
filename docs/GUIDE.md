@@ -647,6 +647,44 @@ key closes the panel; `:terminal-close` ends it any time. `terminal-height`
 ``<C-`>`` needs a terminal with the kitty keyboard protocol (Ghostty,
 kitty, WezTerm, iTerm2); elsewhere use `<C-\><C-n>`.
 
+## The coding agent
+
+ferra talks to coding agents (Claude Code, Gemini CLI, and others that
+speak ACP, the Agent Client Protocol), each its own program, set up in
+`[agents]` in the config; the editor option `agent` says which one to use
+(`claude` by default). They aren't installed for you. For Claude Code:
+
+```sh
+npm install -g @agentclientprotocol/claude-agent-acp   # or pnpm add -g
+```
+
+`Ctrl+Alt+B` (or `:agent_sidebar`, or Agent ▸ Toggle Agent Sidebar) shows
+the agent's sidebar on the right of the windows, with its box focused, and
+hides it again; `:agent` (`<Space>A` with Vim's keys) shows it and focuses
+the box. The agent starts the first time. The file tree can be open
+at the same time. The header shows the agent and the mode it's in; click
+the mode (or `:agent_mode`) to change it, or the agent's name (or
+`:agent_choose`) to talk to another one. Drag the sidebar's edge to resize
+it (`agent-width`, 50 columns).
+
+| Keys (in the box) | Action |
+|-------------------|--------|
+| `<CR>` | Send what's typed |
+| `<S-CR>` `<A-CR>` `<C-j>` | A new line |
+| `<S-Tab>` | The agent's next mode (Claude Code's: Default, Accept Edits, Plan...) |
+| `<C-c>` | Stop the turn it's working on |
+| `<C-o>` | Show every tool call's output and changes (again: hide them) |
+| `<Up>` `<Down>` `<PageUp>` `<PageDown>` | Scroll the chat (or the wheel) |
+| `<Esc>` | Back to the text (the sidebar stays) |
+
+The chat shows what you asked, what the agent says, its plan, and each tool
+call it makes (✓ done, ◐ running, ✗ failed) with the files it changed and
+how many lines; click a tool call to see its output and its changes line by
+line. When the agent asks permission (to run a command, say), its options
+show as buttons above the box: click one, or press its number with nothing
+typed. Files it reads come from their buffers, so it sees unsaved changes.
+`:agent_stop` (Agent ▸ Stop Agent) ends the agent's program.
+
 ## Git
 
 In a git repository, the gutter marks what's changed since you last

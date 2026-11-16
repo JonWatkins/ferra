@@ -16,6 +16,7 @@
 //! takes the bottom of the windows' side, under their status lines.
 
 pub mod activity;
+pub mod agent;
 pub mod breadcrumbs;
 mod command_line;
 mod completion_menu;
@@ -87,6 +88,8 @@ pub struct ScreenMap {
     /// The menu bar: its row, and each title's columns.
     pub menu_bar: Option<(u16, Vec<(u16, u16)>)>,
     pub sidebar: Option<SidebarMap>,
+    /// The agent sidebar, on the right.
+    pub agent: Option<agent::AgentMap>,
     /// The terminal panel, title row included.
     pub terminal: Option<Rect>,
     /// The lines between windows, and whether each is vertical.
@@ -310,6 +313,30 @@ pub fn draw(
             (main, status)
         }
         _ => (main, status),
+    };
+
+    // The agent sidebar takes the right of what's left, down to the
+    // command line (or the one status line, as the left sidebar).
+    let mut agent_cursor = None;
+    let (main, status) = if editor.agent_sidebar_shown() && main.width >= 40 {
+        let per_window = editor.options.statusline == StatuslineMode::Windows;
+        let width = editor.options.agent_width.clamp(24, main.width / 2);
+        let height = main.height + u16::from(per_window);
+        let side = Rect::new(main.right() - width, main.y, width, height);
+        let edge = Rect::new(side.x - 1, main.y, 1, height);
+        let rest = main.width - width - 1;
+        let (drawn, cursor) = agent::draw(frame.buffer_mut(), side, edge, editor, theme);
+        map.agent = Some(drawn);
+        agent_cursor = cursor;
+        let main = Rect::new(main.x, main.y, rest, main.height);
+        let status = if per_window {
+            Rect::new(status.x, status.y, rest, status.height)
+        } else {
+            status
+        };
+        (main, status)
+    } else {
+        (main, status)
     };
 
     // The bottom panel takes the bottom of what's left: a row of tabs and
@@ -605,6 +632,7 @@ pub fn draw(
         // The selection shows where it is.
         (Mode::Popup, _) => None,
         (Mode::Input, _) => input_cursor,
+        (Mode::Agent, _) => agent_cursor,
         (Mode::Git, _) => None,
         (Mode::Settings | Mode::Keybindings, _) => {
             settings_cursor.map(|(x, y)| ratatui::layout::Position::new(x, y))

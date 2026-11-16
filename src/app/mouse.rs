@@ -47,6 +47,8 @@ pub(super) enum Drag {
     Text(WindowId),
     /// Resizing the sidebar (its edge).
     Sidebar,
+    /// Resizing the agent sidebar (its edge).
+    Agent,
     /// Resizing the terminal panel (its title row), whose bottom is here.
     Panel { bottom: u16 },
     /// Resizing a window from the line after it (to its right or below).
@@ -62,7 +64,10 @@ pub(super) enum Drag {
     },
     /// A file or folder dragged from the tree's row `row`: onto a folder
     /// (moving it there), or into a window (opening it there).
-    Tree { path: std::path::PathBuf, row: usize },
+    Tree {
+        path: std::path::PathBuf,
+        row: usize,
+    },
 }
 
 /// What's at a place on the screen (boxes aside).
@@ -83,6 +88,15 @@ enum Hit {
     /// A line of the sidebar's list, rows down from its top.
     SidebarLine(usize),
     Sidebar,
+    /// The agent sidebar's name (lists the agents), its mode (lists the
+    /// modes), a tool call's row (opens it), one of its question's
+    /// options, its box, and the rest of it.
+    AgentTitle,
+    AgentMode,
+    AgentTool(String),
+    AgentOption(usize),
+    AgentInput,
+    Agent,
     Terminal,
     Nothing,
 }
@@ -213,12 +227,19 @@ impl App {
         }
         if let Some(edge) = self.edge_at(at) {
             return match edge {
-                Drag::Sidebar | Drag::Split { vertical: true, .. } => "ew-resize",
+                Drag::Sidebar | Drag::Agent | Drag::Split { vertical: true, .. } => "ew-resize",
                 _ => "ns-resize",
             };
         }
         match self.hit(at) {
-            Hit::SidebarTab(_) | Hit::Activity(_) | Hit::SearchToggle(_) => "pointer",
+            Hit::SidebarTab(_)
+            | Hit::Activity(_)
+            | Hit::SearchToggle(_)
+            | Hit::AgentTitle
+            | Hit::AgentMode
+            | Hit::AgentTool(_)
+            | Hit::AgentOption(_) => "pointer",
+            Hit::AgentInput => "text",
             Hit::SearchField | Hit::SearchReplace => "text",
             Hit::SearchReplaceAll => "pointer",
             Hit::SidebarLine(row) if self.sidebar_line_exists(row) => "pointer",
@@ -285,6 +306,28 @@ impl App {
             }
             return Hit::Sidebar;
         }
+        if let Some(agent) = &map.agent
+            && agent.area.contains(at)
+        {
+            if let Some(&(_, n)) = agent.options.iter().find(|(r, _)| r.contains(at)) {
+                return Hit::AgentOption(n);
+            }
+            if agent.mode.is_some_and(|r| r.contains(at)) {
+                return Hit::AgentMode;
+            }
+            if agent.title.contains(at) {
+                return Hit::AgentTitle;
+            }
+            if agent.input.contains(at) {
+                return Hit::AgentInput;
+            }
+            if agent.chat.contains(at)
+                && let Some((_, id)) = agent.tools.iter().find(|(y, _)| *y == at.y)
+            {
+                return Hit::AgentTool(id.clone());
+            }
+            return Hit::Agent;
+        }
         if map.terminal.is_some_and(|area| area.contains(at)) {
             return Hit::Terminal;
         }
@@ -300,6 +343,9 @@ impl App {
         let map = &self.screen_map;
         if map.sidebar.as_ref().is_some_and(|s| s.edge.contains(at)) {
             return Some(Drag::Sidebar);
+        }
+        if map.agent.as_ref().is_some_and(|a| a.edge.contains(at)) {
+            return Some(Drag::Agent);
         }
         if let Some(panel) = map.terminal
             && at.y == panel.y
@@ -339,6 +385,7 @@ impl App {
                 | Mode::Settings
                 | Mode::Keybindings
                 | Mode::Panel
+                | Mode::Agent
         )
     }
 
@@ -573,6 +620,19 @@ impl App {
                 }
             }
             Hit::Sidebar => self.editor.set_mode(Mode::Sidebar),
+            Hit::AgentTitle => self.agent_click("agent_choose"),
+            Hit::AgentMode => self.agent_click("agent_mode"),
+            Hit::AgentTool(id) => self.editor.agent_toggle_tool(&id),
+            Hit::AgentOption(n) => {
+                if let Err(error) = self.editor.agent_choose(n) {
+                    self.editor.set_message(Message::error(error));
+                }
+            }
+            Hit::AgentInput | Hit::Agent => {
+                if self.editor.mode() != Mode::Agent {
+                    self.editor.set_mode(Mode::Agent);
+                }
+            }
             Hit::Terminal => self.panel_click(at),
             Hit::Nothing => {}
         }
@@ -845,7 +905,11 @@ impl App {
 
     /// The tab under `at`, and whether it's on its `×`.
     fn tab_at(&self, at: Position) -> Option<(WindowId, crate::editor::DocumentId, bool)> {
-        let map = self.screen_map.tab_bars.iter().find(|m| m.row.contains(at))?;
+        let map = self
+            .screen_map
+            .tab_bars
+            .iter()
+            .find(|m| m.row.contains(at))?;
         map.tabs
             .iter()
             .find(|(from, to, _, _)| (*from..*to).contains(&at.x))
@@ -909,9 +973,18 @@ impl App {
         }
     }
 
-    /// A click back into the text leaves the sidebar or the terminal.
+    /// A click on the agent sidebar's name or mode: a list to choose from.
+    fn agent_click(&mut self, command: &str) {
+        self.execute(command, Invocation::default());
+    }
+
+    /// A click back into the text leaves the sidebar, the terminal or the
+    /// agent's box.
     fn leave_panes(&mut self) {
-        if matches!(self.editor.mode(), Mode::Sidebar | Mode::Terminal) {
+        if matches!(
+            self.editor.mode(),
+            Mode::Sidebar | Mode::Terminal | Mode::Agent
+        ) {
             self.editor.set_mode(Mode::Normal);
         }
     }
@@ -970,6 +1043,12 @@ impl App {
                     self.editor.options.sidebar_width = at.x.saturating_sub(sidebar.area.x).max(10);
                 }
             }
+            Some(Drag::Agent) => {
+                if let Some(agent) = &self.screen_map.agent {
+                    let width = agent.area.right().saturating_sub(at.x + 1);
+                    self.editor.options.agent_width = width.max(24);
+                }
+            }
             Some(Drag::Panel { bottom }) => {
                 self.editor.options.terminal_height = bottom.saturating_sub(at.y + 1).max(2);
             }
@@ -1013,10 +1092,8 @@ impl App {
             .iter()
             .find(|t| t.3 == document)
             .map_or(0, |t| t.1 - t.0);
-        let Some(&(over_from, over_to, _, over)) = map
-            .tabs
-            .iter()
-            .find(|t| (t.0..t.1).contains(&at.x))
+        let Some(&(over_from, over_to, _, over)) =
+            map.tabs.iter().find(|t| (t.0..t.1).contains(&at.x))
         else {
             return;
         };
@@ -1061,9 +1138,7 @@ impl App {
                 let target = match row {
                     Some((to, over)) => Some((
                         to,
-                        over.and_then(|o| {
-                            self.editor.window_tabs(to).iter().position(|&t| t == o)
-                        }),
+                        over.and_then(|o| self.editor.window_tabs(to).iter().position(|&t| t == o)),
                     )),
                     None => match self.hit(at) {
                         Hit::Window(to) => Some((to, None)),
@@ -1161,6 +1236,15 @@ impl App {
         }
         self.hover_wait = None;
         self.editor.end_any_hover();
+        if self
+            .screen_map
+            .agent
+            .as_ref()
+            .is_some_and(|a| a.chat.contains(at))
+        {
+            self.editor.agent_scroll(-sign * WHEEL_LINES as isize);
+            return;
+        }
         if self
             .screen_map
             .settings
@@ -1266,6 +1350,12 @@ impl App {
             | Hit::SearchReplace
             | Hit::SearchReplaceAll
             | Hit::SearchToggle(_)
+            | Hit::AgentTitle
+            | Hit::AgentMode
+            | Hit::AgentTool(_)
+            | Hit::AgentOption(_)
+            | Hit::AgentInput
+            | Hit::Agent
             | Hit::Nothing => {}
         }
     }

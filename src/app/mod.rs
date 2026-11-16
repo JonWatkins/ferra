@@ -113,6 +113,8 @@ pub struct App {
     lsp: std::rc::Rc<std::cell::RefCell<crate::lsp::Lsp>>,
     /// The coding agent (`agent`), talked to over ACP.
     agents: crate::agent::Agents,
+    /// The agent sidebar's spinner's frame, as last drawn.
+    agent_spinner: Option<usize>,
 }
 
 impl Default for App {
@@ -159,7 +161,10 @@ impl App {
             plugin_status_errors: HashMap::new(),
             lsp: Default::default(),
             agents: crate::agent::Agents::new(config.agents.clone()),
+            agent_spinner: None,
         };
+        app.editor
+            .set_agent_names(config.agents.keys().cloned().collect());
         let formatter = crate::lsp::LspFormatter::new(std::rc::Rc::clone(&app.lsp));
         app.editor.set_formatter(Box::new(formatter));
         let mode = app.editor.options.clipboard;
@@ -1209,9 +1214,10 @@ impl App {
         {
             let lines: Vec<&str> = text.trim_end_matches('\n').split('\n').collect();
             let each = lines.len() == self.editor.extra_cursors().len() + 1;
-            let mut order: Vec<crate::core::Position> = std::iter::once(self.editor.document.cursor())
-                .chain(self.editor.extra_cursors().iter().map(|c| c.cursor))
-                .collect();
+            let mut order: Vec<crate::core::Position> =
+                std::iter::once(self.editor.document.cursor())
+                    .chain(self.editor.extra_cursors().iter().map(|c| c.cursor))
+                    .collect();
             order.sort();
             let _ = self.editor.for_each_cursor(|editor| {
                 let at = editor.document.cursor();
@@ -1266,6 +1272,7 @@ impl App {
             }
             Mode::Terminal => self.editor.terminal_paste(text),
             Mode::Settings => self.editor.settings_paste(text),
+            Mode::Agent => self.editor.agent_paste(text),
             Mode::Keybindings | Mode::Panel => {}
             Mode::Popup | Mode::Git => {}
             // Nothing to paste into.
@@ -1342,9 +1349,17 @@ impl App {
     /// changed.
     pub fn update_agents(&mut self) -> bool {
         let changed = self.agents.update(&mut self.editor);
-        // The chat popup, shown again with new keys (an answer's).
-        self.after_background_popup();
-        changed
+        // The sidebar's spinner turns while the agent works.
+        let spinning = self.editor.agent_sidebar_shown()
+            && matches!(
+                self.editor.agent_chat().status,
+                crate::editor::agent::AgentStatus::Busy
+                    | crate::editor::agent::AgentStatus::Starting
+            );
+        let frame = spinning.then(ui::agent::spinner_frame);
+        let turned = frame.is_some() && frame != self.agent_spinner;
+        self.agent_spinner = frame;
+        changed || turned
     }
 
     /// The agents (tests give them a fake one).
@@ -1640,7 +1655,13 @@ impl App {
         if at_colon_prompt
             || matches!(
                 self.editor.mode(),
-                Mode::Picker | Mode::Find | Mode::Terminal | Mode::Popup | Mode::Input | Mode::Git
+                Mode::Picker
+                    | Mode::Find
+                    | Mode::Terminal
+                    | Mode::Popup
+                    | Mode::Input
+                    | Mode::Git
+                    | Mode::Agent
             )
         {
             self.changes.note_command_line();

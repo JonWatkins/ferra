@@ -37,10 +37,12 @@ pub enum Mode {
     Keybindings,
     /// The bottom panel's Problems or Output tab has focus.
     Panel,
+    /// The agent sidebar's box has focus.
+    Agent,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 15] = [
+    pub const ALL: [Mode; 16] = [
         Mode::Normal,
         Mode::Insert,
         Mode::Command,
@@ -56,6 +58,7 @@ impl Mode {
         Mode::Settings,
         Mode::Keybindings,
         Mode::Panel,
+        Mode::Agent,
     ];
 
     /// Lowercase identifier, used for config keys and theme scopes.
@@ -76,6 +79,7 @@ impl Mode {
             Mode::Settings => "settings",
             Mode::Keybindings => "keybindings",
             Mode::Panel => "panel",
+            Mode::Agent => "agent",
         }
     }
 
@@ -83,7 +87,7 @@ impl Mode {
     pub const fn accepts_text(self) -> bool {
         matches!(
             self,
-            Mode::Insert | Mode::Command | Mode::Picker | Mode::Find | Mode::Input
+            Mode::Insert | Mode::Command | Mode::Picker | Mode::Find | Mode::Input | Mode::Agent
         )
     }
 

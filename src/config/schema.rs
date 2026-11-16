@@ -76,10 +76,10 @@ fn category_of(path: &str) -> &'static str {
         "file-picker" | "fallback-encoding" | "watch-files" => "Files",
         "git" | "git-blame" => "Git",
         "lsp" | "auto-complete" | "highlight-references" | "inlay-hints" => "Language servers",
-        "keymap" | "mouse" | "mouse-hover" | "mouse-hover-delay" | "kitty-keyboard" | "key-timeout" | "clipboard"
-        | "clipboard-provider" => "Keyboard and mouse",
+        "keymap" | "mouse" | "mouse-hover" | "mouse-hover-delay" | "kitty-keyboard"
+        | "key-timeout" | "clipboard" | "clipboard-provider" => "Keyboard and mouse",
         "terminal-height" | "shell" => "Terminal",
-        "agent" => "Agent",
+        "agent" | "agent-width" => "Agent",
         "cursor-shape" => "Cursor shape",
         "plugin-index" | "plugin-suggestions" => "Plugins",
         _ => "Other",

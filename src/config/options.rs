@@ -86,6 +86,8 @@ pub struct EditorOptions {
     pub shell: String,
     /// The coding agent `:agent` talks to (a name in `[agents]`).
     pub agent: String,
+    /// Columns the agent sidebar takes, right of the windows.
+    pub agent_width: u16,
     /// The plugin directory `:plugin_browse` lists (a git source).
     pub plugin_index: String,
     /// Offer the directory's language pack for files of unknown types.
@@ -426,7 +428,7 @@ impl CursorShapes {
             Mode::Input => self.input,
             Mode::Git => self.git,
             // Its fields take text.
-            Mode::Settings | Mode::Keybindings => self.input,
+            Mode::Settings | Mode::Keybindings | Mode::Agent => self.input,
             Mode::Panel => self.sidebar,
         }
     }

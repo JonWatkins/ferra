@@ -1,7 +1,7 @@
 //! The coding agent over ACP, end to end, with a fake agent running in this
 //! process: starting it, a turn streaming in, a file read from its buffer,
 //! a permission asked and answered, a turn cancelled, and an agent that
-//! isn't installed.
+//! isn't installed; and its sidebar: typed in, drawn, clicked, resized.
 
 mod common;
 
@@ -11,10 +11,12 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use common::{app_with_config, keys};
+use common::{app_with_config, keys, render};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ferra::App;
 use ferra::agent::client::{Streams, read_message, write_message};
 use ferra::agent::{AgentConfig, Spawner};
+use ferra::editor::Mode;
 use ferra::editor::agent::{AgentStatus, ChatEntry, ToolStatus};
 use serde_json::{Value, json};
 
@@ -73,7 +75,10 @@ fn serve(mut input: BufReader<io::PipeReader>, mut out: io::PipeWriter) {
         match message["method"].as_str().unwrap_or_default() {
             "initialize" => {
                 assert_eq!(message["params"]["protocolVersion"], 1);
-                assert_eq!(message["params"]["clientCapabilities"]["fs"]["readTextFile"], true);
+                assert_eq!(
+                    message["params"]["clientCapabilities"]["fs"]["readTextFile"],
+                    true
+                );
                 reply(
                     &mut out,
                     json!({"protocolVersion": 1, "agentInfo": {"name": "fake", "version": "1.0"}}),
@@ -86,7 +91,10 @@ fn serve(mut input: BufReader<io::PipeReader>, mut out: io::PipeWriter) {
                                           {"id": "acceptEdits", "name": "Accept edits"}]}}),
             ),
             "session/prompt" => {
-                let asked = message["params"]["prompt"][0]["text"].as_str().unwrap_or_default().to_string();
+                let asked = message["params"]["prompt"][0]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 match asked.split_whitespace().next().unwrap_or_default() {
                     "hello" => {
                         text(&mut out, "Hi ");
@@ -124,7 +132,9 @@ fn serve(mut input: BufReader<io::PipeReader>, mut out: io::PipeWriter) {
                                                 {"optionId": "reject", "name": "Reject", "kind": "reject_once"}]}}),
                         );
                         let answer = answer_to(&mut input, 101);
-                        let chosen = answer["result"]["outcome"]["optionId"].as_str().unwrap_or("none");
+                        let chosen = answer["result"]["outcome"]["optionId"]
+                            .as_str()
+                            .unwrap_or("none");
                         update(
                             &mut out,
                             json!({"sessionUpdate": "tool_call_update", "toolCallId": "t1",
@@ -153,7 +163,8 @@ fn serve(mut input: BufReader<io::PipeReader>, mut out: io::PipeWriter) {
 }
 
 fn app() -> App {
-    let mut app = app_with_config("[editor]\nagent = \"fake\"\n[agents.fake]\ncommand = \"fake-agent\"\n");
+    let mut app =
+        app_with_config("[editor]\nagent = \"fake\"\n[agents.fake]\ncommand = \"fake-agent\"\n");
     app.agents_mut().set_spawner(Box::new(FakeAgent));
     app
 }
@@ -198,9 +209,108 @@ fn a_turn_streams_in_and_ends() {
     assert_eq!(chat.mode.as_deref(), Some("default"));
     assert_eq!(chat.modes.len(), 2);
     assert!(matches!(&chat.entries[0], ChatEntry::User(t) if t == "hello there"));
-    assert!(chat.entries.iter().any(|e| matches!(e, ChatEntry::Plan(p) if p[0].status == "completed")));
-    // The chat's shown.
-    assert_eq!(app.editor().popup().map(|p| p.name.as_str()), Some("agent"));
+    assert!(
+        chat.entries
+            .iter()
+            .any(|e| matches!(e, ChatEntry::Plan(p) if p[0].status == "completed"))
+    );
+    // The sidebar's shown.
+    assert!(app.editor().agent_sidebar_shown());
+}
+
+#[test]
+fn the_sidebar_is_typed_in_and_drawn() {
+    let mut app = app();
+    keys(&mut app, ":agent<CR>");
+    assert_eq!(app.editor().mode(), Mode::Agent);
+    until(&mut app, ready);
+    keys(&mut app, "hello");
+    keys(&mut app, "<C-j>world");
+    assert_eq!(app.editor().agent_chat().input.text(), "hello\nworld");
+    keys(&mut app, "<C-u><C-a>hello there<CR>");
+    until(&mut app, |a| ready(a) && said(a) == "Hi there.");
+    assert_eq!(app.editor().agent_chat().input.text(), "");
+    let screen = render(&mut app, 100, 30);
+    let rows = &screen.rows;
+    // Right of the windows, from the top: the header, the chat.
+    let at = rows[0].find("fake 1.0").expect("the header");
+    assert!(rows[0].contains("Default ▾"), "{rows:#?}");
+    assert!(
+        rows.iter().any(|r| r[at..].contains("› hello there")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|r| r[at..].contains("Hi there.")),
+        "{rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|r| r[at..].contains("☑ Say hi")),
+        "{rows:#?}"
+    );
+    assert!(rows[27].contains("⏎ send"), "{rows:#?}");
+    // The cursor's in the box.
+    assert_eq!(screen.cursor.1, 24);
+    // Esc goes back to the text; the sidebar stays.
+    keys(&mut app, "<Esc>");
+    assert_ne!(app.editor().mode(), Mode::Agent);
+    assert!(app.editor().agent_sidebar_shown());
+    keys(&mut app, ":agent_sidebar<CR>");
+    assert!(!app.editor().agent_sidebar_shown());
+}
+
+fn mouse(app: &mut App, kind: MouseEventKind, x: u16, y: u16) {
+    app.handle_mouse(MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    });
+}
+
+fn click(app: &mut App, x: u16, y: u16) {
+    mouse(app, MouseEventKind::Down(MouseButton::Left), x, y);
+    mouse(app, MouseEventKind::Up(MouseButton::Left), x, y);
+}
+
+/// Where `text` is on the screen.
+fn find(app: &mut App, text: &str) -> (u16, u16) {
+    let rows = render(app, 100, 30).rows;
+    for (y, row) in rows.iter().enumerate() {
+        if let Some(i) = row.find(text) {
+            return (row[..i].chars().count() as u16, y as u16);
+        }
+    }
+    panic!("{text} isn't shown: {rows:#?}");
+}
+
+#[test]
+fn an_option_is_clicked_and_the_edge_dragged() {
+    let mut app = app();
+    keys(&mut app, ":agent<CR>permission<CR>");
+    until(&mut app, |a| a.editor().agent_chat().permission.is_some());
+    let (x, y) = find(&mut app, "2 Reject");
+    click(&mut app, x + 1, y);
+    until(&mut app, |a| {
+        a.editor().agent_chat().entries.iter().any(|e| {
+            matches!(e, ChatEntry::Tool(t) if t.status == ToolStatus::Done && t.text == "chose reject")
+        })
+    });
+    // The tool call opens to show what it said.
+    let (x, y) = find(&mut app, "Run cargo test ▸");
+    click(&mut app, x, y);
+    find(&mut app, "chose reject");
+    // The edge, dragged left, widens it.
+    let before = app.editor().options.agent_width;
+    let edge = 100 - before.min(50) - 1;
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), edge, 5);
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        edge - 4,
+        5,
+    );
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), edge - 4, 5);
+    assert_eq!(app.editor().options.agent_width, before.min(50) + 4);
 }
 
 #[test]
@@ -221,18 +331,13 @@ fn files_are_read_from_their_buffers() {
 #[test]
 fn permission_is_asked_and_the_answer_goes_back() {
     let mut app = app();
-    keys(&mut app, ":agent_ask permission<CR>");
+    keys(&mut app, ":agent<CR>permission<CR>");
     until(&mut app, |a| a.editor().agent_chat().permission.is_some());
-    let shown: String = app
-        .editor()
-        .popup()
-        .unwrap()
-        .lines
-        .iter()
-        .map(|l| l.iter().map(|s| s.text.as_str()).collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(shown.contains("1 Allow") && shown.contains("2 Reject"), "{shown}");
+    let rows = render(&mut app, 100, 30).rows.join("\n");
+    assert!(
+        rows.contains(" 1 Allow ") && rows.contains(" 2 Reject "),
+        "{rows}"
+    );
     keys(&mut app, "2");
     until(&mut app, |a| {
         a.editor().agent_chat().entries.iter().any(|e| {
@@ -244,9 +349,11 @@ fn permission_is_asked_and_the_answer_goes_back() {
 #[test]
 fn a_turn_is_cancelled() {
     let mut app = app();
-    keys(&mut app, ":agent_ask slow<CR>");
-    until(&mut app, |a| a.editor().agent_chat().status == AgentStatus::Busy);
-    keys(&mut app, "c");
+    keys(&mut app, ":agent<CR>slow<CR>");
+    until(&mut app, |a| {
+        a.editor().agent_chat().status == AgentStatus::Busy
+    });
+    keys(&mut app, "<C-c>");
     until(&mut app, ready);
     assert!(
         app.editor()
@@ -270,5 +377,8 @@ fn an_agent_that_isnt_installed_says_so() {
     ));
     keys(&mut app, "<Esc>:agent_ask hi<CR>");
     app.update_agents();
-    assert!(matches!(app.editor().agent_chat().status, AgentStatus::Stopped(_)));
+    assert!(matches!(
+        app.editor().agent_chat().status,
+        AgentStatus::Stopped(_)
+    ));
 }

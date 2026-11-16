@@ -172,6 +172,8 @@
 "<Space>l" = "git_history"
 "<Space>B" = "git_blame_view"
 "<C-`>" = "terminal_toggle"
+"<Space>A" = "agent"
+"<C-A-b>" = "agent_sidebar"
 "<Space>f" = "file_picker"
 "<Space>F" = "project_search"
 "<Space>r" = "register_picker"

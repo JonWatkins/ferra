@@ -122,6 +122,9 @@ terminal-height = 12
 shell = ""
 # The coding agent :agent talks to: one of the [agents] below.
 agent = "claude"
+# Columns the agent sidebar (Ctrl+Alt+B, :agent) takes, right of the
+# windows. It never takes more than half the screen.
+agent-width = 50
 # The plugin directory :plugin_browse lists: a git repository with an
 # index.toml (owner/repo on GitHub, or any git URL or path).
 plugin-index = "JonWatkins/ferra-plugins"
@@ -422,6 +425,40 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.sidebar.git.folder" = "#c8a96e"
 "ui.sidebar.git.header" = { fg = "#7aa2f7", modifiers = ["bold"] }
 "ui.sidebar.git.branch" = "#6b7280"
+# The agent sidebar (Ctrl+Alt+B, :agent), right of the windows: its header
+# (the agent, its mode), the chat, the agent's question and its box.
+"ui.sidebar.agent.header" = { bg = "#1f2229" }
+"ui.sidebar.agent.title" = { fg = "#7aa2f7", bg = "#1f2229", modifiers = ["bold"] }
+"ui.sidebar.agent.mode" = { fg = "#c0caf5", bg = "#33467c" }
+"ui.sidebar.agent.busy" = { fg = "#e0af68", bg = "#1f2229" }
+"ui.sidebar.agent.user" = { fg = "#c0caf5", bg = "#24283b" }
+"ui.sidebar.agent.user.mark" = { fg = "#7aa2f7", bg = "#24283b", modifiers = ["bold"] }
+"ui.sidebar.agent.text" = "#c0caf5"
+"ui.sidebar.agent.bold" = { fg = "#c0caf5", modifiers = ["bold"] }
+"ui.sidebar.agent.heading" = { fg = "#7aa2f7", modifiers = ["bold"] }
+"ui.sidebar.agent.bullet" = "#7aa2f7"
+"ui.sidebar.agent.code" = "#9ece6a"
+"ui.sidebar.agent.code.inline" = { fg = "#7dcfff", bg = "#24283b" }
+"ui.sidebar.agent.thought" = { fg = "#6b7280", modifiers = ["italic"] }
+"ui.sidebar.agent.notice" = { fg = "#6b7280", modifiers = ["italic"] }
+"ui.sidebar.agent.tool" = "#a9b1d6"
+"ui.sidebar.agent.tool.pending" = "#6b7280"
+"ui.sidebar.agent.tool.running" = "#e0af68"
+"ui.sidebar.agent.tool.done" = "#9ece6a"
+"ui.sidebar.agent.tool.failed" = "#f7768e"
+"ui.sidebar.agent.output" = "#8c93ad"
+"ui.sidebar.agent.added" = "#9ece6a"
+"ui.sidebar.agent.removed" = "#f7768e"
+"ui.sidebar.agent.plan" = "#a9b1d6"
+"ui.sidebar.agent.plan.current" = { fg = "#e0af68", modifiers = ["bold"] }
+"ui.sidebar.agent.plan.done" = { fg = "#6b7280", modifiers = ["crossed_out"] }
+"ui.sidebar.agent.question" = { fg = "#e0af68", modifiers = ["bold"] }
+"ui.sidebar.agent.option.allow" = { fg = "#16181d", bg = "#7aa2f7", modifiers = ["bold"] }
+"ui.sidebar.agent.option.reject" = { fg = "#c0caf5", bg = "#3b4048" }
+"ui.sidebar.agent.input" = { fg = "#d4d7dd", bg = "#1f2229" }
+"ui.sidebar.agent.border" = "#3b4048"
+"ui.sidebar.agent.border.focused" = "#7aa2f7"
+"ui.sidebar.agent.hint" = "#565f89"
 # The full-screen git view (<Space>g).
 "ui.indent-guide" = "#2a2e38"
 "ui.indent-guide.active" = "#4b5263"
@@ -631,6 +668,7 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "<Tab>" = "sidebar_next_view"
 "<S-Tab>" = "sidebar_prev_view"
 "q" = "sidebar_toggle"
+"<C-A-b>" = "agent_sidebar"
 "<Esc>" = "sidebar_focus"
 "<Space>e" = "sidebar_focus"
 ":" = "command_mode"
@@ -807,6 +845,36 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "<C-a>" = "input_home"
 "<End>" = "input_end"
 "<C-e>" = "input_end"
+
+# The agent sidebar's box (Ctrl+Alt+B, :agent), while it has focus. Typing
+# goes in the box; with the agent asking something and nothing typed, 1 to 4
+# answer it.
+[keys.agent]
+"<CR>" = "agent_send"
+"<S-CR>" = "agent_newline"
+"<A-CR>" = "agent_newline"
+"<C-j>" = "agent_newline"
+"<Esc>" = "agent_leave"
+"<C-c>" = "agent_cancel"
+"<S-Tab>" = "agent_next_mode"
+"<C-o>" = "agent_expand"
+"<C-A-b>" = "agent_sidebar"
+"<F10>" = "menu_open"
+"<BS>" = "agent_backspace"
+"<Del>" = "agent_delete"
+"<C-w>" = "agent_delete_word"
+"<A-BS>" = "agent_delete_word"
+"<C-u>" = "agent_delete_to_start"
+"<Left>" = "agent_left"
+"<Right>" = "agent_right"
+"<Home>" = "agent_home"
+"<C-a>" = "agent_home"
+"<End>" = "agent_end"
+"<C-e>" = "agent_end"
+"<Up>" = "agent_scroll_up"
+"<Down>" = "agent_scroll_down"
+"<PageUp>" = "agent_page_up"
+"<PageDown>" = "agent_page_down"
 
 # The terminal panel (<Space>t), while it has focus. Every other key goes
 # to the shell.

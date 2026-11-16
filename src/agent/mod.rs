@@ -168,6 +168,13 @@ impl Agents {
     fn send(&mut self, request: AgentRequest, editor: &mut Editor) {
         match request {
             AgentRequest::Start => self.start(editor),
+            AgentRequest::Restart => {
+                if let Some(mut client) = self.client.take() {
+                    client.stop();
+                }
+                self.receiver = None;
+                self.start(editor);
+            }
             AgentRequest::Prompt(text) => {
                 self.start(editor);
                 if let Some(client) = &mut self.client {
@@ -218,12 +225,17 @@ impl Agents {
             }
             (Some(_), None) => {}
             (Some("session/request_permission"), Some(id)) => {
-                editor.agent_event(AgentEvent::Permission(permission_ask(id, &message["params"])));
+                editor.agent_event(AgentEvent::Permission(permission_ask(
+                    id,
+                    &message["params"],
+                )));
             }
-            (Some("fs/read_text_file"), Some(id)) => match read_text_file(editor, &message["params"]) {
-                Ok(content) => client.answer(id, json!({ "content": content })),
-                Err(e) => client.answer_error(id, -32603, &e),
-            },
+            (Some("fs/read_text_file"), Some(id)) => {
+                match read_text_file(editor, &message["params"]) {
+                    Ok(content) => client.answer(id, json!({ "content": content })),
+                    Err(e) => client.answer_error(id, -32603, &e),
+                }
+            }
             (Some(_), Some(id)) => client.answer_error(id, -32601, "Method not found"),
             (None, Some(id)) => {
                 let Some(id) = id.as_i64() else { return };
@@ -247,7 +259,9 @@ fn read_text_file(editor: &Editor, params: &Value) -> Result<String, String> {
         Some(document) => document.buffer().text(),
         None => std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?,
     };
-    let first = params["line"].as_u64().map_or(0, |l| (l as usize).saturating_sub(1));
+    let first = params["line"]
+        .as_u64()
+        .map_or(0, |l| (l as usize).saturating_sub(1));
     let limit = params["limit"].as_u64().map(|l| l as usize);
     if first == 0 && limit.is_none() {
         return Ok(text);

@@ -103,6 +103,7 @@ inherit = { visual = "insert" }
 "<A-h>" = "menu_help"
 "<C-g>" = "command_mode"
 "<C-b>" = "sidebar_toggle"
+"<C-A-b>" = "agent_sidebar"
 "<C-S-e>" = "sidebar_focus"
 "<C-`>" = "terminal_toggle"
 "<C-j>" = "panel"
@@ -136,6 +137,7 @@ inherit = { visual = "insert" }
 [keys.sidebar]
 "<C-n>" = "new_file"
 "<C-b>" = "sidebar_toggle"
+"<C-A-b>" = "agent_sidebar"
 "<C-p>" = "file_picker"
 "<C-S-p>" = "command_palette"
 "<F1>" = "command_palette"

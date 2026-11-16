@@ -33,16 +33,16 @@ mod comment;
 mod confirm;
 pub mod conflicts;
 mod crash_report;
-mod doc_comments;
 pub mod diagnostics;
+mod doc_comments;
 pub mod explorer;
 pub mod find;
 mod git;
 pub mod git_gui;
 pub use git::GitRow;
+pub mod agent;
 pub mod input_box;
 pub mod lsp;
-pub mod agent;
 pub mod menu_bar;
 pub mod mouse_hover;
 pub mod multi_cursor;
@@ -758,6 +758,7 @@ impl Editor {
             }
             Mode::Find => self.find_edit(|field| field.push(c)),
             Mode::Input => self.input_box_edit(|field| field.push(c)),
+            Mode::Agent => self.agent_type(c),
             Mode::Settings | Mode::Keybindings | Mode::Panel => {}
             Mode::Normal
             | Mode::OperatorPending
