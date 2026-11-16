@@ -491,7 +491,11 @@ impl Lsp {
                 let Some(doc) = editor.document_by_id(document) else {
                     return;
                 };
-                let diagnostics = to_diagnostics(doc.buffer(), &params["diagnostics"], encoding);
+                let diagnostics = if doc.is_modified() {
+                    placed_in_unsaved(doc, &params["diagnostics"], encoding)
+                } else {
+                    to_diagnostics(doc.buffer(), &params["diagnostics"], encoding)
+                };
                 editor.set_diagnostics(document, diagnostics);
                 let raw = params["diagnostics"]
                     .as_array()
@@ -656,6 +660,98 @@ impl Lsp {
     }
 }
 
+/// Whether a diagnostic comes from a check that runs on save (cargo
+/// check's rustc and clippy, as rust-analyzer passes them on): its places
+/// are in the file as saved, whatever version it's sent with.
+fn from_saved_file(d: &Value) -> bool {
+    matches!(d["source"].as_str(), Some("rustc" | "clippy" | "cargo"))
+}
+
+/// A `publishDiagnostics` list for a buffer with unsaved changes. Those
+/// from a check on save are placed in the saved file (rust-analyzer sends
+/// them again, unmoved, whenever its own change), then moved to where those
+/// lines are in the buffer now; the rest are the buffer's.
+fn placed_in_unsaved(
+    document: &crate::editor::Document,
+    list: &Value,
+    encoding: convert::Encoding,
+) -> Vec<Diagnostic> {
+    let buffer = document.buffer();
+    let items = list.as_array().map_or(&[][..], Vec::as_slice);
+    let saved_text = document
+        .path()
+        .filter(|_| items.iter().any(from_saved_file))
+        .and_then(|path| std::fs::read_to_string(path).ok());
+    let Some(saved_text) = saved_text else {
+        return to_diagnostics(buffer, list, encoding);
+    };
+    let (saved, own): (Vec<Value>, Vec<Value>) =
+        items.iter().cloned().partition(from_saved_file);
+    let mut diagnostics = to_diagnostics(buffer, &Value::Array(own), encoding);
+    let saved_buffer = crate::core::Buffer::from_text(&saved_text);
+    let current = buffer.text();
+    let rows = saved_rows_now(&saved_text, &current);
+    let place = |p: crate::core::Position| {
+        let row = rows.get(p.row).copied().unwrap_or(buffer.line_count() - 1);
+        let width = buffer.line(row).trim_end_matches(['\n', '\r']).chars().count();
+        crate::core::Position::new(row, p.col.min(width))
+    };
+    for mut d in to_diagnostics(&saved_buffer, &Value::Array(saved), encoding) {
+        d.start = place(d.start);
+        d.end = place(d.end).max(d.start);
+        diagnostics.push(d);
+    }
+    diagnostics.sort_by_key(|d| (d.start, d.severity));
+    diagnostics
+}
+
+/// For each line of `saved`, the line it is in `current` (a line changed
+/// or taken out: where the change is).
+fn saved_rows_now(saved: &str, current: &str) -> Vec<usize> {
+    let old: Vec<&str> = saved.lines().collect();
+    let new: Vec<&str> = current.lines().collect();
+    let last = new.len().saturating_sub(1);
+    let mut rows = vec![0; old.len()];
+    // A huge file's diff gives up early (its lines then roughly placed).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(50);
+    let ops = similar::capture_diff_slices_deadline(
+        similar::Algorithm::Myers,
+        &old,
+        &new,
+        Some(deadline),
+    );
+    for op in ops {
+        match op {
+            similar::DiffOp::Equal {
+                old_index,
+                new_index,
+                len,
+            } => {
+                for i in 0..len {
+                    rows[old_index + i] = new_index + i;
+                }
+            }
+            similar::DiffOp::Delete {
+                old_index,
+                old_len,
+                new_index,
+            }
+            | similar::DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                ..
+            } => {
+                for i in 0..old_len {
+                    rows[old_index + i] = new_index.min(last);
+                }
+            }
+            similar::DiffOp::Insert { .. } => {}
+        }
+    }
+    rows
+}
+
 /// A `publishDiagnostics` list as diagnostics in `buffer` (positions in
 /// chars).
 fn to_diagnostics(
@@ -724,6 +820,15 @@ pub fn find_root(path: &Path, markers: &[String]) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn saved_lines_are_found_in_the_buffer() {
+        let saved = "fn a() {}\nlet x = 1;\nfn b() {}\n";
+        // Three lines put in at the top, `let` changed.
+        let now = "/**\n * note\n */\nfn a() {}\nlet x = 2;\nfn b() {}";
+        assert_eq!(super::saved_rows_now(saved, now), [3, 4, 5]);
+        assert_eq!(super::saved_rows_now("a\nb\n", "b"), [0, 0]);
+    }
+
     use super::*;
 
     #[test]

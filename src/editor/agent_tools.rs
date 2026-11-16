@@ -335,6 +335,10 @@ impl Editor {
         let edits = spans
             .into_iter()
             .map(|(from, to, new, _)| {
+                // Only what changes is replaced (the text the old and new
+                // share at either end is left), so diagnostics and marks in
+                // it stay put. (Overlaps were checked on the whole spans.)
+                let (from, to, new) = trimmed(&text, from, to, &new);
                 (buffer.position_at_byte(from), buffer.position_at_byte(to), new)
             })
             .collect();
@@ -438,10 +442,18 @@ impl Editor {
                         .iter()
                         .any(|o| o.start == d.start && o.source.as_deref() == Some("rustc"))
             };
+            let mut seen = Vec::new();
             let problems: Vec<String> = all
                 .iter()
                 .filter(|d| d.severity <= super::diagnostics::Severity::Warning)
                 .filter(|d| !said_by_rustc(d))
+                // The same problem twice (rust-analyzer can), once.
+                .filter(|d| {
+                    let key = (d.start, &d.message, &d.source);
+                    let new = !seen.contains(&key);
+                    seen.push(key);
+                    new
+                })
                 .take(20)
                 .map(|d| {
                     let mut line =
@@ -745,6 +757,31 @@ impl Editor {
     }
 }
 
+/// The replacement of `text[from..to]` by `new`, without the text they
+/// share at the start and the end.
+fn trimmed(text: &str, from: usize, to: usize, new: &str) -> (usize, usize, String) {
+    let old = &text[from..to];
+    let start: usize = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum();
+    let (old_rest, new_rest) = (&old[start..], &new[start..]);
+    let end: usize = old_rest
+        .chars()
+        .rev()
+        .zip(new_rest.chars().rev())
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum();
+    (
+        from + start,
+        to - end,
+        new_rest[..new_rest.len() - end].to_string(),
+    )
+}
+
 /// Where the `nth` (from 1) `word` is in `line` as a whole word (or, if
 /// it's nowhere whole, as part of one): its byte offset.
 fn find_word(line: &str, word: &str, nth: usize) -> Option<usize> {
@@ -864,6 +901,14 @@ mod tests {
             full_message(&d("never used\n#[warn(dead_code)] (part of #[warn(unused)]) on by default")),
             "error: never used (rustc)"
         );
+    }
+
+    #[test]
+    fn only_what_changes_is_replaced() {
+        let text = " */\nfn area";
+        assert_eq!(trimmed(text, 0, text.len(), " */\n// probe\nfn area"), (4, 4, "// probe\n".into()));
+        assert_eq!(trimmed("w * h", 0, 5, "w * hh"), (5, 5, "h".into()));
+        assert_eq!(trimmed("é1é", 0, 5, "é2é"), (2, 3, "2".into()));
     }
 
     #[test]

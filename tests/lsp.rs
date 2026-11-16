@@ -620,6 +620,23 @@ fn publish(output: &mut io::PipeWriter, uri: &Value, seen: &Mutex<Seen>, utf8: b
             }));
         }
     }
+    // A file saying `oncheck` also gets each `wrong` in the file as saved,
+    // said to be from rustc, at its place there (as rust-analyzer passes on
+    // cargo check's results whatever the buffer's become).
+    if text.contains("oncheck")
+        && let Some(path) = uri.as_str().and_then(ferra::lsp::convert::uri_to_path)
+    {
+        let saved = fs::read_to_string(path).unwrap_or_default();
+        for (line, line_text) in saved.split('\n').enumerate() {
+            if let Some(col) = line_text.find("wrong") {
+                diagnostics.push(json!({
+                    "range": {"start": {"line": line, "character": col},
+                              "end": {"line": line, "character": col + 5}},
+                    "severity": 1, "message": "wrong word", "source": "rustc",
+                }));
+            }
+        }
+    }
     let mut params = json!({"uri": uri, "diagnostics": diagnostics});
     // A file saying `stale` gets a list said to be for its first version
     // (as a slow server's can be), with a diagnostic at its start.
@@ -2036,4 +2053,23 @@ fn after_the_agents_edit_its_new_problems_are_told() {
     until(&mut app, |a| a.editor().diagnostics_version(id) > version);
     let problems = app.editor().agent_problems(&[id]);
     assert!(problems.contains("1:1  error: bad word (fake)"), "{problems}");
+}
+
+#[test]
+fn checks_on_save_are_placed_where_their_lines_are_now() {
+    let (_dir, mut app, _) = with_server("// oncheck\nlet x = wrong;\n", true);
+    ready(&mut app);
+    until(&mut app, |a| diagnostic_starts(a).contains(&(1, 8)));
+    // Two lines put in above, not saved: the server says it again at the
+    // saved file's place (line 2), which is line 4 now.
+    keys(&mut app, "ggO// one<CR>// two<Esc>");
+    until(&mut app, |a| a.editor().document.buffer().line_count() == 4 && diagnostic_starts(a).contains(&(3, 8)));
+    // And again on the next change: still there.
+    keys(&mut app, "ggA!<Esc>");
+    app.update_lsp();
+    until(&mut app, |a| a.editor().document.buffer().line(0).ends_with('!'));
+    std::thread::sleep(Duration::from_millis(50));
+    app.update_lsp();
+    assert!(diagnostic_starts(&app).contains(&(3, 8)), "{:?}", diagnostic_starts(&app));
+    assert!(!diagnostic_starts(&app).contains(&(1, 8)), "not back at the saved place");
 }

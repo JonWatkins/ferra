@@ -558,6 +558,10 @@ fn the_editors_tools_are_served_to_the_agent() {
     let both = ask(&mut app, 13, "tools/call", edits(json!([
         {"old_text": "x", "new_text": "ex"}, {"old_text": "z", "new_text": "zed"}])));
     assert!(both["content"][0]["text"].as_str().unwrap().ends_with("2 replacements"), "{both}");
+    // Overlapping old_texts are refused even if what changes in them doesn't.
+    let overlap = ask(&mut app, 22, "tools/call", edits(json!([
+        {"old_text": "ex\nw", "new_text": "eX\nw"}, {"old_text": "x\nwhy", "new_text": "x\nwhY"}])));
+    assert!(overlap["content"][0]["text"].as_str().unwrap().contains("overlap"), "{overlap}");
     assert_eq!(fs::read_to_string(&other).unwrap(), "ex\nwhy\nzed\n");
 
     // A new file; not over an old one.
