@@ -181,6 +181,9 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
             "documentHighlightProvider",
         ),
         LspFeature::InlayHint => ("textDocument/inlayHint", "inlayHintProvider"),
+        LspFeature::Callers | LspFeature::Callees => {
+            ("textDocument/prepareCallHierarchy", "callHierarchyProvider")
+        }
     }
 }
 
@@ -278,6 +281,7 @@ impl Client {
                         "typeDefinition": { "linkSupport": true },
                         "implementation": { "linkSupport": true },
                         "references": {},
+                        "callHierarchy": { "dynamicRegistration": false },
                         "rename": { "prepareSupport": false },
                         "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
                         "documentHighlight": {},
@@ -443,6 +447,18 @@ impl Client {
             "context": context,
         });
         self.request("textDocument/codeAction", params, Pending::Feature(request));
+    }
+
+    /// The second step of a call hierarchy request: the calls to (for
+    /// `Callers`) or from (`Callees`) `item`, as `prepareCallHierarchy`
+    /// gave it.
+    pub fn request_calls(&mut self, request: LspRequest, item: Value) {
+        let method = if request.feature == LspFeature::Callers {
+            "callHierarchy/incomingCalls"
+        } else {
+            "callHierarchy/outgoingCalls"
+        };
+        self.request(method, json!({ "item": item }), Pending::Feature(request));
     }
 
     /// Asks for the inlay hints in `start..end` of the request's document.

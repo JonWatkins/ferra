@@ -33,6 +33,13 @@ pub fn list() -> Value {
         })
     };
     let nothing = json!({ "type": "object", "properties": {} });
+    // References: every use, or the callers or callees of a function.
+    let mut references = place("to find the uses of");
+    references["properties"]["kind"] = json!({
+        "type": "string",
+        "enum": ["references", "callers", "callees"],
+        "description": "references if left out",
+    });
     // Code actions: a place, or just a file (its file-wide ones).
     let mut actions = place("they're for");
     actions["required"] = json!(["path"]);
@@ -129,8 +136,8 @@ pub fn list() -> Value {
         },
         {
             "name": "lsp_references",
-            "description": "Every use of a symbol in the project, from the language server: path:line:column and the line.",
-            "inputSchema": place("to find the uses of"),
+            "description": "Every use of a symbol in the project, from the language server: path:line:column and the line. With kind callers: the functions that call it (and on which lines); callees: the functions it calls. Those answer 'who calls this?' and 'what does this do?' better than every mention.",
+            "inputSchema": references,
         },
         {
             "name": "lsp_hover",
@@ -328,11 +335,28 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
             _ => Called::Done(Err("Give path, list and number".into())),
         },
         "lsp_definition" | "lsp_references" | "lsp_hover" | "lsp_code_actions" => {
+            // A kind that isn't one of theirs: said, not taken as the default.
+            let kinds: &[&str] = match name {
+                "lsp_definition" => &["definition", "type", "implementation", "declaration"],
+                "lsp_references" => &["references", "callers", "callees"],
+                _ => &[],
+            };
+            if let Some(kind) = text("kind")
+                && !kinds.is_empty()
+                && !kinds.contains(&kind)
+            {
+                return Called::Done(Err(format!(
+                    "kind is one of {}, not \"{kind}\"",
+                    kinds.join(", ")
+                )));
+            }
             let feature = match (name, text("kind")) {
                 ("lsp_definition", Some("type")) => LspFeature::TypeDefinition,
                 ("lsp_definition", Some("implementation")) => LspFeature::Implementation,
                 ("lsp_definition", Some("declaration")) => LspFeature::Declaration,
                 ("lsp_definition", _) => LspFeature::Definition,
+                ("lsp_references", Some("callers")) => LspFeature::Callers,
+                ("lsp_references", Some("callees")) => LspFeature::Callees,
                 ("lsp_references", _) => LspFeature::References,
                 ("lsp_code_actions", _) => LspFeature::CodeAction,
                 _ => LspFeature::Hover,

@@ -114,6 +114,7 @@ fn serve(
                         "documentHighlightProvider": features,
                         "inlayHintProvider": features,
                         "workspaceSymbolProvider": features,
+                        "callHierarchyProvider": features,
                         "signatureHelpProvider": {"triggerCharacters": ["("],
                                                   "retriggerCharacters": [","]},
                         "codeActionProvider": if features {
@@ -310,6 +311,50 @@ fn serve(
                                     "arguments": [uri]}));
                 actions.push(json!({"title": "Can't do this", "disabled": {"reason": "no"}}));
                 reply(&mut output, Value::Array(actions));
+            }
+            // The function `bad` (line 1), called from `main` twice and
+            // calling `helper`.
+            "textDocument/prepareCallHierarchy" => {
+                let uri = params["textDocument"]["uri"].clone();
+                let line = params["position"]["line"].as_u64().unwrap();
+                let answer = if line == 0 {
+                    json!([{"name": "bad", "kind": 12, "uri": uri,
+                            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 11}},
+                            "selectionRange": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 6}}}])
+                } else {
+                    Value::Null
+                };
+                reply(&mut output, answer);
+            }
+            "callHierarchy/incomingCalls" => {
+                let uri = params["item"]["uri"].clone();
+                let range = |l: u64| json!({"start": {"line": l, "character": 4}, "end": {"line": l, "character": 7}});
+                reply(
+                    &mut output,
+                    json!([{"from": {"name": "main", "kind": 12, "uri": uri,
+                                     "range": range(4), "selectionRange": range(4)},
+                            "fromRanges": [range(6), range(5)]}]),
+                );
+            }
+            "callHierarchy/outgoingCalls" => {
+                let uri = params["item"]["uri"].clone();
+                let range = |l: u64| json!({"start": {"line": l, "character": 4}, "end": {"line": l, "character": 7}});
+                reply(
+                    &mut output,
+                    json!([{"to": {"name": "helper", "kind": 12, "uri": uri,
+                                   "range": range(9), "selectionRange": range(9)},
+                            "fromRanges": [range(0)]},
+                           {"to": {"name": "log", "kind": 6, "uri": uri, "detail": "impl Logger for Fake",
+                                   "range": range(12), "selectionRange": range(12)},
+                            "fromRanges": [range(0)]},
+                           // The standard library's, and an enum member.
+                           {"to": {"name": "push", "kind": 6, "uri": "file:///rustlib/alloc/src/vec.rs",
+                                   "range": range(3), "selectionRange": range(3)},
+                            "fromRanges": [range(0)]},
+                           {"to": {"name": "Ok", "kind": 22, "uri": "file:///rustlib/core/src/result.rs",
+                                   "range": range(3), "selectionRange": range(3)},
+                            "fromRanges": [range(0)]}]),
+                );
             }
             "codeAction/resolve" => {
                 let text = seen.lock().unwrap().text.clone();
@@ -2175,6 +2220,73 @@ fn the_agent_asks_for_a_files_source_actions() {
         seen.action_range["end"],
         json!({"line": 1, "character": 14}),
         "to the end of the last line"
+    );
+}
+
+#[test]
+fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    ready(&mut app);
+    let path = dir.path().join("main.rs");
+    let file = path.to_str().unwrap();
+    let ask = |app: &mut App, call: u64, feature, line: usize| {
+        app.editor_mut()
+            .agent_ask_lsp(
+                call,
+                feature,
+                Some(file),
+                (Some(line), None, None, None),
+                None,
+            )
+            .unwrap();
+        agent_answer(app, call)
+    };
+    let callers = ask(&mut app, 1, LspFeature::Callers, 1).unwrap();
+    assert!(
+        callers.starts_with("1 function calls it:\nmain (function)  "),
+        "{callers}"
+    );
+    assert!(
+        callers.ends_with("main.rs:5 (calls it on lines 6, 7)"),
+        "{callers}"
+    );
+    let callees = ask(&mut app, 2, LspFeature::Callees, 1).unwrap();
+    assert!(
+        callees.starts_with("It calls 2 functions in the project:\n"),
+        "{callees}"
+    );
+    assert!(
+        callees.contains("helper (function)  ")
+            && callees.contains("main.rs:10 (called on line 1)"),
+        "{callees}"
+    );
+    assert!(
+        callees.contains("log (method, impl Logger for Fake)"),
+        "{callees}"
+    );
+    assert!(
+        callees.ends_with("\nAnd 1 outside the project (the standard library, dependencies): push"),
+        "the library's last, enum members left out: {callees}"
+    );
+    // A kind that isn't one: said (through the tool).
+    let wrong = ferra::agent::tools::call(
+        app.editor_mut(),
+        4,
+        "lsp_references",
+        &json!({"path": file, "line": 1, "kind": "calls"}),
+    );
+    assert_eq!(
+        wrong,
+        ferra::agent::tools::Called::Done(Err(
+            "kind is one of references, callers, callees, not \"calls\"".into()
+        ))
+    );
+    // Not on a function: said, no second request.
+    let nothing = ask(&mut app, 3, LspFeature::Callers, 2).unwrap();
+    assert!(
+        nothing.starts_with("Nothing there to find calls of"),
+        "{nothing}"
     );
 }
 

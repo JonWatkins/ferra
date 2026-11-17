@@ -42,6 +42,11 @@ pub enum LspFeature {
     WorkspaceSymbols,
     /// Types and parameter names to show in the text, for the buffer.
     InlayHint,
+    /// The functions that call the one at the position (call hierarchy:
+    /// `prepareCallHierarchy`, then `incomingCalls`).
+    Callers,
+    /// The functions it calls (`outgoingCalls`).
+    Callees,
 }
 
 impl LspFeature {
@@ -66,6 +71,8 @@ impl LspFeature {
             }
             LspFeature::DocumentHighlight => "highlights",
             LspFeature::InlayHint => "inlay hints",
+            LspFeature::Callers => "callers",
+            LspFeature::Callees => "callees",
         }
     }
 
@@ -89,6 +96,8 @@ impl LspFeature {
             LspFeature::WorkspaceSymbols => "Project symbols",
             LspFeature::DocumentHighlight => "Highlights",
             LspFeature::InlayHint => "Inlay hints",
+            LspFeature::Callers => "Callers",
+            LspFeature::Callees => "Calls",
         }
     }
 }
