@@ -224,6 +224,20 @@ fn watching_waits_until_normal_mode_between_commands() {
 }
 
 #[test]
+fn watching_reloads_while_typing_to_the_agent_or_in_the_terminal() {
+    // That's when the agent (or a command) changes files from a shell.
+    let (_dir, path, mut app) = setup("one\n");
+    app.editor_mut().set_mode(ferra::editor::Mode::Agent);
+    change_externally(&path, "two\n", 5);
+    app.check_files_while_idle();
+    assert_eq!(text(&app), "two");
+    app.editor_mut().set_mode(ferra::editor::Mode::Terminal);
+    change_externally(&path, "three\n", 10);
+    app.check_files_while_idle();
+    assert_eq!(text(&app), "three");
+}
+
+#[test]
 fn watching_warns_about_a_modified_buffer_once() {
     let (_dir, path, mut app) = setup("one\n");
     keys(&mut app, "Ax<Esc>");

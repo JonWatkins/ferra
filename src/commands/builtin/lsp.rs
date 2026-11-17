@@ -85,7 +85,9 @@ pub fn register(r: &mut CommandRegistry) {
             } else if lines.is_empty() {
                 "No language servers: none is set for the open files' languages".to_string()
             } else {
-                lines.join("  ·  ")
+                // A line each (the PATH ferra started with can be long): the
+                // message line shows the first, the Output tab all of them.
+                lines.join("\n")
             };
             cx.editor.set_message(Message::info(text));
             Ok(())

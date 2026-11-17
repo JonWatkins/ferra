@@ -33,6 +33,8 @@ struct Seen {
     /// The range the last code action request was for, and ferra's
     /// answer to the server's `workspace/applyEdit`.
     action_range: Value,
+    /// The kinds the last code action request asked for only.
+    action_only: Value,
     applied: Value,
     /// The context the last signature help request came with, and the
     /// queries for the project's symbols.
@@ -278,7 +280,18 @@ fn serve(
             }
             "textDocument/codeAction" => {
                 seen.lock().unwrap().action_range = params["range"].clone();
+                seen.lock().unwrap().action_only = params["context"]["only"].clone();
                 let uri = &params["textDocument"]["uri"];
+                // Asked for the file-wide (source) ones only.
+                if params["context"]["only"] == json!(["source"]) {
+                    reply(
+                        &mut output,
+                        json!([{"title": "Organize imports", "kind": "source.organizeImports",
+                                "edit": {"changes": {}}},
+                               {"title": "Replace with good", "kind": "quickfix"}]),
+                    );
+                    continue;
+                }
                 // A quick fix for each diagnostic sent back with the request.
                 let mut actions: Vec<Value> = params["context"]["diagnostics"]
                     .as_array()
@@ -821,7 +834,7 @@ fn a_server_that_isnt_installed_is_reported_once() {
     let path = std::env::var("PATH").unwrap_or_default();
     assert_eq!(
         app.editor().message().unwrap().text,
-        format!("rust-analyzer: not found on PATH  ·  PATH={path}")
+        format!("rust-analyzer: not found on PATH\nPATH={path}")
     );
 }
 
@@ -844,7 +857,7 @@ language-server = { command = "fake-ls", settings = { check = { on = { level = 2
     let root = dir.path().canonicalize().unwrap().display().to_string();
     assert_eq!(
         app.editor().message().unwrap().text,
-        format!("fake-ls (rust): running in {root}")
+        format!("fake-ls (rust): running in {root}, 1 file open")
     );
 }
 
@@ -2106,6 +2119,106 @@ fn the_agent_renames_formats_and_makes_code_actions() {
     // Undone as the user's own changes are.
     keys(&mut app, "u");
     assert_eq!(text(&app), "fn bad() {} // mine\nlet x = good;");
+}
+
+#[test]
+fn the_agent_asks_for_a_files_source_actions() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, seen) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    ready(&mut app);
+    let path = dir.path().join("main.rs");
+    // No line: the file-wide ones, for all of it.
+    app.editor_mut()
+        .agent_ask_lsp(
+            1,
+            LspFeature::CodeAction,
+            Some(path.to_str().unwrap()),
+            (None, None, None, None),
+            None,
+        )
+        .unwrap();
+    let listed = agent_answer(&mut app, 1).unwrap();
+    assert!(
+        listed.starts_with("1. Organize imports (source.organizeImports)\nTo make one"),
+        "only the source actions: {listed}"
+    );
+    // The file changes: that list's edits were for the old text.
+    let list: u64 = listed
+        .split("list ")
+        .nth(1)
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    keys(&mut app, "ggOuse x;<Esc>");
+    app.editor_mut()
+        .agent_apply_code_action(2, path.to_str().unwrap(), list, 1)
+        .unwrap();
+    assert_eq!(
+        agent_answer(&mut app, 2),
+        Err("The file has changed since that list of code actions: ask for them again".into())
+    );
+    assert_eq!(
+        text(&app),
+        "use x;\nfn bad() {}\nlet  x =  bad;",
+        "untouched"
+    );
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.action_only, json!(["source"]));
+    assert_eq!(
+        seen.action_range["start"],
+        json!({"line": 0, "character": 0})
+    );
+    assert_eq!(
+        seen.action_range["end"],
+        json!({"line": 1, "character": 14}),
+        "to the end of the last line"
+    );
+}
+
+#[test]
+fn the_agents_fix_in_a_file_not_shown_isnt_called_unsaved() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    ready(&mut app);
+    until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
+    let path = dir.path().join("main.rs");
+    let file = path.to_str().unwrap();
+    // The user's moved on to another file: main.rs is in the background.
+    let other = dir.path().join("notes.txt");
+    fs::write(&other, "notes\n").unwrap();
+    keys(&mut app, &format!(":e {}<CR>", other.display()));
+    app.editor_mut()
+        .agent_ask_lsp(
+            1,
+            LspFeature::CodeAction,
+            Some(file),
+            (Some(2), Some("bad"), None, None),
+            None,
+        )
+        .unwrap();
+    let listed = agent_answer(&mut app, 1).unwrap();
+    let list: u64 = listed
+        .split("list ")
+        .nth(1)
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    app.editor_mut()
+        .agent_apply_code_action(2, file, list, 1)
+        .unwrap();
+    agent_answer(&mut app, 2).unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "fn bad() {}\nlet  x =  good;\n"
+    );
+    let said = app.editor().message().unwrap().text.clone();
+    assert!(!said.contains(":wa"), "it was saved: {said}");
 }
 
 #[test]

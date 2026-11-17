@@ -191,7 +191,7 @@ pub struct Client {
     pub language: String,
     pub root: PathBuf,
     pub state: State,
-    writer: Box<dyn Write + Send>,
+    writer: crate::outbox::Outbox,
     child: Option<Child>,
     next_request: i64,
     pending: HashMap<i64, Pending>,
@@ -240,7 +240,9 @@ impl Client {
             language: language.to_string(),
             root: root.to_path_buf(),
             state: State::Starting,
-            writer,
+            writer: crate::outbox::Outbox::spawn(writer, "lsp-out", |out, message| {
+                write_message(out, message)
+            }),
             child,
             next_request: 1,
             pending: HashMap::new(),
@@ -343,7 +345,7 @@ impl Client {
     }
 
     fn send(&mut self, message: Value) {
-        if write_message(&mut self.writer, &message).is_err() {
+        if !self.writer.send(message) {
             self.state = State::Stopped("it stopped reading its input".into());
         }
     }
@@ -397,6 +399,11 @@ impl Client {
         self.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }));
     }
 
+    /// How many files it has open (sent with `didOpen`).
+    pub fn open_files(&self) -> usize {
+        self.documents.len()
+    }
+
     /// Whether the server said it can answer `feature`.
     pub fn supports(&self, feature: LspFeature) -> bool {
         let (_, capability) = feature_method(feature);
@@ -412,21 +419,28 @@ impl Client {
     }
 
     /// Asks for the code actions for `request`'s range (`start`..`end` as
-    /// LSP positions), with the diagnostics there they might fix.
+    /// LSP positions), with the diagnostics there they might fix; only
+    /// those of kind `only` (`source`: organize imports, fix all...), if
+    /// given.
     pub fn request_code_actions(
         &mut self,
         request: LspRequest,
         start: Value,
         end: Value,
         diagnostics: Vec<Value>,
+        only: Option<&str>,
     ) {
         let Some(synced) = self.documents.get(&request.document) else {
             return;
         };
+        let mut context = json!({ "diagnostics": diagnostics, "triggerKind": 1 });
+        if let Some(only) = only {
+            context["only"] = json!([only]);
+        }
         let params = json!({
             "textDocument": { "uri": synced.uri },
             "range": { "start": start, "end": end },
-            "context": { "diagnostics": diagnostics, "triggerKind": 1 },
+            "context": context,
         });
         self.request("textDocument/codeAction", params, Pending::Feature(request));
     }

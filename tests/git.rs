@@ -1173,10 +1173,23 @@ fn the_agent_reads_unsaved_and_uncommitted_changes_as_diffs() {
         "{}",
         cut.lines().last().unwrap()
     );
-    // With no line in common: just that.
+    // A short file with no line in common: its diff, it's short.
+    let small = dir.path().join("small.txt");
+    std::fs::write(&small, "old line\n").unwrap();
+    keys(
+        &mut app,
+        &format!(":e {}<CR>ccnew line<Esc>", small.display()),
+    );
+    let small_name = small.display().to_string();
+    let said = app
+        .editor()
+        .agent_buffer_changes(Some(&small_name), None)
+        .unwrap();
+    assert!(said.contains("-old line\n+new line"), "{said}");
+    // A long one with no line in common: just that.
     let other_text: String = (0..20).map(|n| format!("other {n}\n")).collect();
     std::fs::write(&big, other_text).unwrap();
-    keys(&mut app, ":e!<CR>");
+    keys(&mut app, &format!(":e {big_name}<CR>:e!<CR>"));
     let said = app
         .editor()
         .agent_buffer_changes(Some(&big_name), Some("git"))

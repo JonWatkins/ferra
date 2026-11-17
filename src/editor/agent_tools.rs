@@ -26,6 +26,8 @@ const SELECTION_CHARS: usize = 4000;
 const READ_LINES: usize = 2000;
 /// The terminal's last lines `read_terminal` gives, unless asked for more.
 const TERMINAL_LINES: usize = 200;
+/// The Output tab's last lines `language_servers` gives.
+const LOG_LINES: usize = 50;
 /// The most lines of diff `buffer_changes` gives for a file.
 const DIFF_LINES: usize = 1000;
 
@@ -441,6 +443,73 @@ impl Editor {
         Ok(out.join("\n\n"))
     }
 
+    /// The `language_servers` tool: each server and how it is (starting,
+    /// running, busy with something, stopped and why), the ones not found,
+    /// and the Output tab's last lines (what they've logged).
+    pub fn agent_language_servers(&self) -> String {
+        if !self.options.lsp {
+            return "Language servers are off in this editor (lsp = false)".into();
+        }
+        let mut out = Vec::new();
+        let status = self.lsp_status();
+        if status.is_empty() {
+            out.push("No language servers: none is set for the open files' languages".to_string());
+        } else {
+            out.push("Language servers:".to_string());
+            for line in status {
+                match line.strip_prefix("PATH=") {
+                    Some(path) => out.push(format!("The PATH ferra started with: {path}")),
+                    None => out.push(format!("- {line}")),
+                }
+            }
+        }
+        // The Output tab's last lines (an entry can be several), newest last.
+        let mut shown: Vec<String> = Vec::new();
+        for entry in self.panel.output.iter().rev() {
+            let mark = if entry.error { "error: " } else { "" };
+            let mut lines: Vec<String> = entry
+                .text
+                .lines()
+                .enumerate()
+                .map(|(i, l)| {
+                    if i == 0 {
+                        format!("{} {mark}{l}", entry.time)
+                    } else {
+                        format!("         {l}")
+                    }
+                })
+                .collect();
+            if shown.len() + lines.len() > LOG_LINES {
+                // Its last lines, if it's the first and too long by itself.
+                if shown.is_empty() {
+                    let from = lines.len() - LOG_LINES;
+                    shown = lines.split_off(from);
+                    shown.reverse();
+                }
+                break;
+            }
+            lines.reverse();
+            shown.extend(lines);
+        }
+        shown.reverse();
+        if !shown.is_empty() {
+            let all: usize = self
+                .panel
+                .output
+                .iter()
+                .map(|e| e.text.lines().count().max(1))
+                .sum();
+            out.push(format!(
+                "The Output tab (what they've logged), last {} of {all} lines:",
+                shown.len()
+            ));
+            out.push("```".into());
+            out.extend(shown);
+            out.push("```".into());
+        }
+        out.join("\n")
+    }
+
     /// The `read_terminal` tool: the terminal panel's last `lines` lines
     /// (scrollback included), and what its shell's doing.
     pub fn agent_read_terminal(&self, lines: Option<usize>) -> Result<String, String> {
@@ -662,7 +731,19 @@ impl Editor {
             });
         }
         let count = spans.len();
-        let edits = spans
+        // Edits that touch become one: trimmed on their own, each could
+        // shrink to the same place, and one would land in the other's text.
+        let mut merged: Vec<(usize, usize, String, usize)> = Vec::with_capacity(spans.len());
+        for span in spans {
+            match merged.last_mut() {
+                Some(last) if last.1 == span.0 => {
+                    last.1 = span.1;
+                    last.2.push_str(&span.2);
+                }
+                _ => merged.push(span),
+            }
+        }
+        let edits = merged
             .into_iter()
             .map(|(from, to, new, _)| {
                 // Only what changes is replaced (the text the old and new
@@ -1014,6 +1095,25 @@ impl Editor {
         let document = self.document_by_id(id).ok_or("No such buffer")?;
         let buffer = document.buffer();
         let (line, symbol, column, occurrence) = place;
+        // Code actions with no line: the file-wide ones, for all of it.
+        if feature == LspFeature::CodeAction && line.is_none() {
+            let last = buffer.line_count().saturating_sub(1);
+            self.lsp_requests.push(LspRequest {
+                feature,
+                document: id,
+                position: Position::new(0, 0),
+                buffer_id: buffer.id(),
+                edit_seq: buffer.edit_seq(),
+                manual: true,
+                trigger: None,
+                word_start: Position::new(0, 0),
+                item: None,
+                text: Some(crate::lsp::FILE_WIDE_ACTIONS.to_string()),
+                end: buffer.line_end(last),
+                agent: Some(call),
+            });
+            return Ok(());
+        }
         let row = line.unwrap_or(1).saturating_sub(1);
         if row >= buffer.line_count() {
             return Err(format!(
@@ -1103,6 +1203,10 @@ impl Editor {
     }
 }
 
+/// Lines (both sides together) below which a file's diff is always given,
+/// even with nothing in common.
+const SHORT_FILE: usize = 40;
+
 /// A unified diff of `old` to `new` (three lines of context, headed by
 /// their names), cut at `DIFF_LINES`. When they've no line in common, just
 /// that, and how long each is: the lines themselves say nothing more.
@@ -1116,7 +1220,8 @@ fn file_diff(old: &str, new: &str, old_name: &str, new_name: &str, asked: bool) 
     if old_lines > 0 && new.trim().is_empty() {
         return format!("{new_name}: empty, all {old_lines} lines of {old_name} deleted");
     }
-    if !common && old_lines > 0 && new_lines > 0 {
+    // A short file's diff is short anyway: given as it is.
+    if !common && old_lines > 0 && new_lines > 0 && old_lines + new_lines > SHORT_FILE {
         return format!(
             "{new_name}: the whole file differs from {old_name} ({old_lines} lines there, \
              {new_lines} in the editor; read_buffer gives the editor's)"
@@ -1435,6 +1540,103 @@ mod tests {
 
     fn lines(text: &[&str]) -> Vec<String> {
         text.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn edits_that_touch_land_where_they_were_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.md");
+        std::fs::write(&path, "alpha\n2. x\ngamma\n").unwrap();
+        let mut e = Editor::default();
+        let edits = [
+            ("2. x".to_string(), "1. x".to_string(), false),
+            (
+                "alpha\n".to_string(),
+                "alpha\n   (note)\n".to_string(),
+                false,
+            ),
+        ];
+        let (said, _) = e.agent_edit_buffer(path.to_str().unwrap(), &edits).unwrap();
+        assert!(said.contains("2 replacements"), "{said}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "alpha\n   (note)\n1. x\ngamma\n"
+        );
+    }
+
+    #[test]
+    fn language_servers_say_how_they_are_and_what_they_logged() {
+        let mut e = Editor::default();
+        e.options.lsp = false;
+        assert!(e.agent_language_servers().contains("lsp = false"));
+        e.options.lsp = true;
+        assert!(
+            e.agent_language_servers()
+                .starts_with("No language servers")
+        );
+
+        e.set_lsp_status(vec![
+            "rust-analyzer (rust): running (indexing 3/9) in /p, 2 files open".into(),
+            "pyright-langserver: not found on PATH".into(),
+            "PATH=/usr/bin:/bin".into(),
+        ]);
+        let output = |e: &mut Editor, text: &str, error: bool| {
+            e.panel.output.push(super::super::panel::OutputLine {
+                time: "09:30:05".into(),
+                error,
+                text: text.into(),
+            });
+        };
+        for n in 0..45 {
+            output(&mut e, &format!("rust-analyzer: line {n}"), false);
+        }
+        // One entry of 8 lines: counted as 8.
+        output(
+            &mut e,
+            "rust-analyzer: cargo check failed\nerror: duplicate key\n a\n b\n c\n d\n e\n f",
+            true,
+        );
+        let said = e.agent_language_servers();
+        assert!(
+            said.contains("- rust-analyzer (rust): running (indexing 3/9) in /p, 2 files open"),
+            "{said}"
+        );
+        assert!(
+            said.contains("- pyright-langserver: not found on PATH"),
+            "{said}"
+        );
+        assert!(
+            said.contains("\nThe PATH ferra started with: /usr/bin:/bin"),
+            "{said}"
+        );
+        assert!(!said.contains("Busy:"), "the state says it: {said}");
+        assert!(said.contains("last 50 of 53 lines"), "{said}");
+        assert!(
+            !said.contains("line 2\n") && said.contains("line 3\n"),
+            "{said}"
+        );
+        assert!(
+            said.contains(
+                "09:30:05 error: rust-analyzer: cargo check failed\n         error: duplicate key"
+            ),
+            "{said}"
+        );
+        assert!(said.contains("         f\n```"), "{said}");
+
+        // An entry too long by itself: its last lines.
+        let mut e = Editor::default();
+        let long: Vec<String> = (0..70).map(|n| format!("l{n}")).collect();
+        output(&mut e, &long.join("\n"), false);
+        let said = e.agent_language_servers();
+        assert!(said.contains("last 50 of 70 lines"), "{said}");
+        assert!(
+            said.contains("\n         l20\n") && said.contains("l69\n```"),
+            "{said}"
+        );
+        assert!(
+            said.find("l20").unwrap() < said.find("l69").unwrap(),
+            "in order: {said}"
+        );
     }
 
     #[test]

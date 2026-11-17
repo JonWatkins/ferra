@@ -13,7 +13,9 @@ pub const INSTRUCTIONS: &str = "Tools for the editor (ferra) the user is working
 edit files with read_buffer and edit_buffer rather than your own Read and Edit tools: they see \
 the user's unsaved changes, and edits show in the editor as they're made and can be undone. Use \
 the language server tools (definitions, references, types, symbols, diagnostics) rather than \
-searching to find your way around, and lsp_rename to rename a symbol everywhere.";
+searching to find your way around, and lsp_rename to rename a symbol everywhere. Files you \
+change from your shell (a formatter, sed, codegen) reload in the editor, except where the user \
+has unsaved changes: those keep the user's text, so change them with edit_buffer instead.";
 
 /// The tools, as MCP lists them.
 pub fn list() -> Value {
@@ -31,6 +33,9 @@ pub fn list() -> Value {
         })
     };
     let nothing = json!({ "type": "object", "properties": {} });
+    // Code actions: a place, or just a file (its file-wide ones).
+    let mut actions = place("they're for");
+    actions["required"] = json!(["path"]);
     json!([
         {
             "name": "editor_state",
@@ -47,6 +52,11 @@ pub fn list() -> Value {
                     "against": { "type": "string", "enum": ["saved", "git"], "description": "saved if left out" },
                 },
             },
+        },
+        {
+            "name": "language_servers",
+            "description": "The language servers: each one's state (starting, running, busy indexing, stopped and why), how many files it has open, those not installed, and what they've logged lately. Use it when the lsp_ tools answer nothing or fail, to tell a server that's missing, crashed or still indexing from one with no answer.",
+            "inputSchema": nothing,
         },
         {
             "name": "read_terminal",
@@ -145,8 +155,8 @@ pub fn list() -> Value {
         },
         {
             "name": "lsp_code_actions",
-            "description": "The language server's fixes and refactors for a place (quick fixes for a diagnostic, imports...), numbered; lsp_apply_code_action makes one.",
-            "inputSchema": place("they're for"),
+            "description": "The language server's fixes and refactors for a place (quick fixes for a diagnostic, imports...), numbered; lsp_apply_code_action makes one. With no line: the file-wide ones (organize imports, fix all, remove unused imports).",
+            "inputSchema": actions,
         },
         {
             "name": "lsp_apply_code_action",
@@ -224,6 +234,13 @@ pub enum Called {
 
 /// Runs tool `name` with `args`, as call `call`.
 pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called {
+    // Files changed outside the editor (from the agent's shell, a
+    // formatter) are read again first, as the user's idle check would: a
+    // tool never works from text the disk has moved past. Buffers with the
+    // user's unsaved changes are kept, and warned about.
+    if editor.options.watch_files {
+        editor.check_disk_changes();
+    }
     let text = |key: &str| args[key].as_str().filter(|s| !s.is_empty());
     let number = |key: &str| args[key].as_u64().map(|n| n as usize);
     let ask = |editor: &mut Editor, feature, path, query| {
@@ -242,6 +259,7 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
         "editor_state" => Called::Done(Ok(editor.agent_editor_state())),
         "get_diagnostics" => Called::Done(Ok(editor.agent_diagnostics(text("path")))),
         "read_terminal" => Called::Done(editor.agent_read_terminal(number("lines"))),
+        "language_servers" => Called::Done(Ok(editor.agent_language_servers())),
         "buffer_changes" => {
             Called::Done(editor.agent_buffer_changes(text("path"), text("against")))
         }
@@ -332,5 +350,37 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
             }
         },
         other => Called::Done(Err(format!("No tool named {other}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn done(called: Called) -> String {
+        match called {
+            Called::Done(Ok(text)) | Called::Changed(text, _) => text,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_tool_sees_what_the_shell_wrote_since() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, "one\ntwo\n").unwrap();
+        let file = path.to_str().unwrap();
+        let mut editor = Editor::default();
+        // Opened (hidden) by an edit of the agent's, saved.
+        let args = json!({"path": file, "old_text": "two", "new_text": "TWO"});
+        done(call(&mut editor, 1, "edit_buffer", &args));
+        // The agent's shell rewrites it: the next tool call sees that, with
+        // no idle check in between.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, "from the shell\n").unwrap();
+        let read = done(call(&mut editor, 2, "read_buffer", &json!({"path": file})));
+        assert!(read.contains("from the shell"), "{read}");
+        let changes = done(call(&mut editor, 3, "buffer_changes", &json!({})));
+        assert_eq!(changes, "No open file has unsaved changes");
     }
 }

@@ -11,15 +11,26 @@ use super::client::{Client, ResponseError};
 use super::convert::{self, Encoding};
 use super::{Lsp, State};
 use crate::core::Position;
+use crate::editor::DocumentId;
 use crate::editor::lsp::{Location, LspFeature, LspRequest};
 use crate::editor::server_completion::ServerItem;
 use crate::editor::signature::SignatureHelp;
 use crate::editor::{Editor, Message};
 
+/// The kind of code actions the agent's asked for when it gives no line:
+/// the file-wide ones (organize imports, fix all, remove unused imports).
+pub const FILE_WIDE_ACTIONS: &str = "source";
+
+/// A kept answer: its number, its items, and the buffer and edit count it
+/// was made for.
+type Kept = (u64, Vec<Value>, Option<(DocumentId, u64)>);
+
 /// Recent completion answers' items, by answer.
 #[derive(Default)]
 pub(super) struct Stash {
-    answers: std::collections::VecDeque<(u64, Vec<Value>)>,
+    /// Each answer: its number, its items, and the buffer and edit count
+    /// it was made for (code actions: their edits are for that text).
+    answers: std::collections::VecDeque<Kept>,
     next: u64,
 }
 
@@ -29,17 +40,30 @@ impl Stash {
     const KEPT: usize = 4;
 
     fn keep(&mut self, items: Vec<Value>) -> u64 {
+        self.keep_for(items, None)
+    }
+
+    /// Keeps `items`, made for `made_for`'s buffer at that edit count.
+    fn keep_for(&mut self, items: Vec<Value>, made_for: Option<(DocumentId, u64)>) -> u64 {
         self.next += 1;
         if self.answers.len() == Self::KEPT {
             self.answers.pop_front();
         }
-        self.answers.push_back((self.next, items));
+        self.answers.push_back((self.next, items, made_for));
         self.next
     }
 
     fn item(&self, (answer, index): (u64, usize)) -> Option<&Value> {
-        let (_, items) = self.answers.iter().find(|(id, _)| *id == answer)?;
+        let (_, items, _) = self.answers.iter().find(|(id, ..)| *id == answer)?;
         items.get(index)
+    }
+
+    /// The buffer and edit count answer `answer` was made for, if kept.
+    fn made_for(&self, answer: u64) -> Option<(DocumentId, u64)> {
+        self.answers
+            .iter()
+            .find(|(id, ..)| *id == answer)
+            .and_then(|(_, _, made_for)| *made_for)
     }
 }
 
@@ -217,6 +241,24 @@ impl Lsp {
                 continue;
             }
             if request.feature == LspFeature::ApplyCodeAction {
+                // Its edits are for the text it was made for: not since changed.
+                let changed = request
+                    .item
+                    .and_then(|(list, _)| self.actions.made_for(list))
+                    .is_some_and(|(document, seq)| {
+                        editor
+                            .document_by_id(document)
+                            .is_none_or(|d| d.buffer().edit_seq() != seq)
+                    });
+                if changed {
+                    let text =
+                        "The file has changed since that list of code actions: ask for them again";
+                    match request.agent {
+                        Some(call) => editor.agent_lsp_answer(call, Err(text.into())),
+                        None => editor.set_message(Message::info(text)),
+                    }
+                    continue;
+                }
                 let action = request.item.and_then(|i| self.actions.item(i)).cloned();
                 let Some(action) = action else {
                     let text = "That list of code actions is too old (or has no such number)";
@@ -227,7 +269,7 @@ impl Lsp {
                     continue;
                 };
                 let before = editor.agent_unsaved();
-                let made = make_code_action(editor, client, &action);
+                let made = make_code_action(editor, client, &action, request.agent.is_some());
                 if let Some(call) = request.agent
                     && made
                 {
@@ -277,7 +319,12 @@ impl Lsp {
                     })
                     .cloned()
                     .collect();
-                client.request_code_actions(request, start, end, diagnostics);
+                // The agent's file-wide ones: source actions only.
+                let only = request
+                    .text
+                    .clone()
+                    .filter(|kind| kind == FILE_WIDE_ACTIONS);
+                client.request_code_actions(request, start, end, diagnostics, only.as_deref());
                 continue;
             }
             if request.feature == LspFeature::InlayHint {
@@ -340,6 +387,28 @@ pub(super) fn answer(
             .filter(|a| a.get("disabled").is_none())
             .cloned()
             .collect();
+        // For the whole file: one asking, answered as it is, with only
+        // the source actions (servers send quick fixes too, for the
+        // diagnostics sent with it; the client's to filter by `only`).
+        if request.text.as_deref() == Some(FILE_WIDE_ACTIONS) {
+            let list = list
+                .into_iter()
+                .filter(|a| {
+                    a["kind"].as_str().is_some_and(|kind| {
+                        kind == FILE_WIDE_ACTIONS
+                            || kind.starts_with(&format!("{FILE_WIDE_ACTIONS}."))
+                    })
+                })
+                .collect::<Vec<_>>();
+            let answer = if list.is_empty() {
+                "No file-wide code actions for this file (organize imports and the like)"
+                    .to_string()
+            } else {
+                agent_actions_list(list, stashes.actions, (request.document, request.edit_seq))
+            };
+            editor.agent_lsp_answer(call, Ok(answer));
+            return;
+        }
         let (at_symbol, for_line) = stashes.agent_actions.entry(call).or_default();
         if request.word_start == request.end {
             *at_symbol = Some(list);
@@ -356,7 +425,14 @@ pub(super) fn answer(
                 list.push(action);
             }
         }
-        editor.agent_lsp_answer(call, Ok(agent_actions_list(list, stashes.actions)));
+        editor.agent_lsp_answer(
+            call,
+            Ok(agent_actions_list(
+                list,
+                stashes.actions,
+                (request.document, request.edit_seq),
+            )),
+        );
         return;
     }
     if let Some(call) = request.agent {
@@ -546,12 +622,13 @@ pub(super) fn answer(
                 (title, kind)
             })
             .collect();
-        let answer = stashes.actions.keep(actions);
+        let made_for = Some((request.document, request.edit_seq));
+        let answer = stashes.actions.keep_for(actions, made_for);
         editor.show_code_actions(answer, titles);
         return;
     }
     if request.feature == LspFeature::ResolveCodeAction {
-        make_code_action(editor, client, &result);
+        make_code_action(editor, client, &result, false);
         return;
     }
     if request.feature == LspFeature::Rename {
@@ -651,7 +728,7 @@ fn agent_change(
             format!("Formatted {name} ({changes})")
         }
         LspFeature::ResolveCodeAction => {
-            make_code_action(editor, client, result);
+            make_code_action(editor, client, result, true);
             let title = result["title"].as_str().unwrap_or("the action");
             format!("Made {title}")
         }
@@ -668,7 +745,11 @@ fn agent_change(
 
 /// The code actions there are, for the agent: numbered, and kept to make
 /// one.
-fn agent_actions_list(list: Vec<Value>, actions: &mut Stash) -> String {
+fn agent_actions_list(
+    list: Vec<Value>,
+    actions: &mut Stash,
+    made_for: (DocumentId, u64),
+) -> String {
     if list.is_empty() {
         return "No code actions there".into();
     }
@@ -683,7 +764,7 @@ fn agent_actions_list(list: Vec<Value>, actions: &mut Stash) -> String {
             }
         })
         .collect();
-    let kept = actions.keep(list);
+    let kept = actions.keep_for(list, Some(made_for));
     format!(
         "{}\nTo make one: lsp_apply_code_action with list {kept}, its number and this path.",
         lines.join("\n")
@@ -1000,7 +1081,15 @@ fn signature_help(result: &Value) -> Option<SignatureHelp> {
 /// Makes code action `action`: its edits, then its command (which the
 /// server runs, and may send edits back for). Returns false if it has
 /// neither (so it needs resolving).
-fn make_code_action(editor: &mut Editor, client: &mut Client, action: &Value) -> bool {
+/// Makes `action`: its edit, then its command. For the agent
+/// (`for_agent`), the files it changes are saved after, so they aren't
+/// called unsaved.
+fn make_code_action(
+    editor: &mut Editor,
+    client: &mut Client,
+    action: &Value,
+    for_agent: bool,
+) -> bool {
     let title = action["title"].as_str().unwrap_or("Done").to_string();
     // A bare `Command` rather than a `CodeAction`.
     if action["command"].is_string() {
@@ -1014,7 +1103,10 @@ fn make_code_action(editor: &mut Editor, client: &mut Client, action: &Value) ->
     }
     if let Some(edit) = edit {
         match apply_workspace_edit(editor, edit, client.encoding) {
-            Ok(applied) => {
+            Ok(mut applied) => {
+                if for_agent {
+                    applied.others = 0;
+                }
                 editor.set_message(Message::info(format!("{title}: {}", applied.describe())));
             }
             Err(error) => {

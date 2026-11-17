@@ -277,7 +277,15 @@ impl Editor {
     /// Output tab (the same again isn't).
     pub fn note_output(&mut self, text: &str, error: bool) {
         let text = text.trim();
-        if text.is_empty() || self.panel.output.last().is_some_and(|l| l.text == text) {
+        if text.is_empty() {
+            return;
+        }
+        // The same again (a server's log line, then the same shown as an
+        // error): one line, an error if either was.
+        if let Some(last) = self.panel.output.last_mut()
+            && last.text == text
+        {
+            last.error |= error;
             return;
         }
         let stamp = crate::log::timestamp(std::time::SystemTime::now());
@@ -296,5 +304,21 @@ impl Editor {
         let error = message.severity == Severity::Error;
         let text = message.text.clone();
         self.note_output(&text, error);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_line_logged_then_shown_as_an_error_is_one_error_line() {
+        let mut e = Editor::default();
+        e.note_output("rust-analyzer: cargo check failed", false);
+        e.note_output("rust-analyzer: cargo check failed", true);
+        assert_eq!(e.panel.output.len(), 1);
+        assert!(e.panel.output[0].error);
+        e.note_output("something else", false);
+        assert_eq!(e.panel.output.len(), 2);
     }
 }

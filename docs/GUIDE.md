@@ -731,7 +731,8 @@ extensions do:
 | `get_diagnostics` | The language servers' errors and warnings |
 | `lsp_definition` | Where a symbol's defined (or its type, implementations, declaration) |
 | `lsp_references`, `lsp_hover`, `lsp_symbols` | Its uses, its type and docs, a file's or the project's symbols |
-| `lsp_rename`, `lsp_code_actions`, `lsp_apply_code_action`, `lsp_format` | Renaming everywhere, fixes and refactors, formatting, by the language server |
+| `lsp_rename`, `lsp_code_actions`, `lsp_apply_code_action`, `lsp_format` | Renaming everywhere, fixes and refactors (with no line: the file's own, such as organize imports and fix all), formatting, by the language server |
+| `language_servers` | Which language servers are running, busy, missing or stopped (and why), and what they've logged |
 | `open_file` | Shows you a file |
 
 The agent's told to prefer them to its own Read, Edit and Write tools and

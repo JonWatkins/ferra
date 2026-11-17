@@ -57,7 +57,7 @@ enum Pending {
 pub struct AgentClient {
     /// Its name in `[agents]`.
     pub name: String,
-    writer: Box<dyn Write + Send>,
+    writer: crate::outbox::Outbox,
     child: Option<Child>,
     root: PathBuf,
     next_id: i64,
@@ -134,7 +134,9 @@ impl AgentClient {
         });
         let mut client = AgentClient {
             name: name.to_string(),
-            writer,
+            writer: crate::outbox::Outbox::spawn(writer, "agent-out", |out, message| {
+                write_message(out, message)
+            }),
             child,
             root: root.to_path_buf(),
             next_id: 1,
@@ -162,7 +164,7 @@ impl AgentClient {
     }
 
     fn send(&mut self, message: &Value) {
-        if write_message(&mut self.writer, message).is_err() {
+        if !self.writer.send(message.clone()) {
             self.stopped = true;
         }
     }

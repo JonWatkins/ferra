@@ -34,6 +34,7 @@ pub mod git;
 pub mod input;
 pub mod log;
 pub mod lsp;
+pub mod outbox;
 pub mod plugins;
 pub mod syntax;
 pub mod terminal;

@@ -9,7 +9,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use super::text::truncate_start;
+use super::text::{truncate_end, truncate_start};
 use crate::config::Theme;
 use crate::editor::{Editor, Mode, Severity};
 
@@ -55,15 +55,49 @@ impl Widget for CommandLineView<'_> {
                 Severity::Info => "ui.message.info",
                 Severity::Error => "ui.message.error",
             };
-            // Keep the end visible: for "path" 12L, 340B written, the part
-            // after a long path is what matters.
-            let text = truncate_start(&message.text, area.width as usize);
+            let text = message_line(
+                &message.text,
+                message.severity == Severity::Error,
+                area.width as usize,
+            );
             Line::styled(text, self.theme.get(scope))
         } else {
             return;
         };
         line.render(area, buf);
     }
+}
+
+/// What of a message fits the line, `width` wide. An info line keeps its
+/// end: for `"path" 12L, 340B written`, the part after a long path is what
+/// matters. An error, or a message of several lines, keeps its start (its
+/// first line), with where to read all of it: the Output tab has every
+/// message whole.
+fn message_line(text: &str, error: bool, width: usize) -> String {
+    let first = text.lines().next().unwrap_or_default().trim_end();
+    let more = text.trim_end().contains('\n');
+    if !error && !more {
+        return truncate_start(text, width);
+    }
+    if !more && first.width() <= width {
+        return first.to_string();
+    }
+    const HINT: &str = " … (all of it: :output)";
+    let room = width.saturating_sub(HINT.width());
+    if room < 10 {
+        return truncate_end(first, width);
+    }
+    let mut kept = String::new();
+    let mut used = 0;
+    for c in first.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if used + w > room {
+            break;
+        }
+        used += w;
+        kept.push(c);
+    }
+    format!("{}{HINT}", kept.trim_end())
 }
 
 #[cfg(test)]
@@ -129,6 +163,29 @@ mod tests {
         ));
         // The test area is 20 cells wide.
         assert_eq!(render(&editor), "…ile.txt\" 3L written");
+    }
+
+    #[test]
+    fn long_errors_keep_their_start_and_say_where_the_rest_is() {
+        let long = "rust-analyzer: cargo check failed to start: Cargo watcher failed";
+        assert_eq!(
+            message_line(long, true, 50),
+            "rust-analyzer: cargo check … (all of it: :output)"
+        );
+        // Several lines: the first, and where the rest is, even if it fits.
+        assert_eq!(
+            message_line(
+                "Failed to load.\nerror: duplicate key\n --> Cargo.toml:8:2",
+                false,
+                60
+            ),
+            "Failed to load. … (all of it: :output)"
+        );
+        // Short ones as they are; long info lines keep their end.
+        assert_eq!(message_line("boom", true, 50), "boom");
+        assert_eq!(message_line("abcdefghij", false, 5), "…ghij");
+        // Very narrow: just the start.
+        assert_eq!(message_line(long, true, 12), "rust-analyz…");
     }
 
     #[test]

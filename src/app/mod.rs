@@ -1174,9 +1174,15 @@ impl App {
     /// mode, so a reload never lands mid-insert or mid-command. Public so
     /// tests can trigger it.
     pub fn check_files_while_idle(&mut self) {
-        // With VS Code's keys, insert mode is where the editor rests.
+        // With VS Code's keys, insert mode is where the editor rests. Typing
+        // in the agent's box or the terminal isn't in a buffer, so a reload
+        // can't land mid-edit there (and that's when the agent or a command
+        // changes files).
+        let elsewhere = matches!(self.editor.mode(), Mode::Agent | Mode::Terminal);
         let resting = self.is_idle()
-            || (self.editor.resting() && self.input.is_idle() && self.paste.is_none());
+            || ((self.editor.resting() || elsewhere)
+                && self.input.is_idle()
+                && self.paste.is_none());
         if self.editor.options.watch_files && resting {
             self.editor.check_disk_changes();
             self.dispatch_events();

@@ -18,6 +18,7 @@ pub mod convert;
 pub mod transport;
 
 mod features;
+pub use features::FILE_WIDE_ACTIONS;
 
 pub use client::{ProcessSpawner, Spawner, State, Streams, find_program};
 
@@ -310,8 +311,12 @@ impl Lsp {
                     },
                     State::Stopped(why) => format!("stopped: {why}"),
                 };
+                let files = match c.open_files() {
+                    1 => ", 1 file open".to_string(),
+                    n => format!(", {n} files open"),
+                };
                 format!(
-                    "{} ({}): {state} in {}",
+                    "{} ({}): {state} in {}{files}",
                     c.name,
                     c.language,
                     c.root.display()

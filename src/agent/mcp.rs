@@ -21,6 +21,7 @@ use std::thread;
 use serde_json::Value;
 
 use super::client::{read_message, write_message};
+use crate::outbox::Outbox;
 
 /// What came in on a connection (the agent can make more than one).
 #[derive(Debug)]
@@ -33,7 +34,7 @@ pub enum McpIncoming {
 pub struct McpServer {
     path: PathBuf,
     receiver: Receiver<McpIncoming>,
-    writers: Arc<Mutex<HashMap<u64, std::os::unix::net::UnixStream>>>,
+    writers: Arc<Mutex<HashMap<u64, Outbox>>>,
     stop: Arc<AtomicBool>,
 }
 
@@ -50,7 +51,7 @@ impl McpServer {
         let listener = UnixListener::bind(&path)?;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
         let (sender, receiver) = channel();
-        let writers: Arc<Mutex<HashMap<u64, std::os::unix::net::UnixStream>>> = Arc::default();
+        let writers: Arc<Mutex<HashMap<u64, Outbox>>> = Arc::default();
         let stop = Arc::new(AtomicBool::new(false));
         let (shared, stopping) = (Arc::clone(&writers), Arc::clone(&stop));
         thread::spawn(move || {
@@ -62,7 +63,10 @@ impl McpServer {
                 let Ok(writer) = stream.try_clone() else {
                     continue;
                 };
-                shared.lock().expect("not poisoned").insert(conn, writer);
+                let outbox = Outbox::spawn(writer, "mcp-out", |out, message| {
+                    write_message(out, message)
+                });
+                shared.lock().expect("not poisoned").insert(conn, outbox);
                 let sender = sender.clone();
                 thread::spawn(move || {
                     let mut reader = BufReader::new(stream);
@@ -101,8 +105,8 @@ impl McpServer {
     /// Sends `message` on connection `conn` (gone: dropped).
     pub fn send(&self, conn: u64, message: &Value) {
         let mut writers = self.writers.lock().expect("not poisoned");
-        if let Some(writer) = writers.get_mut(&conn)
-            && write_message(writer, message).is_err()
+        if let Some(outbox) = writers.get(&conn)
+            && !outbox.send(message.clone())
         {
             writers.remove(&conn);
         }
