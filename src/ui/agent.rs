@@ -355,7 +355,7 @@ pub fn draw(
         bottom.saturating_sub(area.y + 1),
     );
     map.chat = chat_area;
-    let lines = editor.agent_transcript();
+    let lines = editor.agent_transcript(inner_w);
     if lines.is_empty() {
         let name = chat.title();
         let hello = [

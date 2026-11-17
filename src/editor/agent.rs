@@ -833,8 +833,9 @@ impl Editor {
         }
     }
 
-    /// The transcript as lines, for the sidebar (which wraps them).
-    pub fn agent_transcript(&self) -> Vec<ChatLine> {
+    /// The transcript as lines, for the sidebar `width` columns wide (which
+    /// wraps them; tables are fitted to it here).
+    pub fn agent_transcript(&self, width: u16) -> Vec<ChatLine> {
         let chat = &self.agent;
         let mut lines: Vec<ChatLine> = Vec::new();
         let gap = |lines: &mut Vec<ChatLine>| {
@@ -862,7 +863,7 @@ impl Editor {
                 }
                 ChatEntry::Agent(text) => {
                     gap(&mut lines);
-                    markdown_lines(text, &mut lines);
+                    markdown_lines(text, usize::from(width), &mut lines);
                 }
                 ChatEntry::Thought(text) => {
                     gap(&mut lines);
@@ -1165,10 +1166,15 @@ pub(crate) fn short_path(path: &str) -> String {
 }
 
 /// What the agent said, as lines: Markdown's headings, lists, code blocks,
-/// `code` and **bold** styled; the rest as it is.
-fn markdown_lines(text: &str, lines: &mut Vec<ChatLine>) {
+/// tables (fitted to `width`), `code` and **bold** styled; the rest as it
+/// is.
+fn markdown_lines(text: &str, width: usize, lines: &mut Vec<ChatLine>) {
     let mut in_code = false;
-    for line in text.lines() {
+    let source: Vec<&str> = text.lines().collect();
+    let mut i = 0;
+    while i < source.len() {
+        let line = source[i];
+        i += 1;
         let trimmed = line.trim_start();
         if trimmed.starts_with("```") {
             in_code = !in_code;
@@ -1180,6 +1186,23 @@ fn markdown_lines(text: &str, lines: &mut Vec<ChatLine>) {
                 indent: 2,
                 ..ChatLine::default()
             });
+            continue;
+        }
+        // A table: a row of cells, then a row of dashes under them.
+        if trimmed.starts_with('|')
+            && let Some(aligns) = source.get(i).and_then(|l| table_aligns(l))
+        {
+            let mut rows = vec![table_cells(trimmed)];
+            i += 1;
+            while let Some(row) = source
+                .get(i)
+                .map(|l| l.trim())
+                .filter(|l| l.starts_with('|'))
+            {
+                rows.push(table_cells(row));
+                i += 1;
+            }
+            table_lines(&rows, &aligns, width, lines);
             continue;
         }
         if let Some(heading) = trimmed.strip_prefix('#') {
@@ -1224,6 +1247,224 @@ fn markdown_lines(text: &str, lines: &mut Vec<ChatLine>) {
     }
 }
 
+/// How a table's column is lined up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Align {
+    Left,
+    Right,
+    Center,
+}
+
+/// A table row's cells: split at its `|`s (not `\|`), trimmed.
+fn table_cells(row: &str) -> Vec<String> {
+    let row = row.trim();
+    let row = row.strip_prefix('|').unwrap_or(row);
+    let row = match row.strip_suffix('|') {
+        Some(inner) if !inner.ends_with('\\') => inner,
+        _ => row,
+    };
+    let mut cells = vec![String::new()];
+    let mut chars = row.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                let cell = cells.last_mut().expect("one");
+                cell.push(c);
+                cell.extend(chars.next());
+            }
+            '|' => cells.push(String::new()),
+            _ => cells.last_mut().expect("one").push(c),
+        }
+    }
+    cells.iter().map(|c| c.trim().to_string()).collect()
+}
+
+/// The columns' alignments, if `row` is a table's row of dashes
+/// (`|:--|--:|:-:|`).
+fn table_aligns(row: &str) -> Option<Vec<Align>> {
+    let row = row.trim();
+    if !row.starts_with('|') {
+        return None;
+    }
+    table_cells(row)
+        .iter()
+        .map(|cell| {
+            let dashes = cell.trim_matches(':');
+            if dashes.is_empty() || !dashes.chars().all(|c| c == '-') {
+                return None;
+            }
+            Some(match (cell.starts_with(':'), cell.ends_with(':')) {
+                (true, true) => Align::Center,
+                (false, true) => Align::Right,
+                _ => Align::Left,
+            })
+        })
+        .collect()
+}
+
+/// Between a table's columns.
+const COLUMN_GAP: &str = " │ ";
+
+/// A table's lines: its columns lined up, a rule under the header, each
+/// column as wide as its widest cell; if they don't fit `width`, the widest
+/// columns are narrowed and their cells wrapped.
+fn table_lines(rows: &[Vec<String>], aligns: &[Align], width: usize, lines: &mut Vec<ChatLine>) {
+    let columns = rows
+        .iter()
+        .map(Vec::len)
+        .max()
+        .unwrap_or(0)
+        .max(aligns.len());
+    if columns == 0 {
+        return;
+    }
+    // Each cell as styled chars; the header's bold.
+    let cells: Vec<Vec<Vec<(char, String)>>> = rows
+        .iter()
+        .enumerate()
+        .map(|(r, row)| {
+            (0..columns)
+                .map(|c| {
+                    let text = row.get(c).map_or("", String::as_str);
+                    inline_spans(text)
+                        .into_iter()
+                        .flat_map(|s| {
+                            let style = match s.style.as_deref() {
+                                Some("ui.sidebar.agent.text") if r == 0 => "ui.sidebar.agent.bold",
+                                other => other.unwrap_or("ui.sidebar.agent.text"),
+                            }
+                            .to_string();
+                            s.text
+                                .chars()
+                                .map(move |ch| (ch, style.clone()))
+                                .collect::<Vec<_>>()
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect();
+    let char_w = |c: char| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+    let mut widths: Vec<usize> = (0..columns)
+        .map(|c| {
+            cells
+                .iter()
+                .map(|row| row[c].iter().map(|(ch, _)| char_w(*ch)).sum::<usize>())
+                .max()
+                .unwrap_or(0)
+                .max(1)
+        })
+        .collect();
+    let gaps = (columns - 1) * COLUMN_GAP.chars().count();
+    while widths.iter().sum::<usize>() + gaps > width {
+        let (widest, &w) = widths
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, w)| **w)
+            .expect("a column");
+        if w <= 4 {
+            break;
+        }
+        widths[widest] -= 1;
+    }
+    let rule_style = "ui.sidebar.agent.hint";
+    for (r, row) in cells.iter().enumerate() {
+        let wrapped: Vec<Vec<Vec<(char, String)>>> = row
+            .iter()
+            .zip(&widths)
+            .map(|(cell, &w)| wrap_cell(cell, w))
+            .collect();
+        let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
+        for k in 0..height {
+            let mut spans = Vec::new();
+            for (c, cell) in wrapped.iter().enumerate() {
+                if c > 0 {
+                    spans.push(span(COLUMN_GAP, rule_style));
+                }
+                let piece = cell.get(k).map_or(&[][..], Vec::as_slice);
+                let used: usize = piece.iter().map(|(ch, _)| char_w(*ch)).sum();
+                let room = widths[c].saturating_sub(used);
+                let (before, after) = match aligns.get(c).copied().unwrap_or(Align::Left) {
+                    Align::Left => (0, room),
+                    Align::Right => (room, 0),
+                    Align::Center => (room / 2, room - room / 2),
+                };
+                if before > 0 {
+                    spans.push(span(&" ".repeat(before), "ui.sidebar.agent.text"));
+                }
+                for (ch, style) in piece {
+                    match spans.last_mut() {
+                        Some(last) if last.style.as_deref() == Some(style.as_str()) => {
+                            last.text.push(*ch);
+                        }
+                        _ => spans.push(span(&ch.to_string(), style)),
+                    }
+                }
+                // The last column needs no padding after it.
+                if after > 0 && c + 1 < columns {
+                    spans.push(span(&" ".repeat(after), "ui.sidebar.agent.text"));
+                }
+            }
+            lines.push(ChatLine {
+                spans,
+                ..ChatLine::default()
+            });
+        }
+        if r == 0 {
+            let rule: Vec<String> = widths.iter().map(|&w| "─".repeat(w)).collect();
+            lines.push(ChatLine {
+                spans: vec![span(&rule.join("─┼─"), rule_style)],
+                ..ChatLine::default()
+            });
+        }
+    }
+}
+
+/// A cell's styled chars as lines `width` wide, broken at spaces (or
+/// anywhere, for a word too long).
+fn wrap_cell(cell: &[(char, String)], width: usize) -> Vec<Vec<(char, String)>> {
+    let char_w = |c: char| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+    let mut out = Vec::new();
+    let mut line: Vec<(char, String)> = Vec::new();
+    let mut used = 0;
+    for (ch, style) in cell {
+        let w = char_w(*ch);
+        if used + w > width && !line.is_empty() {
+            let carry = match line.iter().rposition(|(c, _)| *c == ' ') {
+                Some(at) if *ch != ' ' => line.split_off(at + 1),
+                _ => Vec::new(),
+            };
+            while line.last().is_some_and(|(c, _)| *c == ' ') {
+                line.pop();
+            }
+            out.push(std::mem::take(&mut line));
+            line = carry;
+            used = line.iter().map(|(c, _)| char_w(*c)).sum();
+            if *ch == ' ' {
+                continue;
+            }
+        }
+        line.push((*ch, style.clone()));
+        used += w;
+    }
+    out.push(line);
+    out
+}
+
+/// Markdown's backslash escapes (`\_`, `\*`, `\|`) as the chars they stand for.
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek().is_some_and(char::is_ascii_punctuation) {
+            out.extend(chars.next());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// A line's `code` and **bold** pieces, styled.
 fn inline_spans(text: &str) -> Vec<PopupSpan> {
     let mut spans = Vec::new();
@@ -1240,7 +1481,7 @@ fn inline_spans(text: &str) -> Vec<PopupSpan> {
         let piece = if i % 2 == 1 {
             format!("`{piece}")
         } else {
-            piece.to_string()
+            unescape(piece)
         };
         for (j, part) in piece.split("**").enumerate() {
             if part.is_empty() {
@@ -1301,7 +1542,7 @@ mod tests {
             diffs: None,
         });
         e.agent_event(AgentEvent::TurnEnded("end_turn".into()));
-        let text = text_of(&e.agent_transcript());
+        let text = text_of(&e.agent_transcript(80));
         assert!(text.contains(&"› fix it".to_string()), "{text:?}");
         assert!(text.contains(&"Looking now.".to_string()), "{text:?}");
         assert!(text.contains(&"✓ Read main.rs".to_string()), "{text:?}");
@@ -1355,15 +1596,15 @@ mod tests {
             }],
             ..ToolCall::default()
         }));
-        let closed = text_of(&e.agent_transcript());
+        let closed = text_of(&e.agent_transcript(80));
         assert_eq!(closed, ["✓ Edit a.rs ▸", "  a.rs +1 -1"]);
         e.agent_toggle_tool("t1");
-        let open = text_of(&e.agent_transcript());
+        let open = text_of(&e.agent_transcript(80));
         assert!(open.contains(&"  - two".to_string()), "{open:?}");
         assert!(open.contains(&"  + TWO".to_string()), "{open:?}");
         assert_eq!(open[0], "✓ Edit a.rs ▾");
         e.agent_toggle_tool("t1");
-        assert_eq!(text_of(&e.agent_transcript()), closed);
+        assert_eq!(text_of(&e.agent_transcript(80)), closed);
     }
 
     #[test]
@@ -1371,6 +1612,7 @@ mod tests {
         let mut lines = Vec::new();
         markdown_lines(
             "# Title\nUse `cargo` **now**\n- one\n```\nlet x;\n```",
+            80,
             &mut lines,
         );
         let text = text_of(&lines);
@@ -1384,6 +1626,54 @@ mod tests {
             Some("ui.sidebar.agent.bold")
         );
         assert_eq!(lines[2].indent, 2);
+    }
+
+    #[test]
+    fn tables_are_lined_up_and_escapes_dropped() {
+        let mut lines = Vec::new();
+        markdown_lines(
+            "Usage:\n| MCP server | Usage |\n|:--|--:|\n| ccd\\_turn | 8% |\n| claude-in-chrome | 12% |\nafter",
+            80,
+            &mut lines,
+        );
+        assert_eq!(
+            text_of(&lines),
+            [
+                "Usage:",
+                "MCP server       │ Usage",
+                "─────────────────┼──────",
+                "ccd_turn         │    8%",
+                "claude-in-chrome │   12%",
+                "after",
+            ]
+        );
+        // The header's bold, the rule's dim.
+        assert_eq!(
+            lines[1].spans[0].style.as_deref(),
+            Some("ui.sidebar.agent.bold")
+        );
+        assert_eq!(
+            lines[2].spans[0].style.as_deref(),
+            Some("ui.sidebar.agent.hint")
+        );
+
+        // Too wide: the wide column's cells wrap inside it.
+        let mut lines = Vec::new();
+        markdown_lines(
+            "| Name | What it does |\n|---|---|\n| a | one two three four five six |",
+            20,
+            &mut lines,
+        );
+        let text = text_of(&lines);
+        assert!(text.iter().all(|l| l.chars().count() <= 20), "{text:?}");
+        assert_eq!(text[0], "Name │ What it does");
+        assert_eq!(text[2], "a    │ one two three");
+        assert_eq!(text[3], "     │ four five six");
+
+        // Escapes go outside code, stay inside it; | in a cell.
+        let mut lines = Vec::new();
+        markdown_lines("a\\_b `c\\_d`\n| x \\| y |\n|:-:|", 80, &mut lines);
+        assert_eq!(text_of(&lines), ["a_b c\\_d", "x | y", "─────"]);
     }
 
     #[test]
