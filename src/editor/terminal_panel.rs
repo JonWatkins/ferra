@@ -154,6 +154,71 @@ mod tests {
     }
 
     #[test]
+    fn the_agent_reads_the_scrollback_and_sees_whats_running() {
+        let mut editor = editor_with_shell(
+            "i=1; while [ $i -le 50 ]; do echo line$i; i=$((i+1)); done; sleep 3",
+        );
+        pump_until(&mut editor, |e| {
+            e.terminal
+                .as_ref()
+                .and_then(Terminal::running_command)
+                .is_some_and(|c| c.contains("sleep"))
+                && e.terminal
+                    .as_ref()
+                    .is_some_and(|t| t.text_lines().iter().any(|l| l == "line50"))
+        });
+        let all = editor.agent_read_terminal(None).unwrap();
+        assert!(all.contains("running `sleep 3`"), "{all}");
+        // Scrolled well off a 12-row panel, and in order.
+        let first = all
+            .find("line1\n")
+            .unwrap_or_else(|| panic!("the first line: {all}"));
+        assert!(first < all.find("line50\n").unwrap(), "{all}");
+        assert!(!all.contains("line50\nline50"), "no row twice: {all}");
+
+        let last = editor.agent_read_terminal(Some(3)).unwrap();
+        assert!(last.contains("(ask for more with lines)"), "{last}");
+        assert!(!last.contains("line47"), "only the last 3: {last}");
+        assert!(last.contains("line50"), "{last}");
+
+        let state = editor.agent_editor_state();
+        assert!(
+            state.contains("Terminal panel (shown, titled") && state.contains("read_terminal"),
+            "{state}"
+        );
+    }
+
+    #[test]
+    fn a_status_taller_than_the_panel_leaves_no_copies_for_the_agent() {
+        // As log-update does: draw the status, then up over it, clear, and
+        // draw it again. 15 rows don't fit in the 12-row panel, so the top
+        // of each copy has scrolled off before it can be cleared.
+        let mut editor = editor_with_shell(
+            "for i in 1 2 3 4 5 6; do [ $i -gt 1 ] && printf '\\033[15A\\033[J'; \
+             k=1; while [ $k -le 15 ]; do echo \"w$k $i/6\"; k=$((k+1)); done; done; echo finished",
+        );
+        pump_until(&mut editor, |e| {
+            e.terminal
+                .as_ref()
+                .is_some_and(|t| t.text_lines().iter().any(|l| l == "finished"))
+        });
+        let lines = editor.terminal.as_ref().unwrap().text_lines();
+        let copies = lines.iter().filter(|l| l.starts_with("w1 ")).count();
+        assert!(
+            copies > 1,
+            "the panel itself keeps the leftovers: {lines:?}"
+        );
+
+        let read = editor.agent_read_terminal(None).unwrap();
+        assert!(read.contains("progress redraws left out"), "{read}");
+        assert_eq!(read.matches("w1 ").count(), 1, "{read}");
+        assert!(
+            read.contains("w1 6/6") && read.contains("w15 6/6"),
+            "{read}"
+        );
+    }
+
+    #[test]
     fn opens_hides_and_refocuses_the_same_shell() {
         let mut editor = editor_with_shell("echo ready");
         assert_eq!(editor.mode(), Mode::Terminal);

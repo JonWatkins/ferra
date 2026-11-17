@@ -38,6 +38,14 @@ pub fn list() -> Value {
             "inputSchema": nothing,
         },
         {
+            "name": "read_terminal",
+            "description": "The text in the editor's terminal panel (the user's shell, scrollback included) and whether a command is still running there. Use it when the user mentions output they just saw (a failing build or test, an error, a server's log) instead of running the command again.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "lines": { "type": "integer", "description": "How many of the last lines (200 if left out)" } },
+            },
+        },
+        {
             "name": "get_diagnostics",
             "description": "Errors and warnings from the language servers (compiler, linter) for a file, or every file reported on. Quicker than building to see problems.",
             "inputSchema": {
@@ -222,6 +230,7 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
     match name {
         "editor_state" => Called::Done(Ok(editor.agent_editor_state())),
         "get_diagnostics" => Called::Done(Ok(editor.agent_diagnostics(text("path")))),
+        "read_terminal" => Called::Done(editor.agent_read_terminal(number("lines"))),
         "open_file" => match text("path") {
             Some(path) => Called::Done(editor.agent_open_file(path, number("line"))),
             None => Called::Done(Err("Which file? (path)".into())),

@@ -263,6 +263,77 @@ impl Terminal {
         screen.set_scrollback(to);
     }
 
+    /// Every line there is to read: what's scrolled off, then the screen,
+    /// as plain text, with the blank rows under the last text left off. A
+    /// line too long for the panel, wrapped onto the rows under it, comes
+    /// back whole. (A full-screen program's screen has no scrollback: just
+    /// that.) The user's place in the scrollback stays as it is.
+    pub fn text_lines(&self) -> Vec<String> {
+        let mut screen = self.screen().clone();
+        let height = usize::from(screen.size().0.get());
+        let width = screen.size().1.get();
+        screen.set_scrollback(usize::MAX);
+        let scrolled = screen.scrollback();
+        // Each scrollback offset shows `height` rows from `scrolled -
+        // offset` on; step up through them, a screenful at a time.
+        let mut rows: Vec<(String, bool)> = Vec::with_capacity(scrolled + height);
+        let mut offset = scrolled;
+        loop {
+            screen.set_scrollback(offset);
+            let first = scrolled - offset;
+            for (i, row) in screen.rows(0, width).enumerate() {
+                if first + i == rows.len() {
+                    let wrapped = u16::try_from(i).is_ok_and(|i| screen.row_wrapped(i));
+                    rows.push((row, wrapped));
+                }
+            }
+            if offset == 0 {
+                break;
+            }
+            offset = offset.saturating_sub(height);
+        }
+        let mut lines = Vec::with_capacity(rows.len());
+        let mut line = String::new();
+        for (row, wrapped) in rows {
+            line.push_str(&row);
+            if !wrapped {
+                lines.push(line.trim_end().to_string());
+                line.clear();
+            }
+        }
+        if !line.is_empty() {
+            lines.push(line.trim_end().to_string());
+        }
+        while lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+        lines
+    }
+
+    /// What the shell's running now, if anything: the command line of the
+    /// terminal's foreground process, when that isn't the shell itself.
+    /// `None` at the prompt (or once the shell's gone).
+    pub fn running_command(&self) -> Option<String> {
+        if !self.is_running() {
+            return None;
+        }
+        let leader = self.master.process_group_leader()?;
+        let shell = self.child.process_id()?;
+        if leader <= 0 || leader as u32 == shell {
+            return None;
+        }
+        let output = std::process::Command::new("ps")
+            .args(["-o", "args=", "-p", &leader.to_string()])
+            .output()
+            .ok()?;
+        let line = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Some(if line.is_empty() {
+            "a command".into()
+        } else {
+            line
+        })
+    }
+
     /// Notes the size the panel's drawn at (`apply_size` resizes to it).
     pub fn note_size(&self, rows: u16, cols: u16) {
         self.wanted.set(Some((rows, cols)));
@@ -457,6 +528,22 @@ mod tests {
         assert!(text.contains(&dir_name), "in its folder: {text:?}");
         assert_eq!(terminal.title(), "my title");
         assert_eq!(terminal.exited(), Some("exited with code 3"));
+    }
+
+    #[test]
+    fn wrapped_lines_are_read_back_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let long = "x".repeat(25) + &"y".repeat(20);
+        let script = format!(
+            "echo {long}; echo short; i=0; while [ $i -lt 8 ]; do echo n$i; i=$((i+1)); done"
+        );
+        let mut terminal = Terminal::spawn("/bin/sh", &["-c", &script], dir.path(), 4, 20).unwrap();
+        wait_for(&mut terminal, |t| t.exited().is_some());
+        let lines = terminal.text_lines();
+        assert_eq!(lines[0], long, "joined, from the scrollback: {lines:?}");
+        assert_eq!(lines[1], "short");
+        assert_eq!(lines.last().unwrap(), "n7");
+        assert_eq!(lines.len(), 10, "{lines:?}");
     }
 
     #[test]

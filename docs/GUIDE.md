@@ -724,6 +724,7 @@ extensions do:
 |------|--------------|
 | `editor_state` | What's open and selected |
 | `read_buffer` | A file as the editor has it, unsaved changes and all |
+| `read_terminal` | The terminal panel's text (scrollback too) and what's running in it |
 | `edit_buffer` | Replaces text in a file's buffer (one change, or several as one): you see it as it happens, `u` undoes it, and it's saved unless you had unsaved changes there. Its answer says what the language server finds wrong in the file afterwards |
 | `create_file`, `close_file` | Makes a new file; closes a file's buffer |
 | `get_diagnostics` | The language servers' errors and warnings |

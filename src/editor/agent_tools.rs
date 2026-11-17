@@ -24,6 +24,8 @@ pub struct AgentAnswer {
 const SELECTION_CHARS: usize = 4000;
 /// Lines `read_buffer` gives at most, unless asked for more.
 const READ_LINES: usize = 2000;
+/// The terminal's last lines `read_terminal` gives, unless asked for more.
+const TERMINAL_LINES: usize = 200;
 
 impl Editor {
     /// A short note of what's open, for a prompt (`agent-context`): the
@@ -149,7 +151,65 @@ impl Editor {
         if !open.is_empty() {
             lines.push(format!("Open files:\n{}", open.join("\n")));
         }
+        if let Some(terminal) = self.agent_terminal_note() {
+            lines.push(format!("{terminal} (read_terminal reads it)"));
+        }
         lines.join("\n")
+    }
+
+    /// One line on the terminal panel's shell, if there is one: whether
+    /// it's shown, and what it's doing.
+    fn agent_terminal_note(&self) -> Option<String> {
+        let terminal = self.terminal.as_ref()?;
+        let shown = if self.terminal_panel().is_some() {
+            "shown"
+        } else {
+            "hidden"
+        };
+        let doing = match (terminal.exited(), terminal.running_command()) {
+            (Some(why), _) => format!("the shell has {why}"),
+            (None, Some(command)) => format!("running `{command}`"),
+            (None, None) => "at the shell's prompt".into(),
+        };
+        let title = terminal.title();
+        Some(format!(
+            "Terminal panel ({shown}, titled \"{title}\"): {doing}"
+        ))
+    }
+
+    /// The `read_terminal` tool: the terminal panel's last `lines` lines
+    /// (scrollback included), and what its shell's doing.
+    pub fn agent_read_terminal(&self, lines: Option<usize>) -> Result<String, String> {
+        let terminal = self
+            .terminal
+            .as_ref()
+            .ok_or("The terminal panel has no shell (the user hasn't opened it)")?;
+        let note = self.agent_terminal_note().unwrap_or_default();
+        let (text, redraws) = without_redraws(terminal.text_lines());
+        if text.is_empty() {
+            return Ok(format!("{note}\nNothing in it yet."));
+        }
+        let wanted = lines.unwrap_or(TERMINAL_LINES).max(1);
+        let from = text.len().saturating_sub(wanted);
+        let which = if from == 0 {
+            format!("All {} lines", text.len())
+        } else {
+            format!(
+                "Lines {}-{} of {} (ask for more with lines)",
+                from + 1,
+                text.len(),
+                text.len()
+            )
+        };
+        let left_out = match redraws {
+            0 => String::new(),
+            1 => " (1 progress redraw left out, in all)".into(),
+            n => format!(" ({n} progress redraws left out, in all)"),
+        };
+        Ok(format!(
+            "{note}\n{which}{left_out}:\n```\n{}\n```",
+            text[from..].join("\n")
+        ))
     }
 
     /// The `get_diagnostics` tool: the language servers' errors and
@@ -779,6 +839,178 @@ impl Editor {
     }
 }
 
+/// The longest group of lines a progress display redraws (`❯ file 3/88`
+/// lines, one per worker, and the totals under them) that's looked for.
+const REDRAW_LINES: usize = 32;
+/// How far on an old status line's newer copy (or its file's ✓ line) is
+/// looked for, past the output printed in between.
+const NEAR_LINES: usize = 64;
+
+/// A terminal's lines without what progress displays left behind: a
+/// program that redraws its status in place (Vitest, cargo, npm...) leaves
+/// old copies in the scrollback when its status is taller than the screen.
+/// Status lines are ones with a counter (`3/88`, `40%`) or a status mark
+/// (`❯`, a spinner) in front. Left out: a group of lines with a status line
+/// in it that comes again straight after itself (its counters and `[queued]`
+/// aside); then a status line that comes again close by, with other output
+/// between, or whose file's ✓ (or ×) line follows (or came just before,
+/// if its counter's full: `❯ file 5/5`); and the blank lines beside those. Returns the lines and how many redraws went.
+fn without_redraws(lines: Vec<String>) -> (Vec<String>, usize) {
+    let mut kept: Vec<(String, String)> = Vec::with_capacity(lines.len());
+    let mut dropped = 0;
+    for line in lines {
+        kept.push((redraw_key(&line), line));
+        'again: loop {
+            let n = kept.len();
+            for size in 1..=REDRAW_LINES.min(n / 2) {
+                let (before, after) = kept[n - 2 * size..].split_at(size);
+                if before.iter().zip(after).all(|(a, b)| a.0 == b.0)
+                    && after.iter().any(|(_, line)| is_status(line))
+                {
+                    kept.drain(n - 2 * size..n - size);
+                    dropped += 1;
+                    continue 'again;
+                }
+            }
+            break;
+        }
+    }
+
+    // Old status lines with output in between.
+    let n = kept.len();
+    let mut stale = vec![false; n];
+    for i in 0..n {
+        let line = &kept[i].1;
+        if !is_status(line) {
+            continue;
+        }
+        let subject = status_subject(line);
+        let later = &kept[i + 1..(i + 1 + NEAR_LINES).min(n)];
+        let earlier = &kept[i.saturating_sub(NEAR_LINES)..i];
+        let finished =
+            |(_, other): &(String, String)| subject.as_ref().is_some_and(|s| finishes(other, s));
+        if later
+            .iter()
+            .any(|item| item.0 == kept[i].0 || finished(item))
+            || counter_full(line) && earlier.iter().any(finished)
+        {
+            stale[i] = true;
+            dropped += 1;
+        }
+    }
+    let beside_stale =
+        |i: usize| (i > 0 && stale[i - 1]) || stale.get(i + 1).copied().unwrap_or(false);
+    let lines = kept
+        .into_iter()
+        .enumerate()
+        .filter(|(i, (_, line))| !(stale[*i] || line.trim().is_empty() && beside_stale(*i)))
+        .map(|(_, (_, line))| line)
+        .collect();
+    (lines, dropped)
+}
+
+/// Whether `line` is a status line: a counter in it, or a status mark (`❯`,
+/// `›`, a braille spinner) in front.
+fn is_status(line: &str) -> bool {
+    has_counter(line)
+        || line
+            .trim_start()
+            .chars()
+            .next()
+            .is_some_and(|c| matches!(c, '❯' | '›' | '\u{2801}'..='\u{28FF}'))
+}
+
+/// What a `❯ file 3/5` status line is about: its words after the mark,
+/// without a last counter or `[queued]`.
+fn status_subject(line: &str) -> Option<Vec<&str>> {
+    let mut words: Vec<&str> = line.split_whitespace().collect();
+    let mark = words.first()?.chars().next()?;
+    if !matches!(mark, '❯' | '›' | '\u{2801}'..='\u{28FF}') {
+        return None;
+    }
+    words.remove(0);
+    if words
+        .last()
+        .is_some_and(|w| has_counter(w) || (w.starts_with('[') && w.ends_with(']')))
+    {
+        words.pop();
+    }
+    (!words.is_empty()).then_some(words)
+}
+
+/// Whether `line` says `subject` is done: `✓` (or `×`) and the same words.
+fn finishes(line: &str, subject: &[&str]) -> bool {
+    let mut words = line.split_whitespace();
+    let done = words
+        .next()
+        .and_then(|w| w.chars().next())
+        .is_some_and(|c| matches!(c, '✓' | '✔' | '×' | '✗' | '✘'));
+    done && subject.iter().all(|s| words.next() == Some(*s))
+}
+
+/// What a line's compared by, for [`without_redraws`]: the line with its
+/// counters' numbers (`3/88`, `40%`) left out, and a status line's
+/// `[queued]` at the end. Other numbers stay, so `w1 3/88` and `w2 3/88`
+/// are different lines.
+fn redraw_key(line: &str) -> String {
+    let line = match line.trim_end().rsplit_once(' ') {
+        Some((before, last)) if last.starts_with('[') && last.ends_with(']') && is_status(line) => {
+            before
+        }
+        _ => line,
+    };
+    let chars: Vec<char> = line.chars().collect();
+    let mut key = String::with_capacity(line.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if !chars[i].is_ascii_digit() {
+            key.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        let next = chars.get(i).copied();
+        let after = chars.get(i + 1).is_some_and(char::is_ascii_digit);
+        let before = start >= 2 && chars[start - 1] == '/' && chars[start - 2].is_ascii_digit();
+        let counter = next == Some('%') || (next == Some('/') && after) || before;
+        if counter {
+            key.push('#');
+        } else {
+            key.extend(&chars[start..i]);
+        }
+    }
+    key
+}
+
+/// Whether `line` ends with a full counter (`5/5`, `100%`): what it counts
+/// is done.
+fn counter_full(line: &str) -> bool {
+    let Some(last) = line.split_whitespace().last() else {
+        return false;
+    };
+    if let Some((done, total)) = last.split_once('/') {
+        let number = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        return number(done) && done == total;
+    }
+    last == "100%"
+}
+
+/// Whether there's a counter in `line`: `3/88` or `40%`.
+fn has_counter(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    bytes.iter().enumerate().any(|(i, &b)| {
+        let digit_before = i > 0 && bytes[i - 1].is_ascii_digit();
+        match b {
+            b'%' => digit_before,
+            b'/' => digit_before && bytes.get(i + 1).is_some_and(u8::is_ascii_digit),
+            _ => false,
+        }
+    })
+}
+
 /// The replacement of `text[from..to]` by `new`, without the text they
 /// share at the start and the end.
 fn trimmed(text: &str, from: usize, to: usize, new: &str) -> (usize, usize, String) {
@@ -896,6 +1128,126 @@ fn clipped(text: &str, most: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn lines(text: &[&str]) -> Vec<String> {
+        text.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn progress_redraws_are_left_out_of_the_terminals_text() {
+        // Vitest's leftovers: one status line and a blank, again and again.
+        let (kept, dropped) = without_redraws(lines(&[
+            "RUN v3",
+            " ❯ a.test.ts 0/88",
+            "",
+            " ❯ a.test.ts 0/88",
+            "",
+            " ❯ a.test.ts 17/88",
+            "",
+            " ✓ a.test.ts (88 tests)",
+        ]));
+        // The last copy goes too, once the file's ✓ line is there.
+        assert_eq!(kept, lines(&["RUN v3", " ✓ a.test.ts (88 tests)"]));
+        assert_eq!(dropped, 3);
+
+        // A taller status (a line per worker) goes a group at a time.
+        let (kept, dropped) = without_redraws(lines(&[
+            "w1 a.ts 1/9",
+            "w2 b.ts 3/5",
+            "w1 a.ts 2/9",
+            "w2 b.ts 4/5",
+            "w1 a.ts 9/9",
+            "w2 b.ts 5/5",
+        ]));
+        assert_eq!(kept, lines(&["w1 a.ts 9/9", "w2 b.ts 5/5"]));
+        assert_eq!(dropped, 2);
+
+        // Repeats without a counter are real output: kept.
+        let same = lines(&["warning: x", "warning: x", "line1", "line2", "line3"]);
+        assert_eq!(without_redraws(same.clone()), (same, 0));
+        // Neither are paths or ordinary numbers counters.
+        assert!(!has_counter("server/resources/a1.ts line 12"));
+        assert!(has_counter("Tests 40%") && has_counter("3/88"));
+        assert_eq!(redraw_key("w12 3/88 40% 7s"), "w12 #/# #% 7s");
+    }
+
+    #[test]
+    fn queued_status_lines_go_like_counted_ones() {
+        let q = " ❯  client  components/Editor.test.tsx [queued]";
+        let (kept, dropped) = without_redraws(lines(&["RUN", q, "", q, "", q, "", " ✓ x"]));
+        assert_eq!(kept, lines(&["RUN", q, "", " ✓ x"]));
+        assert_eq!(dropped, 2);
+        // [running] after [queued] is the same line, redrawn.
+        let running = " ❯  client  components/Editor.test.tsx [running]";
+        let (kept, _) = without_redraws(lines(&[q, running]));
+        assert_eq!(kept, lines(&[running]));
+    }
+
+    #[test]
+    fn old_status_lines_between_output_go() {
+        let (kept, dropped) = without_redraws(lines(&[
+            " ❯  client  components/AssessmentEditor.test.tsx 2/5",
+            " ✓  client  pages/Page.test.tsx (35 tests) 879ms",
+            "",
+            " ❯  client  components/AssessmentEditor.test.tsx 2/5",
+            " ✓  client  layouts/AdminLayout.test.tsx (31 tests) 1123ms",
+            "",
+            " ❯  client  components/AssessmentEditor.test.tsx 3/5",
+            " ✓  client  lib/bundle.test.ts (230 tests) 395ms",
+            " ✓  client  components/AssessmentEditor.test.tsx (5 tests) 481ms",
+            "",
+            " Test Files  4 passed (4)",
+        ]));
+        assert_eq!(
+            kept,
+            lines(&[
+                " ✓  client  pages/Page.test.tsx (35 tests) 879ms",
+                " ✓  client  layouts/AdminLayout.test.tsx (31 tests) 1123ms",
+                " ✓  client  lib/bundle.test.ts (230 tests) 395ms",
+                " ✓  client  components/AssessmentEditor.test.tsx (5 tests) 481ms",
+                "",
+                " Test Files  4 passed (4)",
+            ])
+        );
+        assert_eq!(dropped, 3);
+
+        // Two files at 3/5 are two lines; a status still showing stays.
+        let (kept, dropped) = without_redraws(lines(&[
+            " ❯ a.test.ts 3/5",
+            " ❯ b.test.ts 3/5",
+            " ✓ c.test.ts (2 tests)",
+        ]));
+        assert_eq!(kept.len(), 3, "{kept:?}");
+        assert_eq!(dropped, 0);
+        // And real output that repeats with things between stays.
+        let real = lines(&["warning: x", "compiling y", "warning: x", "done"]);
+        assert_eq!(without_redraws(real.clone()), (real, 0));
+    }
+
+    #[test]
+    fn full_status_lines_after_their_file_is_done_go() {
+        // The last redraw can land after the file's ✓ line (seen in Vitest).
+        let (kept, dropped) = without_redraws(lines(&[
+            " ✓  client  lib/search.test.ts (2 tests) 2ms",
+            " ✓  client  lib/format.test.ts (2 tests) 1ms",
+            "",
+            " ❯  client  lib/search.test.ts 2/2",
+            " ✓  client  components/Form.test.tsx (32 tests) 4035ms",
+        ]));
+        assert_eq!(
+            kept,
+            lines(&[
+                " ✓  client  lib/search.test.ts (2 tests) 2ms",
+                " ✓  client  lib/format.test.ts (2 tests) 1ms",
+                " ✓  client  components/Form.test.tsx (32 tests) 4035ms",
+            ])
+        );
+        assert_eq!(dropped, 1);
+
+        // A file running again after it was done (watch mode) still shows.
+        let rerun = lines(&[" ✓ a.test.ts (5 tests)", "", " ❯ a.test.ts 2/5"]);
+        assert_eq!(without_redraws(rerun.clone()), (rerun, 0));
+    }
 
     #[test]
     fn words_are_found_whole() {
