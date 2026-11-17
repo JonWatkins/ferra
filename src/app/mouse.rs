@@ -880,7 +880,7 @@ impl App {
                     self.editor.set_message(Message::error(error));
                 }
             }
-            Some(PanelTab::Problems) => {
+            Some(PanelTab::Problems | PanelTab::Locations) => {
                 self.editor.set_mode(Mode::Panel);
                 let Some(map) = self.screen_map.panel.clone() else {
                     return;

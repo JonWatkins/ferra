@@ -17,7 +17,7 @@ use unicode_width::UnicodeWidthStr;
 use super::text::truncate_end;
 use crate::config::Theme;
 use crate::editor::diagnostics::Severity as Level;
-use crate::editor::panel::{PanelTab, ProblemRow};
+use crate::editor::panel::{LocationRow, PanelTab, ProblemRow};
 use crate::editor::{Editor, Mode};
 
 /// Where the panel's parts are, for the mouse.
@@ -34,12 +34,19 @@ pub struct PanelMap {
 /// The tabs along `row`: their columns.
 fn tab_spans(editor: &Editor, row: Rect) -> Vec<(u16, u16, PanelTab, String)> {
     let problems = editor.problems().len();
+    let places = editor
+        .panel()
+        .locations
+        .as_ref()
+        .map_or(0, |l| l.items.len());
     let mut x = row.x + 1;
-    PanelTab::ALL
-        .iter()
-        .map(|&tab| {
+    editor
+        .panel_tabs()
+        .into_iter()
+        .map(|tab| {
             let label = match tab {
                 PanelTab::Problems if problems > 0 => format!("{} {problems}", tab.title()),
+                PanelTab::Locations => format!("{} {places}", tab.title()),
                 _ => tab.title().to_string(),
             };
             let from = x;
@@ -113,7 +120,7 @@ impl<'a> PanelView<'a> {
         let panel = editor.panel();
         let height = list.height.max(1) as usize;
         match editor.panel_shown() {
-            Some(PanelTab::Problems) => {
+            Some(PanelTab::Problems | PanelTab::Locations) => {
                 let mut first = panel.scroll.get();
                 if panel.selected < first {
                     first = panel.selected;
@@ -177,7 +184,9 @@ impl Widget for PanelView<'_> {
         let focused = editor.mode() == Mode::Panel;
         // The keys, at the right.
         let hints = match editor.panel_shown() {
-            Some(PanelTab::Problems) if focused => "↵ go   Tab next   Esc editor   q hide  ",
+            Some(PanelTab::Problems | PanelTab::Locations) if focused => {
+                "↵ go   Tab next   Esc editor   q hide  "
+            }
             Some(PanelTab::Output) if focused => "j/k scroll   G end   Tab next   Esc editor  ",
             _ => "",
         };
@@ -258,6 +267,59 @@ impl Widget for PanelView<'_> {
                                 "[Ln {}, Col {}]",
                                 diagnostic.start.row + 1,
                                 diagnostic.start.col + 1
+                            );
+                            let end = list.x as usize + width;
+                            let used = rows_width(buf, list, y);
+                            if used + place.width() + 2 <= width {
+                                let at = (end - place.width() - 1) as u16;
+                                buf.set_string(at, y, place, theme.get("ui.panel.detail"));
+                            }
+                        }
+                    }
+                }
+            }
+            Some(PanelTab::Locations) => {
+                let selected = editor.panel().selected;
+                for (i, row) in editor.location_rows().iter().enumerate().skip(first) {
+                    let y = list.y + (i - first) as u16;
+                    if y >= list.bottom() {
+                        break;
+                    }
+                    match row {
+                        LocationRow::Title(title) => {
+                            put(buf, list.x + 1, y, title, theme.get("ui.panel.detail"));
+                        }
+                        LocationRow::File { path, count } => {
+                            let x = put(buf, list.x + 1, y, "▾ ", theme.get("ui.sidebar.marker"));
+                            let x = put(
+                                buf,
+                                x,
+                                y,
+                                &shown_path(path),
+                                theme.get("ui.sidebar.search.file"),
+                            );
+                            put(
+                                buf,
+                                x + 1,
+                                y,
+                                &format!(" {count} "),
+                                theme.get("ui.sidebar.search.count"),
+                            );
+                        }
+                        LocationRow::Item(item) => {
+                            if i == selected {
+                                let style = if focused {
+                                    theme.get("ui.sidebar.selected")
+                                } else {
+                                    theme.get("ui.git.selected.unfocused")
+                                };
+                                buf.set_style(Rect::new(list.x, y, list.width, 1), style);
+                            }
+                            put(buf, list.x + 3, y, &item.note, Style::default());
+                            let place = format!(
+                                "[Ln {}, Col {}]",
+                                item.position.row + 1,
+                                item.position.col + 1
                             );
                             let end = list.x as usize + width;
                             let used = rows_width(buf, list, y);

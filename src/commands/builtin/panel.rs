@@ -15,6 +15,16 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.panel_show(PanelTab::Problems),
     );
     r.register(
+        "locations",
+        "The bottom panel's Locations: the places the coding agent listed, to step through",
+        |cx| {
+            if cx.editor.panel().locations.is_none() {
+                return Err("No locations: the agent lists them (show_locations)".into());
+            }
+            cx.editor.panel_show(PanelTab::Locations)
+        },
+    );
+    r.register(
         "output",
         "The bottom panel's Output: the messages shown, and what language servers logged (Ctrl+Shift+U)",
         |cx| cx.editor.panel_show(PanelTab::Output),

@@ -200,6 +200,30 @@ pub fn list() -> Value {
             },
         },
         {
+            "name": "show_locations",
+            "description": "Give the user a list of places to step through, in the editor's panel (a Locations tab, by file; they press ↵ to go to one): the answer to 'where does this need changing?', the callers to update, the places a change touched. Better than paths in your reply when there are several. Each with a short note of what's there.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string", "description": "What they are (\"Callers of parse to update\")" },
+                    "locations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": { "type": "string" },
+                                "line": { "type": "integer", "description": "From 1" },
+                                "column": { "type": "integer", "description": "From 1 (1 if left out)" },
+                                "note": { "type": "string", "description": "What's there (the line's text if left out)" },
+                            },
+                            "required": ["path", "line"],
+                        },
+                    },
+                },
+                "required": ["title", "locations"],
+            },
+        },
+        {
             "name": "close_file",
             "description": "Close a file's buffer in the editor (one you opened for the user and they're done with). Files you only read or edited close by themselves when your turn ends.",
             "inputSchema": {
@@ -332,6 +356,12 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
                 Err(error) => Called::Done(Err(error)),
             },
             _ => Called::Done(Err("Give from and to".into())),
+        },
+        "show_locations" => match args["locations"].as_array() {
+            Some(places) => Called::Done(
+                editor.agent_show_locations(text("title").unwrap_or("Locations"), places),
+            ),
+            None => Called::Done(Err("Give locations: a list of {path, line, note}".into())),
         },
         "close_file" => match text("path") {
             Some(path) => Called::Done(editor.agent_close_file(path)),

@@ -24,6 +24,8 @@ pub struct AgentAnswer {
 const SELECTION_CHARS: usize = 4000;
 /// Lines `read_buffer` gives at most, unless asked for more.
 const READ_LINES: usize = 2000;
+/// The most places `show_locations` takes.
+const MOST_LOCATIONS: usize = 500;
 /// The terminal's last lines `read_terminal` gives, unless asked for more.
 const TERMINAL_LINES: usize = 200;
 /// The Output tab's last lines `language_servers` gives.
@@ -254,6 +256,32 @@ impl Editor {
                 }
             }
         }
+        if self.panel_shown() == Some(super::panel::PanelTab::Locations)
+            && let Some(Some((path, position))) = self.panel_selected_place()
+        {
+            let note = self
+                .location_rows()
+                .get(self.panel.selected)
+                .and_then(|row| match row {
+                    super::panel::LocationRow::Item(item) => Some(item.note.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let places = self.list_places_count();
+            let at = self.panel_selected_number();
+            let title = self
+                .panel
+                .locations
+                .as_ref()
+                .map(|l| l.title.clone())
+                .unwrap_or_default();
+            notes.push(format!(
+                "Locations tab (\"{title}\"): open, selected {at} of {places}, {}:{}:{}: {note}",
+                shown(&path),
+                position.row + 1,
+                position.col + 1
+            ));
+        }
         if self.sidebar().is_some() {
             match self.sidebar_shows() {
                 super::sidebar_views::SidebarShows::Search => {
@@ -441,6 +469,86 @@ impl Editor {
             });
         }
         Ok(out.join("\n\n"))
+    }
+
+    /// The `show_locations` tool: puts places in the panel's Locations tab
+    /// for the user to step through (`↵` goes to one), each with a note
+    /// (or its line's text). Focus stays where it is.
+    pub fn agent_show_locations(
+        &mut self,
+        title: &str,
+        places: &[serde_json::Value],
+    ) -> Result<String, String> {
+        if places.is_empty() {
+            return Err("No locations given".into());
+        }
+        if places.len() > MOST_LOCATIONS {
+            return Err(format!("At most {MOST_LOCATIONS} locations"));
+        }
+        let mut items = Vec::new();
+        for (i, place) in places.iter().enumerate() {
+            let which = format!("location {}", i + 1);
+            let path = place["path"]
+                .as_str()
+                .filter(|p| !p.is_empty())
+                .ok_or(format!("{which}: no path"))?;
+            let full = absolute(Path::new(path));
+            if full.is_dir() {
+                return Err(format!("{which}: {path} is a folder, not a file"));
+            }
+            let text = match self
+                .find_open_path(&full)
+                .and_then(|id| self.document_by_id(id))
+            {
+                Some(document) => document.buffer().text(),
+                None => std::fs::read_to_string(&full)
+                    .map_err(|_| format!("{which}: no such file: {path}"))?,
+            };
+            let line = match place["line"].as_u64() {
+                Some(0) => return Err(format!("{which}: lines start at 1, not 0")),
+                Some(line) => line as usize,
+                None => return Err(format!("{which}: no line")),
+            };
+            let Some(line_text) = text.lines().nth(line - 1) else {
+                return Err(format!(
+                    "{which}: {path} has {} lines, not {line}",
+                    text.lines().count()
+                ));
+            };
+            let column = place["column"].as_u64().unwrap_or(1).max(1) as usize;
+            let column = column.min(line_text.chars().count() + 1);
+            let note = place["note"]
+                .as_str()
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .unwrap_or(line_text.trim())
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_string();
+            items.push(super::panel::LocationItem {
+                path: full,
+                position: Position::new(line - 1, column - 1),
+                note,
+            });
+        }
+        let count = items.len();
+        let mut files: Vec<&PathBuf> = items.iter().map(|i| &i.path).collect();
+        files.sort();
+        files.dedup();
+        let files = files.len();
+        let title = title.trim();
+        let title = if title.is_empty() { "Locations" } else { title };
+        self.panel_show_locations(super::panel::LocationList {
+            title: title.to_string(),
+            items,
+        });
+        Ok(format!(
+            "Showing {count} place{} in {files} file{} in the panel's Locations tab \
+             (the user steps through them with j/k and ↵)",
+            if count == 1 { "" } else { "s" },
+            if files == 1 { "" } else { "s" },
+        ))
     }
 
     /// The `move_file` tool: checks the move can be made, then asks the

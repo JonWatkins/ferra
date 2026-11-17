@@ -618,6 +618,10 @@ Under the windows, the bottom panel has three tabs, as VS Code's:
   click on the status bar's errors and warnings): every error and warning
   in the open files, by file. `j`/`k` move, `<CR>` (or a click) goes to
   one.
+- **Locations** (`:locations`), once the coding agent has given a list
+  (`show_locations`: "these places need changing"): its places, by file,
+  each with a note. `j`/`k` move, `<CR>` (or a click) goes to one. A new
+  list replaces it.
 - **Output** (`:output`, `Ctrl+Shift+U`): the messages ferra has shown,
   timed, and what language servers log. `j`/`k` scroll back; it follows
   the end otherwise.
@@ -728,6 +732,7 @@ extensions do:
 | `buffer_changes` | Your changes as a diff: a file as the editor has it (unsaved edits too) against the saved file, or against git ("review what I wrote") |
 | `edit_buffer` | Replaces text in a file's buffer (one change, or several as one): you see it as it happens, `u` undoes it, and it's saved unless you had unsaved changes there. Its answer says what the language server finds wrong in the file afterwards |
 | `create_file`, `close_file` | Makes a new file; closes a file's buffer |
+| `show_locations` | Puts a list of places in the panel's Locations tab, for you to step through |
 | `move_file` | Moves or renames a file, the language server updating its imports first (undoable edits) and its buffer following |
 | `get_diagnostics` | The language servers' errors and warnings |
 | `lsp_definition` | Where a symbol's defined (or its type, implementations, declaration) |

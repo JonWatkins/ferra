@@ -1,6 +1,8 @@
 //! The bottom panel, as VS Code's: tabs for Problems (every error and
-//! warning in the open files, by file), Output (the messages ferra showed
-//! and what language servers logged) and Terminal (`terminal_panel.rs`).
+//! warning in the open files, by file), Locations (a list of places the
+//! coding agent gave, to step through; shown once there's one), Output (the
+//! messages ferra showed and what language servers logged) and Terminal
+//! (`terminal_panel.rs`).
 //! Problems and Output have focus in `Mode::Panel` (`[keys.panel]`); the
 //! terminal in `Mode::Terminal`.
 
@@ -14,17 +16,24 @@ use super::{Editor, Message, Mode, Severity};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PanelTab {
     Problems,
+    Locations,
     Output,
     #[default]
     Terminal,
 }
 
 impl PanelTab {
-    pub const ALL: [PanelTab; 3] = [PanelTab::Problems, PanelTab::Output, PanelTab::Terminal];
+    pub const ALL: [PanelTab; 4] = [
+        PanelTab::Problems,
+        PanelTab::Locations,
+        PanelTab::Output,
+        PanelTab::Terminal,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
             PanelTab::Problems => "PROBLEMS",
+            PanelTab::Locations => "LOCATIONS",
             PanelTab::Output => "OUTPUT",
             PanelTab::Terminal => "TERMINAL",
         }
@@ -67,6 +76,32 @@ pub struct PanelState {
     pub output: Vec<OutputLine>,
     /// The Output tab was scrolled back (else it follows the end).
     pub output_held: bool,
+    /// The Locations tab's list, once there's one.
+    pub locations: Option<LocationList>,
+}
+
+/// Places to step through, with what they're about (the agent's answer:
+/// "these need changing").
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocationList {
+    pub title: String,
+    pub items: Vec<LocationItem>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocationItem {
+    pub path: PathBuf,
+    pub position: crate::core::Position,
+    /// What it's about (or the line's text, if no note was given).
+    pub note: String,
+}
+
+/// A row of the Locations tab: its title, a file, or one of its places.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LocationRow {
+    Title(String),
+    File { path: PathBuf, count: usize },
+    Item(LocationItem),
 }
 
 impl Editor {
@@ -96,7 +131,7 @@ impl Editor {
         self.panel_open = true;
         self.panel.scroll.set(0);
         self.panel.output_held = false;
-        if tab == PanelTab::Problems {
+        if matches!(tab, PanelTab::Problems | PanelTab::Locations) {
             self.panel.selected = self.first_problem_row(0);
         }
         self.set_mode(Mode::Panel);
@@ -125,11 +160,9 @@ impl Editor {
 
     /// `<Tab>` / `<S-Tab>`: the next or previous tab.
     pub fn panel_cycle(&mut self, delta: isize) -> Result<(), String> {
-        let at = PanelTab::ALL
-            .iter()
-            .position(|t| *t == self.panel.tab)
-            .unwrap_or(0) as isize;
-        let tab = PanelTab::ALL[(at + delta).rem_euclid(3) as usize];
+        let tabs = self.panel_tabs();
+        let at = tabs.iter().position(|t| *t == self.panel.tab).unwrap_or(0) as isize;
+        let tab = tabs[(at + delta).rem_euclid(tabs.len() as isize) as usize];
         self.panel_show(tab)
     }
 
@@ -181,25 +214,108 @@ impl Editor {
 
     /// The first problem's row from `from` on (files' rows are skipped).
     fn first_problem_row(&self, from: usize) -> usize {
-        let rows = self.problem_rows();
-        (from..rows.len())
-            .find(|&i| matches!(rows[i], ProblemRow::Problem { .. }))
-            .unwrap_or(0)
+        let rows = self.list_places();
+        (from..rows.len()).find(|&i| rows[i].is_some()).unwrap_or(0)
+    }
+
+    /// The tabs shown: Locations only once there's a list.
+    pub fn panel_tabs(&self) -> Vec<PanelTab> {
+        PanelTab::ALL
+            .into_iter()
+            .filter(|&t| t != PanelTab::Locations || self.panel.locations.is_some())
+            .collect()
+    }
+
+    /// The Locations tab's rows: its title, then each file (in the order
+    /// first given) and its places, in order.
+    pub fn location_rows(&self) -> Vec<LocationRow> {
+        let Some(list) = &self.panel.locations else {
+            return Vec::new();
+        };
+        let mut files: Vec<&PathBuf> = Vec::new();
+        for item in &list.items {
+            if !files.contains(&&item.path) {
+                files.push(&item.path);
+            }
+        }
+        let mut rows = vec![LocationRow::Title(list.title.clone())];
+        for file in files {
+            let mut items: Vec<&LocationItem> =
+                list.items.iter().filter(|i| &i.path == file).collect();
+            items.sort_by_key(|i| i.position);
+            rows.push(LocationRow::File {
+                path: file.clone(),
+                count: items.len(),
+            });
+            rows.extend(items.into_iter().cloned().map(LocationRow::Item));
+        }
+        rows
+    }
+
+    /// The Problems or Locations tab's rows as places: where each goes
+    /// (none for a file's or the title's row).
+    fn list_places(&self) -> Vec<Option<(PathBuf, crate::core::Position)>> {
+        match self.panel.tab {
+            PanelTab::Problems => self
+                .problem_rows()
+                .into_iter()
+                .map(|row| match row {
+                    ProblemRow::Problem { path, diagnostic } => Some((path, diagnostic.start)),
+                    ProblemRow::File { .. } => None,
+                })
+                .collect(),
+            PanelTab::Locations => self
+                .location_rows()
+                .into_iter()
+                .map(|row| match row {
+                    LocationRow::Item(item) => Some((item.path, item.position)),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// How many places the Problems or Locations tab lists.
+    pub fn list_places_count(&self) -> usize {
+        self.list_places().iter().filter(|p| p.is_some()).count()
+    }
+
+    /// Which of them is selected, from 1.
+    pub fn panel_selected_number(&self) -> usize {
+        self.list_places()
+            .iter()
+            .take(self.panel.selected + 1)
+            .filter(|p| p.is_some())
+            .count()
+    }
+
+    /// The selected row's place, of the Problems or Locations tab.
+    pub fn panel_selected_place(&self) -> Option<Option<(PathBuf, crate::core::Position)>> {
+        self.list_places().get(self.panel.selected).cloned()
+    }
+
+    /// Puts `list` in the Locations tab and shows it, the first place
+    /// selected; focus stays where it is.
+    pub fn panel_show_locations(&mut self, list: LocationList) {
+        self.panel.locations = Some(list);
+        self.panel.tab = PanelTab::Locations;
+        self.panel_open = true;
+        self.panel.scroll.set(0);
+        self.panel.selected = self.first_problem_row(0);
     }
 
     /// `j` / `k` (and the wheel): the next or previous problem, or the
     /// Output scrolled.
     pub fn panel_move(&mut self, delta: isize) {
         match self.panel.tab {
-            PanelTab::Problems => {
-                let rows = self.problem_rows();
+            PanelTab::Problems | PanelTab::Locations => {
+                let rows = self.list_places();
                 let mut at = self.panel.selected as isize;
                 for _ in 0..delta.unsigned_abs() {
                     let step = delta.signum();
                     let mut next = at + step;
-                    while next >= 0
-                        && (next as usize) < rows.len()
-                        && matches!(rows[next as usize], ProblemRow::File { .. })
+                    while next >= 0 && (next as usize) < rows.len() && rows[next as usize].is_none()
                     {
                         next += step;
                     }
@@ -223,12 +339,12 @@ impl Editor {
     /// `gg` / `G`.
     pub fn panel_jump(&mut self, last: bool) {
         match self.panel.tab {
-            PanelTab::Problems => {
-                let rows = self.problem_rows();
+            PanelTab::Problems | PanelTab::Locations => {
+                let rows = self.list_places();
                 self.panel.selected = if last {
                     (0..rows.len())
                         .rev()
-                        .find(|&i| matches!(rows[i], ProblemRow::Problem { .. }))
+                        .find(|&i| rows[i].is_some())
                         .unwrap_or(0)
                 } else {
                     self.first_problem_row(0)
@@ -242,31 +358,27 @@ impl Editor {
         }
     }
 
-    /// Selects the Problems tab's row `index` (a click).
+    /// Selects the Problems or Locations tab's row `index` (a click).
     pub fn panel_select(&mut self, index: usize) {
-        if self.panel.tab == PanelTab::Problems
-            && matches!(
-                self.problem_rows().get(index),
-                Some(ProblemRow::Problem { .. })
-            )
+        if matches!(self.panel.tab, PanelTab::Problems | PanelTab::Locations)
+            && self.list_places().get(index).is_some_and(Option::is_some)
         {
             self.panel.selected = index;
         }
     }
 
-    /// `<CR>` (or a click) on a problem: its file, at its place.
+    /// `<CR>` (or a click) on a problem or a place: its file, at it.
     pub fn panel_open_selected(&mut self) -> Result<(), String> {
-        if self.panel.tab != PanelTab::Problems {
+        if !matches!(self.panel.tab, PanelTab::Problems | PanelTab::Locations) {
             return Ok(());
         }
-        let Some(ProblemRow::Problem { path, diagnostic }) =
-            self.problem_rows().get(self.panel.selected).cloned()
+        let Some(Some((path, position))) = self.list_places().get(self.panel.selected).cloned()
         else {
-            return Err("No problem selected".into());
+            return Err("Nothing selected".into());
         };
         let location = super::lsp::Location {
             path,
-            position: diagnostic.start,
+            position,
             line: String::new(),
         };
         self.set_mode(Mode::Normal);
