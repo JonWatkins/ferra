@@ -26,6 +26,8 @@ const SELECTION_CHARS: usize = 4000;
 const READ_LINES: usize = 2000;
 /// The terminal's last lines `read_terminal` gives, unless asked for more.
 const TERMINAL_LINES: usize = 200;
+/// The most lines of diff `buffer_changes` gives for a file.
+const DIFF_LINES: usize = 1000;
 
 impl Editor {
     /// A short note of what's open, for a prompt (`agent-context`): the
@@ -124,7 +126,11 @@ impl Editor {
         let open: Vec<String> = std::iter::once(&self.document)
             .chain(&self.background)
             .filter_map(|d| {
-                let path = d.path()?;
+                let Some(path) = d.path() else {
+                    // Named as buffer_changes names it, if there's text.
+                    return (!d.buffer().text().is_empty())
+                        .then(|| "- [unnamed buffer] (unsaved)".to_string());
+                };
                 let note = if d.is_modified() {
                     " (unsaved)"
                 } else if self.agent.opened.contains(&d.id()) {
@@ -322,6 +328,117 @@ impl Editor {
         Some(format!(
             "Terminal panel ({shown}, titled \"{title}\"): {doing}"
         ))
+    }
+
+    /// The `buffer_changes` tool: a unified diff of a file as the editor has
+    /// it against the saved file (`against` "saved", the default) or against
+    /// git's staged text ("git", what the gutter shows). With no `path`,
+    /// every open file that has such changes.
+    pub fn agent_buffer_changes(
+        &self,
+        path: Option<&str>,
+        against: Option<&str>,
+    ) -> Result<String, String> {
+        let git = match against.unwrap_or("saved") {
+            "saved" => false,
+            "git" => true,
+            other => return Err(format!("against is \"saved\" or \"git\", not \"{other}\"")),
+        };
+        // The files (none for a buffer with no name), with their text as
+        // saving would write it (final newline, line endings).
+        let as_saved = |d: &super::Document| d.format().encode(&d.buffer().text());
+        let files: Vec<(Option<PathBuf>, String)> = match path {
+            Some(path) => {
+                let full = absolute(Path::new(path));
+                let text = match self
+                    .find_open_path(&full)
+                    .and_then(|id| self.document_by_id(id))
+                {
+                    Some(document) => as_saved(document),
+                    None => std::fs::read_to_string(&full).map_err(|e| match e.kind() {
+                        std::io::ErrorKind::NotFound => format!("No such file: {path}"),
+                        _ => format!("Can't read {path}: {e}"),
+                    })?,
+                };
+                vec![(Some(full), text)]
+            }
+            None => std::iter::once(&self.document)
+                .chain(&self.background)
+                .filter(|d| {
+                    if git {
+                        d.path().is_some()
+                    } else {
+                        d.is_modified() && (d.path().is_some() || !d.buffer().text().is_empty())
+                    }
+                })
+                .map(|d| (d.path().map(Path::to_path_buf), as_saved(d)))
+                .collect(),
+        };
+        let mut out: Vec<String> = Vec::new();
+        for (full, text) in &files {
+            let Some(full) = full else {
+                // A new buffer, never saved: all of it is new.
+                out.push(file_diff(
+                    "",
+                    text,
+                    "[unnamed buffer] (not saved yet)",
+                    "[unnamed buffer] (editor)",
+                    path.is_some(),
+                ));
+                continue;
+            };
+            // The path as asked for (not where a link led), or as shown.
+            let name = path.map_or_else(|| shown(full), str::to_string);
+            let (base, old) = if git {
+                match crate::git::staged_text(full) {
+                    Some(base) => (base, format!("{name} (git, staged)")),
+                    None => {
+                        let in_repo = full.parent().and_then(crate::git::repo_root).is_some();
+                        if in_repo {
+                            // Untracked: all of it is new to git.
+                            (String::new(), format!("{name} (untracked)"))
+                        } else if path.is_some() {
+                            out.push(format!("{name}: not in a git repository"));
+                            continue;
+                        } else {
+                            // Asked about every file: those outside git aren't news.
+                            continue;
+                        }
+                    }
+                }
+            } else {
+                match std::fs::read_to_string(full) {
+                    Ok(base) => (base, format!("{name} (saved)")),
+                    // Not saved yet: all of it is new.
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        (String::new(), format!("{name} (not saved yet)"))
+                    }
+                    Err(e) => {
+                        out.push(format!("{name}: can't read the saved file ({e})"));
+                        continue;
+                    }
+                }
+            };
+            if base == *text {
+                continue;
+            }
+            out.push(file_diff(
+                &base,
+                text,
+                &old,
+                &format!("{name} (editor)"),
+                path.is_some(),
+            ));
+        }
+        if out.is_empty() {
+            return Ok(match (path, git) {
+                (Some(_), false) => "No unsaved changes".into(),
+                (Some(_), true) => "No changes from git's staged text".into(),
+                (None, false) => "No open file has unsaved changes".into(),
+                (None, true) => "No open file has changes from git's staged text".into(),
+            });
+        }
+        Ok(out.join("\n\n"))
     }
 
     /// The `read_terminal` tool: the terminal panel's last `lines` lines
@@ -984,6 +1101,46 @@ impl Editor {
     pub fn take_agent_lsp_answers(&mut self) -> Vec<AgentAnswer> {
         std::mem::take(&mut self.agent_lsp_answers)
     }
+}
+
+/// A unified diff of `old` to `new` (three lines of context, headed by
+/// their names), cut at `DIFF_LINES`. When they've no line in common, just
+/// that, and how long each is: the lines themselves say nothing more.
+fn file_diff(old: &str, new: &str, old_name: &str, new_name: &str, asked: bool) -> String {
+    let diff = similar::TextDiff::from_lines(old, new);
+    let common = diff
+        .iter_all_changes()
+        .any(|c| c.tag() == similar::ChangeTag::Equal);
+    let (old_lines, new_lines) = (old.lines().count(), new.lines().count());
+    // Emptied (a saved empty buffer is still a line ending).
+    if old_lines > 0 && new.trim().is_empty() {
+        return format!("{new_name}: empty, all {old_lines} lines of {old_name} deleted");
+    }
+    if !common && old_lines > 0 && new_lines > 0 {
+        return format!(
+            "{new_name}: the whole file differs from {old_name} ({old_lines} lines there, \
+             {new_lines} in the editor; read_buffer gives the editor's)"
+        );
+    }
+    let text = diff
+        .unified_diff()
+        .context_radius(3)
+        .header(old_name, new_name)
+        .to_string();
+    let lines: Vec<&str> = text.trim_end().lines().collect();
+    if lines.len() <= DIFF_LINES {
+        return lines.join("\n");
+    }
+    let more = lines.len() - DIFF_LINES;
+    let hint = if asked {
+        "too long to give whole: read_buffer gives the file as it is now"
+    } else {
+        "ask for this file with path, or read_buffer for it as it is now"
+    };
+    format!(
+        "{}\n… {more} more lines of this file's diff ({hint})",
+        lines[..DIFF_LINES].join("\n")
+    )
 }
 
 /// The longest group of lines a progress display redraws (`❯ file 3/88`

@@ -1024,3 +1024,193 @@ fn staging_and_unstaging_single_lines_in_the_git_view() {
         ferra::editor::git_gui::GitPanel::Diff
     );
 }
+
+#[test]
+fn the_agent_reads_unsaved_and_uncommitted_changes_as_diffs() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let path = dir.path().join("code.txt");
+    let mut app = app();
+    keys(&mut app, &format!(":e {}<CR>", path.display()));
+    let editor = app.editor();
+    assert_eq!(
+        editor.agent_buffer_changes(None, None).unwrap(),
+        "No open file has unsaved changes"
+    );
+
+    // Saved: two is TWO; unsaved: four is gone.
+    keys(&mut app, "jccTWO<Esc>:w<CR>2jdd");
+    let editor = app.editor();
+    let unsaved = editor.agent_buffer_changes(None, None).unwrap();
+    assert!(
+        unsaved.contains("(saved)") && unsaved.contains("(editor)"),
+        "{unsaved}"
+    );
+    assert!(unsaved.contains("\n-four\n"), "{unsaved}");
+    assert!(
+        !unsaved.contains("TWO\n+") && !unsaved.contains("-two"),
+        "only what's unsaved: {unsaved}"
+    );
+
+    // Against git: both changes, the unsaved one too.
+    let path_text = path.display().to_string();
+    let git_diff = editor
+        .agent_buffer_changes(Some(&path_text), Some("git"))
+        .unwrap();
+    assert!(git_diff.contains("(git, staged)"), "{git_diff}");
+    assert!(git_diff.contains("-two\n+TWO"), "{git_diff}");
+    assert!(git_diff.contains("-four"), "{git_diff}");
+
+    // Saved again: nothing unsaved, but git still differs.
+    keys(&mut app, ":w<CR>");
+    let editor = app.editor();
+    assert_eq!(
+        editor.agent_buffer_changes(Some(&path_text), None).unwrap(),
+        "No unsaved changes"
+    );
+    assert!(
+        editor
+            .agent_buffer_changes(None, Some("git"))
+            .unwrap()
+            .contains("-four")
+    );
+    assert!(editor.agent_buffer_changes(None, Some("head")).is_err());
+
+    // A file outside git says so.
+    let outside = tempfile::tempdir().unwrap();
+    let other = outside.path().join("x.txt");
+    std::fs::write(&other, "x\n").unwrap();
+    let said = editor
+        .agent_buffer_changes(Some(&other.display().to_string()), Some("git"))
+        .unwrap();
+    // The path as asked for, not where /var's link leads.
+    assert_eq!(
+        said,
+        format!("{}: not in a git repository", other.display())
+    );
+    let missing = editor.agent_buffer_changes(Some("no/such.rs"), None);
+    assert_eq!(missing, Err("No such file: no/such.rs".to_string()));
+
+    // An untracked file in the repository: all new, and called untracked.
+    let fresh = dir.path().join("fresh.txt");
+    std::fs::write(&fresh, "new\n").unwrap();
+    let said = editor
+        .agent_buffer_changes(Some(&fresh.display().to_string()), Some("git"))
+        .unwrap();
+    assert!(
+        said.contains("fresh.txt (untracked)") && said.contains("+new"),
+        "{said}"
+    );
+
+    // Every open file against git: one outside git is left out quietly.
+    keys(&mut app, &format!(":e {}<CR>", other.display()));
+    let all = app
+        .editor()
+        .agent_buffer_changes(None, Some("git"))
+        .unwrap();
+    assert!(all.contains("-four") && !all.contains("x.txt"), "{all}");
+
+    // A named file not saved yet, and a buffer with no name: all new.
+    let unsaved = dir.path().join("later.txt");
+    keys(
+        &mut app,
+        &format!(
+            ":e {}<CR>ilater<Esc>:enew<CR>iscratch<Esc>",
+            unsaved.display()
+        ),
+    );
+    let all = app.editor().agent_buffer_changes(None, None).unwrap();
+    assert!(
+        all.contains("later.txt (not saved yet)") && all.contains("+later"),
+        "{all}"
+    );
+    assert!(
+        all.contains("[unnamed buffer] (not saved yet)") && all.contains("+scratch"),
+        "{all}"
+    );
+    // editor_state names it the same way.
+    let state = app.editor().agent_editor_state();
+    assert!(state.contains("- [unnamed buffer] (unsaved)"), "{state}");
+
+    // Everything deleted: said, not listed line by line.
+    let big = dir.path().join("big.txt");
+    let lines: String = (0..3500).map(|n| format!("line {n}\n")).collect();
+    std::fs::write(&big, &lines).unwrap();
+    keys(&mut app, &format!(":e {}<CR>ggdG", big.display()));
+    let big_name = big.display().to_string();
+    let said = app
+        .editor()
+        .agent_buffer_changes(Some(&big_name), None)
+        .unwrap();
+    assert_eq!(
+        said,
+        format!("{big_name} (editor): empty, all 3500 lines of {big_name} (saved) deleted")
+    );
+
+    // Every tenth line changed since it was staged: hundreds of hunks,
+    // cut at 1000 lines with a note.
+    let local = |args: &[&str]| assert!(git(dir.path(), args), "git {args:?}");
+    local(&["add", "big.txt"]);
+    let changed: String = (0..3500)
+        .map(|n| {
+            if n % 10 == 0 {
+                format!("LINE {n}\n")
+            } else {
+                format!("line {n}\n")
+            }
+        })
+        .collect();
+    std::fs::write(&big, changed).unwrap();
+    keys(&mut app, ":e!<CR>");
+    let cut = app
+        .editor()
+        .agent_buffer_changes(Some(&big_name), Some("git"))
+        .unwrap();
+    assert_eq!(cut.lines().count(), 1001, "1000 lines and the note");
+    assert!(
+        cut.ends_with("(too long to give whole: read_buffer gives the file as it is now)"),
+        "{}",
+        cut.lines().last().unwrap()
+    );
+    // With no line in common: just that.
+    let other_text: String = (0..20).map(|n| format!("other {n}\n")).collect();
+    std::fs::write(&big, other_text).unwrap();
+    keys(&mut app, ":e!<CR>");
+    let said = app
+        .editor()
+        .agent_buffer_changes(Some(&big_name), Some("git"))
+        .unwrap();
+    assert!(
+        said.contains("the whole file differs")
+            && said.contains("(3500 lines there, 20 in the editor"),
+        "{said}"
+    );
+}
+
+#[test]
+fn every_files_diff_is_cut_on_its_own_and_empty_buffers_left_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app();
+    // Two files, each with every tenth line changed and not saved.
+    for name in ["a.txt", "b.txt"] {
+        let path = dir.path().join(name);
+        let lines: String = (0..3500).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(&path, lines).unwrap();
+        keys(&mut app, &format!(":e {}<CR>", path.display()));
+        for n in (0..3500).step_by(10) {
+            keys(&mut app, &format!("{}GAx<Esc>", n + 1));
+        }
+    }
+    // And an empty buffer with no name: nothing to say about it.
+    keys(&mut app, ":enew<CR>");
+    let all = app.editor().agent_buffer_changes(None, None).unwrap();
+    assert_eq!(
+        all.matches("more lines of this file's diff (ask for this file with path")
+            .count(),
+        2,
+        "each file cut on its own"
+    );
+    assert!(all.contains("a.txt (editor)") && all.contains("b.txt (editor)"));
+    assert!(!all.contains("[unnamed buffer]"), "empty: left out");
+}
