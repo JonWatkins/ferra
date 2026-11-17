@@ -47,6 +47,9 @@ pub enum LspFeature {
     Callers,
     /// The functions it calls (`outgoingCalls`).
     Callees,
+    /// The agent's `move_file`: the edits a move needs (imports), asked
+    /// with `workspace/willRenameFiles`, then the move (`text`: where to).
+    MoveFile,
 }
 
 impl LspFeature {
@@ -73,6 +76,7 @@ impl LspFeature {
             LspFeature::InlayHint => "inlay hints",
             LspFeature::Callers => "callers",
             LspFeature::Callees => "callees",
+            LspFeature::MoveFile => "moving files",
         }
     }
 
@@ -98,6 +102,7 @@ impl LspFeature {
             LspFeature::InlayHint => "Inlay hints",
             LspFeature::Callers => "Callers",
             LspFeature::Callees => "Calls",
+            LspFeature::MoveFile => "Move",
         }
     }
 }

@@ -202,7 +202,7 @@ impl Editor {
 
     /// Moves `from` (a file or folder) to `to`, open buffers in it
     /// following, and shows it in the tree.
-    fn move_path(&mut self, from: &Path, to: &Path) -> Result<(), String> {
+    pub(super) fn move_path(&mut self, from: &Path, to: &Path) -> Result<(), String> {
         let (from, to) = (from.to_path_buf(), to.to_path_buf());
         if to.exists() {
             return Err(format!("{} already exists", self.relative(&to)));

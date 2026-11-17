@@ -67,6 +67,65 @@ impl Stash {
     }
 }
 
+impl Lsp {
+    /// The agent's `move_file`: asks the file's server for the edits the
+    /// move needs, if it has one that wants asking; else moves it now.
+    fn start_move(&mut self, editor: &mut Editor, request: LspRequest, since: std::time::Instant) {
+        let Some(call) = request.agent else { return };
+        let to = std::path::PathBuf::from(request.text.clone().unwrap_or_default());
+        let Some(from) = editor
+            .document_by_id(request.document)
+            .and_then(|d| d.path())
+            .map(std::path::Path::to_path_buf)
+        else {
+            editor.agent_lsp_answer(call, Err("The file's buffer is gone".into()));
+            return;
+        };
+        let language = editor
+            .document_by_id(request.document)
+            .and_then(|d| editor.language_of(d))
+            .map(str::to_string);
+        if self
+            .clients
+            .iter()
+            .any(|c| c.state == State::Starting && Some(&c.language) == language.as_ref())
+        {
+            // Asked once it's ready (it'd update the imports).
+            if since.elapsed() < START_WAIT {
+                self.waiting.push((request, since));
+                return;
+            }
+            editor.agent_lsp_answer(
+                call,
+                Err("The language server is still starting (it'd update the imports): try again in a moment".into()),
+            );
+            return;
+        }
+        if let Some(client) = self.clients.iter_mut().find(|c| {
+            c.has_document(request.document) && c.state == State::Ready && c.will_rename()
+        }) {
+            client.request_will_rename(request, &from, &to);
+            return;
+        }
+        // No server to ask: just the move.
+        let before = editor.agent_unsaved();
+        match editor.agent_finish_move(request.document, &to, &before, None, false) {
+            Ok((text, changed)) => {
+                for client in &mut self.clients {
+                    if client.state == State::Ready {
+                        client.did_rename(&from, &to);
+                    }
+                }
+                editor.agent_lsp_changed(call, text, changed);
+            }
+            Err(error) => editor.agent_lsp_answer(call, Err(error)),
+        }
+    }
+}
+
+/// How long the agent's requests wait for their server to start.
+const START_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// How long `:format` (and saving, with `format-on-save`) waits.
 const FORMAT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
@@ -166,9 +225,17 @@ impl Lsp {
     /// open (synced just before, so it has the text the request is about).
     /// Returns whether there were any (which may have set a message).
     pub(super) fn send_requests(&mut self, editor: &mut Editor) -> bool {
-        let requests = editor.take_lsp_requests();
+        // The agent's requests waiting for a server to start, again, then
+        // the new ones.
+        let now = std::time::Instant::now();
+        let mut requests: Vec<(LspRequest, std::time::Instant)> = std::mem::take(&mut self.waiting);
+        requests.extend(editor.take_lsp_requests().into_iter().map(|r| (r, now)));
         let any = !requests.is_empty();
-        for request in requests {
+        for (request, since) in requests {
+            if request.feature == LspFeature::MoveFile {
+                self.start_move(editor, request, since);
+                continue;
+            }
             let Some(document) = editor.document_by_id(request.document) else {
                 continue;
             };
@@ -182,8 +249,13 @@ impl Lsp {
                     let starting = self.clients.iter().any(|c| {
                         c.state == State::Starting && Some(&c.language) == language.as_ref()
                     });
+                    // Its server's starting: asked once it's ready.
+                    if starting && since.elapsed() < START_WAIT {
+                        self.waiting.push((request, since));
+                        continue;
+                    }
                     let text = if starting {
-                        "The language server is still starting: try again in a moment"
+                        "The language server is still starting (waited 30 s): try again in a moment"
                     } else {
                         "No language server for this file"
                     };
@@ -374,6 +446,42 @@ pub(super) fn answer(
     result: Result<Value, ResponseError>,
     stashes: Stashes,
 ) {
+    // The agent's move: the server's edits for it, then the move.
+    if request.feature == LspFeature::MoveFile {
+        let Some(call) = request.agent else { return };
+        let to = std::path::PathBuf::from(request.text.clone().unwrap_or_default());
+        let from = editor
+            .document_by_id(request.document)
+            .and_then(|d| d.path())
+            .map(std::path::Path::to_path_buf);
+        let before = editor.agent_unsaved();
+        let edits = match &result {
+            Ok(edit) if !edit.is_null() => {
+                match apply_workspace_edit(editor, edit, client.encoding) {
+                    Ok(Applied { changes: 0, .. }) => None,
+                    Ok(mut applied) => {
+                        applied.others = 0;
+                        Some(applied.describe())
+                    }
+                    Err(error) => {
+                        editor.agent_lsp_answer(call, Err(format!("{error}: nothing was moved")));
+                        return;
+                    }
+                }
+            }
+            _ => None,
+        };
+        match editor.agent_finish_move(request.document, &to, &before, edits, true) {
+            Ok((text, changed)) => {
+                if let Some(from) = from {
+                    client.did_rename(&from, &to);
+                }
+                editor.agent_lsp_changed(call, text, changed);
+            }
+            Err(error) => editor.agent_lsp_answer(call, Err(error)),
+        }
+        return;
+    }
     // Call hierarchy: the function at the place, then the calls to or
     // from it.
     if matches!(request.feature, LspFeature::Callers | LspFeature::Callees) {

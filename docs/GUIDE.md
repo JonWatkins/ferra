@@ -728,6 +728,7 @@ extensions do:
 | `buffer_changes` | Your changes as a diff: a file as the editor has it (unsaved edits too) against the saved file, or against git ("review what I wrote") |
 | `edit_buffer` | Replaces text in a file's buffer (one change, or several as one): you see it as it happens, `u` undoes it, and it's saved unless you had unsaved changes there. Its answer says what the language server finds wrong in the file afterwards |
 | `create_file`, `close_file` | Makes a new file; closes a file's buffer |
+| `move_file` | Moves or renames a file, the language server updating its imports first (undoable edits) and its buffer following |
 | `get_diagnostics` | The language servers' errors and warnings |
 | `lsp_definition` | Where a symbol's defined (or its type, implementations, declaration) |
 | `lsp_references`, `lsp_hover`, `lsp_symbols` | Its uses (or the functions that call it, or that it calls), its type and docs, a file's or the project's symbols |

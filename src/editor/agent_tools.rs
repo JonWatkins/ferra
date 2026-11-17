@@ -443,6 +443,103 @@ impl Editor {
         Ok(out.join("\n\n"))
     }
 
+    /// The `move_file` tool: checks the move can be made, then asks the
+    /// file's language server for the edits it needs (imports), through
+    /// `LspFeature::MoveFile`; [`Editor::agent_finish_move`] makes them and
+    /// the move. With language servers off, the move's made now (`Some`).
+    pub fn agent_move_file(
+        &mut self,
+        call: u64,
+        from: &str,
+        to: &str,
+    ) -> Result<Option<(String, Vec<DocumentId>)>, String> {
+        let source = absolute(Path::new(from));
+        let target = absolute(Path::new(to));
+        if source.is_dir() {
+            return Err(format!("{from} is a folder: move_file moves files"));
+        }
+        if !source.is_file() {
+            return Err(format!("No such file: {from}"));
+        }
+        if target.exists() {
+            return Err(format!("{to} already exists: nothing was moved"));
+        }
+        if let Some(file) = target.ancestors().skip(1).find(|p| p.is_file()) {
+            return Err(format!(
+                "{} is a file, not a folder: nothing was moved",
+                shown(file)
+            ));
+        }
+        let id = self.agent_buffer(&source)?;
+        if !self.options.lsp {
+            let before = self.agent_unsaved();
+            return self
+                .agent_finish_move(id, &target, &before, None, false)
+                .map(Some);
+        }
+        let buffer = self.document_by_id(id).ok_or("No such buffer")?.buffer();
+        self.lsp_requests.push(LspRequest {
+            feature: LspFeature::MoveFile,
+            document: id,
+            position: Position::default(),
+            buffer_id: buffer.id(),
+            edit_seq: buffer.edit_seq(),
+            manual: true,
+            trigger: None,
+            word_start: Position::default(),
+            item: None,
+            text: Some(target.to_string_lossy().into_owned()),
+            end: Position::default(),
+            agent: Some(call),
+        });
+        Ok(None)
+    }
+
+    /// Moves buffer `id`'s file to `to` (its buffer, and any other open in
+    /// it, following), after the language server's edits for it were made
+    /// (`edits`: what they were; `asked`: whether a server was asked); saves
+    /// what the agent changed (as against
+    /// `before`). The answer, and the buffers changed.
+    pub fn agent_finish_move(
+        &mut self,
+        id: DocumentId,
+        to: &Path,
+        before: &HashMap<DocumentId, (u64, bool)>,
+        edits: Option<String>,
+        asked: bool,
+    ) -> Result<(String, Vec<DocumentId>), String> {
+        let from = self
+            .document_by_id(id)
+            .and_then(|d| d.path())
+            .map(Path::to_path_buf)
+            .ok_or("The file's buffer is gone")?;
+        let (saved, mut changed) = self.agent_save_changed(before);
+        if let Err(error) = self.move_path(&from, to) {
+            return Err(match edits {
+                Some(edits) => format!(
+                    "{error}. The file wasn't moved, but its imports were already changed \
+                     ({edits}): undo them (u in those files) or move it some other way"
+                ),
+                None => format!("{error}. Nothing was moved"),
+            });
+        }
+        if !changed.contains(&id) {
+            changed.push(id);
+        }
+        let updated = match (edits, asked) {
+            (Some(edits), _) => format!("; updated for it: {edits}"),
+            (None, true) => "; the language server made no edits for it, so check what \
+                             refers to it (imports, mod lines): get_diagnostics shows what \
+                             broke once the server's caught up"
+                .to_string(),
+            (None, false) => String::new(),
+        };
+        Ok((
+            format!("Moved {} to {}{updated}{saved}", shown(&from), shown(to)),
+            changed,
+        ))
+    }
+
     /// The `language_servers` tool: each server and how it is (starting,
     /// running, busy with something, stopped and why), the ones not found,
     /// and the Output tab's last lines (what they've logged).
@@ -980,6 +1077,14 @@ impl Editor {
         &mut self,
         before: &HashMap<DocumentId, (u64, bool)>,
     ) -> (String, Vec<DocumentId>) {
+        // Buffers its edits opened (a rename's, a move's other files) are
+        // the agent's, to close when its turn ends.
+        let opened: Vec<DocumentId> = std::iter::once(&self.document)
+            .chain(&self.background)
+            .map(|d| d.id())
+            .filter(|id| !before.contains_key(id))
+            .collect();
+        self.agent.opened.extend(opened);
         // Those the agent changed (opened for it, or edited since).
         let changed: Vec<(DocumentId, bool)> = std::iter::once(&self.document)
             .chain(&self.background)
@@ -1471,7 +1576,26 @@ fn absolute(path: &Path) -> PathBuf {
     } else {
         std::env::current_dir().unwrap_or_default().join(path)
     };
-    std::fs::canonicalize(&path).unwrap_or(path)
+    if let Ok(real) = std::fs::canonicalize(&path) {
+        return real;
+    }
+    // Not there yet (a file to create, a move's target): its nearest folder
+    // that is, as the file system resolves it (`/tmp` is `/private/tmp` on
+    // macOS), and the rest as given, so it's written as files that exist are.
+    let mut rest = Vec::new();
+    let mut at = path.as_path();
+    while let Some(parent) = at.parent() {
+        rest.push(
+            at.file_name()
+                .map(std::ffi::OsStr::to_os_string)
+                .unwrap_or_default(),
+        );
+        if let Ok(real) = std::fs::canonicalize(parent) {
+            return rest.iter().rev().fold(real, |p, part| p.join(part));
+        }
+        at = parent;
+    }
+    path
 }
 
 /// A path the agent gave, as it's told back: relative to the project if

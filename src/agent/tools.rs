@@ -188,6 +188,18 @@ pub fn list() -> Value {
             },
         },
         {
+            "name": "move_file",
+            "description": "Move or rename a file: the language server updates what refers to it (imports, mod paths) first, as edits that can be undone, then the file moves and its open buffer follows. Use instead of mv. Its answer says what changed and the problems after.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string", "description": "The file" },
+                    "to": { "type": "string", "description": "Its new path (folders are made)" },
+                },
+                "required": ["from", "to"],
+            },
+        },
+        {
             "name": "close_file",
             "description": "Close a file's buffer in the editor (one you opened for the user and they're done with). Files you only read or edited close by themselves when your turn ends.",
             "inputSchema": {
@@ -312,6 +324,14 @@ pub fn call(editor: &mut Editor, call: u64, name: &str, args: &Value) -> Called 
                 Err(error) => Called::Done(Err(error)),
             },
             _ => Called::Done(Err("Give path and text".into())),
+        },
+        "move_file" => match (text("from"), text("to")) {
+            (Some(from), Some(to)) => match editor.agent_move_file(call, from, to) {
+                Ok(Some((text, changed))) => Called::Changed(text, changed),
+                Ok(None) => Called::Waiting,
+                Err(error) => Called::Done(Err(error)),
+            },
+            _ => Called::Done(Err("Give from and to".into())),
         },
         "close_file" => match text("path") {
             Some(path) => Called::Done(editor.agent_close_file(path)),

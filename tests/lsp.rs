@@ -35,6 +35,8 @@ struct Seen {
     action_range: Value,
     /// The kinds the last code action request asked for only.
     action_only: Value,
+    /// The files the last `workspace/didRenameFiles` said moved.
+    renamed: Value,
     applied: Value,
     /// The context the last signature help request came with, and the
     /// queries for the project's symbols.
@@ -115,6 +117,10 @@ fn serve(
                         "inlayHintProvider": features,
                         "workspaceSymbolProvider": features,
                         "callHierarchyProvider": features,
+                        "workspace": {"fileOperations": {
+                            "willRename": {"filters": [{"pattern": {"glob": "**/*.rs"}}]},
+                            "didRename": {"filters": [{"pattern": {"glob": "**/*.rs"}}]},
+                        }},
                         "signatureHelpProvider": {"triggerCharacters": ["("],
                                                   "retriggerCharacters": [","]},
                         "codeActionProvider": if features {
@@ -311,6 +317,41 @@ fn serve(
                                     "arguments": [uri]}));
                 actions.push(json!({"title": "Can't do this", "disabled": {"reason": "no"}}));
                 reply(&mut output, Value::Array(actions));
+            }
+            // Moving a file: main.rs (beside it) has its "import" updated.
+            "workspace/willRenameFiles" => {
+                let old = params["files"][0]["oldUri"].as_str().unwrap();
+                let new = params["files"][0]["newUri"].as_str().unwrap();
+                if new.contains("noedit") {
+                    reply(&mut output, Value::Null);
+                    continue;
+                }
+                let main = format!("{}/main.rs", &old[..old.rfind('/').unwrap()]);
+                let name = |uri: &str| {
+                    uri.rsplit('/')
+                        .next()
+                        .unwrap()
+                        .trim_end_matches(".rs")
+                        .to_string()
+                };
+                let note = format!(
+                    "// uses {} at {}\n",
+                    name(old),
+                    &new[new.find("sub").unwrap_or(0)..]
+                );
+                let edit = json!([{"range": {"start": {"line": 0, "character": 0},
+                                             "end": {"line": 0, "character": 0}},
+                                   "newText": note}]);
+                let mut changes = json!({ main.clone(): edit });
+                // uses.rs too, if there's one beside it (no one has it open).
+                let uses = main.replace("main.rs", "uses.rs");
+                if std::path::Path::new(uses.trim_start_matches("file://")).exists() {
+                    changes[uses] = edit.clone();
+                }
+                reply(&mut output, json!({ "changes": changes }));
+            }
+            "workspace/didRenameFiles" => {
+                seen.lock().unwrap().renamed = params["files"].clone();
             }
             // The function `bad` (line 1), called from `main` twice and
             // calling `helper`.
@@ -2287,6 +2328,137 @@ fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
     assert!(
         nothing.starts_with("Nothing there to find calls of"),
         "{nothing}"
+    );
+}
+
+#[test]
+fn the_agents_question_waits_for_a_server_still_starting() {
+    use ferra::editor::lsp::LspFeature;
+    // Asked straight away, before the server's answered `initialize`.
+    let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    let path = dir.path().join("main.rs");
+    app.update_lsp();
+    app.editor_mut()
+        .agent_ask_lsp(
+            1,
+            LspFeature::References,
+            Some(path.to_str().unwrap()),
+            (Some(1), Some("bad"), None, None),
+            None,
+        )
+        .unwrap();
+    let answer = agent_answer(&mut app, 1);
+    assert!(answer.is_ok(), "answered once it was ready: {answer:?}");
+}
+
+#[test]
+fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
+    let (dir, mut app, seen) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    ready(&mut app);
+    let helper = dir.path().join("helper.rs");
+    fs::write(&helper, "pub fn help() {}\n").unwrap();
+    fs::write(dir.path().join("uses.rs"), "use helper;\n").unwrap();
+    let to = dir.path().join("sub/helper.rs");
+    let call = |app: &mut App, id: i64, args: Value| {
+        ferra::agent::tools::call(app.editor_mut(), id as u64, "move_file", &args)
+    };
+    let started = call(
+        &mut app,
+        1,
+        json!({"from": helper.to_str().unwrap(), "to": to.to_str().unwrap()}),
+    );
+    assert_eq!(started, ferra::agent::tools::Called::Waiting);
+    let said = agent_answer(&mut app, 1).unwrap();
+    assert!(
+        said.starts_with("Moved ") && said.contains("sub/helper.rs"),
+        "{said}"
+    );
+    assert!(
+        said.contains("updated for it: 2 changes in 2 files"),
+        "{said}"
+    );
+    // Moved, the "import" updated and saved, the server told.
+    assert!(!helper.exists() && to.exists());
+    assert_eq!(
+        fs::read_to_string(dir.path().join("main.rs")).unwrap(),
+        "// uses helper at sub/helper.rs\nfn bad() {}\nlet  x =  bad;\n"
+    );
+    // Both ends as the file system has them (the test's folder is under a
+    // link on macOS: /var is /private/var), so the server's paths agree.
+    let real = fs::canonicalize(dir.path()).unwrap();
+    let renamed = seen.lock().unwrap().renamed.clone();
+    let uri = |p: &std::path::Path| format!("file://{}", p.display());
+    assert_eq!(
+        renamed[0]["oldUri"],
+        uri(&real.join("helper.rs")),
+        "{renamed}"
+    );
+    assert_eq!(
+        renamed[0]["newUri"],
+        uri(&real.join("sub/helper.rs")),
+        "{renamed}"
+    );
+    // uses.rs, opened for the edit, is the agent's: it closes after the turn
+    // (main.rs is the user's, open already).
+    let state = app.editor().agent_editor_state();
+    assert!(state.contains("uses.rs (opened for your tools"), "{state}");
+    assert!(!state.contains("main.rs (opened for your tools"), "{state}");
+
+    // The server made no edits: said, so what refers to it gets checked.
+    let quiet = dir.path().join("sub/noedit.rs");
+    call(
+        &mut app,
+        5,
+        json!({"from": to.to_str().unwrap(), "to": quiet.to_str().unwrap()}),
+    );
+    let said = agent_answer(&mut app, 5).unwrap();
+    assert!(
+        said.contains("the language server made no edits for it"),
+        "{said}"
+    );
+    let to = quiet;
+    // A folder on the way that's a file.
+    let under_file = dir.path().join("main.rs/x.rs");
+    let bad = call(
+        &mut app,
+        6,
+        json!({"from": to.to_str().unwrap(), "to": under_file.to_str().unwrap()}),
+    );
+    assert!(
+        matches!(&bad, ferra::agent::tools::Called::Done(Err(e)) if e.contains("main.rs is a file, not a folder")),
+        "{bad:?}"
+    );
+
+    // What can't be: said, nothing done.
+    let main = dir.path().join("main.rs");
+    let taken = call(
+        &mut app,
+        2,
+        json!({"from": to.to_str().unwrap(), "to": main.to_str().unwrap()}),
+    );
+    assert!(
+        matches!(&taken, ferra::agent::tools::Called::Done(Err(e)) if e.contains("already exists")),
+        "{taken:?}"
+    );
+    // A file no server's for: just moved.
+    let notes = dir.path().join("notes.txt");
+    fs::write(&notes, "notes\n").unwrap();
+    let moved = dir.path().join("docs/notes.txt");
+    call(
+        &mut app,
+        4,
+        json!({"from": notes.to_str().unwrap(), "to": moved.to_str().unwrap()}),
+    );
+    let said = agent_answer(&mut app, 4).unwrap();
+    assert!(
+        said.starts_with("Moved ") && !said.contains("updated"),
+        "{said}"
+    );
+    assert!(moved.exists() && !notes.exists());
+    let missing = call(&mut app, 3, json!({"from": "no/such.rs", "to": "x.rs"}));
+    assert!(
+        matches!(&missing, ferra::agent::tools::Called::Done(Err(e)) if e.starts_with("No such file")),
+        "{missing:?}"
     );
 }
 

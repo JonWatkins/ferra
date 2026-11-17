@@ -184,6 +184,8 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
         LspFeature::Callers | LspFeature::Callees => {
             ("textDocument/prepareCallHierarchy", "callHierarchyProvider")
         }
+        // Checked on its own (`will_rename`): it's under `workspace`.
+        LspFeature::MoveFile => ("workspace/willRenameFiles", "workspace"),
     }
 }
 
@@ -338,6 +340,9 @@ impl Client {
                         "applyEdit": true,
                         "symbol": {},
                         "executeCommand": { "dynamicRegistration": false },
+                        // Moving a file: asked for the edits it needs first
+                        // (imports), told after.
+                        "fileOperations": { "willRename": true, "didRename": true },
                     },
                     // `$/progress`: what it's busy with, for the status line.
                     "window": { "workDoneProgress": true },
@@ -447,6 +452,29 @@ impl Client {
             "context": context,
         });
         self.request("textDocument/codeAction", params, Pending::Feature(request));
+    }
+
+    /// Whether it wants asking before a file's moved (`willRename`).
+    pub fn will_rename(&self) -> bool {
+        self.capabilities["workspace"]["fileOperations"]["willRename"].is_object()
+    }
+
+    /// Asks for the edits moving `from` to `to` needs.
+    pub fn request_will_rename(&mut self, request: LspRequest, from: &Path, to: &Path) {
+        let files = json!([{ "oldUri": path_to_uri(from), "newUri": path_to_uri(to) }]);
+        self.request(
+            "workspace/willRenameFiles",
+            json!({ "files": files }),
+            Pending::Feature(request),
+        );
+    }
+
+    /// Tells it `from` was moved to `to`, if it wants to know.
+    pub fn did_rename(&mut self, from: &Path, to: &Path) {
+        if self.capabilities["workspace"]["fileOperations"]["didRename"].is_object() {
+            let files = json!([{ "oldUri": path_to_uri(from), "newUri": path_to_uri(to) }]);
+            self.notify("workspace/didRenameFiles", json!({ "files": files }));
+        }
     }
 
     /// The second step of a call hierarchy request: the calls to (for

@@ -53,6 +53,9 @@ pub struct Lsp {
     actions: features::Stash,
     /// The agent's code action lists, as its two asks come in.
     agent_actions: HashMap<u64, features::AgentActions>,
+    /// The agent's requests for a server still starting, and since when:
+    /// sent once it's ready (or told it isn't, after a while).
+    waiting: Vec<(crate::editor::lsp::LspRequest, std::time::Instant)>,
     /// Each document's diagnostics as its server sent them, to send back
     /// with code action requests.
     raw_diagnostics: HashMap<DocumentId, Vec<Value>>,
@@ -89,6 +92,7 @@ impl Default for Lsp {
             completions: features::Stash::default(),
             actions: features::Stash::default(),
             agent_actions: HashMap::new(),
+            waiting: Vec::new(),
             raw_diagnostics: HashMap::new(),
             formatted: None,
             resting: None,
