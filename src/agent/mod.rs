@@ -460,6 +460,12 @@ impl Agents {
                 self.start(editor);
                 if let Some(client) = &mut self.client {
                     let mut blocks = prompt_blocks(&text, context.as_deref(), &files);
+                    // Nothing goes with a slash command (see prompt_blocks).
+                    let images = if is_command(&text) {
+                        Vec::new()
+                    } else {
+                        images
+                    };
                     for (mime, data) in images {
                         blocks.push(json!({
                             "type": "image",
@@ -565,24 +571,22 @@ fn tool_result(answer: Result<String, String>) -> Value {
 }
 
 /// A prompt's content blocks: a note of what's open in the editor (if
-/// any), what was typed, and a link to each file it mentions.
+/// any), what was typed, and a link to each file it mentions. A slash
+/// command goes alone: Claude Code runs one only when it's the whole
+/// prompt (with a note after it, it reaches the model as a message).
 pub fn prompt_blocks(text: &str, context: Option<&str>, files: &[PathBuf]) -> Vec<Value> {
-    let mut blocks = Vec::new();
     let typed = json!({ "type": "text", "text": text });
-    // A slash command must be the first text (agents look for it there).
-    let command = text.starts_with('/');
-    if command {
-        blocks.push(typed.clone());
+    if is_command(text) {
+        return vec![typed];
     }
+    let mut blocks = Vec::new();
     if let Some(context) = context {
         blocks.push(json!({
             "type": "text",
             "text": format!("<editor-context>\n{context}\n</editor-context>"),
         }));
     }
-    if !command {
-        blocks.push(typed);
-    }
+    blocks.push(typed);
     for file in files {
         let name = file
             .file_name()
@@ -595,6 +599,14 @@ pub fn prompt_blocks(text: &str, context: Option<&str>, files: &[PathBuf]) -> Ve
         }));
     }
     blocks
+}
+
+/// Whether `text` is a slash command (`/compact`, `/review main`), not a
+/// message that starts with a path (`/Users/me/a.rs is broken`).
+pub fn is_command(text: &str) -> bool {
+    text.strip_prefix('/')
+        .and_then(|rest| rest.split_whitespace().next())
+        .is_some_and(|name| !name.contains('/'))
 }
 
 /// `fs/read_text_file`: the file's text (from its buffer, if it's open, so
@@ -621,4 +633,24 @@ fn read_text_file(editor: &Editor, params: &Value) -> Result<String, String> {
         None => &lines[..],
     };
     Ok(lines.concat())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_slash_command_is_sent_alone() {
+        let files = [PathBuf::from("/p/a.rs")];
+        let blocks = prompt_blocks("/review main", Some("In a.rs"), &files);
+        assert_eq!(blocks, [json!({"type": "text", "text": "/review main"})]);
+        // A message: the note first, then what was typed, then the links.
+        let blocks = prompt_blocks("fix a.rs", Some("In a.rs"), &files);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[1]["text"], "fix a.rs");
+        // A path at the start isn't a command.
+        assert!(is_command("/usage") && is_command("/mcp:server:tool x"));
+        assert!(!is_command("/Users/me/a.rs is broken"));
+        assert!(!is_command("/") && !is_command("hello /usage"));
+    }
 }

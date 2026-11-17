@@ -173,9 +173,10 @@ fn serve(mut input: BufReader<io::PipeReader>, mut out: io::PipeWriter) {
                     .and_then(|b| b["text"].as_str())
                     .unwrap_or_default()
                     .to_string();
-                // A slash command comes first.
+                // A slash command runs only when it's all that's sent, as in
+                // Claude Code (with more, it goes to the model as a message).
                 let first = blocks[0]["text"].as_str().unwrap_or_default();
-                if first.starts_with('/') {
+                if first.starts_with('/') && blocks.len() == 1 {
                     text(&mut out, &format!("ran {first}"));
                     reply(&mut out, json!({"stopReason": "end_turn"}));
                     continue;
@@ -900,7 +901,12 @@ fn commands_ready(app: &App) -> bool {
 
 #[test]
 fn slash_lists_the_commands_and_runs_one() {
+    // With a file open, so there's editor context that mustn't go with it.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.txt");
+    fs::write(&path, "one\n").unwrap();
     let mut app = app();
+    app.open(&path);
     keys(&mut app, ":agent<CR>");
     until(&mut app, commands_ready);
     // The agent's commands and ferra's own; its /clear is ferra's.
