@@ -1205,6 +1205,36 @@ fn markdown_lines(text: &str, width: usize, lines: &mut Vec<ChatLine>) {
             table_lines(&rows, &aligns, width, lines);
             continue;
         }
+        // A rule: `---`, `***` or `___`.
+        let bare: String = trimmed.chars().filter(|c| *c != ' ').collect();
+        if bare.len() >= 3
+            && ['-', '*', '_']
+                .iter()
+                .any(|&mark| bare.chars().all(|c| c == mark))
+        {
+            lines.push(ChatLine {
+                spans: vec![span(&"─".repeat(width.max(1)), "ui.sidebar.agent.hint")],
+                ..ChatLine::default()
+            });
+            continue;
+        }
+        // A quote: a bar in front, the text dimmed.
+        if let Some(quote) = trimmed.strip_prefix('>') {
+            let quote = quote.strip_prefix(' ').unwrap_or(quote);
+            let mut spans = vec![span("▎ ", "ui.sidebar.agent.hint")];
+            spans.extend(inline_spans(quote).into_iter().map(|mut s| {
+                if s.style.as_deref() == Some("ui.sidebar.agent.text") {
+                    s.style = Some("ui.sidebar.agent.thought".into());
+                }
+                s
+            }));
+            lines.push(ChatLine {
+                spans,
+                indent: 2,
+                ..ChatLine::default()
+            });
+            continue;
+        }
         if let Some(heading) = trimmed.strip_prefix('#') {
             let heading = heading.trim_start_matches('#').trim();
             lines.push(ChatLine {
@@ -1674,6 +1704,31 @@ mod tests {
         let mut lines = Vec::new();
         markdown_lines("a\\_b `c\\_d`\n| x \\| y |\n|:-:|", 80, &mut lines);
         assert_eq!(text_of(&lines), ["a_b c\\_d", "x | y", "─────"]);
+    }
+
+    #[test]
+    fn rules_and_quotes_are_drawn() {
+        let mut lines = Vec::new();
+        markdown_lines(
+            "a\n---\n> Approximate, `only` here\n* * *\n- item",
+            6,
+            &mut lines,
+        );
+        assert_eq!(
+            text_of(&lines),
+            [
+                "a",
+                "──────",
+                "▎ Approximate, only here",
+                "──────",
+                "• item"
+            ]
+        );
+        assert_eq!(lines[2].indent, 2);
+        assert_eq!(
+            lines[2].spans[1].style.as_deref(),
+            Some("ui.sidebar.agent.thought")
+        );
     }
 
     #[test]
