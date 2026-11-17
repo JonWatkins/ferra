@@ -232,26 +232,21 @@ replace = "underline"
 
 # Coding agents, for :agent: each is its own program speaking ACP (the Agent
 # Client Protocol), started in the project's folder. They aren't installed
-# for you, and each has its own login (claude, gemini...):
+# for you, and each has its own login. Claude Code:
 #
-#   Claude Code: npm install -g @agentclientprotocol/claude-agent-acp
-#   Gemini CLI:  npm install -g @google/gemini-cli
+#   npm install -g @agentclientprotocol/claude-agent-acp
 #
 # (With Node from pnpm, use `pnpm add -g` instead, so the command lands on
 # your PATH.)
 #
 # Add others the same way (a command, its arguments, environment variables):
 #
-#   [agents.goose]
-#   command = "goose"
-#   args = ["acp"]
+#   [agents.gemini]          # npm install -g @google/gemini-cli
+#   command = "gemini"
+#   args = ["--acp"]
 
 [agents.claude]
 command = "claude-agent-acp"
-
-[agents.gemini]
-command = "gemini"
-args = ["--acp"]
 
 # Which files are in which language, for syntax highlighting. Files are
 # matched by exact file name, then extension, then the interpreter on a
