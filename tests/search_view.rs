@@ -68,6 +68,12 @@ fn finds_in_every_file_as_you_type() {
     let mut app = searching("alpha");
     assert_eq!(app.editor().mode(), Mode::Find, "typing in the query");
     assert_eq!(app.editor().search_status(), "3 results in 2 files");
+    // The agent's told what's searched for.
+    let state = app.editor().agent_editor_state();
+    assert!(
+        state.contains("\nSearch view: \"alpha\" (3 matches in 2 files)"),
+        "{state}"
+    );
     let rows = render(&mut app, 70, 20).rows;
     let shown = rows.join("\n");
     assert!(shown.contains("SEARCH"), "{shown}");

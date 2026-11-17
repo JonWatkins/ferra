@@ -722,7 +722,7 @@ extensions do:
 
 | Tool | What it does |
 |------|--------------|
-| `editor_state` | What's open and selected |
+| `editor_state` | What's open and selected, the symbol the cursor's in, the lines on screen, the last places changed, what's selected in the Problems panel and the Search and Source Control views, a merge's conflicts, and the terminal |
 | `read_buffer` | A file as the editor has it, unsaved changes and all |
 | `read_terminal` | The terminal panel's text (scrollback too) and what's running in it |
 | `edit_buffer` | Replaces text in a file's buffer (one change, or several as one): you see it as it happens, `u` undoes it, and it's saved unless you had unsaved changes there. Its answer says what the language server finds wrong in the file afterwards |

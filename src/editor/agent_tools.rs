@@ -47,6 +47,9 @@ impl Editor {
                 ""
             }
         );
+        if let Some(symbol) = self.agent_enclosing_symbol() {
+            note.push_str(&format!("\nIn: {symbol}"));
+        }
         if let Some((first, last, text)) = self.agent_selection() {
             let text = clipped(&text, SELECTION_CHARS);
             note.push_str(&format!(
@@ -55,6 +58,11 @@ impl Editor {
                 last + 1
             ));
         }
+        // What's selected in the panel and the sidebar ("that one").
+        for view in self.agent_view_notes() {
+            note.push('\n');
+            note.push_str(&view);
+        }
         let others: Vec<String> = self
             .background
             .iter()
@@ -62,7 +70,7 @@ impl Editor {
             .take(20)
             .collect();
         if !others.is_empty() {
-            note.push_str(&format!("\nAlso open: {}.", others.join(", ")));
+            note.push_str(&format!("\nAlso open: {}", others.join(", ")));
         }
         Some(note)
     }
@@ -102,6 +110,7 @@ impl Editor {
             }
             None => lines.push("Current buffer: an unnamed one (no file)".into()),
         }
+        lines.extend(self.agent_where_notes());
         if let Some((first, last, text)) = self.agent_selection() {
             lines.push(format!(
                 "Selected, lines {}-{}:\n```\n{}\n```",
@@ -151,10 +160,148 @@ impl Editor {
         if !open.is_empty() {
             lines.push(format!("Open files:\n{}", open.join("\n")));
         }
+        lines.extend(self.agent_view_notes());
         if let Some(terminal) = self.agent_terminal_note() {
             lines.push(format!("{terminal} (read_terminal reads it)"));
         }
         lines.join("\n")
+    }
+
+    /// The symbols the cursor's in, from the language server's outline:
+    /// `impl Editor > agent_editor_state (method, lines 84-151)`.
+    fn agent_enclosing_symbol(&self) -> Option<String> {
+        let symbols = self.outline()?;
+        let path = self.symbols_at_cursor();
+        let symbol = &symbols[*path.last()?];
+        let names: Vec<&str> = path.iter().map(|&i| symbols[i].name.as_str()).collect();
+        Some(format!(
+            "{} ({}, lines {}-{})",
+            names.join(" > "),
+            symbol.kind,
+            symbol.start.row + 1,
+            symbol.end.row + 1
+        ))
+    }
+
+    /// Where in the current file the user is: the symbols the cursor's in
+    /// (from the language server's outline), the lines on screen, and the
+    /// last places changed.
+    fn agent_where_notes(&self) -> Vec<String> {
+        let mut notes = Vec::new();
+        let cursor = self.document.cursor();
+        if let Some(symbol) = self.agent_enclosing_symbol() {
+            notes.push(format!("In: {symbol}"));
+        }
+        let windows = self.windows();
+        let active = windows.active();
+        let height = windows.height(active);
+        if height > 0 {
+            let top = windows.view_top(active, &self.document, cursor, &self.options);
+            let layout = super::windows::TextLayout::new(
+                windows.width(active),
+                &self.document,
+                &self.options,
+            );
+            let bottom = layout.bottom(&self.document, top, height);
+            notes.push(format!("Showing lines {}-{}", top + 1, bottom + 1));
+        }
+        let changes: Vec<String> = self
+            .document
+            .recent_changes(5)
+            .iter()
+            .map(|p| (p.row + 1).to_string())
+            .collect();
+        if !changes.is_empty() {
+            notes.push(format!(
+                "Last changed here (newest first): line {}",
+                changes.join(", ")
+            ));
+        }
+        notes
+    }
+
+    /// What the user's looking at beside the text: the Problems panel's
+    /// selected problem, the Search view's search, Source Control's
+    /// selected file; and a merge with conflicts, if there's one.
+    fn agent_view_notes(&self) -> Vec<String> {
+        let mut notes = Vec::new();
+        if self.panel_shown() == Some(super::panel::PanelTab::Problems) {
+            let rows = self.problem_rows();
+            match rows.get(self.panel.selected) {
+                Some(super::panel::ProblemRow::Problem { path, diagnostic }) => {
+                    notes.push(format!(
+                        "Problems panel: open, selected {}:{}: {}",
+                        shown(path),
+                        diagnostic.start.row + 1,
+                        diagnostic.describe()
+                    ));
+                }
+                _ => {
+                    let count = rows
+                        .iter()
+                        .filter(|r| matches!(r, super::panel::ProblemRow::Problem { .. }))
+                        .count();
+                    let plural = if count == 1 { "" } else { "s" };
+                    notes.push(format!("Problems panel: open ({count} problem{plural})"));
+                }
+            }
+        }
+        if self.sidebar().is_some() {
+            match self.sidebar_shows() {
+                super::sidebar_views::SidebarShows::Search => {
+                    let search = self.project_search();
+                    let query = search.fields.find.text();
+                    if !query.is_empty() {
+                        let (matches, files) = search.totals();
+                        notes.push(format!(
+                            "Search view: \"{query}\" ({matches} matches in {files} files)"
+                        ));
+                    }
+                }
+                super::sidebar_views::SidebarShows::Git => {
+                    if let Some(super::git::GitRow::File { file, staged }) =
+                        self.git_rows().get(self.git_selected())
+                    {
+                        notes.push(format!(
+                            "Source Control view: selected {} ({})",
+                            file.path,
+                            if *staged { "staged" } else { "not staged" }
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(merge) = self.git_merging() {
+            let conflicted: Vec<String> = std::iter::once(&self.document)
+                .chain(&self.background)
+                .filter_map(|d| {
+                    let path = d.path()?;
+                    let buffer = d.buffer();
+                    // Most files have no markers: no need to read them line by line.
+                    if !buffer.text().contains("<<<<<<<") {
+                        return None;
+                    }
+                    let text: Vec<String> = (0..buffer.line_count())
+                        .map(|row| buffer.line(row).into_owned())
+                        .collect();
+                    let count = crate::git::conflicts(text.iter().map(String::as_str)).len();
+                    (count > 0).then(|| format!("{} ({count})", shown(path)))
+                })
+                .collect();
+            let first = merge.lines().next().unwrap_or("a merge");
+            if conflicted.is_empty() {
+                notes.push(format!(
+                    "Merging ({first}): no conflicts left in the open files"
+                ));
+            } else {
+                notes.push(format!(
+                    "Merging ({first}): conflicts in {}",
+                    conflicted.join(", ")
+                ));
+            }
+        }
+        notes
     }
 
     /// One line on the terminal panel's shell, if there is one: whether

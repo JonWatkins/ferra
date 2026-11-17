@@ -187,6 +187,21 @@ impl Document {
         self.changes.last().map(|&p| self.clamp(p))
     }
 
+    /// Where the last `n` changes were, newest first, one per line.
+    pub fn recent_changes(&self, n: usize) -> Vec<Position> {
+        let mut found: Vec<Position> = Vec::new();
+        for &at in self.changes.iter().rev() {
+            let at = self.clamp(at);
+            if !found.iter().any(|p| p.row == at.row) {
+                found.push(at);
+            }
+            if found.len() == n {
+                break;
+            }
+        }
+        found
+    }
+
     /// `g;` (`older`) / `g,`: the next change position in that direction,
     /// clamped into the buffer. `None` at either end of the list.
     pub fn step_change(&mut self, older: bool, count: usize) -> Option<Position> {

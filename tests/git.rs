@@ -142,6 +142,13 @@ fn source_control_lists_stages_commits_and_discards() {
     assert!(shown.contains("CHANGES (2)"), "{shown}");
     assert!(shown.contains("M code.txt"), "{shown}");
     assert!(shown.contains("U notes.md"), "{shown}");
+    // The agent's told which file's selected, with each message.
+    keys(&mut app, "gg");
+    let context = app.editor().agent_context().unwrap();
+    assert!(
+        context.contains("\nSource Control view: selected code.txt (not staged)"),
+        "{context}"
+    );
 
     // The first file (code.txt): stage it, then commit.
     keys(&mut app, "ggs");
@@ -894,6 +901,14 @@ fn merging_a_branch_resolving_its_conflict_and_committing() {
     keys(&mut app, "<CR>");
     assert_eq!(app.editor().mode(), ferra::editor::Mode::Normal);
     assert_eq!(cursor(&app), (1, 0), "at the conflict");
+    // The agent's told, with each message.
+    let context = app.editor().agent_context().unwrap();
+    assert!(
+        context
+            .lines()
+            .any(|l| l.starts_with("Merging (") && l.ends_with("code.txt (1)")),
+        "{context}"
+    );
     let screen = render(&mut app, 120, 12).rows.join("\n");
     assert!(screen.contains("current change"), "the hint: {screen}");
     assert!(screen.contains("incoming change"), "{screen}");
