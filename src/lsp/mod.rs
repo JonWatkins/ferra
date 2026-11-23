@@ -496,7 +496,7 @@ impl Lsp {
                         match features::workspace_edits(editor, &params["edit"], client.encoding) {
                             Ok(edits) => {
                                 let label = params["label"].as_str();
-                                match &client.running {
+                                let made = match &client.running {
                                     Some(request) => editor.lsp_edits_pushed(request, label, edits),
                                     None => {
                                         let label = label
@@ -507,9 +507,17 @@ impl Lsp {
                                             "{label}: {}",
                                             applied.describe()
                                         )));
+                                        true
                                     }
+                                };
+                                if made {
+                                    json!({ "applied": true })
+                                } else {
+                                    json!({
+                                        "applied": false,
+                                        "failureReason": "The tool call it was for was given up",
+                                    })
                                 }
-                                json!({ "applied": true })
                             }
                             Err(error) => json!({ "applied": false, "failureReason": error }),
                         }

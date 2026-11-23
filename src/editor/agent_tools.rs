@@ -1190,6 +1190,20 @@ impl Editor {
         Some(self.agent_save_changed(&before))
     }
 
+    /// Gives up tool call `call` (its language server took too long):
+    /// whatever comes for it later is dropped, edits included. Edits a
+    /// command already made for it stay, and are saved as an agent
+    /// change's are: the note on that, and the documents, if there were any.
+    pub fn agent_give_up(&mut self, call: u64) -> Option<(String, Vec<DocumentId>)> {
+        self.agent.given_up.insert(call);
+        self.end_agent_change(call)
+    }
+
+    /// Whether tool call `call` was given up.
+    pub(super) fn agent_given_up(&self, call: u64) -> bool {
+        self.agent.given_up.contains(&call)
+    }
+
     /// After the agent's changes: the files they changed that had no
     /// unsaved changes before are saved (so what the agent runs sees
     /// them); the others are left to the user. Says which, for the agent.
@@ -1256,7 +1270,7 @@ impl Editor {
 
     /// The `lsp_apply_code_action` tool: action `number` (from 1) of the
     /// list `list` that `lsp_code_actions` gave, for `path`.
-    pub fn agent_apply_code_action(
+    pub(crate) fn agent_apply_code_action(
         &mut self,
         call: u64,
         path: &str,
@@ -1297,7 +1311,7 @@ impl Editor {
     /// `path`'s `line` (from 1), at `symbol` on it (or `column`, from 1, or
     /// the line's first word); `query` for the project's symbols. The answer
     /// comes back through [`Editor::agent_lsp_answer`].
-    pub fn agent_ask_lsp(
+    pub(crate) fn agent_ask_lsp(
         &mut self,
         call: u64,
         feature: LspFeature,

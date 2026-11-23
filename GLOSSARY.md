@@ -68,6 +68,10 @@ _Avoid_: assistant, bot, AI
 One thing the agent can ask the editor to do or tell it (read a file, rename a symbol, show locations), offered to the agent over MCP.
 _Avoid_: command (that word is for the editor's named commands), MCP tool
 
+**Tool call**:
+One request from the agent to run an agent tool, from being asked to being answered: with a result, an error, or that it was given up because a language server took too long, after which nothing more comes of it.
+_Avoid_: request (an LSP request is the editor's question for a language server)
+
 **Agent change**:
 A change the agent makes to the user's files through the editor, after which the files that were saved before it are saved again and those with the user's unsaved work are left unsaved.
 _Avoid_: agent edit, agent write

@@ -249,6 +249,9 @@ pub struct AgentChat {
     /// whose server sends its edits as it runs. Each is what was unsaved
     /// before its first edit (see `Editor::agent_change`).
     pub(super) open_changes: HashMap<u64, HashMap<super::DocumentId, (u64, bool)>>,
+    /// Tool calls given up waiting on a language server: their answers,
+    /// and edits, are dropped if they come after all.
+    pub(super) given_up: HashSet<u64>,
     /// The last few lists of code actions it was given, to make one.
     pub(super) code_actions: std::collections::VecDeque<super::lsp::ActionList>,
     /// Whether the agent takes images (it says as it starts).

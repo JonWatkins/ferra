@@ -1162,6 +1162,8 @@ impl Editor {
     /// asked, else shown (or not) as the reply says.
     pub fn lsp_answered(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
         match request.reply {
+            // Given up waiting for: too late.
+            Reply::Agent(call) if self.agent_given_up(call) => {}
             Reply::Agent(call) => self.agent_lsp_answered(call, request, answer),
             _ => self.show_lsp_answer(request, answer),
         }
@@ -1189,12 +1191,21 @@ impl Editor {
     /// command's, or the action's own before its command runs): made now,
     /// as the server waits on them. The screen says so as they come
     /// (`label`, or the action's title); the agent's are made as one agent
-    /// change, closed with the answer.
-    pub fn lsp_edits_pushed(&mut self, request: &LspRequest, label: Option<&str>, edits: Edits) {
+    /// change, closed with the answer. Returns whether they were made:
+    /// not for an agent's tool call that was given up.
+    pub fn lsp_edits_pushed(
+        &mut self,
+        request: &LspRequest,
+        label: Option<&str>,
+        edits: Edits,
+    ) -> bool {
         if let Reply::Agent(call) = request.reply {
+            if self.agent_given_up(call) {
+                return false;
+            }
             self.begin_agent_change(call, &edits.opened);
             self.apply_lsp_edits(edits);
-            return;
+            return true;
         }
         let title = match &request.query {
             LspQuery::ApplyCodeAction { action } | LspQuery::ResolveCodeAction { action } => {
@@ -1205,6 +1216,7 @@ impl Editor {
         let label = label.unwrap_or(title).to_string();
         let applied = self.apply_lsp_edits(edits);
         self.set_message(Message::info(format!("{label}: {}", applied.describe())));
+        true
     }
 
     /// The screen's side of `lsp_answered`: shown if it's still wanted
