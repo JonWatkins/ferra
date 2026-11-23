@@ -58,6 +58,10 @@ use crate::editor::lsp::{LspFeature, NoAnswer};
 use crate::editor::{DocumentId, Editor, Message};
 use client::{Client, ClientId, Incoming, Response};
 
+/// Which inlay hints: a buffer, its text (edit count), and how many times
+/// they've been cleared.
+type HintsAt = (DocumentId, u64, u64);
+
 pub struct Lsp {
     clients: Vec<Client>,
     sender: Sender<Incoming>,
@@ -93,10 +97,11 @@ pub struct Lsp {
     formatted: Option<Result<Value, client::ResponseError>>,
     /// The formatting request `format` waits for: its server, and its id.
     formatting: Option<(ClientId, i64)>,
-    /// Inlay hints: the buffer and text (edit count) last asked about, and
-    /// the text last seen, since when (asked once it's been still a moment).
-    hints_asked: Option<(DocumentId, u64)>,
-    hints_seen: Option<(DocumentId, u64, std::time::Instant)>,
+    /// Inlay hints: the buffer, text (edit count) and clearing (see
+    /// `Editor::inlay_hints_cleared`) last asked about, and the same last
+    /// seen, since when (asked once it's been still a moment).
+    hints_asked: Option<HintsAt>,
+    hints_seen: Option<(HintsAt, std::time::Instant)>,
 }
 
 impl Default for Lsp {
@@ -233,12 +238,16 @@ impl Lsp {
         if editor.document.path().is_none() {
             return;
         }
-        let here = (editor.document.id(), editor.document.buffer().edit_seq());
+        let here = (
+            editor.document.id(),
+            editor.document.buffer().edit_seq(),
+            editor.inlay_hints_cleared(),
+        );
         if self.hints_asked == Some(here) {
             return;
         }
         match self.hints_seen {
-            Some((doc, seq, since)) if (doc, seq) == here => {
+            Some((seen, since)) if seen == here => {
                 let ready = self.clients.iter().any(|c| {
                     c.has_document(here.0)
                         && c.state == State::Ready
@@ -253,7 +262,7 @@ impl Lsp {
                     self.hints_asked = Some(here);
                 }
             }
-            _ => self.hints_seen = Some((here.0, here.1, std::time::Instant::now())),
+            _ => self.hints_seen = Some((here, std::time::Instant::now())),
         }
     }
 
