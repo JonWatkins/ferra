@@ -116,9 +116,8 @@ pub struct LspRequest {
     pub position: Position,
     pub buffer_id: u64,
     pub edit_seq: u64,
-    /// Asked for with a key, so a server that can't answer says so (rather
-    /// than a completion asked for as you type).
-    pub manual: bool,
+    /// Who asked, and so where the answer goes.
+    pub reply: Reply,
     /// For completion: the character typed that might start one (`.`),
     /// and where the word being completed starts. For code actions: where
     /// their range starts (the cursor, or a selection's start).
@@ -130,9 +129,56 @@ pub struct LspRequest {
     pub text: Option<String>,
     /// For code actions: the end of the range they're for.
     pub end: Position,
-    /// Asked by the coding agent (its tool call, by number): the answer
-    /// goes back to it, not on the screen.
-    pub agent: Option<u64>,
+}
+
+/// Who asked an LSP query, and so where its answer goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reply {
+    /// With a key or a command: says so when there's no answer.
+    Key,
+    /// The mouse (a hover, a Ctrl+hover peek): quiet without an answer.
+    Pointer,
+    /// As the user types (completion, signature help): quiet.
+    Typing,
+    /// To fill a view (the outline, inlay hints, highlights): quiet.
+    View,
+    /// The coding agent's tool call, by number: the answer goes back to
+    /// it as text, not on the screen.
+    Agent(u64),
+}
+
+impl Reply {
+    /// The agent's tool call, if it asked.
+    pub fn agent(self) -> Option<u64> {
+        match self {
+            Reply::Agent(call) => Some(call),
+            _ => None,
+        }
+    }
+
+    /// Asked for on purpose (a key, or the agent), so it's told when there
+    /// is no answer, rather than left quiet.
+    pub fn explicit(self) -> bool {
+        matches!(self, Reply::Key | Reply::Agent(_))
+    }
+}
+
+/// An LSP query's answer. Features move over to it one at a time; until
+/// then their answers go straight from `lsp/` to the screen or the agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {}
+
+/// Why an LSP query has no answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoAnswer {
+    /// No language server has the document.
+    NoServer,
+    /// Its server (by name) is still starting.
+    Starting(String),
+    /// Its server (by name) doesn't offer what was asked.
+    Unsupported(String),
+    /// Its server (by name) stopped before answering.
+    Stopped(String),
 }
 
 /// A place a server pointed to: a file, and a row and char column in it.
@@ -420,13 +466,12 @@ impl Editor {
             position: self.document.cursor(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual: true,
+            reply: Reply::Key,
             trigger: None,
             word_start: self.document.cursor(),
             item: None,
             text: None,
             end: self.document.cursor(),
-            agent: None,
         });
         Ok(())
     }
@@ -571,13 +616,12 @@ impl Editor {
             position: self.document.cursor(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual: true,
+            reply: Reply::Key,
             trigger: None,
             word_start: self.document.cursor(),
             item: Some((answer, index)),
             text: None,
             end: self.document.cursor(),
-            agent: None,
         });
     }
 
@@ -733,6 +777,36 @@ impl Editor {
     /// Reports a failed or empty answer.
     pub fn lsp_failed(&mut self, text: String) {
         self.set_message(Message::error(text));
+    }
+
+    /// An LSP query's answer, or why there's none: to the agent if it
+    /// asked, else shown (or not) as the reply says.
+    pub fn lsp_answered(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
+        match request.reply {
+            Reply::Agent(call) => self.agent_lsp_answered(call, request, answer),
+            _ => self.show_lsp_answer(request, answer),
+        }
+    }
+
+    /// The screen's side of `lsp_answered`.
+    fn show_lsp_answer(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
+        let why = match answer {
+            Ok(answer) => match answer {},
+            Err(why) => why,
+        };
+        if request.reply != Reply::Key {
+            return;
+        }
+        let text = match why {
+            NoAnswer::NoServer => "No language server for this buffer (see :lsp)".to_string(),
+            NoAnswer::Starting(name) => format!("{name} is still starting"),
+            NoAnswer::Unsupported(name) => {
+                format!("{name} doesn't offer {}", request.feature.noun())
+            }
+            // Its stopping is said already.
+            NoAnswer::Stopped(_) => return,
+        };
+        self.set_message(Message::info(text));
     }
 }
 

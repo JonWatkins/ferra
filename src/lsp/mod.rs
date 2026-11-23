@@ -29,7 +29,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use serde_json::{Value, json};
 
 use crate::editor::diagnostics::{Diagnostic, Severity};
-use crate::editor::lsp::LspFeature;
+use crate::editor::lsp::{LspFeature, NoAnswer};
 use crate::editor::{DocumentId, Editor, Message};
 use client::{Answer, Client, ClientId, Incoming};
 
@@ -220,7 +220,7 @@ impl Lsp {
                     && editor.request_lsp(LspFeature::InlayHint).is_ok()
                     && let Some(request) = editor.lsp_requests_mut().last_mut()
                 {
-                    request.manual = false;
+                    request.reply = crate::editor::lsp::Reply::View;
                     self.hints_asked = Some(here);
                 }
             }
@@ -253,7 +253,7 @@ impl Lsp {
                         && editor.request_lsp(LspFeature::DocumentHighlight).is_ok()
                         && let Some(request) = editor.lsp_requests_mut().last_mut()
                     {
-                        request.manual = false;
+                        request.reply = crate::editor::lsp::Reply::View;
                     }
                 }
             }
@@ -288,6 +288,9 @@ impl Lsp {
             for document in documents {
                 editor.set_diagnostics(document, Vec::new());
                 self.raw_diagnostics.remove(&document);
+            }
+            for request in client.take_unanswered() {
+                editor.lsp_answered(&request, Err(NoAnswer::Stopped(client.name.clone())));
             }
             client.shutdown();
             // Dropping it ends the process.
@@ -377,6 +380,10 @@ impl Lsp {
         for document in documents {
             editor.set_diagnostics(document, Vec::new());
         }
+        let name = client.name.clone();
+        for request in client.take_unanswered() {
+            editor.lsp_answered(&request, Err(NoAnswer::Stopped(name.clone())));
+        }
     }
 
     fn handle(&mut self, id: ClientId, message: Value, editor: &mut Editor) {
@@ -396,7 +403,8 @@ impl Lsp {
                         editor.set_message(Message::error(format!("{}: {error}", client.name)));
                     }
                     Answer::Feature(request, result)
-                        if request.feature == LspFeature::Format && request.agent.is_none() =>
+                        if request.feature == LspFeature::Format
+                            && request.reply.agent().is_none() =>
                     {
                         self.formatted = Some(result);
                     }

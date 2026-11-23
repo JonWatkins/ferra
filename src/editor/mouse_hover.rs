@@ -7,7 +7,7 @@
 //! instead, as VS Code's peek.
 
 use super::diagnostics::Severity;
-use super::lsp::{Location, LspFeature, LspRequest};
+use super::lsp::{Location, LspFeature, LspRequest, Reply};
 use super::{DocumentId, Editor};
 use crate::core::Position;
 
@@ -159,13 +159,12 @@ impl Editor {
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
             // Not asked for with a key: quiet if there's no answer.
-            manual: false,
+            reply: Reply::Pointer,
             trigger: None,
             word_start: at,
             item: None,
             text: None,
             end: at,
-            agent: None,
         };
         if !rest.problems.is_empty() {
             let problems = rest.problems.clone();

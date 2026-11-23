@@ -4,7 +4,7 @@
 //! and again on each change while it's showing, so the parameter follows
 //! the cursor; it goes when the server has none, or insert mode ends.
 
-use super::lsp::{LspFeature, LspRequest};
+use super::lsp::{LspFeature, LspRequest, Reply};
 use super::{Editor, Message, Mode};
 
 /// One signature to show.
@@ -70,13 +70,12 @@ impl Editor {
             position: cursor,
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual,
+            reply: if manual { Reply::Key } else { Reply::Typing },
             trigger: typed,
             word_start: cursor,
             item: None,
             text: None,
             end: cursor,
-            agent: None,
         });
         Ok(())
     }
@@ -87,7 +86,7 @@ impl Editor {
         if self.document.id() != request.document || self.mode() != Mode::Insert {
             return;
         }
-        if help.is_none() && request.manual {
+        if help.is_none() && request.reply.explicit() {
             self.set_message(Message::info("No signature here"));
         }
         self.signature = help;

@@ -41,6 +41,7 @@ mod git;
 pub mod git_gui;
 pub use git::GitRow;
 pub mod agent;
+mod agent_lsp;
 pub mod agent_session;
 mod agent_tools;
 pub mod input_box;

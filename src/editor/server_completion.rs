@@ -10,7 +10,7 @@
 //! space, moving away, `<Esc>`) closes it, keeping what's in the text.
 
 use super::completion::{WordCompletion, is_word_char};
-use super::lsp::{LspFeature, LspRequest};
+use super::lsp::{LspFeature, LspRequest, Reply};
 use super::picker::fuzzy_match;
 use super::{Editor, Mode};
 use crate::core::Position;
@@ -157,13 +157,12 @@ impl Editor {
             position: cursor,
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual,
+            reply: if manual { Reply::Key } else { Reply::Typing },
             trigger,
             word_start: start,
             item: None,
             text: None,
             end: cursor,
-            agent: None,
         });
         Ok(())
     }
@@ -195,12 +194,12 @@ impl Editor {
         let chosen = self
             .completion
             .as_ref()
-            .is_some_and(|c| c.selected.is_some() && !request.manual);
+            .is_some_and(|c| c.selected.is_some() && !request.reply.explicit());
         if chosen {
             return;
         }
         if items.is_empty() {
-            if request.manual {
+            if request.reply.explicit() {
                 self.set_message(super::Message::info("No completions here"));
             }
             self.completion = None;
@@ -353,13 +352,12 @@ impl Editor {
                 position: self.document.cursor(),
                 buffer_id: buffer.id(),
                 edit_seq: buffer.edit_seq(),
-                manual: false,
+                reply: Reply::Typing,
                 trigger: None,
                 word_start: completion.start,
                 item: Some(resolve),
                 text: None,
                 end: self.document.cursor(),
-                agent: None,
             });
         }
         // A snippet's cursor place: counted from the completion's start

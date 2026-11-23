@@ -581,7 +581,7 @@ impl Client {
             }
             LspFeature::SignatureHelp => {
                 let mut context = json!({
-                    "triggerKind": if request.manual { 1 } else { 3 },
+                    "triggerKind": if request.reply.explicit() { 1 } else { 3 },
                     "isRetrigger": request.text.is_some(),
                 });
                 if let Some(c) = request.trigger.filter(|c| self.signature_triggered_by(*c)) {
@@ -599,6 +599,26 @@ impl Client {
             _ => {}
         }
         self.request(method, params, Pending::Feature(request));
+    }
+
+    /// The requests it hasn't answered, taken (as it's stopped or being
+    /// stopped), so each can be answered that it won't be.
+    pub fn take_unanswered(&mut self) -> Vec<LspRequest> {
+        let ids: Vec<i64> = self
+            .pending
+            .iter()
+            .filter(|(_, p)| matches!(p, Pending::Feature(_)))
+            .map(|(id, _)| *id)
+            .collect();
+        let mut taken: Vec<(i64, LspRequest)> = ids
+            .into_iter()
+            .filter_map(|id| match self.pending.remove(&id) {
+                Some(Pending::Feature(request)) => Some((id, request)),
+                _ => None,
+            })
+            .collect();
+        taken.sort_by_key(|(id, _)| *id);
+        taken.into_iter().map(|(_, request)| request).collect()
     }
 
     /// Handles the answer to one of our requests.

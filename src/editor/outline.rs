@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::lsp::{LspFeature, LspRequest};
+use super::lsp::{LspFeature, LspRequest, Reply};
 use super::popup::{PopupLine, PopupSpan};
 use super::sidebar_views::ViewSpec;
 use super::{DocumentId, Editor, Mode};
@@ -131,13 +131,12 @@ impl Editor {
             position: self.document.cursor(),
             buffer_id: buffer.id(),
             edit_seq: seq,
-            manual: false,
+            reply: Reply::View,
             trigger: None,
             word_start: Position::default(),
             item: None,
             text: None,
             end: Position::default(),
-            agent: None,
         });
     }
 

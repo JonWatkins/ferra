@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::lsp::{LspFeature, LspRequest};
+use super::lsp::{LspFeature, LspRequest, Reply};
 use super::{DocumentId, Editor};
 use crate::core::{Position, Range};
 
@@ -592,13 +592,12 @@ impl Editor {
             position: Position::default(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual: true,
+            reply: Reply::Agent(call),
             trigger: None,
             word_start: Position::default(),
             item: None,
             text: Some(target.to_string_lossy().into_owned()),
             end: Position::default(),
-            agent: Some(call),
         });
         Ok(None)
     }
@@ -1264,13 +1263,12 @@ impl Editor {
             position,
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual: true,
+            reply: Reply::Agent(call),
             trigger: None,
             word_start: position,
             item: Some((list, number.saturating_sub(1))),
             text: None,
             end: position,
-            agent: Some(call),
         });
         Ok(())
     }
@@ -1317,13 +1315,12 @@ impl Editor {
                 position: Position::new(0, 0),
                 buffer_id: buffer.id(),
                 edit_seq: buffer.edit_seq(),
-                manual: true,
+                reply: Reply::Agent(call),
                 trigger: None,
                 word_start: Position::new(0, 0),
                 item: None,
                 text: Some(crate::lsp::FILE_WIDE_ACTIONS.to_string()),
                 end: buffer.line_end(last),
-                agent: Some(call),
             });
             return Ok(());
         }
@@ -1370,13 +1367,12 @@ impl Editor {
             position,
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual: true,
+            reply: Reply::Agent(call),
             trigger: None,
             word_start: position,
             item: None,
             text: query.map(str::to_string),
             end: position,
-            agent: Some(call),
         };
         // Code actions: asked at the symbol (its own refactors), and for
         // the whole line with every problem on it (a fix can hang on a hint

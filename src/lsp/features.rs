@@ -12,7 +12,7 @@ use super::convert::{self, Encoding};
 use super::{Lsp, State};
 use crate::core::Position;
 use crate::editor::DocumentId;
-use crate::editor::lsp::{Location, LspFeature, LspRequest};
+use crate::editor::lsp::{Location, LspFeature, LspRequest, NoAnswer, Reply};
 use crate::editor::server_completion::ServerItem;
 use crate::editor::signature::SignatureHelp;
 use crate::editor::{Editor, Message};
@@ -71,7 +71,9 @@ impl Lsp {
     /// The agent's `move_file`: asks the file's server for the edits the
     /// move needs, if it has one that wants asking; else moves it now.
     fn start_move(&mut self, editor: &mut Editor, request: LspRequest, since: std::time::Instant) {
-        let Some(call) = request.agent else { return };
+        let Some(call) = request.reply.agent() else {
+            return;
+        };
         let to = std::path::PathBuf::from(request.text.clone().unwrap_or_default());
         let Some(from) = editor
             .document_by_id(request.document)
@@ -85,20 +87,12 @@ impl Lsp {
             .document_by_id(request.document)
             .and_then(|d| editor.language_of(d))
             .map(str::to_string);
-        if self
-            .clients
-            .iter()
-            .any(|c| c.state == State::Starting && Some(&c.language) == language.as_ref())
-        {
-            // Asked once it's ready (it'd update the imports).
-            if since.elapsed() < START_WAIT {
-                self.waiting.push((request, since));
-                return;
+        // Its server's starting: asked once it's ready (it'd update the
+        // imports).
+        if let Some(name) = self.starting(language.as_deref()) {
+            if let Some(request) = self.wait_for_start(request, since) {
+                editor.lsp_answered(&request, Err(NoAnswer::Starting(name)));
             }
-            editor.agent_lsp_answer(
-                call,
-                Err("The language server is still starting (it'd update the imports): try again in a moment".into()),
-            );
             return;
         }
         if let Some(client) = self.clients.iter_mut().find(|c| {
@@ -120,6 +114,30 @@ impl Lsp {
             }
             Err(error) => editor.agent_lsp_answer(call, Err(error)),
         }
+    }
+
+    /// The name of the server starting for `language`, if one is.
+    fn starting(&self, language: Option<&str>) -> Option<String> {
+        self.clients
+            .iter()
+            .find(|c| c.state == State::Starting && Some(c.language.as_str()) == language)
+            .map(|c| c.name.clone())
+    }
+
+    /// Keeps `request`, asked `since`, to send once its server is ready,
+    /// if its reply waits for that (the agent's: it can't just ask again
+    /// as the user would) and it hasn't waited too long; else hands it back
+    /// to be answered that the server is still starting.
+    fn wait_for_start(
+        &mut self,
+        request: LspRequest,
+        since: std::time::Instant,
+    ) -> Option<LspRequest> {
+        if request.reply.agent().is_some() && since.elapsed() < START_WAIT {
+            self.waiting.push((request, since));
+            return None;
+        }
+        Some(request)
     }
 }
 
@@ -166,13 +184,12 @@ impl Lsp {
             position: editor.document.cursor(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual: true,
+            reply: Reply::Key,
             trigger: None,
             word_start: editor.document.cursor(),
             item: None,
             text: None,
             end: editor.document.cursor(),
-            agent: None,
         };
         let (tab_size, spaces) = editor.format_indent(document);
         let (name, encoding, client_id) = (client.name.clone(), client.encoding, client.id);
@@ -245,40 +262,19 @@ impl Lsp {
                 .iter_mut()
                 .find(|c| c.has_document(request.document) && c.state == State::Ready);
             let Some(client) = client else {
-                if let Some(call) = request.agent {
-                    let starting = self.clients.iter().any(|c| {
-                        c.state == State::Starting && Some(&c.language) == language.as_ref()
-                    });
-                    // Its server's starting: asked once it's ready.
-                    if starting && since.elapsed() < START_WAIT {
-                        self.waiting.push((request, since));
-                        continue;
+                match self.starting(language.as_deref()) {
+                    // Asked once it's ready, if the reply waits for that.
+                    Some(name) => {
+                        if let Some(request) = self.wait_for_start(request, since) {
+                            editor.lsp_answered(&request, Err(NoAnswer::Starting(name)));
+                        }
                     }
-                    let text = if starting {
-                        "The language server is still starting (waited 30 s): try again in a moment"
-                    } else {
-                        "No language server for this file"
-                    };
-                    editor.agent_lsp_answer(call, Err(text.into()));
-                    continue;
+                    None => editor.lsp_answered(&request, Err(NoAnswer::NoServer)),
                 }
-                // Completing as you type stays quiet about it.
-                if !request.manual {
-                    continue;
-                }
-                let starting = self
-                    .clients
-                    .iter()
-                    .find(|c| c.state == State::Starting && Some(&c.language) == language.as_ref());
-                let text = match starting {
-                    Some(c) => format!("{} is still starting", c.name),
-                    None => "No language server for this buffer (see :lsp)".to_string(),
-                };
-                editor.set_message(Message::info(text));
                 continue;
             };
             let mut request = request;
-            if request.feature == LspFeature::SignatureHelp && !request.manual {
+            if request.feature == LspFeature::SignatureHelp && !request.reply.explicit() {
                 // Asked as you type: on a character the server names, or on
                 // any change while it's showing (so the parameter follows).
                 let showing = editor.signature_help().is_some();
@@ -297,19 +293,7 @@ impl Lsp {
                 continue;
             }
             if !client.supports(request.feature) {
-                if let Some(call) = request.agent {
-                    let text = format!("{} doesn't offer {}", client.name, request.feature.noun());
-                    editor.agent_lsp_answer(call, Err(text));
-                    continue;
-                }
-                if !request.manual {
-                    continue;
-                }
-                editor.set_message(Message::info(format!(
-                    "{} doesn't offer {}",
-                    client.name,
-                    request.feature.noun()
-                )));
+                editor.lsp_answered(&request, Err(NoAnswer::Unsupported(client.name.clone())));
                 continue;
             }
             if request.feature == LspFeature::ApplyCodeAction {
@@ -325,7 +309,7 @@ impl Lsp {
                 if changed {
                     let text =
                         "The file has changed since that list of code actions: ask for them again";
-                    match request.agent {
+                    match request.reply.agent() {
                         Some(call) => editor.agent_lsp_answer(call, Err(text.into())),
                         None => editor.set_message(Message::info(text)),
                     }
@@ -334,15 +318,16 @@ impl Lsp {
                 let action = request.item.and_then(|i| self.actions.item(i)).cloned();
                 let Some(action) = action else {
                     let text = "That list of code actions is too old (or has no such number)";
-                    match request.agent {
+                    match request.reply.agent() {
                         Some(call) => editor.agent_lsp_answer(call, Err(text.into())),
                         None => editor.set_message(Message::info(text)),
                     }
                     continue;
                 };
                 let before = editor.agent_unsaved();
-                let made = make_code_action(editor, client, &action, request.agent.is_some());
-                if let Some(call) = request.agent
+                let made =
+                    make_code_action(editor, client, &action, request.reply.agent().is_some());
+                if let Some(call) = request.reply.agent()
                     && made
                 {
                     let title = action["title"].as_str().unwrap_or("the action");
@@ -359,7 +344,7 @@ impl Lsp {
                             ..request
                         };
                         client.resolve_code_action(request, action);
-                    } else if let Some(call) = request.agent {
+                    } else if let Some(call) = request.reply.agent() {
                         editor.agent_lsp_answer(call, Err("That code action does nothing".into()));
                     } else {
                         editor.set_message(Message::info("That code action does nothing"));
@@ -448,7 +433,9 @@ pub(super) fn answer(
 ) {
     // The agent's move: the server's edits for it, then the move.
     if request.feature == LspFeature::MoveFile {
-        let Some(call) = request.agent else { return };
+        let Some(call) = request.reply.agent() else {
+            return;
+        };
         let to = std::path::PathBuf::from(request.text.clone().unwrap_or_default());
         let from = editor
             .document_by_id(request.document)
@@ -489,7 +476,7 @@ pub(super) fn answer(
         return;
     }
     // The coding agent's: the answer as text, back to it.
-    if let Some(call) = request.agent
+    if let Some(call) = request.reply.agent()
         && request.feature == LspFeature::CodeAction
     {
         let list: Vec<Value> = result
@@ -552,7 +539,7 @@ pub(super) fn answer(
         );
         return;
     }
-    if let Some(call) = request.agent {
+    if let Some(call) = request.reply.agent() {
         let text = match result {
             Ok(result) => match agent_change(editor, client, &request, &result) {
                 Some(Ok((text, changed))) if !changed.is_empty() => {
@@ -618,7 +605,7 @@ pub(super) fn answer(
                 && editor.document.buffer().edit_seq() == request.edit_seq
         }
         // The pointer's: while it rests there.
-        LspFeature::Hover | LspFeature::Definition if !request.manual => {
+        LspFeature::Hover | LspFeature::Definition if !request.reply.explicit() => {
             editor.mouse_hover_wanted(&request)
         }
         _ => editor.still_at(&request),
@@ -632,7 +619,7 @@ pub(super) fn answer(
         // The pointer's hover stays quiet about it.
         Err(_)
             if matches!(request.feature, LspFeature::Hover | LspFeature::Definition)
-                && !request.manual =>
+                && !request.reply.explicit() =>
         {
             return;
         }
@@ -762,7 +749,7 @@ pub(super) fn answer(
     }
     if request.feature == LspFeature::Hover {
         let markdown = hover_markdown(&result["contents"]);
-        if !request.manual {
+        if !request.reply.explicit() {
             editor.mouse_hover_answer(&markdown);
         } else if markdown.trim().is_empty() {
             editor.set_message(Message::info("No hover information here"));
@@ -773,7 +760,7 @@ pub(super) fn answer(
     }
     let locations = locations(editor, &result, client.encoding);
     // Ctrl held on the pointer's word: the definition peeked at.
-    if request.feature == LspFeature::Definition && !request.manual {
+    if request.feature == LspFeature::Definition && !request.reply.explicit() {
         editor.mouse_peek_answer(&locations);
         return;
     }
@@ -899,7 +886,7 @@ fn calls_answer(
     request: LspRequest,
     result: Result<Value, ResponseError>,
 ) {
-    let tell = |editor: &mut Editor, answer: Result<String, String>| match request.agent {
+    let tell = |editor: &mut Editor, answer: Result<String, String>| match request.reply.agent() {
         Some(call) => editor.agent_lsp_answer(call, answer),
         None => editor.set_message(match answer {
             Ok(text) => Message::info(text),
@@ -1986,13 +1973,12 @@ mod tests {
             position: Position::new(0, 4),
             buffer_id: 0,
             edit_seq: 0,
-            manual: false,
+            reply: Reply::Typing,
             trigger: None,
             word_start: Position::new(0, 2),
             item: None,
             text: None,
             end: editor.document.cursor(),
-            agent: None,
         };
         let range = |from: u64| {
             json!({"start": {"line": 0, "character": from},

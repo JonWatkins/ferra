@@ -207,6 +207,10 @@ fn serve(
             }
             "textDocument/hover" => {
                 let word = word_at(&seen.lock().unwrap().text, &params["position"]);
+                // Asked about "die", it stops before answering.
+                if word == "die" {
+                    return;
+                }
                 let result = (word == "bad").then(|| {
                     json!({"contents": {
                         "kind": "markdown",
@@ -2262,6 +2266,20 @@ fn the_agent_asks_for_a_files_source_actions() {
         json!({"line": 1, "character": 14}),
         "to the end of the last line"
     );
+}
+
+#[test]
+fn a_server_that_stops_still_answers_the_agent() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("fn die() {}\n", true);
+    ready(&mut app);
+    let said = agent_asks(
+        &mut app,
+        LspFeature::Hover,
+        &dir.path().join("main.rs"),
+        (Some(1), Some("die"), None, None),
+    );
+    assert_eq!(said, Err("rust-analyzer stopped before answering".into()));
 }
 
 #[test]
