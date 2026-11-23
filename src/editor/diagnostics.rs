@@ -37,6 +37,21 @@ use super::{DocumentId, Editor, Message};
 use crate::core::Position;
 
 /// How serious a diagnostic is, most serious first (LSP's numbering).
+/// What's known of a buffer's diagnostics: how often and when they were
+/// last set, and the language server checking it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocDiagnostics {
+    /// How many times they've been set.
+    pub version: u64,
+    /// When they were last set.
+    pub set_at: Option<std::time::Instant>,
+    /// The ready server it's open in, and what that's busy with
+    /// (checking, indexing), if anything.
+    pub server: Option<(String, Option<String>)>,
+    /// A server is set up for its language: one may be about to open it.
+    pub may_open: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Severity {
     Error,
@@ -183,6 +198,26 @@ impl Editor {
             let now = std::time::Instant::now();
             let entry = self.diagnostics_versions.entry(id).or_insert((0, now));
             *entry = (entry.0 + 1, now);
+        }
+    }
+
+    /// What's known of buffer `id`'s diagnostics, for an agent change's
+    /// wait for them (`agent/diagnostics_wait.rs`).
+    pub fn diagnostics_state(&self, id: DocumentId) -> DocDiagnostics {
+        let (version, set_at) = self
+            .diagnostics_versions
+            .get(&id)
+            .map_or((0, None), |&(version, at)| (version, Some(at)));
+        let may_open = self.options.lsp
+            && self
+                .document_by_id(id)
+                .and_then(|d| self.language_of(d))
+                .is_some_and(|language| self.languages.server(language).is_some());
+        DocDiagnostics {
+            version,
+            set_at,
+            server: self.lsp_checks.get(&id).cloned(),
+            may_open,
         }
     }
 
