@@ -4,17 +4,19 @@
 //! Vim's grammar is `[count]["x]operator[count](motion | text-object)`:
 //!
 //! 1. An operator command (`operator_delete`, ...) calls
-//! `Editor::begin_operator`, which enters `Mode::OperatorPending` and stores
-//! the count and register. 2. Keys are now looked up in `[keys.operator]`
-//! (Vim's `omap`). Counts are still accepted, so `2d3w` works. 3. **Motions are
-//! data** (`commands/builtin/motions.rs`): a target function plus a
-//! `MotionKind` (exclusive, inclusive or linewise). A motion command takes the
-//! pending operator if there is one and applies it over `Range::from_motion`.
-//! Otherwise it moves the cursor. One definition serves both `w` and `dw`. 4.
-//! **Text objects** (`core::text_object`) return a `Range` directly. `dd`, `cc`
-//! and `yy` are the `current_line` text object. 5. `Editor::apply_operator`
-//! stores the text in a register, then deletes, changes (deletes and enters
-//! insert mode) or yanks.
+//!    `Editor::begin_operator`, which enters `Mode::OperatorPending` and
+//!    stores the count and register.
+//! 2. Keys are now looked up in `[keys.operator]` (Vim's `omap`). Counts
+//!    are still accepted, so `2d3w` works.
+//! 3. **Motions are data** (`commands/builtin/motions.rs`): a target
+//!    function plus a `MotionKind` (exclusive, inclusive or linewise). A
+//!    motion command takes the pending operator if there is one and applies
+//!    it over `Range::from_motion`. Otherwise it moves the cursor. One
+//!    definition serves both `w` and `dw`.
+//! 4. **Text objects** (`core::text_object`) return a `Range` directly.
+//!    `dd`, `cc` and `yy` are the `current_line` text object.
+//! 5. `Editor::apply_operator` stores the text in a register, then deletes,
+//!    changes (deletes and enters insert mode) or yanks.
 //!
 //! Operators that transform text in place (`>`, `<`, `gu`, `gU`, `g~`) don't
 //! touch registers. `apply_operator` hands them to `editor/transform.rs`:
@@ -25,7 +27,7 @@
 //! - `change_case` replaces the range with its re-cased text (which may change
 //!   length, e.g. `ß` → `SS`).
 //!
-//! `J` and indentation live there too; see Indentation.
+//! `J` and indentation live there too (see `editor/transform.rs`).
 
 use super::registers::{Register, StoreKind};
 use super::transform::CaseChange;

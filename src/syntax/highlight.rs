@@ -39,7 +39,7 @@
 //!   - With locals, the query starts at the top-level node holding the first
 //!     row, so definitions above the rows are seen.
 //!
-//!   `HIGHLIGHT_NAMES` are the names captures map to (the one with the most
+//! `HIGHLIGHT_NAMES` are the names captures map to (the one with the most
 //! parts all in the capture's name), and they double as theme scopes.
 
 use std::ops::Range;

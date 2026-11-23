@@ -653,7 +653,7 @@ mod tests {
         assert_same_as_reference("a.rs", "rust", &read("src/syntax/highlight.rs"));
         assert_same_as_reference("a.rs", "rust", &read("src/editor/transform.rs"));
         assert_same_as_reference("a.md", "markdown", &read("README.md"));
-        assert_same_as_reference("a.md", "markdown", &read("docs/ARCHITECTURE.md"));
+        assert_same_as_reference("a.md", "markdown", &read("docs/GUIDE.md"));
         assert_same_as_reference("a.toml", "toml", &read("src/config/default.toml"));
     }
 

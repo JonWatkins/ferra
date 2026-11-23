@@ -14,10 +14,10 @@
 //! - `languages.rs` lists each built-in language by name: its grammar and
 //!   queries. Only a core is built in (Markdown and its inline grammar, TOML,
 //!   JSON, YAML, Bash): ferra's own files and the ones met everywhere. Every
-//!   other language is a language pack (see Plugin packages), which keeps the
+//!   other language is a language pack (see `plugins/packages.rs`), which keeps the
 //!   binary small: moving Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++,
 //!   HTML and CSS out took the release binary from 21 MB to 12 MB. `indent.rs`
-//!   holds the core's indentation rules (see Indentation). A language built on
+//!   holds the core's indentation rules (see `syntax/indent.rs`). A language built on
 //!   another lists its own highlight query first and the base one after,
 //!   joined, so its patterns win (the packs do the same in their
 //!   `highlights.scm`).
