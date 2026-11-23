@@ -45,9 +45,6 @@ pub struct Lsp {
     /// Off until the editor runs in a terminal (or a test sets a spawner),
     /// so tests that open files don't start real servers.
     enabled: bool,
-    /// The last few completion answers' items as the servers sent them, to
-    /// send one back to be resolved when it's taken.
-    completions: features::Stash,
     /// Requests asked in parts, and the parts' answers so far.
     parts: Vec<(crate::editor::lsp::LspRequest, features::Parts)>,
     /// The agent's requests for a server still starting, and since when:
@@ -86,7 +83,6 @@ impl Default for Lsp {
             missing: HashSet::new(),
             failed: HashMap::new(),
             enabled: false,
-            completions: features::Stash::default(),
             parts: Vec::new(),
             waiting: Vec::new(),
             raw_diagnostics: HashMap::new(),
@@ -415,7 +411,7 @@ impl Lsp {
                         self.formatted = Some(result);
                     }
                     Answer::Feature(request, result) => {
-                        features::answer(editor, client, request, result, &mut self.completions);
+                        features::answer(editor, client, request, result);
                     }
                     // Answered once every part has its answer.
                     Answer::Part(request, part, result) => {
@@ -430,13 +426,7 @@ impl Lsp {
                         if self.parts[at].1.iter().all(Option::is_some) {
                             let (request, parts) = self.parts.remove(at);
                             let result = features::merge_actions(parts);
-                            features::answer(
-                                editor,
-                                client,
-                                request,
-                                result,
-                                &mut self.completions,
-                            );
+                            features::answer(editor, client, request, result);
                         }
                     }
                 }

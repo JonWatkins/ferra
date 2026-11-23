@@ -150,10 +150,10 @@ pub enum LspQuery {
         trigger: Option<char>,
         word_start: Position,
     },
-    /// A taken completion item's details (its import): which answer's,
-    /// and which item (see `ServerItem::resolve`).
+    /// A taken completion item's details (its import): the item as the
+    /// server sent it (see `ServerItem::resolve`).
     ResolveCompletion {
-        item: (u64, usize),
+        item: serde_json::Value,
     },
     Format,
     Rename {
@@ -302,6 +302,26 @@ pub enum Answer {
     Edits(Edits),
     /// The code actions there are (those that can be done there).
     Actions(Vec<CodeAction>),
+    /// Completions for the word being typed; `incomplete` if the server
+    /// has more, to be asked again as more is typed.
+    Completion {
+        items: Vec<super::server_completion::ServerItem>,
+        incomplete: bool,
+    },
+    /// The signature of the call being typed (none: not in one).
+    Signature(Option<super::signature::SignatureHelp>),
+    /// The document's inlay hints.
+    InlayHints(Vec<VirtualText>),
+    /// The other uses of the symbol at the place, in its document.
+    Highlights(Vec<(Position, Position)>),
+    /// The document's symbols, nested, for the outline.
+    Outline(Vec<super::outline::OutlineSymbol>),
+    /// Symbols (the document's, or the project's matching a query): each
+    /// a name, what it is, and where.
+    Symbols {
+        found: Vec<(String, String, Location)>,
+        busy: Option<Busy>,
+    },
     /// A code action made: its title, and its edits (none if all it does
     /// is run a command on the server, which sends edits of its own).
     Action { title: String, edits: Option<Edits> },
@@ -1111,33 +1131,52 @@ impl Editor {
     /// (the cursor, or the pointer, still where it was asked).
     fn show_lsp_answer(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
         let pointer = request.reply == Reply::Pointer;
-        let wanted = |e: &Self| match request.feature() {
+        let current = |e: &Self| e.document.id() == request.document;
+        let unchanged = |e: &Self| current(e) && e.document.buffer().edit_seq() == request.edit_seq;
+        let wanted = match request.feature() {
             // Picked from a list: made unless the text changed meanwhile.
-            LspFeature::ApplyCodeAction | LspFeature::ResolveCodeAction => {
-                e.document.id() == request.document
-                    && e.document.buffer().edit_seq() == request.edit_seq
-            }
-            _ if pointer => e.mouse_hover_wanted(request),
-            _ => e.still_at(request),
+            LspFeature::ApplyCodeAction | LspFeature::ResolveCodeAction => unchanged(self),
+            LspFeature::Completion => self.still_completing(request),
+            // Shown if the picker's still open with that query; kept for
+            // its buffer while the text is as it was (both checked there).
+            LspFeature::WorkspaceSymbols | LspFeature::InlayHint => true,
+            // Shown while the text is as it was (wherever the cursor is
+            // now: it's drawn only while on one of them).
+            LspFeature::DocumentHighlight => unchanged(self),
+            // Shown wherever typing has got to since, in the buffer; a
+            // taken item's import goes in if it's the same buffer.
+            LspFeature::SignatureHelp | LspFeature::ResolveCompletion => current(self),
+            _ if pointer => self.mouse_hover_wanted(request),
+            _ => self.still_at(request),
         };
+        if !wanted {
+            return;
+        }
         let answer = match answer {
             Ok(answer) => answer,
-            Err(why) => {
-                if wanted(self) {
-                    self.show_no_answer(request, why);
-                }
-                return;
-            }
+            Err(why) => return self.show_no_answer(request, why),
         };
         match answer {
             // Only the agent asks for calls.
             Answer::Calls(_) => {}
-            Answer::Hover(_)
-            | Answer::Locations { .. }
-            | Answer::Edits(_)
-            | Answer::Actions(_)
-            | Answer::Action { .. }
-                if !wanted(self) => {}
+            Answer::Completion { items, incomplete } => {
+                self.show_server_completion(request, items, incomplete);
+            }
+            Answer::Signature(help) => self.show_signature_help(request, help),
+            Answer::InlayHints(hints) => self.set_inlay_hints(request, hints),
+            Answer::Highlights(ranges) => {
+                self.set_references(request.document, request.edit_seq, ranges);
+            }
+            Answer::Outline(symbols) => {
+                self.set_outline(request.document, request.edit_seq, symbols)
+            }
+            Answer::Symbols { found, .. } => {
+                let query = match &request.query {
+                    LspQuery::WorkspaceSymbols { query } => Some(query.as_str()),
+                    _ => None,
+                };
+                self.show_symbols(request.feature(), query, found);
+            }
             Answer::Actions(actions) => self.show_code_actions(request, actions),
             Answer::Action { title, edits } => {
                 if let Some(edits) = edits {
@@ -1145,9 +1184,12 @@ impl Editor {
                     self.set_message(Message::info(format!("{title}: {}", applied.describe())));
                 }
             }
-            // Only the agent moves files.
-            Answer::Edits(_) if request.feature() != LspFeature::Rename => {}
-            Answer::Edits(edits) => {
+            // A taken completion's other edits (its import).
+            Answer::Edits(edits) if request.feature() == LspFeature::ResolveCompletion => {
+                let edits = edits.documents.into_iter().flat_map(|(_, e)| e).collect();
+                self.make_other_edits(edits);
+            }
+            Answer::Edits(edits) if request.feature() == LspFeature::Rename => {
                 let name = match &request.query {
                     LspQuery::Rename { name } => name.as_str(),
                     _ => "",
@@ -1158,6 +1200,9 @@ impl Editor {
                 };
                 self.set_message(Message::info(text));
             }
+            // Only the agent moves files, or formats this way (`:format`
+            // waits for its answer).
+            Answer::Edits(_) => {}
             Answer::Hover(markdown) if pointer => self.mouse_hover_answer(&markdown),
             Answer::Hover(markdown) if markdown.trim().is_empty() => {
                 self.set_message(Message::info("No hover information here"));

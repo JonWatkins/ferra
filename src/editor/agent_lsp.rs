@@ -25,10 +25,22 @@ impl Editor {
             return;
         }
         let text = match answer {
+            Ok(Answer::Edits(edits)) if request.feature() == LspFeature::Format => {
+                self.agent_format(call, request, edits);
+                return;
+            }
             Ok(Answer::Edits(edits)) => {
                 self.agent_lsp_edits(call, request, edits);
                 return;
             }
+            // Only the screen asks for these.
+            Ok(
+                Answer::Completion { .. }
+                | Answer::Signature(_)
+                | Answer::InlayHints(_)
+                | Answer::Highlights(_)
+                | Answer::Outline(_),
+            ) => return,
             Ok(Answer::Action { title, edits }) => {
                 self.agent_made_action(call, &title, edits);
                 return;
@@ -56,6 +68,9 @@ impl Editor {
                 }
             }
             Ok(Answer::Calls(calls)) => Ok(calls_text(&calls, request.feature())),
+            Ok(Answer::Symbols { found, busy }) => {
+                Ok(symbols_text(&found, request.feature(), busy.as_ref()))
+            }
             Ok(Answer::Hover(markdown)) => Ok(hover_text(&markdown)),
             Ok(Answer::Locations { found, busy }) => {
                 Ok(locations_text(found, request.feature(), busy.as_ref()))
@@ -96,6 +111,38 @@ impl Editor {
         match self.agent_move_document(document, to, edits, asked) {
             Ok((text, changed)) => self.agent_lsp_changed(call, text, changed),
             Err(error) => self.agent_lsp_answer(call, Err(error)),
+        }
+    }
+
+    /// The agent's formatting, made as an agent change if the text is as
+    /// it was when asked.
+    fn agent_format(&mut self, call: u64, request: &LspRequest, edits: Edits) {
+        let document = request.document;
+        let seq = self.document_by_id(document).map(|d| d.buffer().edit_seq());
+        if seq != Some(request.edit_seq) {
+            let text = "The text changed while formatting: try again";
+            self.agent_lsp_answer(call, Err(text.into()));
+            return;
+        }
+        let name = self.agent_names(&[document]);
+        let changes: usize = edits.documents.iter().map(|(_, e)| e.len()).sum();
+        if changes == 0 {
+            self.agent_lsp_answer(call, Ok(format!("{name} is already formatted")));
+            return;
+        }
+        let ((), saved, changed) = self.agent_change(&[], |e| {
+            e.apply_lsp_edits(edits);
+        });
+        let changes = if changes == 1 {
+            "1 change".to_string()
+        } else {
+            format!("{changes} changes")
+        };
+        let text = format!("Formatted {name} ({changes}){saved}");
+        if changed.is_empty() {
+            self.agent_lsp_answer(call, Ok(text));
+        } else {
+            self.agent_lsp_changed(call, text, changed);
         }
     }
 
@@ -255,6 +302,38 @@ fn actions_text(list: &ActionList) -> String {
         lines.join("\n"),
         list.number
     )
+}
+
+/// Symbols for the agent, a line each: `name (what)  path:line:column
+/// text`. None found in the project (by `WorkspaceSymbols`) by a server
+/// at work says it may know more in a moment.
+fn symbols_text(
+    found: &[(String, String, Location)],
+    feature: LspFeature,
+    busy: Option<&Busy>,
+) -> String {
+    if found.is_empty() {
+        return match busy {
+            Some(Busy { server, work }) if feature == LspFeature::WorkspaceSymbols => format!(
+                "No symbols found, but {server} is busy ({work}): it may know more in a moment"
+            ),
+            _ => "No symbols found".into(),
+        };
+    }
+    found
+        .iter()
+        .take(PLACES_LISTED)
+        .map(|(name, detail, l)| {
+            let path = short_path(&l.path.to_string_lossy());
+            format!(
+                "{name} ({detail})  {path}:{}:{}  {}",
+                l.position.row + 1,
+                l.position.col + 1,
+                l.line.trim()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The most functions a call hierarchy answer lists.
@@ -575,6 +654,37 @@ mod tests {
             "only the project-wide ones wait on indexing"
         );
         assert_eq!(hover_text("<b></b>  "), "No hover information there");
+    }
+
+    #[test]
+    fn symbols_for_the_agent() {
+        use crate::core::Position;
+        let found = vec![(
+            "parse".to_string(),
+            "function".to_string(),
+            Location {
+                path: "/p/a.rs".into(),
+                position: Position::new(2, 3),
+                line: "  fn parse() {}".into(),
+            },
+        )];
+        assert_eq!(
+            symbols_text(&found, LspFeature::DocumentSymbols, None),
+            "parse (function)  /p/a.rs:3:4  fn parse() {}"
+        );
+        let busy = Busy {
+            server: "rust-analyzer".into(),
+            work: "Indexing".into(),
+        };
+        assert!(
+            symbols_text(&[], LspFeature::WorkspaceSymbols, Some(&busy))
+                .ends_with("is busy (Indexing): it may know more in a moment")
+        );
+        assert_eq!(
+            symbols_text(&[], LspFeature::DocumentSymbols, Some(&busy)),
+            "No symbols found",
+            "a file's symbols don't wait on the project's indexing"
+        );
     }
 
     #[test]

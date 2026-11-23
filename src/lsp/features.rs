@@ -23,34 +23,6 @@ use crate::editor::signature::SignatureHelp;
 /// the file-wide ones (organize imports, fix all, remove unused imports).
 const FILE_WIDE_ACTIONS: &str = "source";
 
-/// Recent completion answers' items, by answer, to resolve the one taken.
-#[derive(Default)]
-pub(super) struct Stash {
-    /// Each answer: its number and its items.
-    answers: std::collections::VecDeque<(u64, Vec<Value>)>,
-    next: u64,
-}
-
-impl Stash {
-    /// How many answers are kept: an item can only be taken from one of the
-    /// last few.
-    const KEPT: usize = 4;
-
-    fn keep(&mut self, items: Vec<Value>) -> u64 {
-        self.next += 1;
-        if self.answers.len() == Self::KEPT {
-            self.answers.pop_front();
-        }
-        self.answers.push_back((self.next, items));
-        self.next
-    }
-
-    fn item(&self, (answer, index): (u64, usize)) -> Option<&Value> {
-        let (_, items) = self.answers.iter().find(|(id, _)| *id == answer)?;
-        items.get(index)
-    }
-}
-
 impl Lsp {
     /// Moving a file: asks the file's server for the edits the move
     /// needs (imports), if it has one that wants asking; else answers that
@@ -341,13 +313,10 @@ impl Lsp {
                 continue;
             }
             if request.feature() == LspFeature::ResolveCompletion {
-                let LspQuery::ResolveCompletion { item } = request.query else {
+                let LspQuery::ResolveCompletion { item } = request.query.clone() else {
                     continue;
                 };
-                let item = self.completions.item(item);
-                if let Some(item) = item {
-                    client.resolve_completion(request, item.clone());
-                }
+                client.resolve_completion(request, item);
                 continue;
             }
             let position = convert::to_lsp(document.buffer(), request.position, client.encoding);
@@ -384,7 +353,6 @@ pub(super) fn answer(
     client: &mut Client,
     request: LspRequest,
     result: Result<Value, ResponseError>,
-    completions: &mut Stash,
 ) {
     // Call hierarchy: the function at the place, then the calls to or
     // from it.
@@ -444,183 +412,51 @@ pub(super) fn answer(
         }
         return;
     }
-    if let Some(call) = request.reply.agent() {
-        let text = match result {
-            Ok(result) => match agent_change(editor, client, &request, &result) {
-                Some(Ok((text, changed))) if !changed.is_empty() => {
-                    editor.agent_lsp_changed(call, text, changed);
-                    return;
-                }
-                Some(answer) => answer.map(|(text, _)| text),
-                None => {
-                    let text = agent_answer(editor, &request, &result, client.encoding);
-                    // Nothing about the project, from a server still at
-                    // work: maybe not yet.
-                    let project_wide = matches!(
-                        request.feature(),
-                        LspFeature::References
-                            | LspFeature::WorkspaceSymbols
-                            | LspFeature::Implementation
-                    );
-                    match client.busy_with() {
-                        Some(work) if project_wide && text == NOTHING => Ok(format!(
-                            "{text}, but {} is busy ({work}): it may know more in a moment",
-                            client.name
-                        )),
-                        _ => Ok(text),
-                    }
-                }
-            },
-            Err(error) => Err(format!("{}: {}", client.name, error.message)),
-        };
-        editor.agent_lsp_answer(call, text);
-        return;
-    }
-    let stash = completions;
-    let current = match request.feature() {
-        LspFeature::Completion => editor.still_completing(&request),
-        // Shown if the picker's still open with that query (checked there).
-        LspFeature::WorkspaceSymbols => true,
-        // Kept for its buffer while the text is as it was (checked there).
-        LspFeature::InlayHint => true,
-        // Shown while the text is as it was (wherever the cursor is now:
-        // it's drawn only while on one of them).
-        LspFeature::DocumentHighlight => {
-            editor.document.id() == request.document
-                && editor.document.buffer().edit_seq() == request.edit_seq
-        }
-        // Shown wherever typing has got to since, while it's in the buffer.
-        LspFeature::SignatureHelp => editor.document.id() == request.document,
-        // The item was taken: its import goes in if it's the same buffer.
-        LspFeature::ResolveCompletion => editor.document.id() == request.document,
-        _ => editor.still_at(&request),
-    };
-    if !current {
-        return;
-    }
     let result = match result {
         Ok(result) => result,
-        Err(error) if error.is_stale() => return,
         Err(error) => {
-            editor.lsp_failed(format!("{}: {}", client.name, error.message));
+            editor.lsp_answered(&request, Err(server_error(client, error)));
             return;
         }
     };
-    if request.feature() == LspFeature::Completion {
-        let resolves = client.resolves_completions();
-        let (items, incomplete, raw) = completion_items(editor, &request, &result, client.encoding);
-        // Resolved when taken, for its import: if the server says it
-        // resolves items, or the item has `data` for it to (rust-analyzer
-        // says it doesn't, but resolves those).
-        let needs: Vec<bool> = raw
-            .iter()
-            .map(|item| resolves || item.get("data").is_some())
-            .collect();
-        let answer = stash.keep(raw);
-        let items = items
-            .into_iter()
-            .enumerate()
-            .map(|(i, mut item)| {
-                if needs[i] && item.other_edits.is_empty() {
-                    item.resolve = Some((answer, i));
-                }
-                item
-            })
-            .collect();
-        editor.show_server_completion(&request, items, incomplete);
-        return;
-    }
-    if request.feature() == LspFeature::ResolveCompletion {
-        let buffer = editor.document.buffer();
-        let edits = result["additionalTextEdits"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|e| {
-                let start = convert::from_lsp(buffer, &e["range"]["start"], client.encoding);
-                let end = convert::from_lsp(buffer, &e["range"]["end"], client.encoding);
-                (start, end, e["newText"].as_str().unwrap_or("").to_string())
-            })
-            .collect();
-        editor.make_other_edits(edits);
-        return;
-    }
-    if request.feature() == LspFeature::InlayHint {
-        let Some(document) = editor.document_by_id(request.document) else {
-            return;
-        };
-        let hints = inlay_hints(document.buffer(), &result, client.encoding);
-        editor.set_inlay_hints(&request, hints);
-        return;
-    }
-    if request.feature() == LspFeature::DocumentHighlight {
-        let buffer = editor.document.buffer();
-        let ranges = result
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|h| {
-                (
-                    convert::from_lsp(buffer, &h["range"]["start"], client.encoding),
-                    convert::from_lsp(buffer, &h["range"]["end"], client.encoding),
-                )
-            })
-            .collect();
-        editor.set_references(request.document, request.edit_seq, ranges);
-        return;
-    }
-    if request.feature() == LspFeature::Outline {
-        let symbols = outline(editor, request.document, &result, client.encoding);
-        editor.set_outline(request.document, request.edit_seq, symbols);
-        return;
-    }
-    if matches!(
-        request.feature(),
-        LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols
-    ) {
-        let symbols = symbols(editor, request.document, &result, client.encoding);
-        let query = match &request.query {
-            LspQuery::WorkspaceSymbols { query } => Some(query.as_str()),
-            _ => None,
-        };
-        editor.show_symbols(request.feature(), query, symbols);
-        return;
-    }
-    if request.feature() == LspFeature::SignatureHelp {
-        let help = signature_help(&result);
-        editor.show_signature_help(&request, help);
-    }
-}
-
-/// What `agent_answer` says when the server found nothing.
-const NOTHING: &str = "No symbols found";
-
-/// A server's error answer, as the reason there's no answer.
-fn server_error(client: &Client, error: ResponseError) -> NoAnswer {
-    NoAnswer::ServerError {
-        server: client.name.clone(),
-        stale: error.is_stale(),
-        message: error.message,
-    }
-}
-
-/// A server's answer that changes things, for the coding agent:
-/// formatting, made. `None` for an answer that's only told.
-fn agent_change(
-    editor: &mut Editor,
-    client: &mut Client,
-    request: &LspRequest,
-    result: &Value,
-) -> Option<Result<(String, Vec<crate::editor::DocumentId>), String>> {
-    let before = editor.agent_unsaved();
-    let done = match request.feature() {
-        LspFeature::Format => {
-            let document = editor.document_by_id(request.document)?;
+    let busy = || {
+        client.busy_with().map(|work| Busy {
+            server: client.name.clone(),
+            work,
+        })
+    };
+    let answer = match request.feature() {
+        LspFeature::Completion => {
+            let resolves = client.resolves_completions();
+            let (items, incomplete, raw) =
+                completion_items(editor, &request, &result, client.encoding);
+            // Resolved when taken, for its import: if the server says it
+            // resolves items, or the item has `data` for it to
+            // (rust-analyzer says it doesn't, but resolves those).
+            let items = items
+                .into_iter()
+                .zip(raw)
+                .map(|(mut item, raw)| {
+                    if (resolves || raw.get("data").is_some()) && item.other_edits.is_empty() {
+                        item.resolve = Some(raw);
+                    }
+                    item
+                })
+                .collect();
+            Answer::Completion { items, incomplete }
+        }
+        // A taken item's other edits (its import), in its buffer.
+        LspFeature::ResolveCompletion | LspFeature::Format => {
+            let Some(document) = editor.document_by_id(request.document) else {
+                return;
+            };
             let buffer = document.buffer();
-            if buffer.edit_seq() != request.edit_seq {
-                return Some(Err("The text changed while formatting: try again".into()));
-            }
-            let edits: Vec<_> = result
+            let edits = if request.feature() == LspFeature::Format {
+                &result
+            } else {
+                &result["additionalTextEdits"]
+            };
+            let edits = edits
                 .as_array()
                 .into_iter()
                 .flatten()
@@ -630,23 +466,55 @@ fn agent_change(
                     (start, end, e["newText"].as_str().unwrap_or("").to_string())
                 })
                 .collect();
-            let name = editor.agent_names(&[request.document]);
-            if edits.is_empty() {
-                return Some(Ok((format!("{name} is already formatted"), Vec::new())));
-            }
-            let count = edits.len();
-            editor.edit_document(request.document, edits);
-            let changes = if count == 1 {
-                "1 change".to_string()
-            } else {
-                format!("{count} changes")
-            };
-            format!("Formatted {name} ({changes})")
+            Answer::Edits(Edits {
+                documents: vec![(request.document, edits)],
+                ..Edits::default()
+            })
         }
-        _ => return None,
+        LspFeature::InlayHint => {
+            let Some(document) = editor.document_by_id(request.document) else {
+                return;
+            };
+            Answer::InlayHints(inlay_hints(document.buffer(), &result, client.encoding))
+        }
+        LspFeature::DocumentHighlight => {
+            let Some(document) = editor.document_by_id(request.document) else {
+                return;
+            };
+            let buffer = document.buffer();
+            let ranges = result
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|h| {
+                    (
+                        convert::from_lsp(buffer, &h["range"]["start"], client.encoding),
+                        convert::from_lsp(buffer, &h["range"]["end"], client.encoding),
+                    )
+                })
+                .collect();
+            Answer::Highlights(ranges)
+        }
+        LspFeature::Outline => {
+            Answer::Outline(outline(editor, request.document, &result, client.encoding))
+        }
+        LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols => Answer::Symbols {
+            found: symbols(editor, request.document, &result, client.encoding),
+            busy: busy(),
+        },
+        LspFeature::SignatureHelp => Answer::Signature(signature_help(&result)),
+        _ => return,
     };
-    let (saved, changed) = editor.agent_save_changed(&before);
-    Some(Ok((format!("{done}{saved}"), changed)))
+    editor.lsp_answered(&request, Ok(answer));
+}
+
+/// A server's error answer, as the reason there's no answer.
+fn server_error(client: &Client, error: ResponseError) -> NoAnswer {
+    NoAnswer::ServerError {
+        server: client.name.clone(),
+        stale: error.is_stale(),
+        message: error.message,
+    }
 }
 
 /// A call hierarchy answer: after `prepareCallHierarchy`, asks for the
@@ -746,33 +614,6 @@ fn calls(result: &Value, callers: bool, root: &std::path::Path) -> Calls {
         });
     }
     answer
-}
-
-/// Symbols, for the coding agent, as text: each with where it is.
-fn agent_answer(
-    editor: &Editor,
-    request: &LspRequest,
-    result: &Value,
-    encoding: Encoding,
-) -> String {
-    let found = symbols(editor, request.document, result, encoding);
-    if found.is_empty() {
-        return NOTHING.into();
-    }
-    found
-        .iter()
-        .take(200)
-        .map(|(name, detail, l)| {
-            let path = crate::editor::agent::short_path(&l.path.to_string_lossy());
-            format!(
-                "{name} ({detail})  {path}:{}:{}  {}",
-                l.position.row + 1,
-                l.position.col + 1,
-                l.line.trim()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// The symbols in a `documentSymbol` answer (`DocumentSymbol`s, nested, in

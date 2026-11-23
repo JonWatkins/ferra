@@ -43,8 +43,8 @@ pub struct ServerItem {
     /// in the buffer's chars as it was when they were asked for.
     pub other_edits: Vec<(Position, Position, String)>,
     /// When the server gives the other edits only on asking (resolving):
-    /// which answer and item it was, to ask about once it's taken.
-    pub resolve: Option<(u64, usize)>,
+    /// the item as it sent it, to ask about once it's taken.
+    pub resolve: Option<serde_json::Value>,
 }
 
 /// A server's completion in progress.
@@ -341,7 +341,7 @@ impl Editor {
             return;
         };
         let item = &server.all[server.shown[i]];
-        if let Some(resolve) = item.resolve {
+        if let Some(resolve) = item.resolve.clone() {
             // Its import comes when the server answers.
             let buffer = self.document.buffer();
             self.lsp_requests.push(LspRequest {
