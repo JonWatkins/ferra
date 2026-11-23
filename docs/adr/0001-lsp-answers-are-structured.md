@@ -9,3 +9,7 @@ We chose this over keeping the formatting in `lsp/` behind a reply sink (a small
 - A new agent tool that uses a language server adds a query variant and agent wording, and does not touch the protocol code's presentation.
 - Staleness (an answer arriving after the document changed) is decided by each presenter, not by `lsp/`.
 - Waiting for a server that is still starting is decided by the reply: the agent waits, a key press answers at once.
+- `lsp/` keeps nothing between queries: a code action or a completion item carries the server's own form of itself (which only `lsp/` reads) back in the query that makes or resolves it, and the asker keeps its own lists.
+- A question `lsp/` sends to a server in parts (the agent's code actions at a symbol and for its line) is still one query with one answer.
+- The editor records the files it moves (the agent's moves and the file tree's) and `lsp/` tells the servers, so it never needs to know who moved them.
+- Two exceptions remain: `:format` (and format-on-save) calls into `lsp/` and waits for the answer itself, since saving has to block on it; and edits a server pushes while running a code action's command (`workspace/applyEdit`) are still applied by `lsp/` and only shown on the screen.

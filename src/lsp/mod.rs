@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use crate::editor::diagnostics::{Diagnostic, Severity};
 use crate::editor::lsp::{LspFeature, NoAnswer};
 use crate::editor::{DocumentId, Editor, Message};
-use client::{Answer, Client, ClientId, Incoming};
+use client::{Client, ClientId, Incoming, Response};
 
 pub struct Lsp {
     clients: Vec<Client>,
@@ -65,6 +65,8 @@ pub struct Lsp {
     )>,
     /// The answer to the formatting request being waited for.
     formatted: Option<Result<Value, client::ResponseError>>,
+    /// The formatting request `format` waits for: its server, and its id.
+    formatting: Option<(ClientId, i64)>,
     /// Inlay hints: the buffer and text (edit count) last asked about, and
     /// the text last seen, since when (asked once it's been still a moment).
     hints_asked: Option<(DocumentId, u64)>,
@@ -87,6 +89,7 @@ impl Default for Lsp {
             waiting: Vec::new(),
             raw_diagnostics: HashMap::new(),
             formatted: None,
+            formatting: None,
             resting: None,
             hints_asked: None,
             hints_seen: None,
@@ -395,26 +398,23 @@ impl Lsp {
         let method = message["method"].as_str();
         match (method, message.get("id")) {
             // An answer to one of our requests.
-            (None, Some(request)) => {
-                let Some(request) = request.as_i64() else {
+            (None, Some(response)) => {
+                let Some(response) = response.as_i64() else {
                     return;
                 };
-                match client.handle_response(request, &message) {
-                    Answer::Done => {}
-                    Answer::Failed(error) => {
+                let waited = self.formatting == Some((client.id, response));
+                match client.handle_response(response, &message) {
+                    Response::Done => {}
+                    Response::Failed(error) => {
                         editor.set_message(Message::error(format!("{}: {error}", client.name)));
                     }
-                    Answer::Feature(request, result)
-                        if request.feature() == LspFeature::Format
-                            && request.reply.agent().is_none() =>
-                    {
-                        self.formatted = Some(result);
-                    }
-                    Answer::Feature(request, result) => {
+                    // `format`'s, waited for there.
+                    Response::Feature(_, result) if waited => self.formatted = Some(result),
+                    Response::Feature(request, result) => {
                         features::answer(editor, client, request, result);
                     }
                     // Answered once every part has its answer.
-                    Answer::Part(request, part, result) => {
+                    Response::Part(request, part, result) => {
                         let at = match self.parts.iter().position(|(r, _)| *r == request) {
                             Some(at) => at,
                             None => {

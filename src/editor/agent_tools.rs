@@ -960,9 +960,9 @@ impl Editor {
                 )
             })
             .collect();
-        let before = self.agent_unsaved();
-        self.edit_document(id, edits);
-        let (saved, _) = self.agent_save_changed(&before);
+        let ((), saved, _) = self.agent_change(&[], |e| {
+            e.edit_document(id, edits);
+        });
         let what = if count == 1 {
             "1 replacement".to_string()
         } else {
@@ -1169,7 +1169,7 @@ impl Editor {
 
     /// Each buffer's text (its edit count) and whether it had unsaved
     /// changes, before the agent changes any.
-    pub fn agent_unsaved(&self) -> HashMap<DocumentId, (u64, bool)> {
+    fn agent_unsaved(&self) -> HashMap<DocumentId, (u64, bool)> {
         std::iter::once(&self.document)
             .chain(&self.background)
             .map(|d| (d.id(), (d.buffer().edit_seq(), d.is_modified())))
@@ -1199,7 +1199,7 @@ impl Editor {
     /// After the agent's changes: the files they changed that had no
     /// unsaved changes before are saved (so what the agent runs sees
     /// them); the others are left to the user. Says which, for the agent.
-    pub fn agent_save_changed(
+    fn agent_save_changed(
         &mut self,
         before: &HashMap<DocumentId, (u64, bool)>,
     ) -> (String, Vec<DocumentId>) {

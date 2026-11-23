@@ -281,6 +281,13 @@ impl Reply {
         }
     }
 
+    /// Whether it waits for a server that's still starting, rather than
+    /// being told so at once: the agent's does, as it can't tell when to
+    /// ask again; the user just presses the key again.
+    pub fn waits_for_start(self) -> bool {
+        matches!(self, Reply::Agent(_))
+    }
+
     /// Asked for on purpose (a key, or the agent), so it's told when there
     /// is no answer, rather than left quiet.
     pub fn explicit(self) -> bool {

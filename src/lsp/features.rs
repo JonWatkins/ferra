@@ -76,15 +76,15 @@ impl Lsp {
     }
 
     /// Keeps `request`, asked `since`, to send once its server is ready,
-    /// if its reply waits for that (the agent's: it can't just ask again
-    /// as the user would) and it hasn't waited too long; else hands it back
-    /// to be answered that the server is still starting.
+    /// if its reply waits for that (`Reply::waits_for_start`) and it
+    /// hasn't waited too long; else hands it back to be answered that the
+    /// server is still starting.
     fn wait_for_start(
         &mut self,
         request: LspRequest,
         since: std::time::Instant,
     ) -> Option<LspRequest> {
-        if request.reply.agent().is_some() && since.elapsed() < START_WAIT {
+        if request.reply.waits_for_start() && since.elapsed() < START_WAIT {
             self.waiting.push((request, since));
             return None;
         }
@@ -143,13 +143,17 @@ impl Lsp {
         let id = client.request_format(request, tab_size, spaces);
 
         self.formatted = None;
+        self.formatting = Some((client_id, id));
         let deadline = std::time::Instant::now() + FORMAT_TIMEOUT;
         while self.formatted.is_none() {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             match self.receiver.recv_timeout(left) {
                 Ok(super::Incoming::Message(from, message)) => self.handle(from, message, editor),
                 Ok(super::Incoming::Closed(from)) => self.closed(from, editor),
-                Err(_) => return Err(format!("{name} took too long to format")),
+                Err(_) => {
+                    self.formatting = None;
+                    return Err(format!("{name} took too long to format"));
+                }
             }
             let gone = self
                 .clients
@@ -157,9 +161,11 @@ impl Lsp {
                 .find(|c| c.id == client_id)
                 .is_none_or(|c| !c.waiting_for(id));
             if gone && self.formatted.is_none() {
+                self.formatting = None;
                 return Err(format!("{name} stopped"));
             }
         }
+        self.formatting = None;
         let edits = match self.formatted.take().expect("loop ends with it") {
             Ok(edits) => edits,
             Err(error) => return Err(format!("{name}: {}", error.message)),
@@ -188,8 +194,8 @@ impl Lsp {
     /// open (synced just before, so it has the text the request is about).
     /// Returns whether there were any (which may have set a message).
     pub(super) fn send_requests(&mut self, editor: &mut Editor) -> bool {
-        // The agent's requests waiting for a server to start, again, then
-        // the new ones.
+        // The requests waiting for a server to start, again, then the new
+        // ones.
         let now = std::time::Instant::now();
         let mut requests: Vec<(LspRequest, std::time::Instant)> = std::mem::take(&mut self.waiting);
         requests.extend(editor.take_lsp_requests().into_iter().map(|r| (r, now)));
@@ -246,8 +252,8 @@ impl Lsp {
                 make_action(editor, client, request, &server);
                 continue;
             }
-            // The agent's formatting: answered in `answer` (the app's own
-            // waits for its answer when saving).
+            // Formatting asked as a query (the agent's): answered in
+            // `answer` (`:format` waits for its own, in `format`).
             if request.feature() == LspFeature::Format {
                 let (tab_size, spaces) = editor.format_indent(request.document);
                 client.request_format(request, tab_size, spaces);

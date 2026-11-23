@@ -147,7 +147,7 @@ impl ResponseError {
 }
 
 /// What an answer from the server was for.
-pub enum Answer {
+pub enum Response {
     /// Nothing more to do.
     Done,
     /// `initialize` failed: why.
@@ -649,13 +649,13 @@ impl Client {
     }
 
     /// Handles the answer to one of our requests.
-    pub fn handle_response(&mut self, id: i64, message: &Value) -> Answer {
+    pub fn handle_response(&mut self, id: i64, message: &Value) -> Response {
         match self.pending.remove(&id) {
             Some(Pending::Initialize) => {
                 if let Some(error) = message.get("error") {
                     let text = error["message"].as_str().unwrap_or("initialize failed");
                     self.state = State::Stopped(text.to_string());
-                    return Answer::Failed(text.to_string());
+                    return Response::Failed(text.to_string());
                 }
                 self.capabilities = message["result"]["capabilities"].clone();
                 let capabilities = &message["result"]["capabilities"];
@@ -679,15 +679,17 @@ impl Client {
                     "workspace/didChangeConfiguration",
                     json!({ "settings": settings }),
                 );
-                Answer::Done
+                Response::Done
             }
             Some(Pending::Shutdown) => {
                 self.notify("exit", Value::Null);
-                Answer::Done
+                Response::Done
             }
             Some(Pending::Command) => match message.get("error") {
-                Some(error) => Answer::Failed(error["message"].as_str().unwrap_or("failed").into()),
-                None => Answer::Done,
+                Some(error) => {
+                    Response::Failed(error["message"].as_str().unwrap_or("failed").into())
+                }
+                None => Response::Done,
             },
             // Typing on asks again; an answer with a newer one on its way
             // would only be replaced, so it's not worth reading.
@@ -704,11 +706,11 @@ impl Client {
                                     && r.document == request.document)
                 }) =>
             {
-                Answer::Done
+                Response::Done
             }
-            Some(Pending::Feature(request)) => Answer::Feature(request, response(message)),
-            Some(Pending::Part(request, part)) => Answer::Part(request, part, response(message)),
-            None => Answer::Done,
+            Some(Pending::Feature(request)) => Response::Feature(request, response(message)),
+            Some(Pending::Part(request, part)) => Response::Part(request, part, response(message)),
+            None => Response::Done,
         }
     }
 
