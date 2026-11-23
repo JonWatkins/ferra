@@ -970,6 +970,8 @@ fn a_new_file_named_relatively_gets_a_server_in_this_folder() {
 #[test]
 fn a_new_unsaved_file_gets_its_diagnostics() {
     let (_dir, mut app, _) = with_server("x\n", true);
+    // Started first, so the wait below is only for the diagnostics.
+    ready(&mut app);
     keys(&mut app, ":e not-yet-there.rs<CR>ilet bad = 1;<Esc>");
     until(&mut app, |a| diagnostic_starts(a) == [(0, 4)]);
     keys(&mut app, "0]d");
