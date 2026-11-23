@@ -553,7 +553,7 @@ impl Editor {
 
     /// The `move_file` tool: checks the move can be made, then asks the
     /// file's language server for the edits it needs (imports), through
-    /// `LspFeature::MoveFile`; [`Editor::agent_finish_move`] makes them and
+    /// `LspQuery::MoveFile`; [`Editor::agent_move_document`] makes them and
     /// the move. With language servers off, the move's made now (`Some`).
     pub fn agent_move_file(
         &mut self,
@@ -580,10 +580,7 @@ impl Editor {
         }
         let id = self.agent_buffer(&source)?;
         if !self.options.lsp {
-            let before = self.agent_unsaved();
-            return self
-                .agent_finish_move(id, &target, &before, None, false)
-                .map(Some);
+            return self.agent_move_document(id, &target, None, false).map(Some);
         }
         let buffer = self.document_by_id(id).ok_or("No such buffer")?.buffer();
         self.lsp_requests.push(LspRequest {
@@ -600,24 +597,29 @@ impl Editor {
     }
 
     /// Moves buffer `id`'s file to `to` (its buffer, and any other open in
-    /// it, following), after the language server's edits for it were made
-    /// (`edits`: what they were; `asked`: whether a server was asked); saves
-    /// what the agent changed (as against
-    /// `before`). The answer, and the buffers changed.
-    pub fn agent_finish_move(
+    /// it, following) as an agent change: first the language server's
+    /// `edits` for it, if it had any, (`asked`: whether a server was asked),
+    /// then the files changed saved, then the move. The answer, and the
+    /// buffers changed.
+    pub fn agent_move_document(
         &mut self,
         id: DocumentId,
         to: &Path,
-        before: &HashMap<DocumentId, (u64, bool)>,
-        edits: Option<String>,
+        edits: Option<super::lsp::Edits>,
         asked: bool,
     ) -> Result<(String, Vec<DocumentId>), String> {
         let from = self
             .document_by_id(id)
             .and_then(|d| d.path())
             .map(Path::to_path_buf)
-            .ok_or("The file's buffer is gone")?;
-        let (saved, mut changed) = self.agent_save_changed(before);
+            .ok_or("The file's buffer is gone: nothing was moved")?;
+        let opened = edits.as_ref().map(|e| e.opened.clone()).unwrap_or_default();
+        let (applied, saved, mut changed) =
+            self.agent_change(&opened, |e| edits.map(|edits| e.apply_lsp_edits(edits)));
+        // Others aren't left for :wa: the agent change saved them.
+        let edits = applied
+            .filter(|a| a.changes > 0)
+            .map(|a| super::lsp::Applied { others: 0, ..a }.describe());
         if let Err(error) = self.move_path(&from, to) {
             return Err(match edits {
                 Some(edits) => format!(

@@ -2424,6 +2424,32 @@ fn the_agents_question_waits_for_a_server_still_starting() {
 }
 
 #[test]
+fn moving_a_file_in_the_tree_tells_the_server() {
+    let (dir, mut app, seen) = with_server("fn bad() {}\n", true);
+    ready(&mut app);
+    let helper = dir.path().join("helper.rs");
+    fs::write(&helper, "pub fn help() {}\n").unwrap();
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    app.editor_mut().tree_ask_move(helper, sub).unwrap();
+    app.editor_mut().tree_move().unwrap();
+    until(&mut app, |_| !seen.lock().unwrap().renamed.is_null());
+    let real = fs::canonicalize(dir.path()).unwrap();
+    let renamed = seen.lock().unwrap().renamed.clone();
+    let uri = |p: &std::path::Path| format!("file://{}", p.display());
+    assert_eq!(
+        renamed[0]["oldUri"],
+        uri(&real.join("helper.rs")),
+        "{renamed}"
+    );
+    assert_eq!(
+        renamed[0]["newUri"],
+        uri(&real.join("sub/helper.rs")),
+        "{renamed}"
+    );
+}
+
+#[test]
 fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
     let (dir, mut app, seen) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
     ready(&mut app);

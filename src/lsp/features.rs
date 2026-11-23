@@ -52,12 +52,10 @@ impl Stash {
 }
 
 impl Lsp {
-    /// The agent's `move_file`: asks the file's server for the edits the
-    /// move needs, if it has one that wants asking; else moves it now.
+    /// Moving a file: asks the file's server for the edits the move
+    /// needs (imports), if it has one that wants asking; else answers that
+    /// there's none to ask, for the asker to just move it.
     fn start_move(&mut self, editor: &mut Editor, request: LspRequest, since: std::time::Instant) {
-        let Some(call) = request.reply.agent() else {
-            return;
-        };
         let LspQuery::MoveFile { to } = request.query.clone() else {
             return;
         };
@@ -66,7 +64,8 @@ impl Lsp {
             .and_then(|d| d.path())
             .map(std::path::Path::to_path_buf)
         else {
-            editor.agent_lsp_answer(call, Err("The file's buffer is gone".into()));
+            let why = NoAnswer::Unusable("The file's buffer is gone".into());
+            editor.lsp_answered(&request, Err(why));
             return;
         };
         let language = editor
@@ -81,25 +80,19 @@ impl Lsp {
             }
             return;
         }
-        if let Some(client) = self.clients.iter_mut().find(|c| {
-            c.has_document(request.document) && c.state == State::Ready && c.will_rename()
-        }) {
-            client.request_will_rename(request, &from, &to);
-            return;
-        }
-        // No server to ask: just the move.
-        let before = editor.agent_unsaved();
-        match editor.agent_finish_move(request.document, &to, &before, None, false) {
-            Ok((text, changed)) => {
-                for client in &mut self.clients {
-                    if client.state == State::Ready {
-                        client.did_rename(&from, &to);
-                    }
-                }
-                editor.agent_lsp_changed(call, text, changed);
+        let client = self
+            .clients
+            .iter_mut()
+            .find(|c| c.has_document(request.document) && c.state == State::Ready);
+        let why = match client {
+            Some(client) if client.will_rename() => {
+                client.request_will_rename(request, &from, &to);
+                return;
             }
-            Err(error) => editor.agent_lsp_answer(call, Err(error)),
-        }
+            Some(client) => NoAnswer::Unsupported(client.name.clone()),
+            None => NoAnswer::NoServer,
+        };
+        editor.lsp_answered(&request, Err(why));
     }
 
     /// The name of the server starting for `language`, if one is.
@@ -393,46 +386,6 @@ pub(super) fn answer(
     result: Result<Value, ResponseError>,
     completions: &mut Stash,
 ) {
-    // The agent's move: the server's edits for it, then the move.
-    if request.feature() == LspFeature::MoveFile {
-        let Some(call) = request.reply.agent() else {
-            return;
-        };
-        let LspQuery::MoveFile { to } = request.query.clone() else {
-            return;
-        };
-        let from = editor
-            .document_by_id(request.document)
-            .and_then(|d| d.path())
-            .map(std::path::Path::to_path_buf);
-        let before = editor.agent_unsaved();
-        let edits = match &result {
-            Ok(edit) if !edit.is_null() => {
-                match apply_workspace_edit(editor, edit, client.encoding) {
-                    Ok(Applied { changes: 0, .. }) => None,
-                    Ok(mut applied) => {
-                        applied.others = 0;
-                        Some(applied.describe())
-                    }
-                    Err(error) => {
-                        editor.agent_lsp_answer(call, Err(format!("{error}: nothing was moved")));
-                        return;
-                    }
-                }
-            }
-            _ => None,
-        };
-        match editor.agent_finish_move(request.document, &to, &before, edits, true) {
-            Ok((text, changed)) => {
-                if let Some(from) = from {
-                    client.did_rename(&from, &to);
-                }
-                editor.agent_lsp_changed(call, text, changed);
-            }
-            Err(error) => editor.agent_lsp_answer(call, Err(error)),
-        }
-        return;
-    }
     // Call hierarchy: the function at the place, then the calls to or
     // from it.
     if matches!(request.feature(), LspFeature::Callers | LspFeature::Callees) {
@@ -464,8 +417,10 @@ pub(super) fn answer(
         editor.lsp_answered(&request, answer);
         return;
     }
-    if request.feature() == LspFeature::Rename {
+    // Edits for the asker to make: a rename's, a move's (its imports).
+    if matches!(request.feature(), LspFeature::Rename | LspFeature::MoveFile) {
         let answer = match result {
+            Ok(result) if result.is_null() => Ok(Answer::Edits(Edits::default())),
             Ok(result) => workspace_edits(editor, &result, client.encoding)
                 .map(Answer::Edits)
                 .map_err(NoAnswer::Unusable),

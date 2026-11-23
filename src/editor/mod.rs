@@ -301,6 +301,8 @@ pub struct Editor {
     file_diagnostics: HashMap<std::path::PathBuf, Vec<diagnostics::Diagnostic>>,
     /// The project symbol picker's query when the server was last asked.
     symbol_query: Option<String>,
+    /// Files and folders moved, for the language servers to be told.
+    moved_paths: Vec<(std::path::PathBuf, std::path::PathBuf)>,
     /// The last code actions listed, to make the one picked.
     code_actions: Option<lsp::ActionList>,
     /// How many lists of code actions there have been (the screen's and

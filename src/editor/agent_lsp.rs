@@ -20,6 +20,10 @@ impl Editor {
         request: &LspRequest,
         answer: Result<Answer, NoAnswer>,
     ) {
+        if let LspQuery::MoveFile { to } = &request.query {
+            self.agent_move(call, request.document, to, answer);
+            return;
+        }
         let text = match answer {
             Ok(Answer::Edits(edits)) => {
                 self.agent_lsp_edits(call, request, edits);
@@ -61,6 +65,38 @@ impl Editor {
             Err(why) => Err(no_answer_text(request.feature(), &why)),
         };
         self.agent_lsp_answer(call, text);
+    }
+
+    /// The agent's file move, once its server's had its say: its edits for
+    /// it (an import's path), then the move. With no server to ask (or
+    /// one that doesn't update anything for moves), just the move; one
+    /// that failed to answer is taken as having no edits.
+    fn agent_move(
+        &mut self,
+        call: u64,
+        document: super::DocumentId,
+        to: &Path,
+        answer: Result<Answer, NoAnswer>,
+    ) {
+        let (edits, asked) = match answer {
+            Ok(Answer::Edits(edits)) => (Some(edits), true),
+            Err(NoAnswer::NoServer | NoAnswer::Unsupported(_)) => (None, false),
+            Err(NoAnswer::ServerError { .. }) => (None, true),
+            Err(NoAnswer::Unusable(why)) => {
+                self.agent_lsp_answer(call, Err(format!("{why}: nothing was moved")));
+                return;
+            }
+            Err(why) => {
+                let text = no_answer_text(LspFeature::MoveFile, &why);
+                self.agent_lsp_answer(call, Err(text));
+                return;
+            }
+            Ok(_) => (None, true),
+        };
+        match self.agent_move_document(document, to, edits, asked) {
+            Ok((text, changed)) => self.agent_lsp_changed(call, text, changed),
+            Err(error) => self.agent_lsp_answer(call, Err(error)),
+        }
     }
 
     /// A code action made for the agent: its edits as an agent change.

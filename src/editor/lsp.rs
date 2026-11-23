@@ -1145,6 +1145,8 @@ impl Editor {
                     self.set_message(Message::info(format!("{title}: {}", applied.describe())));
                 }
             }
+            // Only the agent moves files.
+            Answer::Edits(_) if request.feature() != LspFeature::Rename => {}
             Answer::Edits(edits) => {
                 let name = match &request.query {
                     LspQuery::Rename { name } => name.as_str(),

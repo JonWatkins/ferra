@@ -149,6 +149,8 @@ impl Lsp {
     /// loop only redraws then.
     pub fn update(&mut self, editor: &mut Editor) -> bool {
         if !self.enabled || !editor.options.lsp {
+            // No servers to tell of moves.
+            editor.take_moved_paths();
             return false;
         }
         let handled = self.receive(editor);
@@ -159,6 +161,12 @@ impl Lsp {
         self.ask_about_resting_cursor(editor);
         self.ask_for_inlay_hints(editor);
         let asked = self.send_requests(editor);
+        // Files moved (by the agent, or in the tree): the servers are told.
+        for (from, to) in editor.take_moved_paths() {
+            for client in self.clients.iter_mut().filter(|c| c.state == State::Ready) {
+                client.did_rename(&from, &to);
+            }
+        }
         // Which files a ready server has open, and whether it's busy, for
         // the agent's wait for diagnostics after an edit.
         let mut checks = HashMap::new();
