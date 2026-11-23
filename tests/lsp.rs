@@ -2407,6 +2407,12 @@ fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
     // Both ends as the file system has them (the test's folder is under a
     // link on macOS: /var is /private/var), so the server's paths agree.
     let real = fs::canonicalize(dir.path()).unwrap();
+    // The server is told after the move, with nothing to answer: wait
+    // until it has read it.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while seen.lock().unwrap().renamed.is_null() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let renamed = seen.lock().unwrap().renamed.clone();
     let uri = |p: &std::path::Path| format!("file://{}", p.display());
     assert_eq!(
