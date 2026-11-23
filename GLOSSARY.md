@@ -2,6 +2,62 @@
 
 A terminal code editor with a coding agent beside it. These are the words the code and its docs use for ferra's own concepts.
 
+## Editing
+
+**Buffer**:
+An open file (or unsaved text) in the editor, with its own cursor and undo history; one or more windows may show it.
+_Avoid_: document (the code's name for it), file (a buffer may have none yet)
+
+**Window**:
+A view onto a buffer in the editor area, with its own cursor and scroll position, split beside or below others.
+_Avoid_: pane, split, view
+
+**Command**:
+A named action (`delete_line`, `git_commit`) that keys, the `:` line, menus, the palette and plugins all run the same way.
+_Avoid_: action, function
+
+**Keymap**:
+The preset that decides how keys behave: VS Code's (the default, without modes) or Vim's.
+_Avoid_: key bindings (the user's own changes on top of it)
+
+**Picker**:
+A box of items to choose from, filtered by typing: files, buffers, commands, symbols, places.
+_Avoid_: quick open, palette (the picker of commands)
+
+**Popup**:
+A small box over the editor that asks something or lists choices, from the editor or a plugin.
+_Avoid_: dialog, modal
+
+**Sidebar view**:
+One thing the sidebar can show: the file tree, Search, Source Control, or a plugin's list.
+_Avoid_: panel (the bottom area), tab
+
+**Panel**:
+The area along the bottom with Problems, Output, Terminal and Locations tabs.
+_Avoid_: bottom bar, console
+
+**Virtual text**:
+Text drawn in a buffer that isn't in the file: inlay hints, line blame, a plugin's decorations.
+_Avoid_: ghost text, annotation
+
+## Extending
+
+**Plugin**:
+Lua that adds commands, keys, hooks, views or decorations, registered the same way as the editor's own.
+_Avoid_: extension, add-on
+
+**Plugin package**:
+A plugin installed from a git repository, described by its `ferra-plugin.toml` and pinned in `plugins.lock`.
+_Avoid_: package (alone), bundle
+
+**Language pack**:
+A plugin package that adds a language: file types, comment markers, options, a language server, and grammars compiled on install.
+_Avoid_: language plugin, grammar package
+
+**Hook**:
+Commands the config or a plugin runs when an event happens (a file opened, a buffer about to be saved).
+_Avoid_: callback, listener
+
 ## The coding agent
 
 **Agent**:
