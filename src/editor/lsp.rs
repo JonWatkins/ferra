@@ -1134,6 +1134,28 @@ impl Editor {
         applied
     }
 
+    /// Edits a server sends while answering `request` (a code action's
+    /// command's, or the action's own before its command runs): made now,
+    /// as the server waits on them. The screen says so as they come
+    /// (`label`, or the action's title); the agent's are made as one agent
+    /// change, closed with the answer.
+    pub fn lsp_edits_pushed(&mut self, request: &LspRequest, label: Option<&str>, edits: Edits) {
+        if let Reply::Agent(call) = request.reply {
+            self.begin_agent_change(call, &edits.opened);
+            self.apply_lsp_edits(edits);
+            return;
+        }
+        let title = match &request.query {
+            LspQuery::ApplyCodeAction { action } | LspQuery::ResolveCodeAction { action } => {
+                action.title.as_str()
+            }
+            _ => "Changed",
+        };
+        let label = label.unwrap_or(title).to_string();
+        let applied = self.apply_lsp_edits(edits);
+        self.set_message(Message::info(format!("{label}: {}", applied.describe())));
+    }
+
     /// The screen's side of `lsp_answered`: shown if it's still wanted
     /// (the cursor, or the pointer, still where it was asked).
     fn show_lsp_answer(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {

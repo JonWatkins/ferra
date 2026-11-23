@@ -1196,6 +1196,29 @@ impl Editor {
         (done, saved, changed)
     }
 
+    /// Opens an agent change for tool call `call` that spans edits made as
+    /// they come (a code action's command's), unless one's open: the
+    /// snapshot `agent_change` takes, kept until `end_agent_change`.
+    /// `opened`: buffers already opened for the first edits.
+    pub(super) fn begin_agent_change(&mut self, call: u64, opened: &[DocumentId]) {
+        if self.agent.open_changes.contains_key(&call) {
+            return;
+        }
+        let mut before = self.agent_unsaved();
+        for id in opened {
+            before.remove(id);
+        }
+        self.agent.open_changes.insert(call, before);
+    }
+
+    /// Closes call `call`'s open agent change, if it has one: saves what it
+    /// changed as `agent_change` does. The note on what was saved, and the
+    /// documents changed.
+    pub(super) fn end_agent_change(&mut self, call: u64) -> Option<(String, Vec<DocumentId>)> {
+        let before = self.agent.open_changes.remove(&call)?;
+        Some(self.agent_save_changed(&before))
+    }
+
     /// After the agent's changes: the files they changed that had no
     /// unsaved changes before are saved (so what the agent runs sees
     /// them); the others are left to the user. Says which, for the agent.

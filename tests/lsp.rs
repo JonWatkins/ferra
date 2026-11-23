@@ -413,8 +413,9 @@ fn serve(
                 }]}});
                 reply(&mut output, action);
             }
+            // The edit sent while it runs, then the command's answer, as
+            // servers do.
             "workspace/executeCommand" => {
-                reply(&mut output, Value::Null);
                 let uri = params["arguments"][0].clone();
                 write_message(
                     &mut output,
@@ -427,6 +428,7 @@ fn serve(
                         }]}}}}),
                 )
                 .unwrap();
+                reply(&mut output, Value::Null);
             }
             "textDocument/signatureHelp" => {
                 seen.lock().unwrap().signature_context = params["context"].clone();
@@ -2313,6 +2315,55 @@ fn a_server_that_stops_still_answers_the_agent() {
         (Some(1), Some("die"), None, None),
     );
     assert_eq!(said, Err("rust-analyzer stopped before answering".into()));
+}
+
+#[test]
+fn the_agent_hears_of_the_edits_an_actions_command_makes() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("fine\nalso fine\n", true);
+    ready(&mut app);
+    let path = dir.path().join("main.rs");
+    let file = path.to_str().unwrap();
+    app.editor_mut()
+        .agent_ask_lsp(
+            1,
+            LspFeature::CodeAction,
+            Some(file),
+            (Some(2), None, None, None),
+            None,
+        )
+        .unwrap();
+    let listed = agent_answer(&mut app, 1).unwrap();
+    let number: usize = listed
+        .lines()
+        .find(|l| l.contains("Add a note"))
+        .and_then(|l| l.split('.').next())
+        .unwrap()
+        .parse()
+        .unwrap();
+    let list: u64 = listed
+        .split("list ")
+        .nth(1)
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    app.editor_mut()
+        .agent_apply_code_action(2, file, list, number)
+        .unwrap();
+    // The command's server sends the edit as it runs: the agent hears of
+    // it, and it's saved, as the file had no unsaved changes.
+    let made = agent_answer(&mut app, 2).unwrap();
+    assert!(
+        made.starts_with("Made Add a note in ") && made.ends_with("main.rs"),
+        "{made}"
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "// note\nfine\nalso fine\n"
+    );
 }
 
 #[test]

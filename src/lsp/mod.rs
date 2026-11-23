@@ -405,6 +405,14 @@ impl Lsp {
                 let waited = self.formatting == Some((client.id, response));
                 match client.handle_response(response, &message) {
                     Response::Done => {}
+                    // A code action's command, done: its answer.
+                    Response::Command(request, result) => {
+                        let answer = match result {
+                            Ok(_) => Ok(features::made(&request, None)),
+                            Err(error) => Err(features::server_error(client, error)),
+                        };
+                        editor.lsp_answered(&request, answer);
+                    }
                     Response::Failed(error) => {
                         editor.set_message(Message::error(format!("{}: {error}", client.name)));
                     }
@@ -455,23 +463,26 @@ impl Lsp {
                         "uri": convert::path_to_uri(&client.root),
                         "name": client.root.display().to_string(),
                     }]),
-                    // A command it ran (a code action's) wants edits made.
+                    // A command it ran (a code action's) wants edits made:
+                    // made now (it waits on them), for the query that ran it.
                     "workspace/applyEdit" => {
                         let params = &message["params"];
-                        match features::apply_workspace_edit(
-                            editor,
-                            &params["edit"],
-                            client.encoding,
-                        ) {
-                            Ok(applied) => {
-                                let label = params["label"]
-                                    .as_str()
-                                    .or(client.command_title.as_deref())
-                                    .unwrap_or("Changed");
-                                editor.set_message(Message::info(format!(
-                                    "{label}: {}",
-                                    applied.describe()
-                                )));
+                        match features::workspace_edits(editor, &params["edit"], client.encoding) {
+                            Ok(edits) => {
+                                let label = params["label"].as_str();
+                                match &client.running {
+                                    Some(request) => editor.lsp_edits_pushed(request, label, edits),
+                                    None => {
+                                        let label = label
+                                            .or(client.command_title.as_deref())
+                                            .unwrap_or("Changed");
+                                        let applied = editor.apply_lsp_edits(edits);
+                                        editor.set_message(Message::info(format!(
+                                            "{label}: {}",
+                                            applied.describe()
+                                        )));
+                                    }
+                                }
                                 json!({ "applied": true })
                             }
                             Err(error) => json!({ "applied": false, "failureReason": error }),

@@ -77,7 +77,15 @@ impl Editor {
             }
             // Nothing there isn't the call failing: it's the answer.
             Err(NoAnswer::NothingThere) => Ok(nothing_there(request.feature())),
-            Err(why) => Err(no_answer_text(request.feature(), &why)),
+            // A code action's command that failed (or whose server
+            // stopped): what its edits changed so far is saved.
+            Err(why) => match self.end_agent_change(call) {
+                Some((saved, _)) => Err(format!(
+                    "{}{saved}",
+                    no_answer_text(request.feature(), &why)
+                )),
+                None => Err(no_answer_text(request.feature(), &why)),
+            },
         };
         self.agent_lsp_answer(call, text);
     }
@@ -146,14 +154,15 @@ impl Editor {
         }
     }
 
-    /// A code action made for the agent: its edits as an agent change.
+    /// A code action made for the agent: its edits as an agent change
+    /// (with those its command's server sent as it ran, if any).
     fn agent_made_action(&mut self, call: u64, title: &str, edits: Option<Edits>) {
         let opened = edits.as_ref().map(|e| e.opened.clone()).unwrap_or_default();
-        let ((), saved, changed) = self.agent_change(&opened, |e| {
-            if let Some(edits) = edits {
-                e.apply_lsp_edits(edits);
-            }
-        });
+        self.begin_agent_change(call, &opened);
+        if let Some(edits) = edits {
+            self.apply_lsp_edits(edits);
+        }
+        let (saved, changed) = self.end_agent_change(call).unwrap_or_default();
         let text = if changed.is_empty() {
             format!("Made {title}{saved}")
         } else {

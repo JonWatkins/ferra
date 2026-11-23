@@ -13,8 +13,8 @@ use super::{Lsp, State};
 use crate::core::Position;
 use crate::editor::Editor;
 use crate::editor::lsp::{
-    Answer, Applied, Busy, Call, Calls, CodeAction, Edits, Location, LspFeature, LspQuery,
-    LspRequest, NoAnswer, Reply,
+    Answer, Busy, Call, Calls, CodeAction, Edits, Location, LspFeature, LspQuery, LspRequest,
+    NoAnswer, Reply,
 };
 use crate::editor::server_completion::ServerItem;
 use crate::editor::signature::SignatureHelp;
@@ -515,7 +515,7 @@ pub(super) fn answer(
 }
 
 /// A server's error answer, as the reason there's no answer.
-fn server_error(client: &Client, error: ResponseError) -> NoAnswer {
+pub(super) fn server_error(client: &Client, error: ResponseError) -> NoAnswer {
     NoAnswer::ServerError {
         server: client.name.clone(),
         stale: error.is_stale(),
@@ -875,16 +875,17 @@ fn signature_help(result: &Value) -> Option<SignatureHelp> {
     })
 }
 
-/// Makes code action `action` (as the server has it) for `request`: runs
-/// its command, if it has one, and answers with its edits for the asker to
-/// make. One with neither is resolved first, if the server fills them in
-/// then.
+/// Makes code action `action` (as the server has it) for `request`: its
+/// edits, then its command, if it has one. Without a command, the edits are
+/// the answer, for the asker to make; with one, they're made first (the
+/// command expects them), as are those the server sends while it runs,
+/// and the answer comes when it's done. One with neither is resolved
+/// first, if the server fills them in then.
 fn make_action(editor: &mut Editor, client: &mut Client, request: LspRequest, action: &Value) {
-    let title = action["title"].as_str().unwrap_or("Done").to_string();
     // A bare `Command` rather than a `CodeAction`.
     if action["command"].is_string() {
-        client.execute_command(action, &title);
-        editor.lsp_answered(&request, Ok(Answer::Action { title, edits: None }));
+        let title = action["title"].as_str().unwrap_or("Done").to_string();
+        client.execute_command(action, &title, Some(request));
         return;
     }
     let edit = action.get("edit").filter(|e| !e.is_null());
@@ -914,10 +915,27 @@ fn make_action(editor: &mut Editor, client: &mut Client, request: LspRequest, ac
         }
         None => None,
     };
-    if let Some(command) = command {
-        client.execute_command(command, &title);
+    let Some(command) = command else {
+        editor.lsp_answered(&request, Ok(made(&request, edits)));
+        return;
+    };
+    if let Some(edits) = edits {
+        editor.lsp_edits_pushed(&request, None, edits);
     }
-    editor.lsp_answered(&request, Ok(Answer::Action { title, edits }));
+    let title = action["title"].as_str().unwrap_or("Done").to_string();
+    client.execute_command(command, &title, Some(request));
+}
+
+/// The answer for a code action made for `request`: its title (as listed)
+/// and the edits for the asker to make, if any are left to make.
+pub(super) fn made(request: &LspRequest, edits: Option<Edits>) -> Answer {
+    let title = match &request.query {
+        LspQuery::ApplyCodeAction { action } | LspQuery::ResolveCodeAction { action } => {
+            action.title.clone()
+        }
+        _ => "Done".to_string(),
+    };
+    Answer::Action { title, edits }
 }
 
 /// The code actions in an answer, but those the server says can't be done
@@ -994,17 +1012,6 @@ pub(super) fn workspace_edits(
         edits.documents.push((id, converted));
     }
     Ok(edits)
-}
-
-/// Makes a `WorkspaceEdit`'s changes (see `workspace_edits`), each file's
-/// as one undo step.
-pub(super) fn apply_workspace_edit(
-    editor: &mut Editor,
-    edit: &Value,
-    encoding: Encoding,
-) -> Result<Applied, String> {
-    let edits = workspace_edits(editor, edit, encoding)?;
-    Ok(editor.apply_lsp_edits(edits))
 }
 
 /// The items in a completion answer (`CompletionItem[]`, a
@@ -1341,6 +1348,7 @@ fn resolve_places(editor: &Editor, places: &[Value], encoding: Encoding) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::lsp::Applied;
     use serde_json::json;
 
     #[test]
@@ -1498,7 +1506,8 @@ mod tests {
             convert::path_to_uri(&a): [edit(0, 0, 3)],
             convert::path_to_uri(&b): [edit(0, 2, 5), edit(1, 0, 3)],
         }});
-        let applied = apply_workspace_edit(&mut editor, &changes, Encoding::Utf8).unwrap();
+        let edits = workspace_edits(&mut editor, &changes, Encoding::Utf8).unwrap();
+        let applied = editor.apply_lsp_edits(edits);
         assert_eq!(
             applied,
             Applied {
@@ -1517,7 +1526,8 @@ mod tests {
         let with_ops = json!({"documentChanges": [
             {"kind": "rename", "oldUri": "file:///x", "newUri": "file:///y"},
         ]});
-        let applied = apply_workspace_edit(&mut editor, &with_ops, Encoding::Utf8).unwrap();
+        let edits = workspace_edits(&mut editor, &with_ops, Encoding::Utf8).unwrap();
+        let applied = editor.apply_lsp_edits(edits);
         assert_eq!(applied.skipped, 1);
         assert_eq!(
             applied.describe(),

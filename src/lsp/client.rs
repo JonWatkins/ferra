@@ -127,8 +127,9 @@ enum Pending {
     /// One part of a request asked in parts (code actions at the symbol,
     /// 0, and for its line, 1), answered together.
     Part(LspRequest, usize),
-    /// `workspace/executeCommand`: only an error is worth showing.
-    Command,
+    /// `workspace/executeCommand`: for the query that ran it (a code
+    /// action's), if any, answered when it's done.
+    Command(Option<LspRequest>),
 }
 
 /// An error a server answered with.
@@ -156,6 +157,8 @@ pub enum Response {
     Feature(LspRequest, Result<Value, ResponseError>),
     /// The answer to part of one (see `Pending::Part`).
     Part(LspRequest, usize, Result<Value, ResponseError>),
+    /// A command run for a query has finished (or failed).
+    Command(LspRequest, Result<Value, ResponseError>),
 }
 
 /// A response's result, or the error it has instead.
@@ -226,6 +229,9 @@ pub struct Client {
     /// The title of the last command it was asked to run (a code
     /// action's), for the message when it sends edits back.
     pub command_title: Option<String>,
+    /// The query whose command it's running, which the edits it sends
+    /// meanwhile are for.
+    pub running: Option<LspRequest>,
     /// What it's busy with, by progress token, in the order begun: the
     /// title, and the latest message and percentage.
     progress: Vec<(String, String, Option<String>, Option<u64>)>,
@@ -273,6 +279,7 @@ impl Client {
             settings: serde_json::to_value(&config.settings).unwrap_or_else(|_| json!({})),
             capabilities: Value::Null,
             command_title: None,
+            running: None,
             progress: Vec::new(),
         };
         let root_uri = path_to_uri(root);
@@ -532,14 +539,20 @@ impl Client {
     }
 
     /// Has the server run `command` (a `Command`: its name and arguments),
-    /// for the action titled `title`.
-    pub fn execute_command(&mut self, command: &Value, title: &str) {
+    /// for the action titled `title`, made for `request`: the edits it
+    /// sends while it runs are for that, and it's answered once it's done.
+    pub fn execute_command(&mut self, command: &Value, title: &str, request: Option<LspRequest>) {
         self.command_title = Some(title.to_string());
+        self.running.clone_from(&request);
         let params = json!({
             "command": command["command"],
             "arguments": command.get("arguments").cloned().unwrap_or(json!([])),
         });
-        self.request("workspace/executeCommand", params, Pending::Command);
+        self.request(
+            "workspace/executeCommand",
+            params,
+            Pending::Command(request),
+        );
     }
 
     /// Asks for the rest of completion `item` (as the server sent it).
@@ -627,13 +640,22 @@ impl Client {
         let ids: Vec<i64> = self
             .pending
             .iter()
-            .filter(|(_, p)| matches!(p, Pending::Feature(_) | Pending::Part(..)))
+            .filter(|(_, p)| {
+                matches!(
+                    p,
+                    Pending::Feature(_) | Pending::Part(..) | Pending::Command(Some(_))
+                )
+            })
             .map(|(id, _)| *id)
             .collect();
         let mut taken: Vec<(i64, LspRequest)> = ids
             .into_iter()
             .filter_map(|id| match self.pending.remove(&id) {
-                Some(Pending::Feature(request) | Pending::Part(request, _)) => Some((id, request)),
+                Some(
+                    Pending::Feature(request)
+                    | Pending::Part(request, _)
+                    | Pending::Command(Some(request)),
+                ) => Some((id, request)),
                 _ => None,
             })
             .collect();
@@ -685,12 +707,18 @@ impl Client {
                 self.notify("exit", Value::Null);
                 Response::Done
             }
-            Some(Pending::Command) => match message.get("error") {
-                Some(error) => {
-                    Response::Failed(error["message"].as_str().unwrap_or("failed").into())
+            Some(Pending::Command(request)) => {
+                if self.running == request {
+                    self.running = None;
                 }
-                None => Response::Done,
-            },
+                match (request, message.get("error")) {
+                    (Some(request), _) => Response::Command(request, response(message)),
+                    (None, Some(error)) => {
+                        Response::Failed(error["message"].as_str().unwrap_or("failed").into())
+                    }
+                    (None, None) => Response::Done,
+                }
+            }
             // Typing on asks again; an answer with a newer one on its way
             // would only be replaced, so it's not worth reading.
             Some(Pending::Feature(request))
