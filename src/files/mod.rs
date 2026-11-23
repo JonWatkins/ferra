@@ -1,8 +1,9 @@
 //! Reading and writing files on disk.
 //!
-//! This is the only module that touches the filesystem. It deals in raw
-//! bytes; converting them to buffer text (encoding, line endings, final
-//! newline) is [`core::TextFormat`](crate::core::TextFormat)'s job.
+//! Saving a buffer's file goes only through here (see
+//! docs/adr/0004-saving-goes-through-files.md). It deals in raw bytes;
+//! converting them to buffer text (encoding, line endings, final newline)
+//! is [`core::TextFormat`](crate::core::TextFormat)'s job.
 //!
 //! - `files` is the only module that touches the disk. Writes go to a temp file
 //!   in the same directory, are fsynced, then renamed over the target. Existing
