@@ -1,6 +1,30 @@
 //! Status lines. The active window's shows the mode, document name, pending
 //! keys and position; other windows' (with `statusline = "windows"`) show
 //! just their document's name and their cursor's position, dimmed.
+//!
+//! By default there's one status bar along the bottom (`statusline =
+//! "global"`), the full width: the activity bar and sidebar stop above it. With
+//! `statusline = "windows"`, status lines are drawn per window. A window's
+//! status line goes in the row right below it, which is always either the
+//! horizontal separator under it or the screen's status row, so the layout is
+//! the same in both modes: the UI just draws status lines where it would draw
+//! `─` separators. Windows side by side share the bottom row, each drawing in
+//! its own columns. `StatusLine::new` draws the active window's and
+//! `StatusLine::inactive` the others' (name, `[+]`, their own cursor), in
+//! `ui.statusline.inactive`.
+//!
+//! The active status line is built from `[editor.statusline-layout]`: lists of
+//! `StatusElement`s for the left, center and right (Helix's design rather than
+//! Vim's `%`-format strings). Each element renders to one styled span, possibly
+//! empty. A file name gets the width all the other elements leave, shortened
+//! from the left, so everything else always stays visible; the center is
+//! centred between the other two when there's room. The `vscode` style
+//! (`statusline-style`) draws the whole bar in `ui.statusbar` and words some
+//! elements as VS Code does (`StatusLine::vscode_element`: `Ln 12, Col 5`,
+//! `Spaces: 4`, always the encoding, problem counts with icons, the language's
+//! display name), the mode keeping its own colours; `classic` is the terse
+//! wording in `ui.statusline.*`. Integration tests use the classic, per-window
+//! lines (`tests/common`); `tests/status_bar.rs` tests the bar as shipped.
 
 use ratatui::{
     buffer::Buffer,

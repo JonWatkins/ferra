@@ -7,6 +7,15 @@
 //! the panel are turned back into the bytes a terminal sends
 //! (`key_bytes`). The parser answers the few queries programs wait on
 //! (the cursor position, the device attributes) and takes the title.
+//!
+//! `terminal/` runs a shell in a pseudo-terminal (`portable-pty`). A thread
+//! reads its output into a channel; `Terminal::pump`, called by the event loop
+//! (which polls while a shell runs, as it does for language servers), feeds it
+//! to a `vt100` parser, whose screen the panel draws. The parser's callbacks
+//! answer the queries programs wait on (`ESC [ 6 n`, the device attributes) and
+//! take the window title. Keys go back as the bytes a terminal sends
+//! (`terminal::key_bytes`: control characters, xterm's modifier parameters,
+//! application cursor mode); pastes are bracketed when the program asked.
 
 use std::cell::Cell;
 use std::io::{self, Read, Write};

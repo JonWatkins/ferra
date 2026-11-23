@@ -7,6 +7,37 @@
 //! virtual text put in, and a map from the real text's columns to the
 //! display line's. So wrapping, the cursor and highlights see the extra
 //! width, while editing never does.
+//!
+//! A `Document` keeps `VirtualText`: text drawn before a char that isn't in the
+//! file, with a theme scope and a source (`"inlay"`) so a source's pieces are
+//! replaced together. It's moved along with edits as diagnostics are
+//! (`virtual_text_after_insert`/`_delete`); typing where a piece sits pushes it
+//! along, and deleting around it drops it.
+//!
+//! `Document::display_line(row)` gives a line with its virtual text put in
+//! (`None` for the many lines with none, which keep the old path), and maps its
+//! columns: `to_display(col)` is where char `col` is drawn (after the virtual
+//! text before it), `caret_at(col)` the gap before that virtual text (where an
+//! insert-mode cursor goes, and where a range ending at `col` ends), and
+//! `to_real` maps back. Everything that lays lines out uses the display line:
+//! `TextLayout::rows_in` and `follow_cursor` (so scrolling counts the extra
+//! rows), the editor pane (wrapping, the cursor, the virtual text's colours
+//! over everything), `ViewState::position_at` for clicks, and `gj`/`gk`.
+//! Everything that comes in buffer columns (syntax spans, selections, search
+//! matches, diagnostics, references) is mapped as it's drawn; search runs on
+//! the real text, so hints never match.
+//!
+//! Virtual text marked `end_of_line` (git blame) is left out of the display
+//! line and drawn after the line's own text on its last row, after any
+//! diagnostic message, cut off at the window's edge: it takes no room, so
+//! nothing else changes.
+//!
+//! A `Document` also keeps `RangeHighlight`s: ranges drawn in a theme scope,
+//! moved along with edits (text typed inside one stretches it; one whose text
+//! is all deleted goes), drawn after syntax colours and before search matches.
+//! Plugins make both through `ctx:decorate` (`plugins/api.rs`), with the source
+//! `plugin:<group>`, and `ctx:clear_decorations(group)` takes a group's away
+//! together (`Document::clear_decorations`).
 
 use super::Document;
 use crate::core::Position;

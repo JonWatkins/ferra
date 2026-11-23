@@ -9,6 +9,19 @@
 //!
 //! The letters avoid ⌥E, ⌥U, ⌥I, ⌥N and ⌥`, which a Mac's keyboard keeps
 //! for accents: Edit is `d`, Go `o`.
+//!
+//! The menu bar (`editor/menu_bar.rs`, drawn by `ui/menu_bar.rs`) takes the
+//! screen's top row before anything else is laid out. Its menus are data
+//! (`MENUS`: titles, letters, and items naming commands, with arguments after a
+//! space); an open menu is an ordinary popup (named `menu`, at
+//! `PopupPosition::At` under its title, so placed against the whole screen),
+//! whose own keys run `menu_run` (close it, then run the item's command through
+//! the registry), `menu_prev` and `menu_next`. The keys shown beside items come
+//! from the keymap: the app gives the editor a map of them
+//! (`refresh_menu_hints`) whenever the keymap changes. Each menu also has a
+//! command (`menu_file`...) for keys: `<A-f>`, and the characters a Mac's
+//! Option key types (`ƒ`) in normal mode and the sidebar, so ⌥ works without
+//! the terminal sending it as Alt.
 
 use std::collections::HashMap;
 

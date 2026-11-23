@@ -3,6 +3,14 @@
 //! it and gives it focus, starting the shell the first time; with focus,
 //! keys go to the shell except `[keys.terminal]`'s (`<C-\><C-n>` back to
 //! the editor, leaving it open; `<C-`>` hides it, the shell still running).
+//!
+//! The editor owns the `Terminal` (`editor/terminal_panel.rs`) and whether the
+//! panel's open; hiding it keeps the shell. `Mode::Terminal` has focus there.
+//! In it the input layer returns `Outcome::PassThrough` with the keys of any
+//! sequence that isn't bound in `[keys.terminal]` (including a bound prefix
+//! that goes no further, or times out), so only those bindings are kept from
+//! the shell. Without the kitty protocol crossterm reads Ctrl+\ ] ^ _ as Ctrl+4
+//! to 7; `KeyPress::from_event` maps them back.
 
 use std::path::Path;
 

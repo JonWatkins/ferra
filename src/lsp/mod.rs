@@ -12,6 +12,14 @@
 //! messages into a channel, which [`Lsp::update`] drains before each draw,
 //! when it also sends the edits made since. Diagnostics go to the editor
 //! ([`Editor::set_diagnostics`]).
+//!
+//! Inlay hints (`LspQuery::InlayHint`) are asked for the whole buffer once its
+//! text has been still for 300 ms and a ready server has it
+//! (`Lsp::ask_for_inlay_hints`), again after each change and when the server
+//! sends `workspace/inlayHint/refresh` (rust-analyzer does once it's indexed).
+//! The screen keeps an answer only for the text it was asked about
+//! (`Editor::set_inlay_hints`). Labels made of parts are joined, and
+//! `paddingLeft`/`paddingRight` become spaces.
 
 mod client;
 pub mod convert;

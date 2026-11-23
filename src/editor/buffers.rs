@@ -4,6 +4,19 @@
 //! `background`, least recently used first. Switching swaps a background
 //! document into place, so the rest of the editor only ever deals with
 //! "the document".
+//!
+//! `Editor::document` is always the active buffer; the others wait in
+//! `Editor::background`, least recently used first (`editor/buffers.rs`).
+//! Switching swaps a background document into place, so the rest of the editor
+//! only ever deals with "the document". Each `Document` has a `DocumentId`
+//! (shown from 1), its own cursor and its own undo history. The app keeps each
+//! buffer's scroll position (`App::other_views`).
+//!
+//! `Editor::open` switches to an already-open file (comparing canonical paths)
+//! or opens a new buffer. A pristine scratch buffer is replaced rather than
+//! kept, and its number is reused. `:q` and the write-and-quit commands check
+//! every buffer for unsaved changes. `:wa` saves each modified buffer as the
+//! active one, so its before-save hooks run.
 
 use std::path::Path;
 

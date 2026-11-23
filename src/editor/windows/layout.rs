@@ -4,6 +4,24 @@
 //! between windows by direction (`<C-w>h`) without knowing the screen size:
 //! directions only depend on the windows' relative positions, which are the
 //! same in any area.
+//!
+//! `editor/windows/` holds split windows. A `Window` is a view onto a buffer: a
+//! `DocumentId` and its own cursor. `Layout` is a tree of horizontal and
+//! vertical splits, separated by one-cell lines. Each split's children share
+//! its space by weight: equal after a split or close, and set from actual cell
+//! sizes when a window is resized, so sizes are proportions that survive the
+//! terminal changing size. Resizing works in cells, so the UI records the area
+//! it drew the windows in (`Windows::note_area`). `Layout::resize` changes the
+//! innermost split in the right direction that holds the window: growing takes
+//! cells from the windows after it first, then the ones before, and every
+//! window keeps at least one cell.
+//!
+//! Moving windows rearranges the tree. `exchange` (`<C-w>x`) and `rotate`
+//! (`<C-w>r`) reorder the children of the split holding the window, leaving the
+//! sizes where they were; rotating refuses when that split holds another split,
+//! as Vim does. `move_to_edge` (`<C-w>H` and friends) removes the window and
+//! wraps the rest of the tree in a new split with the window on that side, or
+//! joins the root split if it already runs that way.
 
 use super::WindowId;
 

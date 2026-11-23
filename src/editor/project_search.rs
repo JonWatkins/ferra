@@ -23,6 +23,32 @@
 //! (leaving out what `.gitignore` ignores), skips binary and very large
 //! files, and sends what it finds file by file. A newer search makes the
 //! app drop what an older one sends.
+//!
+//! The Search view (`editor/project_search.rs`, drawn by `ui/search.rs`) is a
+//! built-in sidebar view between the files and Source Control (the built-in
+//! views are named, `builtin_view_list`, not counted). Its query field reuses
+//! the find box: its fields and toggles are a `FindState`, typed in
+//! `Mode::Find` with `[keys.find]`, and while it has focus
+//! (`ProjectSearch::typing`) the find box's commands (`find.rs`) edit it
+//! instead and start a search. A search is a `SearchRequest` the app runs on a
+//! thread (`search_files`: `walk_files`, as the file picker lists, then each
+//! file's lines against the `SearchPattern`), sending each file's matches as an
+//! update; a new search sets the old one's cancel flag, and updates from an
+//! older job are dropped. Results are files with their matching lines,
+//! flattened into rows for the list; the sidebar's `sidebar_*` commands drive
+//! the list when the view is shown. Typed characters can start background work
+//! now, so the app starts requests after every key's outcomes, not only after
+//! commands.
+//!
+//! Replacing (`<Tab>` to the replace field, `FindField::Replace`): the results
+//! preview each match's replacement (`search_replacements`, through
+//! `SearchPattern::next_replacement`, so `$1` expands). Replacing a file's
+//! matches (`replace_in_file`) opens its buffer in the background
+//! (`buffer_for_path`, as a rename's edits do) and replaces line by line,
+//! bottom up, as one undo step; one line (`r` on a match) is only replaced if
+//! it still reads as it did when found. Replacing searches again, and a search
+//! reads open, modified buffers' text instead of the files
+//! (`SearchRequest::unsaved`), so the results match what's in ferra.
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};

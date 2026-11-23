@@ -10,6 +10,15 @@
 //!
 //! The selected row is highlighted while the sidebar has focus; the current
 //! file's row is marked always, and unsaved files have a `●`.
+//!
+//! `ui/sidebar.rs` draws it. `ui::draw` takes the sidebar's columns (plus a
+//! `│`) from the left before the windows are laid out, so splits, resizing and
+//! per-window status lines work within what's left. With per-window status
+//! lines the sidebar runs down to the command line; with the global one, the
+//! status line keeps the full width under it. Popups (the picker) are still
+//! centred on the whole screen. The view scrolls (a `Cell` in the explorer) to
+//! keep the selected row in sight, and the terminal cursor sits on that row's
+//! name while the sidebar has focus.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

@@ -6,6 +6,14 @@
 //! ~/Code/ferra $ cargo test
 //!    Compiling ferra v0.1.0
 //! ```
+//!
+//! `ui/terminal.rs` draws the title row and the screen cell by cell (indexed
+//! colours stay the user's palette). `ui::draw` takes the panel's rows from the
+//! bottom of the windows' side, under their status lines. The panel notes the
+//! size it was drawn at, and the app resizes the pty and parser to it after
+//! drawing. Its key hints come from the keymap like the find box's;
+//! `Keymap::hint_keys` ranks keys that need the kitty protocol (`<C-`>`,
+//! `<C-CR>`) after ones every terminal sends.
 
 use ratatui::{
     buffer::Buffer,

@@ -6,6 +6,15 @@
 //! listing, which streams files into the open picker so a large tree never
 //! freezes the editor. Later jobs (language servers, a terminal) can send
 //! their own kinds of update the same way.
+//!
+//! The listing runs in the background. The `file_picker` command opens an empty
+//! picker marked as loading a job number and leaves a `FileListRequest`; the
+//! app (`app/background.rs`) walks the tree on a thread that sends batches of a
+//! few hundred paths through a channel. The event loop polls for them every 30
+//! ms while a job runs (and blocks on input as usual otherwise), and
+//! `Picker::extend` matches only the new items against the query and keeps the
+//! highlighted item. Updates for a job whose picker has gone are dropped, and
+//! closing the picker sets a flag the walker checks, so it stops.
 
 use std::path::PathBuf;
 use std::sync::Arc;

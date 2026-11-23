@@ -3,6 +3,18 @@
 //!
 //! The picker only holds state; the commands in `commands/builtin/picker.rs`
 //! fill it and act on the chosen item, and `ui/picker.rs` draws it.
+//!
+//! `editor/picker/` holds the picker state: items with an action
+//! (`SwitchBuffer`, `OpenFile`, `RunCommand` or `Paste`), the query, and
+//! fuzzy-matched results (`fuzzy.rs`, a small dependency-free matcher that
+//! favours word starts and consecutive runs). `Mode::Picker` has its own
+//! `[keys.picker]` table; unbound printable keys filter the list. The command
+//! palette lists the registry's commands, except ones that drive the prompt or
+//! picker or need a character. `ui/picker.rs` draws the popup over the editor
+//! pane, cutting labels (paths) from the start and descriptions from the end. A
+//! picker built with `keep_label_start` cuts labels at the end instead: the
+//! register picker's labels start with the register name and a one-line preview
+//! of its text, so typing filters by either.
 
 mod fuzzy;
 

@@ -1,4 +1,12 @@
 //! The sidebar's commands: opening it and moving about its file tree.
+//!
+//! The tree has focus in `Mode::Sidebar`, with its own `[keys.sidebar]` table
+//! (counts work, as in normal mode); the `sidebar_*` commands
+//! (`commands/builtin/sidebar.rs`) drive it. Opening a file goes back to normal
+//! mode and through `Editor::open`, named relative to the current folder as the
+//! file picker names them. The `Explorer` is made the first time it's needed
+//! and kept when the sidebar closes, so its open folders are still open next
+//! time.
 
 use crate::commands::CommandRegistry;
 

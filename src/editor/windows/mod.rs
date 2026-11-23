@@ -32,6 +32,40 @@
 //!
 //! `j`/`k` still move by lines, as in Vim, and `<C-d>` and friends scroll by
 //! lines too.
+//!
+//! The scroll position stays in the UI (`ViewState`, per window and buffer),
+//! since it's settled while drawing, when the cursor has to be kept in sight.
+//! After drawing a window the UI records where its view starts
+//! (`Windows::note_top`), and scrolling commands (`commands/builtin/
+//! scrolling.rs`: `<C-d>`, `<C-f>`, `<C-e>`, `zz`, `H`...) read it back through
+//! `Windows::view_top`, which also applies the scroll the next draw will do for
+//! the cursor's current row (`windows::follow_cursor`, shared with the UI's
+//! `Viewport`), so commands run before a redraw (a macro's) agree with it. A
+//! command moves the view by asking for a new first row
+//! (`Windows::request_top`), which the UI applies before drawing that window
+//! next. The window's height comes from the layout (`Windows::height`), so it
+//! works before the first draw too. Like Vim, a scroll that leaves the cursor
+//! inside the `scroll-off` margin moves the cursor out of it, not the view
+//! back. `H`, `M` and `L` are a linewise jump motion (`SCREEN_LINE`) given the
+//! row, so operators take them (`dL`).
+//!
+//! - `Layout::arrange` computes window and separator areas in plain cells, with
+//!   no UI types. Directional moves (`<C-w>h`) use the same geometry on a fixed
+//!   nominal area, since direction only depends on relative positions. Nothing
+//!   is ever placed outside the given area, however small.
+//! - The active window's buffer is always `Editor::document`, so commands are
+//!   unchanged. Focusing another window saves the active window's cursor into
+//!   its `Window`, then swaps the target's buffer in and restores its cursor.
+//!   Two windows on one buffer each keep their own cursor.
+//! - Buffers interact with windows in two places: a buffer shown in another
+//!   window is never dropped when a new file replaces it, and closing a buffer
+//!   points any window showing it at the next buffer.
+//! - The UI (`ui/windows.rs`) draws each window's `EditorView`, with that
+//!   window's cursor and scroll state (kept per window and buffer, in
+//!   `App::views`). The cursor line and selection appear only in the active
+//!   window. The app refreshes syntax highlights for every buffer on screen
+//!   before drawing.
+//! - `:q` closes the window and quits only from the last one; `:qa` quits.
 
 mod layout;
 

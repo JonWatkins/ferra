@@ -27,6 +27,19 @@
 //! ending in a line break reads as linewise, as in Vim. A failed clipboard
 //! write never cancels the yank or delete: the text is still stored, and the
 //! error is reported after the command.
+//!
+//! The read-only registers `"/`, `":` and `"%` live elsewhere in the editor
+//! (the last search, command-line history, the document's path), so
+//! `Editor::read_register` answers them before falling back to `Registers`;
+//! pastes and the register picker go through it.
+//!
+//! `".` holds the text typed in the last insert session. The editor collects it
+//! while in insert mode (typed characters, line breaks, tabs, pastes and
+//! `<C-r>` insertions, with backspaces taking characters back off) and stores
+//! it when insert mode ends, if anything was typed. `<C-r>{register}`
+//! (`insert_register`) takes the register name as its next key, like `f`; in
+//! insert mode it inserts the text exactly, without auto-indent, and on the
+//! `:`/`/` line the first line.
 
 use std::collections::HashMap;
 use std::fmt;
