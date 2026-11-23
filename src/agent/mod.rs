@@ -11,6 +11,7 @@
 pub mod client;
 pub mod diagnostics_wait;
 pub mod mcp;
+pub mod tool_calls;
 pub mod tools;
 
 use std::collections::HashMap;
@@ -23,11 +24,10 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::editor::Editor;
 use crate::editor::agent::{AgentEvent, AgentRequest, AgentStatus};
-use crate::editor::diagnostics::DocDiagnostics;
-use crate::editor::{DocumentId, Editor};
 use client::{AgentClient, Incoming, Streams, permission_ask, update_event};
-use diagnostics_wait::{DiagnosticsWait, Settled};
+use tool_calls::ToolCalls;
 
 /// How to start an agent: `[agents.claude] command = "claude-agent-acp"`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -83,43 +83,9 @@ pub struct Agents {
     /// ferra's tools for it (`tools.rs`), served while it runs.
     #[cfg(unix)]
     mcp: Option<mcp::McpServer>,
-    /// Tool calls waiting for a language server: by call, the connection
-    /// and the request's id.
-    waiting: HashMap<u64, (u64, Value)>,
-    next_call: u64,
-    /// Edits answered once their file's language server has said what's
-    /// wrong in it now (or a moment's passed).
-    after_edits: Vec<AfterEdit>,
-}
-
-/// A change's answer, waiting for what the language servers find wrong in
-/// the files it changed.
-struct AfterEdit {
-    conn: u64,
-    id: Value,
-    text: String,
-    documents: Vec<DocumentId>,
-    wait: DiagnosticsWait,
-}
-
-impl AfterEdit {
-    fn new(conn: u64, id: Value, text: String, documents: &[DocumentId], editor: &Editor) -> Self {
-        let wait = DiagnosticsWait::new(Instant::now(), &diagnostics_state(editor, documents));
-        Self {
-            conn,
-            id,
-            text,
-            documents: documents.to_vec(),
-            wait,
-        }
-    }
-}
-
-fn diagnostics_state(editor: &Editor, documents: &[DocumentId]) -> Vec<DocDiagnostics> {
-    documents
-        .iter()
-        .map(|&d| editor.diagnostics_state(d))
-        .collect()
+    /// Tool calls being answered: each for a connection and its request's
+    /// id.
+    calls: ToolCalls<(u64, Value)>,
 }
 
 impl Default for Agents {
@@ -137,9 +103,7 @@ impl Agents {
             receiver: None,
             #[cfg(unix)]
             mcp: None,
-            waiting: HashMap::new(),
-            next_call: 0,
-            after_edits: Vec::new(),
+            calls: ToolCalls::default(),
         }
     }
 
@@ -185,48 +149,14 @@ impl Agents {
                     if let Some(server) = &self.mcp {
                         server.forget(conn);
                     }
-                    self.waiting.retain(|_, (c, _)| *c != conn);
-                    self.after_edits.retain(|e| e.conn != conn);
+                    self.calls.forget(editor, |(c, _)| *c == conn);
                 }
             }
         }
-        for answer in editor.take_agent_lsp_answers() {
+        for ((conn, id), answer) in self.calls.poll(editor, Instant::now()) {
             changed = true;
-            let Some((conn, id)) = self.waiting.remove(&answer.call) else {
-                continue;
-            };
-            match answer.answer {
-                Ok(text) if !answer.changed.is_empty() => {
-                    let edit = AfterEdit::new(conn, id, text, &answer.changed, editor);
-                    self.after_edits.push(edit);
-                }
-                answer => self.reply(conn, id, tool_result(answer)),
-            }
+            self.reply(conn, id, tool_result(answer));
         }
-        // Changes whose files' servers have had their say (or that waited
-        // long enough).
-        let mut waiting = Vec::new();
-        let now = Instant::now();
-        for mut edit in std::mem::take(&mut self.after_edits) {
-            let state = diagnostics_state(editor, &edit.documents);
-            let text = match edit.wait.poll(now, &state) {
-                Settled::Waiting => {
-                    waiting.push(edit);
-                    continue;
-                }
-                Settled::Reported => {
-                    format!("{}{}", edit.text, editor.agent_problems(&edit.documents))
-                }
-                Settled::Unchecked => edit.text,
-                Settled::StillChecking(server) => format!(
-                    "{}\n{server} is still checking: get_diagnostics will say what's wrong in a moment.",
-                    edit.text
-                ),
-            };
-            changed = true;
-            self.reply(edit.conn, edit.id, tool_result(Ok(text)));
-        }
-        self.after_edits = waiting;
         changed
     }
 
@@ -278,18 +208,13 @@ impl Agents {
             "ping" => self.reply(conn, id, json!({})),
             "tools/list" => self.reply(conn, id, json!({ "tools": tools::list() })),
             "tools/call" => {
-                let call = self.next_call;
-                self.next_call += 1;
                 let name = params["name"].as_str().unwrap_or_default();
-                match tools::call(editor, call, name, &params["arguments"]) {
-                    tools::Called::Done(answer) => self.reply(conn, id, tool_result(answer)),
-                    tools::Called::Waiting => {
-                        self.waiting.insert(call, (conn, id));
-                    }
-                    tools::Called::Changed(text, documents) => {
-                        self.after_edits
-                            .push(AfterEdit::new(conn, id, text, &documents, editor));
-                    }
+                let started = Instant::now();
+                let args = &params["arguments"];
+                if let Some(((conn, id), answer)) =
+                    self.calls.start(editor, started, name, args, (conn, id))
+                {
+                    self.reply(conn, id, tool_result(answer));
                 }
             }
             _ => self.reply_error(conn, id, -32601, "Method not found"),
@@ -438,8 +363,7 @@ impl Agents {
                     client.stop();
                 }
                 self.receiver = None;
-                self.waiting.clear();
-                self.after_edits.clear();
+                self.calls.forget(editor, |_| true);
                 #[cfg(unix)]
                 {
                     self.mcp = None;
