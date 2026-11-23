@@ -1035,6 +1035,11 @@ fn completion_items(
     // Items' edits are nearly all on the word's line: it's read once, not
     // once per item (there can be hundreds).
     let row = request.word_start().row;
+    // Read before it's known whether the answer's still wanted (the
+    // screen's side decides): the line may have gone since.
+    if row >= buffer.line_count() {
+        return (Vec::new(), incomplete, Vec::new());
+    }
     let line = buffer.line(row);
     let start_of = |range: &Value| {
         let start = &range["start"];
@@ -1370,6 +1375,26 @@ mod tests {
             "a choice: the first"
         );
         assert_eq!(expand("cost \\$5"), ("cost $5".into(), None));
+    }
+
+    #[test]
+    fn a_late_completion_for_a_line_gone_since_is_none() {
+        let mut editor = Editor::default();
+        editor.document.insert(Position::new(0, 0), "one line");
+        let request = LspRequest {
+            query: LspQuery::Completion {
+                trigger: None,
+                word_start: Position::new(3, 0),
+            },
+            document: editor.document.id(),
+            position: Position::new(3, 0),
+            buffer_id: 0,
+            edit_seq: 0,
+            reply: Reply::Typing,
+        };
+        let answer = json!([{"label": "x"}]);
+        let (items, _, raw) = completion_items(&editor, &request, &answer, Encoding::Utf8);
+        assert!(items.is_empty() && raw.is_empty());
     }
 
     #[test]
