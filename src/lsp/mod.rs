@@ -20,6 +20,24 @@
 //! The screen keeps an answer only for the text it was asked about
 //! (`Editor::set_inlay_hints`). Labels made of parts are joined, and
 //! `paddingLeft`/`paddingRight` become spaces.
+//!
+//! - `mod.rs`: `Lsp`, owned by `App`. `update`, called before each draw, drains
+//!   the channel (answers, server requests, `publishDiagnostics`, `showMessage`
+//!   errors, servers that closed) and then syncs: each buffer with a file and a
+//!   language that has a server gets a client for its (language, root), started
+//!   if need be, and is opened or changed there; documents no longer open are
+//!   closed. Server requests are answered: `workspace/configuration` with each
+//!   `section` of the settings (`{}` where there's none: the vscode servers
+//!   ignore `null`), `workspace/workspaceFolders` with the root, anything else
+//!   with `null`. The event loop checks every 30 ms while a server runs, but
+//!   only redraws when `update` says something happened (a message handled, a
+//!   request sent, a server's state changed), or after input. On quit,
+//!   `shutdown` then `exit`, waiting up to 300 ms before the processes are
+//!   killed.
+//!
+//! - Highlighting references: `Lsp::update` notes where the cursor is (buffer,
+//!   place, edit count); once it's rested there 150 ms in normal mode it asks
+//!   `LspQuery::DocumentHighlight` (once per place), for a view: quiet.
 
 mod client;
 pub mod convert;

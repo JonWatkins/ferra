@@ -1,5 +1,34 @@
 //! One running language server: its process, the requests waiting for an
 //! answer, and the documents it has open.
+//!
+//! - `client.rs`: one server. `Client::start` spawns it (through a `Spawner`,
+//!   which tests replace with a server in the same process over pipes), starts
+//!   a thread that reads its output into the `Lsp`'s channel, and sends
+//!   `initialize`. Its answer gives the encoding and sync kind; then come
+//!   `initialized` and `workspace/didChangeConfiguration` with the settings
+//!   (pyright waits for that before it checks anything). `change` sends a
+//!   document's edits since its last version: the one edit from the buffer's
+//!   edit log, in place, when there's exactly one and the server counts bytes
+//!   and syncs incrementally; otherwise the whole text. `saved` sends `didSave`
+//!   when the document's save count (`Document::saves`) has moved, after its
+//!   changes; rust-analyzer runs `cargo check` then. Documents are found by the
+//!   URI they were opened as (a new file's path is relative and can't be
+//!   canonicalized), else by path; a document whose path changed (`:saveas`) is
+//!   closed and reopened under the new one.
+//!
+//! - Progress and restarting: ferra says it takes `workDoneProgress`, so
+//!   servers send `$/progress` (begin, report, end, by token; their
+//!   `window/workDoneProgress/create` request is answered like any other). Each
+//!   `Client` keeps the work begun and not ended; the first server busy with
+//!   something gives the status line's `lsp-progress` element its text
+//!   (`rust-analyzer: Indexing 45%`, else the title and message) and `:lsp` its
+//!   "running (…)". `:lsp-restart [name]` (the command line takes a name with
+//!   `-`s when it's a command's, so `:s-a-b-` is still `:s`) leaves a request
+//!   on the editor that `Lsp::update` takes before syncing: the servers it
+//!   names (the buffer's, by command or language, or `all`) are sent `shutdown`
+//!   and dropped (which ends their processes), their diagnostics cleared, and
+//!   which commands weren't found or failed is forgotten; the sync after starts
+//!   what the open files need.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};

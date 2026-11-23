@@ -3,6 +3,19 @@
 //! out. The server is asked when a character it names is typed (`(`, `,`),
 //! and again on each change while it's showing, so the parameter follows
 //! the cursor; it goes when the server has none, or insert mode ends.
+//!
+//! - Signature help (`editor/signature.rs`, drawn by `ui/signature.rs`): after
+//!   each key that changes the text in insert mode, `LspQuery::SignatureHelp`
+//!   is asked with the character before the cursor; `Lsp` sends it if that's
+//!   one of the server's trigger or retrigger characters (`(`, `,`), or on any
+//!   change while a signature is showing (`isRetrigger`), so the active
+//!   parameter follows the cursor. An answer with a newer request waiting isn't
+//!   read, as for completion. The active signature's label is shown with its
+//!   active parameter (by substring, or UTF-16 offsets) in `ui.popup.match`,
+//!   and the first paragraph of its documentation (code blocks left out)
+//!   wrapped to at most four rows. No signature in the answer closes it; so
+//!   does leaving insert mode. It goes above the line, so the completion menu
+//!   can be below, or below when there's no room.
 
 use super::lsp::{LspQuery, LspRequest, Reply};
 use super::{Editor, Message, Mode};

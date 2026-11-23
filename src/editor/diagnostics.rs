@@ -1,5 +1,34 @@
 //! Diagnostics: errors and warnings a language server reports for a
 //! buffer, shown in the text and stepped through with `]d`/`[d`.
+//!
+//! Diagnostics live on their `Document` (set through `editor/diagnostics.rs`),
+//! sorted, with positions converted to chars. `EditorView` draws them: an
+//! underline in `diagnostic.<severity>` (with the underline colour), the line
+//! number in `ui.diagnostic.<severity>` and the message after the line's text,
+//! both on the line it starts on (one over a whole file, like rust-analyzer's
+//! "not included in the module tree", would otherwise repeat on every line);
+//! empty lines inside a range aren't underlined.
+//!
+//! Between an edit and the server's next list, diagnostics move with the text,
+//! as marks do: each `Document` keeps its own (`Editor::diagnostics` and
+//! `set_diagnostics` reach them by id), and its `insert` and `delete` shift
+//! those after the change (a start moves with text put in right at it, an end
+//! doesn't, so typing after a word doesn't stretch its underline; text deleted
+//! from under one shrinks it). Undo and redo report the changes they make
+//! (`History::undo_noting`), so diagnostics follow them too. A list the server
+//! says is for an older version than ferra last sent (`publishDiagnostics`'
+//! `version`) is left out: it would put back places the edits moved diagnostics
+//! from, and a newer one follows.
+//!
+//! - Diagnostics pickers: `<Space>d` lists the buffer's diagnostics, `<Space>D`
+//!   every buffer's and those for files that aren't open: a
+//!   `publishDiagnostics` for a file with no buffer is placed by the file's
+//!   text read from disk and kept on the editor by path
+//!   (`set_file_diagnostics`), and opening the file gives its buffer those
+//!   until the server reports again. Errors come first, then by file and place;
+//!   the label is `path:line:col  message` (the path relative to the current
+//!   folder if it's in it), which a narrow picker shortens from the start.
+//!   Built by the editor alone: no request.
 
 use std::path::{Path, PathBuf};
 

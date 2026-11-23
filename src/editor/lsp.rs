@@ -1,7 +1,58 @@
-//! What the editor asks of language servers (hover, go to definition,
-//! references) and shows from their answers. The editor only queues the
-//! requests; the app's `Lsp` sends them and hands back the answers, so this
-//! layer knows nothing of servers or JSON.
+//! What the editor asks of language servers, and the screen's side of
+//! their answers.
+//!
+//! The editor only queues `LspRequest`s: `request_lsp` for a question that
+//! needs only the cursor's place (`K`, `gd`, `gr`), `ask_lsp` for an
+//! `LspQuery` with arguments (`:rename name`, a selection's code actions,
+//! a project symbol search). The app's `Lsp` sends them and hands each
+//! answer to [`Editor::lsp_answered`], which passes the agent's to its own
+//! side (`editor/agent_lsp.rs`) and shows the rest (`show_lsp_answer`),
+//! so this layer knows nothing of servers or JSON (see
+//! docs/adr/0001-lsp-answers-are-structured.md).
+//!
+//! `show_lsp_answer` first decides whether an answer is still wanted, by
+//! feature: the cursor still where it was asked, the text unchanged, the
+//! word still being completed, the pointer still resting. Then it shows
+//! it: a hover popup, a jump or a picker, a message, a completion menu.
+//! Why there's no answer is said only for a `Key` reply; the pointer,
+//! typing and views stay quiet, and a stale-answer error
+//! (`ContentModified`, cancelled) is never said.
+//!
+//! - Go to: answers become `Location`s with char columns, converted with
+//!   each line's text (from the buffer if the file is open, else read from
+//!   disk once per file). One is gone to as a jump (`goto_location`, which
+//!   opens the file by its path relative to the current folder when it's
+//!   under it); several open a picker whose items are `PickerAction::GoTo`.
+//! - Rename: `:rename name` asks `LspQuery::Rename`; `<F2>` opens the
+//!   command line with `rename <word>` in it. The answer's `Edits` are made
+//!   by `apply_lsp_edits`: each file's in its buffer, through
+//!   `edit_document`, which makes them one undo step of their own in any
+//!   buffer (`Document::apply_edits`, the same as formatting's); files that
+//!   weren't open were opened in the background (no jump, not shown, left
+//!   modified). The message counts changes and files, and the other files
+//!   left unsaved.
+//! - Code actions: `<Space>a` asks for the cursor, or a visual selection's
+//!   range. The answer's actions are kept as the screen's `ActionList`
+//!   (numbered, with the document and edit count they're for) and listed in
+//!   a picker whose items are `PickerAction::CodeAction(list, index)`.
+//!   Choosing one checks the text hasn't changed since, then asks
+//!   `ApplyCodeAction` with it; its edits are made as they come, with the
+//!   action's title (or the server's label) in the message.
+//! - Highlighting references: the answer is kept with the edit count it's
+//!   for (`set_references`), and `references_shown` gives the view the
+//!   ranges only while the text is unchanged, in normal mode, with the
+//!   cursor on one of them, so moving off or editing hides them at once.
+//!   Drawn under search matches and the selection, in
+//!   `ui.highlight.reference`.
+//! - Symbols: `<Space>s` asks for the document's symbols, nested
+//!   `DocumentSymbol`s (flattened, each child's detail naming its parent:
+//!   "method in Circle") or flat `SymbolInformation`s (their
+//!   `containerName`); `<Space>S` opens an empty picker marked
+//!   `searched_by_server` and asks `workspace/symbol` for its query, and
+//!   `search_symbols_after_key` asks again whenever the query changes, the
+//!   answer replacing the picker's items if the query's still the same
+//!   (older answers with a newer request waiting aren't read). Places are
+//!   found as for go to definition, and the items are `PickerAction::GoTo`.
 
 use std::path::{Path, PathBuf};
 

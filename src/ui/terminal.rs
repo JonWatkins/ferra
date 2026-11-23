@@ -12,7 +12,7 @@
 //! bottom of the windows' side, under their status lines. The panel notes the
 //! size it was drawn at, and the app resizes the pty and parser to it after
 //! drawing. Its key hints come from the keymap like the find box's;
-//! `Keymap::hint_keys` ranks keys that need the kitty protocol (`<C-`>`,
+//! `Keymap::hint_keys` ranks keys that need the kitty protocol (``<C-`>``,
 //! `<C-CR>`) after ones every terminal sends.
 
 use ratatui::{

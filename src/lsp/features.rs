@@ -1,6 +1,61 @@
-//! The editor's requests (hover, go to definition, references): sending
-//! them to the server that has the document open, and turning the answers
-//! into a hover popup, a jump or a picker.
+//! Asking language servers LSP queries, and turning what they send back
+//! into answers.
+//!
+//! The editor queues `LspRequest`s (an `LspQuery`, the document and place,
+//! and who asked: its `Reply`). `Lsp::update` takes them after syncing, so
+//! the server has the text they're about, and [`Lsp::send_requests`] sends
+//! each to the server with that document open, if it said it can answer
+//! (`hoverProvider`, `definitionProvider`...). Every query gets exactly one
+//! answer, handed to `Editor::lsp_answered`: a typed `Answer` (places,
+//! hover text, edits, code actions, completions...) or the `NoAnswer`
+//! reason there's none (no server, still starting, not offered, stopped,
+//! an error, nothing there, unusable). This module never looks at who
+//! asked (docs/adr/0001-lsp-answers-are-structured.md): the screen's side
+//! (`editor/lsp.rs`) and the agent's (`editor/agent_lsp.rs`) present
+//! answers in their own way, and each decides whether a late one is still
+//! wanted, so parsing here must cope with text that's changed since.
+//!
+//! - Waiting for a server that's still starting is the reply's to say
+//!   (`Reply::waits_for_start`: the agent's wait, up to 30 s).
+//! - Edits come back in the editor's terms ([`workspace_edits`]: each
+//!   file's changes, opening files that aren't open in the background to
+//!   read their columns; creating, renaming and deleting files left out and
+//!   counted), for the asker to make: a rename's, a move's, a code action's.
+//! - Code actions: the agent's ask at a symbol (`with_line`) goes to the
+//!   server in two parts, at the symbol and for its whole line with every
+//!   problem on it, and is answered once with the lists merged
+//!   ([`merge_actions`]). `Lsp` sends back each document's diagnostics as
+//!   the server sent them (`raw_diagnostics`) on the range's lines, which
+//!   most quick fixes need. Each action carries the server's own form,
+//!   which the asker sends back in `ApplyCodeAction` to make it: a bare
+//!   `Command` is run (`workspace/executeCommand`), a `CodeAction` has its
+//!   edit made and then its command run, and one with neither is resolved
+//!   first (`codeAction/resolve`). While a command runs, the edits the
+//!   server sends (`workspace/applyEdit`) are for the query that ran it
+//!   (`Editor::lsp_edits_pushed`), and the command's end is its answer.
+//! - Completion items carry their server form too, to be resolved when
+//!   one's taken (`completionItem/resolve`): nothing is kept here between
+//!   queries.
+//! - Callers and callees take two requests (`prepareCallHierarchy`, then
+//!   the calls to or from what it found), as one query.
+//! - Moving a file asks `workspace/willRenameFiles` for the edits it needs
+//!   (imports); the asker makes them and the move, the editor records the
+//!   move, and `Lsp::update` tells the servers (`didRenameFiles`).
+//! - Formatting for `:format` and format-on-save is the exception:
+//!   [`Lsp::format`] waits for its own answer, since `:wq` has to save the
+//!   formatted text. The editor can't see the `Lsp` (it's in the app), so
+//!   it holds a `Formatter` (`editor/lsp.rs`) that the app fills with an
+//!   `LspFormatter`, sharing the `Lsp` through an `Rc<RefCell>` (only ever
+//!   borrowed by a command or the draw, never both). `Lsp::format` syncs
+//!   the buffer, sends `textDocument/formatting` with `tab-width` and
+//!   `expand-tab`, and handles everything servers send until its answer
+//!   comes (known by its request id) or 2 seconds pass. The edits go
+//!   through `Editor::apply_text_edits`: last first, the cursor moved along
+//!   by those before it and kept at its place in one that replaces its
+//!   text; in a command they're one undo step. `format-on-save` is a buffer
+//!   option (so it can be set per language); a built-in `BeforeSave` hook
+//!   runs `format(quiet)` before the config's hooks, and a failure doesn't
+//!   stop the save, only adds to its message (`note_for_save`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
