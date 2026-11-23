@@ -166,7 +166,37 @@ impl Reply {
 /// An LSP query's answer. Features move over to it one at a time; until
 /// then their answers go straight from `lsp/` to the screen or the agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Answer {}
+pub enum Answer {
+    /// The functions that call the one asked about (`Callers`), or that
+    /// it calls (`Callees`).
+    Calls(Calls),
+}
+
+/// A call hierarchy's functions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Calls {
+    /// Those in the project, as the server listed them.
+    pub ours: Vec<Call>,
+    /// The names of those outside it (the standard library, dependencies),
+    /// once each.
+    pub outside: Vec<String>,
+}
+
+/// A function in a call hierarchy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Call {
+    pub name: String,
+    /// What it is: "function", "method"...
+    pub kind: &'static str,
+    /// What the server adds (often its signature).
+    pub detail: Option<String>,
+    pub path: PathBuf,
+    /// Where it's named, from 1.
+    pub line: usize,
+    /// The lines the calls are on, from 1: in the caller's file for
+    /// callers, in the function asked about for callees.
+    pub at: Vec<usize>,
+}
 
 /// Why an LSP query has no answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +209,10 @@ pub enum NoAnswer {
     Unsupported(String),
     /// Its server (by name) stopped before answering.
     Stopped(String),
+    /// Its server (by name) answered with an error.
+    ServerError(String, String),
+    /// Nothing at the place asked about to answer for.
+    NothingThere,
 }
 
 /// A place a server pointed to: a file, and a row and char column in it.
@@ -791,13 +825,19 @@ impl Editor {
     /// The screen's side of `lsp_answered`.
     fn show_lsp_answer(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
         let why = match answer {
-            Ok(answer) => match answer {},
+            // Only the agent asks for calls.
+            Ok(Answer::Calls(_)) => return,
             Err(why) => why,
         };
         if request.reply != Reply::Key {
             return;
         }
         let text = match why {
+            NoAnswer::ServerError(name, message) => {
+                self.set_message(Message::error(format!("{name}: {message}")));
+                return;
+            }
+            NoAnswer::NothingThere => format!("No {} here", request.feature.noun()),
             NoAnswer::NoServer => "No language server for this buffer (see :lsp)".to_string(),
             NoAnswer::Starting(name) => format!("{name} is still starting"),
             NoAnswer::Unsupported(name) => {

@@ -12,7 +12,7 @@ use super::convert::{self, Encoding};
 use super::{Lsp, State};
 use crate::core::Position;
 use crate::editor::DocumentId;
-use crate::editor::lsp::{Location, LspFeature, LspRequest, NoAnswer, Reply};
+use crate::editor::lsp::{Answer, Call, Calls, Location, LspFeature, LspRequest, NoAnswer, Reply};
 use crate::editor::server_completion::ServerItem;
 use crate::editor::signature::SignatureHelp;
 use crate::editor::{Editor, Message};
@@ -879,24 +879,18 @@ fn agent_actions_list(
 const CALLS_STEP: &str = "calls";
 
 /// A call hierarchy answer: after `prepareCallHierarchy`, asks for the
-/// calls to or from the function found; after that, says what they are.
+/// calls to or from the function found; after that, answers with them.
 fn calls_answer(
     editor: &mut Editor,
     client: &mut Client,
     request: LspRequest,
     result: Result<Value, ResponseError>,
 ) {
-    let tell = |editor: &mut Editor, answer: Result<String, String>| match request.reply.agent() {
-        Some(call) => editor.agent_lsp_answer(call, answer),
-        None => editor.set_message(match answer {
-            Ok(text) => Message::info(text),
-            Err(text) => Message::error(text),
-        }),
-    };
     let result = match result {
         Ok(result) => result,
         Err(error) => {
-            tell(editor, Err(format!("{}: {}", client.name, error.message)));
+            let why = NoAnswer::ServerError(client.name.clone(), error.message);
+            editor.lsp_answered(&request, Err(why));
             return;
         }
     };
@@ -912,101 +906,21 @@ fn calls_answer(
                     item,
                 );
             }
-            None => tell(
-                editor,
-                Ok("Nothing there to find calls of (put it on a function or method's name)".into()),
-            ),
+            None => editor.lsp_answered(&request, Err(NoAnswer::NothingThere)),
         }
         return;
     }
-    tell(
-        editor,
-        Ok(calls_text(&result, request.feature, &client.root)),
-    );
+    let callers = request.feature == LspFeature::Callers;
+    let calls = calls(&result, callers, &client.root);
+    editor.lsp_answered(&request, Ok(Answer::Calls(calls)));
 }
 
-/// The most functions a call hierarchy answer lists.
-const CALLS_LISTED: usize = 50;
-/// The most of a function's detail (its signature) shown.
-const DETAIL_CHARS: usize = 60;
-
-/// A function in a call hierarchy answer: its path as shown, line, name,
-/// kind and detail, where it's called, and its file.
-type Named = (
-    String,
-    usize,
-    String,
-    String,
-    String,
-    Option<std::path::PathBuf>,
-);
-
-/// What the function on `line` (from 1) of `file` is in: the nearest line
-/// above it, less indented, that opens an `impl`, `trait`, `class` or
-/// `interface` (`impl Clipboard for TerminalClipboard`).
-fn container_of(file: &std::path::Path, line: usize) -> Option<String> {
-    let text = std::fs::read_to_string(file).ok()?;
-    let lines: Vec<&str> = text.lines().collect();
-    let own = lines.get(line.checked_sub(1)?)?;
-    let indent = |l: &str| l.len() - l.trim_start().len();
-    let depth = indent(own);
-    let opens = |l: &str| {
-        let word = l
-            .split_whitespace()
-            .find(|w| {
-                !matches!(
-                    *w,
-                    "pub" | "pub(crate)" | "export" | "default" | "abstract" | "unsafe"
-                )
-            })
-            .unwrap_or("");
-        let word = word.split('<').next().unwrap_or("");
-        matches!(word, "impl" | "trait" | "class" | "interface")
-    };
-    // The nearest line that's less indented is what it's in: a container,
-    // or something else (a function, an object literal), then none.
-    let outer = lines[..line - 1]
-        .iter()
-        .rev()
-        .find(|l| !l.trim().is_empty() && indent(l) < depth)?;
-    opens(outer.trim()).then(|| {
-        let l = outer
-            .trim()
-            .trim_end_matches('{')
-            .trim_end_matches(':')
-            .trim_end();
-        short(l.strip_prefix("pub ").unwrap_or(l))
-    })
-}
-
-/// `text` on one line (a wrapped signature's line breaks and indents as
-/// single spaces), cut to `DETAIL_CHARS` with `…`.
-fn short(text: &str) -> String {
-    let one = text
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .replace("( ", "(")
-        .replace(" )", ")")
-        .replace(",)", ")");
-    if one.chars().count() <= DETAIL_CHARS {
-        return one;
-    }
-    let cut: String = one.chars().take(DETAIL_CHARS - 1).collect();
-    format!("{}…", cut.trim_end())
-}
-
-/// The calls in an `incomingCalls` / `outgoingCalls` answer, a function
-/// each: `name (kind, detail)  path:line`, and the lines the calls are on.
-/// The project's own first; those outside it (the standard library, other
-/// crates) named on one line; enum members (`Ok`, `Err`) aren't calls.
-fn calls_text(result: &Value, feature: LspFeature, root: &std::path::Path) -> String {
-    let callers = feature == LspFeature::Callers;
-    let mut ours: Vec<(String, usize, String)> = Vec::new();
-    // Each in the project: path, line, name, kind and detail, where it's
-    // called, and its file.
-    let mut named: Vec<Named> = Vec::new();
-    let mut outside: Vec<String> = Vec::new();
+/// The functions in an `incomingCalls` / `outgoingCalls` answer: those in
+/// the project (under the server's `root`) and the names of those outside
+/// it (the standard library, other crates). Enum members (`Ok`, `Err`)
+/// aren't calls.
+fn calls(result: &Value, callers: bool, root: &std::path::Path) -> Calls {
+    let mut answer = Calls::default();
     for call in result.as_array().into_iter().flatten() {
         let item = if callers { &call["from"] } else { &call["to"] };
         let name = item["name"].as_str().unwrap_or("?");
@@ -1014,141 +928,47 @@ fn calls_text(result: &Value, feature: LspFeature, root: &std::path::Path) -> St
         if kind == "enum member" {
             continue;
         }
-        let full = item["uri"].as_str().and_then(convert::uri_to_path);
-        let path = full
-            .as_ref()
-            .map(|p| crate::editor::agent::short_path(&p.to_string_lossy()))
-            .unwrap_or_default();
-        // The project: the server's folder (where it found Cargo.toml...).
-        let in_project = full.as_ref().is_some_and(|p| {
+        let path = item["uri"].as_str().and_then(convert::uri_to_path);
+        let in_project = path.as_ref().is_some_and(|p| {
             p.starts_with(root)
                 || std::fs::canonicalize(p)
                     .ok()
                     .zip(std::fs::canonicalize(root).ok())
                     .is_some_and(|(p, root)| p.starts_with(root))
         });
-        if !in_project {
-            if !outside.iter().any(|n| n == name) {
-                outside.push(name.to_string());
+        let (Some(path), true) = (path, in_project) else {
+            if !answer.outside.iter().any(|n| n == name) {
+                answer.outside.push(name.to_string());
             }
             continue;
-        }
+        };
         let line = item["selectionRange"]["start"]["line"]
             .as_u64()
             .unwrap_or(0) as usize
             + 1;
-        let mut at: Vec<u64> = call["fromRanges"]
+        let mut at: Vec<usize> = call["fromRanges"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|r| r["start"]["line"].as_u64().map(|l| l + 1))
+            .filter_map(|r| r["start"]["line"].as_u64().map(|l| l as usize + 1))
             .collect();
         at.sort_unstable();
         at.dedup();
-        let at: Vec<String> = at.iter().map(u64::to_string).collect();
-        // A caller's calls are in its own file; the callees are called
-        // from the function asked about.
-        let place = match (callers, at.len()) {
-            (_, 0) => String::new(),
-            (true, 1) => format!(" (calls it on line {})", at[0]),
-            (true, _) => format!(" (calls it on lines {})", at.join(", ")),
-            (false, 1) => format!(" (called on line {})", at[0]),
-            (false, _) => format!(" (called on lines {})", at.join(", ")),
-        };
-        // The server's detail (often the signature), cut short.
-        let what = match item["detail"]
+        let detail = item["detail"]
             .as_str()
             .map(str::trim)
             .filter(|d| !d.is_empty())
-        {
-            Some(detail) => format!("{kind}, {}", short(detail)),
-            None => kind.to_string(),
-        };
-        named.push((path, line, name.to_string(), what, place, full));
+            .map(str::to_string);
+        answer.ours.push(Call {
+            name: name.to_string(),
+            kind,
+            detail,
+            path,
+            line,
+            at,
+        });
     }
-    // Same-named ones: what each is in (`impl Clipboard for X`), found in
-    // its file, tells them apart.
-    for (path, line, name, what, place, full) in &named {
-        let twins = named.iter().filter(|n| n.2 == *name).count() > 1;
-        let within = twins
-            .then(|| full.as_deref().and_then(|f| container_of(f, *line)))
-            .flatten()
-            .map(|c| format!(" in {c}"))
-            .unwrap_or_default();
-        ours.push((
-            path.clone(),
-            *line,
-            format!("{name} ({what}){within}  {path}:{line}{place}"),
-        ));
-    }
-    if ours.is_empty() && outside.is_empty() {
-        return if callers {
-            "No callers found".into()
-        } else {
-            "It calls nothing the server knows of".into()
-        };
-    }
-    ours.sort();
-    let count = ours.len();
-    let head = match (callers, count) {
-        (true, 1) => "1 function calls it:".to_string(),
-        (true, n) => format!("{n} functions call it:"),
-        (false, 0) => "It calls nothing in the project".to_string(),
-        (false, 1) => "It calls 1 function in the project:".to_string(),
-        (false, n) => format!("It calls {n} functions in the project:"),
-    };
-    let mut lines = vec![head];
-    let files_left: std::collections::BTreeSet<&str> = ours
-        .iter()
-        .skip(CALLS_LISTED)
-        .map(|(path, ..)| path.as_str())
-        .collect();
-    lines.extend(
-        ours.iter()
-            .take(CALLS_LISTED)
-            .map(|(_, _, text)| text.clone()),
-    );
-    if count > CALLS_LISTED {
-        let files = files_left.len();
-        let per_file: Vec<String> = files_left
-            .iter()
-            .take(15)
-            .map(|file| {
-                let n = ours
-                    .iter()
-                    .skip(CALLS_LISTED)
-                    .filter(|(path, ..)| path == file)
-                    .count();
-                format!("{file} ({n})")
-            })
-            .collect();
-        let more_files = if files > 15 {
-            format!(", … {} more files", files - 15)
-        } else {
-            String::new()
-        };
-        lines.push(format!(
-            "… and {} more in {files} file{}: {}{more_files}",
-            count - CALLS_LISTED,
-            if files == 1 { "" } else { "s" },
-            per_file.join(", ")
-        ));
-    }
-    if !outside.is_empty() {
-        let shown: Vec<&str> = outside.iter().take(20).map(String::as_str).collect();
-        let more = outside.len().saturating_sub(20);
-        lines.push(format!(
-            "And {} outside the project (the standard library, dependencies): {}{}",
-            outside.len(),
-            shown.join(", "),
-            if more > 0 {
-                format!(", … {more} more")
-            } else {
-                String::new()
-            }
-        ));
-    }
-    lines.join("\n")
+    answer
 }
 
 /// A server's answer for the coding agent, as text: places as
@@ -2098,92 +1918,35 @@ mod tests {
     }
 
     #[test]
-    fn many_callers_are_cut_with_how_many_more() {
-        let root = std::path::Path::new("/p");
-        let calls: Vec<Value> = (0..60)
-            .map(|n| {
-                let file = if n < 55 { "a" } else { "b" };
-                let range = json!({"start": {"line": n, "character": 0}, "end": {"line": n, "character": 1}});
-                json!({"from": {"name": format!("f{n:02}"), "kind": 12,
-                                "uri": format!("file:///p/{file}.rs"),
-                                "range": range, "selectionRange": range},
-                       "fromRanges": [range]})
-            })
-            .collect();
-        let text = calls_text(&Value::Array(calls), LspFeature::Callers, root);
-        let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines[0], "60 functions call it:");
-        assert_eq!(lines.len(), 1 + CALLS_LISTED + 1);
-        assert_eq!(
-            lines.last().unwrap(),
-            &"… and 10 more in 2 files: /p/a.rs (5), /p/b.rs (5)"
-        );
-    }
-
-    #[test]
-    fn same_named_functions_say_what_they_are_in() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("c.rs");
-        std::fs::write(
-            &file,
-            "pub trait Clipboard {\n    fn get(&mut self) -> String;\n}\n\n\
-             impl Clipboard for TerminalClipboard {\n    fn get(&mut self) -> String {\n        \
-             String::new()\n    }\n}\n\nfn alone() {}\n",
-        )
-        .unwrap();
-        assert_eq!(container_of(&file, 2).as_deref(), Some("trait Clipboard"));
-        assert_eq!(
-            container_of(&file, 6).as_deref(),
-            Some("impl Clipboard for TerminalClipboard")
-        );
-        assert_eq!(container_of(&file, 11), None, "at the top");
-        // In something that isn't a container (a function, an object): none.
-        let ts = dir.path().join("a.ts");
-        std::fs::write(
-            &ts,
-            "export class Cat {\n  speak() {}\n}\nexport const obj = {\n  speak() {},\n};\n",
-        )
-        .unwrap();
-        assert_eq!(container_of(&ts, 2).as_deref(), Some("export class Cat"));
-        assert_eq!(container_of(&ts, 5), None, "obj isn't a class");
-        // A wrapped signature, on one line.
-        assert_eq!(
-            short("fn go(\n    a: u8,\n    b: u8,\n) -> u32\nwhere\n    Self: Sized,"),
-            "fn go(a: u8, b: u8) -> u32 where Self: Sized,"
-        );
-
-        let uri = convert::path_to_uri(&file);
-        let item = |name: &str, line: u64, detail: &str| {
-            let range = json!({"start": {"line": line, "character": 7}, "end": {"line": line, "character": 10}});
-            json!({"to": {"name": name, "kind": 12, "uri": uri, "detail": detail,
-                          "range": range, "selectionRange": range},
-                   "fromRanges": [range]})
+    fn calls_in_the_project_and_outside_it() {
+        let range = |line: u64| json!({"start": {"line": line, "character": 4}, "end": {"line": line, "character": 7}});
+        let item = |name: &str, kind: u64, uri: &str, detail: &str| {
+            json!({"from": {"name": name, "kind": kind, "uri": uri, "detail": detail,
+                            "range": range(3), "selectionRange": range(3)},
+                   "fromRanges": [range(9), range(5), range(9)]})
         };
-        let long = "fn alone(with: a, very: long, list: of, parameters: that, goes: on) -> X";
-        let text = calls_text(
+        let answer = calls(
             &json!([
-                item("get", 1, "fn get(&mut self) -> String"),
-                item("get", 5, "fn get(&mut self) -> String"),
-                item("alone", 10, long)
+                item("go", 12, "file:///p/a.rs", "  fn go()  "),
+                item("Ok", 22, "file:///p/a.rs", ""),
+                item("push", 6, "file:///rust/vec.rs", ""),
+                item("push", 6, "file:///rust/vec.rs", ""),
             ]),
-            LspFeature::Callees,
-            dir.path(),
+            true,
+            std::path::Path::new("/p"),
         );
-        assert!(
-            text.contains("get (function, fn get(&mut self) -> String) in trait Clipboard  "),
-            "{text}"
+        assert_eq!(
+            answer.ours,
+            [Call {
+                name: "go".into(),
+                kind: "function",
+                detail: Some("fn go()".into()),
+                path: PathBuf::from("/p/a.rs"),
+                line: 4,
+                at: vec![6, 10],
+            }]
         );
-        assert!(
-            text.contains(") in impl Clipboard for TerminalClipboard  "),
-            "{text}"
-        );
-        // Only twins get it; a long detail is cut, not dropped.
-        assert!(
-            text.contains(
-                "alone (function, fn alone(with: a, very: long, list: of, parameters: that, g…)  "
-            ),
-            "{text}"
-        );
+        assert_eq!(answer.outside, ["push"], "once each; Ok isn't a call");
     }
 
     #[test]
