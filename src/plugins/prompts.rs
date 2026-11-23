@@ -16,6 +16,17 @@
 //!   on_cancel = "rename_cancelled", -- optional
 //! })
 //! ```
+//!
+//! `ctx:pick` and `ctx:input` (`plugins/prompts.rs`) follow popups: the table
+//! is checked as it's read, and the answer goes to a command by name. A pick is
+//! an ordinary `Picker` whose items carry `PickerAction::RunWith(command,
+//! [value])`, so filtering, drawing and keys are the built-in picker's. An
+//! input is an `InputBox` (`editor/input_box.rs`: a title, a `TextField` from
+//! the find box, a placeholder, and the commands to run), with focus in
+//! `Mode::Input` and its own `[keys.input]`; leaving that mode any way closes
+//! it. `input_submit` takes the box and runs `on_submit` with the text as its
+//! argument. `ui/input_box.rs` draws it at the top centre of the windows, its
+//! key hints from the keymap like the find box's.
 
 use mlua::{Table, Value};
 

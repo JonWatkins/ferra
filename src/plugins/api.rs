@@ -36,6 +36,14 @@
 //! Edits go through the document like built-in commands, so they're undoable
 //! and repeatable with `.`. Raising a Lua error makes the command fail with
 //! that message.
+//!
+//! A callback runs inside `Lua::scope` (`plugins/api.rs`). The `ctx` methods
+//! are scoped functions that borrow the command's `Context` through a
+//! `RefCell`, so Lua can reach the editor only for the duration of the call: a
+//! `ctx` saved and used later gives a Lua error, not undefined behaviour.
+//! `ctx:run` executes any command, including other plugin commands, re-entering
+//! Lua safely. Lua errors become the command's error (first line, without the
+//! traceback).
 
 use std::cell::RefCell;
 

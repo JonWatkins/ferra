@@ -17,6 +17,53 @@
 //!
 //! Everything here is plain file and git work with no editor state, so the
 //! clone can run on a thread.
+//!
+//! Installed plugins are git clones with a `ferra-plugin.toml` manifest
+//! (`plugins/packages.rs`, which does only file and git work, so it can run on
+//! a thread). `PluginPaths` names the config folder (`plugins.toml`, what was
+//! asked for; `plugins.lock`, the commit of each) and the data folder holding
+//! one clone per plugin name. `main` gives the standard paths to the app; tests
+//! give temporary folders.
+//!
+//! Every job is a `PackageJob` (install, check for updates, update, restore)
+//! the editor hands over as a `PackageRequest`, one at a time, and the app gets
+//! a `PackageDone` back. `:plugin_update` is two jobs with a popup between:
+//! `check_updates` fetches and lists `HEAD..@{upstream}` (skipping tag clones,
+//! whose HEAD is detached, and branches that can't fast-forward); on `y`,
+//! `apply_update` runs `merge --ff-only` and checks the plugin again, resetting
+//! to the old commit if it no longer loads. `:plugin_install` with no source
+//! restores what `plugins.toml` lists but isn't cloned: clone, then `reset
+//! --hard` to the locked commit (so the branch, and later updates, stay).
+//!
+//! A plugin can be a folder of a repository (`owner/repo//plugins/zig`,
+//! `Source::path`, kept in `plugins.toml` as `path`): the official plugins
+//! share the directory's repository. It's cloned blobless and sparse
+//! (`--filter=blob:none --sparse`, then `sparse-checkout set`), so only that
+//! folder's files are fetched; `PluginPaths::dir` stays the clone, for git, and
+//! `PluginPaths::root`/`Source::root` is the plugin's folder, for its manifest,
+//! Lua and grammars. `check_updates` lists only the commits that touch the
+//! folder (none: up to date). Index entries without a `repo` are folders of the
+//! directory's own repository (`IndexEntry::source`), so a fork of the
+//! directory works as it is.
+//!
+//! `:plugin_browse` is a `Browse` job: `fetch_index` keeps a shallow clone of
+//! the `plugin-index` source in the data folder (`.index`, which can't be a
+//! plugin's name), fetching and resetting it each time and cloning afresh if
+//! the option points somewhere new; if the fetch fails, the last copy is read
+//! and the picker says so. The index's entries become picker items whose action
+//! is `plugin_install <repo>`, so choosing goes through the same confirm popup.
+//!
+//! A manifest's `[languages.<name>]` tables are `config::FileType`s.
+//! `App::load_package` adds them with `Languages::add`, which refuses a name
+//! from ferra's default config, lays the pack's settings under the user's
+//! config where that already has the language (field by field: the config wins,
+//! so `[languages.rust] options = ...` in config.toml just works), and checks
+//! per-language options as the config does. That happens before the plugin's
+//! Lua runs, and options are refreshed after; since a buffer's language is
+//! detected when asked (`Editor::language_of`) and the language servers are
+//! matched to open buffers on every update, open files take the new language at
+//! once. `main` is optional: a pack with languages needs no Lua. The app keeps
+//! the config's languages and puts them back on reload.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};

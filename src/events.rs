@@ -9,6 +9,25 @@
 //! - **After** events (`Opened`, `AfterSave`, `ModeChanged`,
 //!   `BufferChanged`) are queued with [`Editor::emit`](crate::editor::Editor::emit)
 //!   and dispatched by the app once the current key has been handled.
+//!
+//! `events::Event` lists what hooks can observe: `Opened`, `BeforeSave`,
+//! `AfterSave`, `ModeChanged` and `BufferChanged`. Hooks are registered on the
+//! `CommandRegistry` with `on(kind, source, handler)`, next to commands, so the
+//! registry stays the single extension point. A hook gets the same `Context` as
+//! a command.
+//!
+//! There are two delivery styles:
+//!
+//! - **Before** events fire synchronously from the command doing the work
+//!   (`write` fires `BeforeSave` with `CommandRegistry::fire`). A hook can edit
+//!   the document first, or return an error to cancel.
+//! - **After** events are queued with `Editor::emit`, because the editor has no
+//!   access to the registry. The app dispatches them once each key has been
+//!   handled (`App::dispatch_events`). That's also when it emits
+//!   `BufferChanged` if the key edited the text. Hooks can queue further
+//!   events, so dispatch repeats, but stops after 8 rounds with an error so two
+//!   hooks can't trigger each other forever. A hook's own edits form a separate
+//!   undo step.
 
 use std::path::PathBuf;
 

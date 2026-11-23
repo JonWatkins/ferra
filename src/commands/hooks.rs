@@ -4,6 +4,10 @@
 //! registry stays the single extension point plugins use. A hook gets the
 //! same [`Context`] as a command, so it can edit the document or run other
 //! commands.
+//!
+//! `[hooks]` in config maps an event to a list of commands
+//! (`CommandRegistry::on_run_commands`), and unknown command names are reported
+//! at startup, like the keymap.
 
 use std::collections::HashMap;
 

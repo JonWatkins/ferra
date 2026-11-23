@@ -19,6 +19,27 @@
 //!   on_close = "todos_closed",      -- run when q / <Esc> closes it
 //! })
 //! ```
+//!
+//! `ctx:popup{...}` (`plugins/popup.rs`) reads a Lua table into an
+//! `editor::popup::Popup`: styled lines (spans with a theme scope), title,
+//! footer, position, size, whether it's a list, whether it takes focus, its own
+//! keys and an `on_close` command. Everything is checked as it's read (key
+//! notation, that each command exists), so a mistake is the plugin's error
+//! rather than a popup that half works. The popup's keys name commands rather
+//! than holding Lua functions, so they go through the registry like any key:
+//! undo, hooks, errors and `ctx` work with no special cases, and the editor
+//! holds no Lua state.
+//!
+//! A popup with focus is `Mode::Popup`. When one opens, the app makes a copy of
+//! the keymap with the popup's keys bound in that mode (`App::popup_keymap`)
+//! and uses it while the mode lasts; `[keys.popup]` has the moving and closing
+//! commands (`commands/builtin/popup.rs`). `popup_close` runs the popup's
+//! `on_close` through `cx.registry`; `ctx:popup_close()` from the plugin
+//! doesn't, so a plugin closing its own popup can't loop. A popup without focus
+//! is dropped after the next key that didn't open it, like the hover.
+//! `ui/popup.rs` sizes it to its lines (within the windows' area), places it
+//! centred, by the cursor or at the top right of the active window, scrolls it
+//! to keep the selection in view, and shows where it's at in the bottom border.
 
 use mlua::{Table, Value};
 

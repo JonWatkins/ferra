@@ -24,6 +24,53 @@
 //! already loaded. Building happens when a plugin is installed, updated or
 //! restored (on a thread); loading builds first if the library is missing
 //! (a C compiler installed since, say).
+//!
+//! Grammars (`plugins/grammars.rs`): `syntax::LANGUAGES` stays the built-ins,
+//! and `syntax::register` appends plugins' languages to a process-wide
+//! registry; positions never change (so `SyntaxEngine` keeps indexing its
+//! compiled queries by position, growing the cache as the registry grows), and
+//! a name registered again (an update) resolves to the newest. A
+//! `LanguageDef`'s grammar is `Grammar::BuiltIn(fn)` or
+//! `Grammar::Loaded(LanguageFn)` (`Copy`, so the built-in table stays a
+//! `const`); kept trees compare definitions by address, so an updated grammar
+//! never edits a tree from the old one. Installing, updating and restoring
+//! compile each `[grammars.<lang>]` on the job's thread with `cc` into
+//! `.ferra-build/<lang>-<commit>.<dylib|so>` (excluded in the clone's
+//! `.git/info/exclude`): a new commit is a new path, since a process can't load
+//! a second library from a path it already has. Loading builds if the file's
+//! missing, opens it with `libloading` and never closes it (trees and queries
+//! point into it), checks the ABI version, compiles the queries before
+//! registering, and remembers what it registered by library and query text, so
+//! `:plugin_reload` reuses it.
+//!
+//! A grammar can come from its own repository (`git` + `rev`, as Helix's do):
+//! `grammars::grammar_root` fetches that commit into
+//! `.ferra-build/src/<lang>-<rev>` (a shallow fetch of the commit, else a full
+//! clone), so a pack is only settings and queries. Each query file is the
+//! pack's own, else the grammar repository's; either way it's read through
+//! `syntax::compat::adapt`, which turns `#lua-match?` into `#match?` (Lua
+//! patterns to regexes) and Neovim's indent captures into `@indent` and
+//! `@outdent`, while `highlight::recognise` maps older capture names
+//! (`ALIASES`). Indentation while typing leans on `ERROR` nodes:
+//! `indent::loose_brackets` keeps a stack of openers in each (the built-in
+//! brackets, and the language's `@open` tokens), closed by its `@outdent`
+//! tokens or by a clause the parser did make that begins with one (Lua's
+//! `else_statement`); a closed one becomes an indent node up to its closer,
+//! with a made-up id the closer outdents against. A token that's both (`else`,
+//! `when`) closes the open block and opens the next, which takes the id of the
+//! clause the parser made, if it made one, so tokens inside the clause (Ruby's
+//! `else` within `elsif`) close the same node. A plugin language's re-indenting
+//! words are the quoted words of its rules (`indent::keywords`).
+//!
+//! A grammar that can't be built for want of a compiler says so in a way
+//! `grammars::needs_compiler` recognises (the program not found, or macOS's
+//! `cc` stub answering `xcrun: error`); wherever grammar errors arrive (the
+//! plugins loading, an install, update or restore), `App::offer_compiler_for`
+//! has the editor offer, once a session, the install command
+//! `grammars::compiler_install` picks for the system (by `/etc/os-release` on
+//! Linux), typed into the terminal panel on `y`. Since plugins load before the
+//! startup files open, `App::open_all` gives a popup that takes keys its focus
+//! back (`Editor::refocus_popup`).
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};

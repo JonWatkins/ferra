@@ -18,6 +18,42 @@
 //! the command registry and keymap, the same ones built-in commands use. A
 //! callback gets a `ctx` object (see `api.rs`) that's only valid during the
 //! call, so a plugin can never hold on to the editor.
+//!
+//! `plugins/` embeds Lua 5.4 through `mlua`, with Lua bundled so users need
+//! nothing installed. `PluginHost` owns the Lua state and sets up the global
+//! `editor` table. While a file loads, `editor.command`, `editor.on` and
+//! `editor.map` only record registrations, keeping each Lua function in the Lua
+//! registry. `PluginHost::install` then adds them to the same `CommandRegistry`
+//! and `Keymap` the built-ins use. Each plugin command or hook is an ordinary
+//! Rust closure holding the Lua state and the function's registry key, so
+//! plugin commands get the palette, `:` execution, key binding, undo, `.` and
+//! hooks with no special cases.
+//!
+//! `editor.status(name, fn)` registers a status line function for a
+//! `plugin:<name>` element (`StatusElement::Plugin`, parsed from config
+//! strings, so the names are checked: one no plugin registers is reported after
+//! loading). The status line is drawn with only `&Editor`, so before each draw
+//! `App::refresh_plugin_statuses` calls the functions in the layout, with an
+//! ordinary `ctx`, and stores their text on the editor
+//! (`Editor::set_plugin_status`); an error is shown once until it changes, and
+//! the element is left empty. `ctx:option`/`ctx:set_option` go through
+//! `Editor::option_value`/`Editor::set_option`, which use the same TOML-table
+//! checks as `:set` (and `:setlocal` with `"local"`), converting Lua values to
+//! TOML and back (tables are lists when keyed 1, 2, 3...).
+//!
+//! Loading order: `init.lua`, then `plugins/*.lua` by name, so later files can
+//! override earlier commands and bindings. Errors are collected per file; a
+//! broken file doesn't stop the rest. `main` loads plugins before opening the
+//! startup files, so `opened` hooks see them.
+//!
+//! `:plugin_reload` doesn't unregister piece by piece: `App::reload_plugins`
+//! drops the `PluginHost` (so `require`'s cache goes too), rebuilds the
+//! registry from the built-ins and the config's hooks (`base_commands`), copies
+//! the config's keymap back, forgets plugin status texts and sidebar views
+//! (showing the same view again if it comes back), and runs `load_plugins`
+//! again. Updating, restoring and `:plugin_remove` reload the same way, so
+//! removed or replaced code stops running at once. Commands added from Rust
+//! with `commands_mut` (tests) don't survive a reload.
 
 mod api;
 pub mod grammars;
