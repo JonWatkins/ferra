@@ -72,6 +72,10 @@ _Avoid_: command (that word is for the editor's named commands), MCP tool
 A change the agent makes to the user's files through the editor, after which the files that were saved before it are saved again and those with the user's unsaved work are left unsaved.
 _Avoid_: agent edit, agent write
 
+**Settled**:
+The language servers have had their say about the files an agent change touched: they've reported since and gone quiet, or said nothing new for long enough, or the wait for them ran out. The change's answer to the agent waits for this, so it can say what's wrong in those files now.
+_Avoid_: done, finished (the servers may still report more later)
+
 ## Language servers
 
 **LSP query**:

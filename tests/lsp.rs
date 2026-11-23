@@ -2667,9 +2667,12 @@ fn after_the_agents_edit_its_new_problems_are_told() {
     let path = dir.path().join("main.rs");
     let id = doc(&app);
     // The report on the file as it opened, first.
-    until(&mut app, |a| a.editor().diagnostics_version(id) > 0);
-    let version = app.editor().diagnostics_version(id);
-    assert!(app.editor().lsp_check(id).is_some(), "a server has it open");
+    until(&mut app, |a| a.editor().diagnostics_state(id).version > 0);
+    let version = app.editor().diagnostics_state(id).version;
+    assert!(
+        app.editor().diagnostics_state(id).server.is_some(),
+        "a server has it open"
+    );
     let (done, edited) = app
         .editor_mut()
         .agent_edit_buffer(
@@ -2679,7 +2682,9 @@ fn after_the_agents_edit_its_new_problems_are_told() {
         .unwrap();
     assert_eq!(edited, [id]);
     assert!(done.ends_with("1 replacement"), "{done}");
-    until(&mut app, |a| a.editor().diagnostics_version(id) > version);
+    until(&mut app, |a| {
+        a.editor().diagnostics_state(id).version > version
+    });
     let problems = app.editor().agent_problems(&[id]);
     assert!(
         problems.contains("1:1  error: bad word (fake)"),

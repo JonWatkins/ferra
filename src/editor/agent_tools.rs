@@ -1114,12 +1114,6 @@ impl Editor {
         out
     }
 
-    /// How many times buffer `id`'s diagnostics have been set (they're
-    /// waited for after the agent's edit).
-    pub fn diagnostics_version(&self, id: DocumentId) -> u64 {
-        self.diagnostics_versions.get(&id).map_or(0, |v| v.0)
-    }
-
     /// What a language server's formatting is told about buffer `id`'s
     /// indentation (`tabSize`, `insertSpaces`): its own (chosen or as the
     /// file has it), else its settings'.
@@ -1138,33 +1132,10 @@ impl Editor {
         }
     }
 
-    /// Whether buffer `id`'s language has a language server set up (one
-    /// may be about to open it).
-    pub fn has_language_server(&self, id: DocumentId) -> bool {
-        self.options.lsp
-            && self
-                .document_by_id(id)
-                .and_then(|d| self.language_of(d))
-                .is_some_and(|language| self.languages.server(language).is_some())
-    }
-
-    /// When buffer `id`'s diagnostics were last set.
-    pub fn diagnostics_set_at(&self, id: DocumentId) -> Option<std::time::Instant> {
-        self.diagnostics_versions.get(&id).map(|v| v.1)
-    }
-
     /// The language servers' state, from the app: the ready server each
     /// buffer's open in, and what it's busy with.
     pub fn set_lsp_checks(&mut self, checks: HashMap<DocumentId, (String, Option<String>)>) {
         self.lsp_checks = checks;
-    }
-
-    /// The ready language server buffer `id` is open in (it reports its
-    /// problems), and what it's busy with, if anything.
-    pub fn lsp_check(&self, id: DocumentId) -> Option<(&str, Option<&str>)> {
-        self.lsp_checks
-            .get(&id)
-            .map(|(name, busy)| (name.as_str(), busy.as_deref()))
     }
 
     /// Each buffer's text (its edit count) and whether it had unsaved
