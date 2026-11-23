@@ -19,11 +19,11 @@ use std::thread;
 
 use serde_json::{Value, json};
 
+use crate::editor::agent::{AgentCommand, Usage, config_options};
 use crate::editor::agent::{
     AgentEvent, AgentStatus, PermissionAsk, PermissionOption, PlanStep, ToolCall, ToolDiff,
     ToolStatus,
 };
-use crate::editor::agent_session::{AgentCommand, Usage, config_options};
 
 /// The protocol version ferra speaks.
 pub const PROTOCOL_VERSION: u64 = 1;

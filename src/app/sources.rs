@@ -98,7 +98,7 @@ pub static SOURCES: &[Source] = &[
     },
     Source {
         name: "the agent",
-        busy: |app| app.agents.running() || app.editor.agent_wants_attention(),
+        busy: |app| app.agents.running() || app.editor.agent_chat().wants_attention(),
         update: App::update_agents,
     },
 ];
@@ -122,9 +122,9 @@ impl App {
     /// said; the sidebar's spinner turns while it works.
     fn update_agents(&mut self) -> bool {
         let changed = self.agents.update(&mut self.editor);
-        let spinning = self.editor.agent_sidebar_shown()
+        let spinning = self.editor.agent_chat().shown()
             && matches!(
-                self.editor.agent_chat().status,
+                self.editor.agent_chat().status(),
                 AgentStatus::Busy | AgentStatus::Starting
             );
         let frame = spinning.then(ui::agent::spinner_frame);

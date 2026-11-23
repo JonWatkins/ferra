@@ -5,16 +5,16 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use super::Editor;
-use super::agent::short_path;
-use super::lsp::{
+use crate::editor::Editor;
+use crate::editor::agent::short_path;
+use crate::editor::lsp::{
     ActionList, Answer, Applied, Busy, Calls, Edits, Location, LspFeature, LspQuery, LspRequest,
     NoAnswer, without_html,
 };
 
 impl Editor {
     /// The answer to the agent's tool call `call`, or why there's none.
-    pub(super) fn agent_lsp_answered(
+    pub(in crate::editor) fn agent_lsp_answered(
         &mut self,
         call: u64,
         request: &LspRequest,
@@ -97,7 +97,7 @@ impl Editor {
     fn agent_move(
         &mut self,
         call: u64,
-        document: super::DocumentId,
+        document: crate::editor::DocumentId,
         to: &Path,
         answer: Result<Answer, NoAnswer>,
     ) {

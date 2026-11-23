@@ -6,7 +6,7 @@
 //! `LspQuery` with arguments (`:rename name`, a selection's code actions,
 //! a project symbol search). The app's `Lsp` sends them and hands each
 //! answer to [`Editor::lsp_answered`], which passes the agent's to its own
-//! side (`editor/agent_lsp.rs`) and shows the rest (`show_lsp_answer`),
+//! side (`editor/agent/lsp.rs`) and shows the rest (`show_lsp_answer`),
 //! so this layer knows nothing of servers or JSON (see
 //! docs/adr/0001-lsp-answers-are-structured.md).
 //!

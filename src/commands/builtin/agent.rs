@@ -1,4 +1,4 @@
-//! The coding agent (`editor/agent.rs`, `agent/`): `:agent` shows its
+//! The coding agent (`editor/agent/`, `agent/`): `:agent` shows its
 //! sidebar, `:agent_ask` sends it a message; the sidebar's box is edited
 //! with `[keys.agent]`.
 
@@ -56,12 +56,12 @@ pub fn register(r: &mut CommandRegistry) {
         "agent_cancel",
         "Stop what the coding agent is doing",
         |cx| {
-            cx.editor.agent_cancel();
+            cx.editor.agent_chat_mut().cancel();
             Ok(())
         },
     );
     r.register("agent_stop", "Stop the coding agent's program", |cx| {
-        cx.editor.agent_stop();
+        cx.editor.agent_chat_mut().stop();
         Ok(())
     });
     r.register(
@@ -72,13 +72,13 @@ pub fn register(r: &mut CommandRegistry) {
     r.register(
         "agent_next_mode",
         "Switch the coding agent to its next mode",
-        |cx| cx.editor.agent_next_mode(),
+        |cx| cx.editor.agent_chat_mut().next_mode(),
     );
     r.register(
         "agent_set_mode",
         "Switch the coding agent to a mode (its id)",
         |cx| match cx.args.first() {
-            Some(id) => cx.editor.agent_set_mode(id),
+            Some(id) => cx.editor.agent_chat_mut().set_mode(id),
             None => cx.editor.agent_mode_picker(),
         },
     );
@@ -99,7 +99,7 @@ pub fn register(r: &mut CommandRegistry) {
         "agent_expand",
         "Agent sidebar: show every tool call's output and changes, or hide them all",
         |cx| {
-            cx.editor.agent_toggle_all_tools();
+            cx.editor.agent_chat_mut().toggle_all_tools();
             Ok(())
         },
     );
@@ -120,14 +120,14 @@ pub fn register(r: &mut CommandRegistry) {
         "agent_newline",
         "Agent sidebar: a new line in the box",
         |cx| {
-            cx.editor.agent_input_edit(|f| f.push('\n'));
+            cx.editor.agent_chat_mut().edit_input(|f| f.push('\n'));
             Ok(())
         },
     );
     r.register(
         "agent_new",
         "Start a new conversation with the coding agent (/clear)",
-        |cx| cx.editor.agent_new_session(),
+        |cx| cx.editor.agent_chat_mut().new_session(),
     );
     r.register("agent_model", "Choose the coding agent's model", |cx| {
         cx.editor.agent_config_picker(Some("model"))
@@ -149,13 +149,13 @@ pub fn register(r: &mut CommandRegistry) {
     r.register(
         "agent_complete",
         "Agent sidebar: fill in the slash command chosen in the list",
-        |cx| cx.editor.agent_complete(),
+        |cx| cx.editor.agent_chat_mut().complete(),
     );
     r.register(
         "agent_up",
         "Agent sidebar: up the slash command list (or scroll the chat up)",
         |cx| {
-            cx.editor.agent_up_down(false);
+            cx.editor.agent_chat_mut().up_down(false);
             Ok(())
         },
     );
@@ -163,7 +163,7 @@ pub fn register(r: &mut CommandRegistry) {
         "agent_down",
         "Agent sidebar: down the slash command list (or scroll the chat down)",
         |cx| {
-            cx.editor.agent_up_down(true);
+            cx.editor.agent_chat_mut().up_down(true);
             Ok(())
         },
     );
@@ -187,7 +187,7 @@ pub fn register(r: &mut CommandRegistry) {
     ];
     for (name, description, rows) in scrolls {
         r.register(name, description, move |cx| {
-            cx.editor.agent_scroll(rows);
+            cx.editor.agent_chat_mut().scroll_by(rows);
             Ok(())
         });
     }
@@ -219,7 +219,7 @@ pub fn register(r: &mut CommandRegistry) {
     ];
     for (name, description, edit) in edits {
         r.register(name, description, move |cx| {
-            cx.editor.agent_input_edit(edit);
+            cx.editor.agent_chat_mut().edit_input(edit);
             Ok(())
         });
     }
@@ -227,7 +227,7 @@ pub fn register(r: &mut CommandRegistry) {
         r.register(
             format!("agent_option_{n}"),
             "Answer the coding agent's question with that option",
-            move |cx| cx.editor.agent_choose(n),
+            move |cx| cx.editor.agent_chat_mut().choose(n),
         );
     }
 }

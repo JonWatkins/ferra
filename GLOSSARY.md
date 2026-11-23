@@ -64,6 +64,10 @@ _Avoid_: callback, listener
 A coding assistant (Claude Code, over ACP) running beside the editor in the agent sidebar, working on the user's project through agent tools.
 _Avoid_: assistant, bot, AI
 
+**Chat**:
+What passes between the user and the agent, shown in the agent sidebar: what the user asked, what the agent said and did (its tool calls, its plan), what it's asking now, and the box the user types in. It outlives the agent's session: switching agents keeps it, for reading.
+_Avoid_: session (the agent's own record of the conversation, which a new session starts over), conversation
+
 **Agent tool**:
 One thing the agent can ask the editor to do or tell it (read a file, rename a symbol, show locations), offered to the agent over MCP.
 _Avoid_: command (that word is for the editor's named commands), MCP tool

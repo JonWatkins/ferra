@@ -169,7 +169,8 @@ impl App {
             agent_spinner: None,
         };
         app.editor
-            .set_agent_names(config.agents.keys().cloned().collect());
+            .agent_chat_mut()
+            .set_names(config.agents.keys().cloned().collect());
         let formatter = crate::lsp::LspFormatter::new(std::rc::Rc::clone(&app.lsp));
         app.editor.set_formatter(Box::new(formatter));
         let mode = app.editor.options.clipboard;
@@ -1202,7 +1203,7 @@ impl App {
             .pointer_at
             .and_then(|at| self.target_at(at))
             .is_some_and(|target| matches!(target, ui::Target::Agent(_)));
-        if self.editor.agent_sidebar_shown()
+        if self.editor.agent_chat().shown()
             && self.editor.mode() != Mode::Agent
             && (over_agent || crate::editor::agent::only_images(&text))
         {

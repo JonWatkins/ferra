@@ -41,9 +41,6 @@ mod git;
 pub mod git_gui;
 pub use git::GitRow;
 pub mod agent;
-mod agent_lsp;
-pub mod agent_session;
-mod agent_tools;
 pub mod input_box;
 pub mod lsp;
 pub mod menu_bar;
@@ -227,10 +224,10 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
-    /// The coding agent's chat (`agent.rs`).
+    /// The coding agent's chat (`agent/chat.rs`).
     agent: agent::AgentChat,
-    /// Language servers' answers to the agent's tool calls, to send it.
-    agent_lsp_answers: Vec<agent_tools::AgentAnswer>,
+    /// The editor's side of the agent's tool calls (`agent/tools.rs`).
+    agent_tools: agent::AgentToolState,
     /// How many times each buffer's diagnostics have been set, and when
     /// last.
     diagnostics_versions: HashMap<DocumentId, (u64, std::time::Instant)>,
@@ -596,7 +593,7 @@ impl Editor {
     /// Switches mode, applying Vim's transition rules.
     pub fn set_mode(&mut self, mode: Mode) {
         // The file to mention to the agent not picked: back to its box.
-        if self.mode == Mode::Picker && mode != Mode::Picker && self.agent.mentioning {
+        if self.mode == Mode::Picker && mode != Mode::Picker && self.agent.mentioning() {
             self.agent_mentioned(None);
             return;
         }
@@ -784,7 +781,11 @@ impl Editor {
             }
             Mode::Find => self.find_edit(|field| field.push(c)),
             Mode::Input => self.input_box_edit(|field| field.push(c)),
-            Mode::Agent => self.agent_type(c),
+            Mode::Agent => {
+                if let Err(error) = self.agent.type_char(c) {
+                    self.set_message(Message::error(error));
+                }
+            }
             Mode::Settings | Mode::Keybindings | Mode::Panel => {}
             Mode::Normal
             | Mode::OperatorPending
@@ -858,7 +859,7 @@ impl Editor {
             .and_then(|p| p.selected_item())
             .map(|item| item.action.clone());
         // A file to mention to the agent: into its box.
-        if self.agent.mentioning {
+        if self.agent.mentioning() {
             self.agent_mentioned(action.as_ref());
             return None;
         }

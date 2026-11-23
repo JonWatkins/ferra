@@ -481,10 +481,10 @@ impl App {
             AgentPart::Chip(id) => self.editor.agent_config_picker(Some(&id)),
             AgentPart::Slash(i) => self.editor.agent_slash_pick(i),
             AgentPart::Tool(id) => {
-                self.editor.agent_toggle_tool(&id);
+                self.editor.agent_chat_mut().toggle_tool(&id);
                 Ok(())
             }
-            AgentPart::Option(n) => self.editor.agent_choose(n),
+            AgentPart::Option(n) => self.editor.agent_chat_mut().choose(n),
             AgentPart::Input | AgentPart::Chat | AgentPart::Rest => {
                 if self.editor.mode() != Mode::Agent {
                     self.editor.set_mode(Mode::Agent);
@@ -1029,7 +1029,9 @@ impl App {
             Some(Target::Agent(
                 AgentPart::Chat | AgentPart::Tool(_) | AgentPart::Option(_) | AgentPart::Slash(_),
             )) => {
-                self.editor.agent_scroll(-sign * WHEEL_LINES as isize);
+                self.editor
+                    .agent_chat_mut()
+                    .scroll_by(-sign * WHEEL_LINES as isize);
                 return;
             }
             Some(Target::Settings(

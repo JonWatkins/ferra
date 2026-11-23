@@ -8,10 +8,9 @@
 
 use serde_json::Value;
 
-use super::picker::{Picker, PickerAction, PickerItem};
-use super::text_field::TextField;
-use super::{Editor, Message};
-use crate::editor::agent::{AgentRequest, AgentStatus, ChatEntry};
+use super::chat::{AgentChat, AgentRequest, AgentStatus, ChatEntry};
+use crate::editor::picker::{Picker, PickerAction, PickerItem};
+use crate::editor::text_field::TextField;
 
 /// One of the agent's slash commands (`available_commands_update`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,21 +211,31 @@ const LOCAL: [(&str, &str); 3] = [
 /// The most rows the slash menu shows.
 pub const SLASH_ROWS: usize = 8;
 
-impl Editor {
+/// What `<CR>` with the slash menu shown did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum SlashEnter {
+    /// The menu wasn't shown.
+    Hidden,
+    /// The selected command takes something after its name: filled in to
+    /// finish.
+    Filled,
+    /// The selected command, to be sent as the message.
+    Run(String),
+}
+
+impl AgentChat {
     /// The option of `category` (`model`, `thought_level`), if the agent
     /// has one.
-    fn agent_option_of(&self, category: &str) -> Option<&ConfigOption> {
-        self.agent
-            .config
+    fn option_of(&self, category: &str) -> Option<&ConfigOption> {
+        self.config
             .iter()
             .find(|o| o.category.as_deref() == Some(category))
     }
 
     /// The commands `/` offers: the agent's, then ferra's own (those it
     /// can do now, and not shadowing one of the agent's).
-    pub fn agent_commands(&self) -> Vec<AgentCommand> {
+    pub fn slash_commands(&self) -> Vec<AgentCommand> {
         let mut commands: Vec<AgentCommand> = self
-            .agent
             .commands
             .iter()
             .filter(|c| !LOCAL.iter().any(|(name, _)| *name == c.name))
@@ -234,8 +243,8 @@ impl Editor {
             .collect();
         for (name, description) in LOCAL {
             let offered = match name {
-                "model" => self.agent_option_of("model").is_some(),
-                "effort" => self.agent_option_of("thought_level").is_some(),
+                "model" => self.option_of("model").is_some(),
+                "effort" => self.option_of("thought_level").is_some(),
                 _ => true,
             };
             if offered {
@@ -252,17 +261,17 @@ impl Editor {
     /// The slash menu's commands: while the box holds just `/` and a
     /// name being typed (and it wasn't put away). Names starting with
     /// what's typed come first, then those containing it.
-    pub fn agent_slash_matches(&self) -> Vec<AgentCommand> {
-        let text = self.agent.input.text();
+    pub fn slash_matches(&self) -> Vec<AgentCommand> {
+        let text = self.input.text();
         let Some(typed) = text.strip_prefix('/') else {
             return Vec::new();
         };
-        if typed.contains(char::is_whitespace) || self.agent.slash_closed.as_deref() == Some(text) {
+        if typed.contains(char::is_whitespace) || self.slash_closed.as_deref() == Some(text) {
             return Vec::new();
         }
         let typed = typed.to_lowercase();
         let (mut first, mut then): (Vec<_>, Vec<_>) = self
-            .agent_commands()
+            .slash_commands()
             .into_iter()
             .filter(|c| c.name.to_lowercase().contains(&typed))
             .partition(|c| c.name.to_lowercase().starts_with(&typed));
@@ -273,21 +282,21 @@ impl Editor {
     }
 
     /// The slash menu's selected row (kept in range).
-    pub fn agent_slash_selected(&self) -> usize {
-        let count = self.agent_slash_matches().len();
-        self.agent.slash_selected.min(count.saturating_sub(1))
+    pub fn slash_selected(&self) -> usize {
+        let count = self.slash_matches().len();
+        self.slash_selected.min(count.saturating_sub(1))
     }
 
     /// `<Up>`/`<Down>` in the box: through the slash menu, if it's shown;
     /// else the chat scrolls.
-    pub fn agent_up_down(&mut self, down: bool) {
-        let count = self.agent_slash_matches().len();
+    pub fn up_down(&mut self, down: bool) {
+        let count = self.slash_matches().len();
         if count == 0 {
-            self.agent_scroll(if down { -3 } else { 3 });
+            self.scroll_by(if down { -3 } else { 3 });
             return;
         }
-        let at = self.agent_slash_selected();
-        self.agent.slash_selected = if down {
+        let at = self.slash_selected();
+        self.slash_selected = if down {
             (at + 1) % count
         } else {
             (at + count - 1) % count
@@ -295,110 +304,87 @@ impl Editor {
     }
 
     /// `<Tab>` in the box: the selected command's name filled in.
-    pub fn agent_complete(&mut self) -> Result<(), String> {
-        let matches = self.agent_slash_matches();
+    pub fn complete(&mut self) -> Result<(), String> {
+        let matches = self.slash_matches();
         let command = matches
-            .get(self.agent_slash_selected())
+            .get(self.slash_selected())
             .ok_or("Type / for the agent's commands")?;
-        self.agent.input = TextField::default();
+        self.input = TextField::default();
         format!("/{} ", command.name)
             .chars()
-            .for_each(|c| self.agent.input.push(c));
-        self.agent.slash_selected = 0;
+            .for_each(|c| self.input.push(c));
+        self.slash_selected = 0;
         Ok(())
     }
 
-    /// `<CR>` with the slash menu shown: the selected command. One that
-    /// takes something after its name is filled in to finish; one that
-    /// doesn't is run. Returns whether the menu was shown.
-    pub(super) fn agent_slash_enter(&mut self) -> Result<bool, String> {
-        let matches = self.agent_slash_matches();
-        let Some(command) = matches.get(self.agent_slash_selected()) else {
-            return Ok(false);
+    /// `<CR>` with the slash menu shown, on its row `at` (else the one
+    /// selected): a command that takes something after its name is filled
+    /// in to finish; one that doesn't is taken out of the box, to send.
+    pub(super) fn slash_enter(&mut self, at: Option<usize>) -> Result<SlashEnter, String> {
+        if let Some(at) = at {
+            self.slash_selected = at;
+        }
+        let matches = self.slash_matches();
+        let Some(command) = matches.get(self.slash_selected()) else {
+            return Ok(SlashEnter::Hidden);
         };
         if command.hint.is_some() {
-            self.agent_complete()?;
-            return Ok(true);
+            self.complete()?;
+            return Ok(SlashEnter::Filled);
         }
-        let text = format!("/{}", command.name);
-        self.agent.input = TextField::default();
-        self.agent.slash_selected = 0;
-        self.agent_prompt(&text)?;
-        Ok(true)
-    }
-
-    /// A click on the slash menu's row `i`: as `<CR>` on it.
-    pub fn agent_slash_pick(&mut self, i: usize) -> Result<(), String> {
-        self.agent.slash_selected = i;
-        self.agent_slash_enter()?;
-        if self.mode() != super::Mode::Agent {
-            self.set_mode(super::Mode::Agent);
-        }
-        Ok(())
+        self.input = TextField::default();
+        self.slash_selected = 0;
+        Ok(SlashEnter::Run(format!("/{}", command.name)))
     }
 
     /// Puts the slash menu away (`<Esc>`) until the box changes. Returns
     /// whether it was shown.
-    pub fn agent_slash_close(&mut self) -> bool {
-        if self.agent_slash_matches().is_empty() {
+    pub fn slash_close(&mut self) -> bool {
+        if self.slash_matches().is_empty() {
             return false;
         }
-        self.agent.slash_closed = Some(self.agent.input.text().to_string());
+        self.slash_closed = Some(self.input.text().to_string());
         true
     }
 
     /// The hint for what's typed: the command's input hint, while just
     /// `/name ` is in the box.
-    pub fn agent_input_hint(&self) -> Option<String> {
-        let text = self.agent.input.text();
+    pub fn input_hint(&self) -> Option<String> {
+        let text = self.input.text();
         let name = text.strip_prefix('/')?.strip_suffix(' ')?;
-        self.agent_commands()
+        self.slash_commands()
             .into_iter()
             .find(|c| c.name == name)?
             .hint
     }
 
-    /// One of ferra's own commands, typed as the whole message: run here.
-    /// Returns whether it was one.
-    pub(super) fn agent_local_command(&mut self, text: &str) -> Result<bool, String> {
-        let Some(name) = text.strip_prefix('/') else {
-            return Ok(false);
-        };
-        let local = self
-            .agent_commands()
-            .into_iter()
-            .any(|c| c.name == name && LOCAL.iter().any(|(n, _)| *n == name));
-        if !local {
-            return Ok(false);
-        }
-        match name {
-            "clear" => self.agent_new_session()?,
-            "model" => self.agent_config_picker(Some("model"))?,
-            "effort" => self.agent_config_picker(Some("thought_level"))?,
-            _ => return Ok(false),
-        }
-        Ok(true)
+    /// The name of ferra's own command `text` is (the whole message), if
+    /// it's one offered now: `clear`, `model` or `effort`.
+    pub(super) fn local_command(&self, text: &str) -> Option<&'static str> {
+        let name = text.strip_prefix('/')?;
+        let offered = self.slash_commands().into_iter().any(|c| c.name == name);
+        let (local, _) = LOCAL.iter().find(|(n, _)| *n == name)?;
+        offered.then_some(*local)
     }
 
     /// `/clear`, `:agent_new`: a new session (the agent forgets the
     /// conversation; the chat's cleared).
-    pub fn agent_new_session(&mut self) -> Result<(), String> {
-        match self.agent.status {
+    pub fn new_session(&mut self) -> Result<(), String> {
+        match self.status {
             AgentStatus::Busy => return Err("The agent is still working (Ctrl+C stops it)".into()),
             AgentStatus::Ready => {
-                self.agent.requests.push(AgentRequest::NewSession);
-                self.agent.status = AgentStatus::Starting;
+                self.requests.push(AgentRequest::NewSession);
+                self.status = AgentStatus::Starting;
             }
             // It starts with a new session anyway.
             _ => {}
         }
-        let chat = &mut self.agent;
-        chat.entries.clear();
-        chat.expanded.clear();
-        chat.permission = None;
-        chat.usage = None;
-        chat.scroll.set(0);
-        chat.entries
+        self.entries.clear();
+        self.expanded.clear();
+        self.permission = None;
+        self.usage = None;
+        self.scroll.set(0);
+        self.entries
             .push(ChatEntry::Notice("A new conversation".into()));
         Ok(())
     }
@@ -406,13 +392,12 @@ impl Editor {
     /// `:agent_config`: a picker of a setting's values: the setting of
     /// `category`, or the one with that id; with none given, a picker of
     /// the settings first.
-    pub fn agent_config_picker(&mut self, which: Option<&str>) -> Result<(), String> {
-        if self.agent.config.is_empty() {
+    pub(super) fn config_picker(&self, which: Option<&str>) -> Result<Picker, String> {
+        if self.config.is_empty() {
             return Err("The agent has no settings (or hasn't started)".into());
         }
         let Some(which) = which else {
             let items = self
-                .agent
                 .config
                 .iter()
                 .filter(|o| o.category.as_deref() != Some("mode"))
@@ -422,15 +407,13 @@ impl Editor {
                     action: PickerAction::RunWith("agent_config".into(), vec![o.id.clone()]),
                 })
                 .collect();
-            self.open_picker(Picker::new("Agent settings", items).keep_label_start());
-            return Ok(());
+            return Ok(Picker::new("Agent settings", items).keep_label_start());
         };
         let option = self
-            .agent
             .config
             .iter()
             .find(|o| o.id == which)
-            .or_else(|| self.agent_option_of(which))
+            .or_else(|| self.option_of(which))
             .ok_or_else(|| format!("The agent has no setting \"{which}\""))?;
         let items = option
             .choices
@@ -448,16 +431,13 @@ impl Editor {
                 ),
             })
             .collect();
-        let title = option.name.clone();
-        self.open_picker(Picker::new(title, items).keep_label_start());
-        Ok(())
+        Ok(Picker::new(option.name.clone(), items).keep_label_start())
     }
 
     /// Sets the agent's setting `id` to `value` (shown at once; the agent
-    /// answers with them all).
-    pub fn agent_set_config(&mut self, id: &str, value: &str) -> Result<(), String> {
+    /// answers with them all). Returns what it's set to, to say.
+    pub(super) fn set_config(&mut self, id: &str, value: &str) -> Result<String, String> {
         let option = self
-            .agent
             .config
             .iter_mut()
             .find(|o| o.id == id)
@@ -471,16 +451,14 @@ impl Editor {
             value: option.json_value(value),
         };
         let note = format!("{}: {}", option.name, option.current_name());
-        self.agent.requests.push(request);
-        self.set_message(Message::info(note));
-        Ok(())
+        self.requests.push(request);
+        Ok(note)
     }
 
     /// The settings shown as chips under the box: their ids and labels
     /// (see `ConfigOption::chip`).
-    pub fn agent_chips(&self) -> Vec<(String, String)> {
-        self.agent
-            .config
+    pub fn chips(&self) -> Vec<(String, String)> {
+        self.config
             .iter()
             .filter_map(|o| Some((o.id.clone(), o.chip()?)))
             .collect()
