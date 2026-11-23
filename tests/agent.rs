@@ -306,7 +306,7 @@ fn app() -> App {
 fn until(app: &mut App, done: impl Fn(&App) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
-        app.update_agents();
+        app.update();
         if done(app) {
             return;
         }
@@ -505,13 +505,13 @@ fn an_agent_that_isnt_installed_says_so() {
         "[editor]\nagent = \"nope\"\n[agents.nope]\ncommand = \"ferra-no-such-agent\"\n",
     );
     keys(&mut app, ":agent<CR>");
-    app.update_agents();
+    app.update();
     assert!(matches!(
         &app.editor().agent_chat().status,
         AgentStatus::Stopped(why) if why.contains("ferra-no-such-agent isn't installed")
     ));
     keys(&mut app, "<Esc>:agent_ask hi<CR>");
-    app.update_agents();
+    app.update();
     assert!(matches!(
         app.editor().agent_chat().status,
         AgentStatus::Stopped(_)
@@ -586,7 +586,7 @@ fn the_editors_tools_are_served_to_the_agent() {
         write_message(&mut writer, &request).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            app.update_agents();
+            app.update();
             if let Ok(answer) = answers.try_recv() {
                 assert_eq!(answer["id"], id);
                 return answer["result"].clone();

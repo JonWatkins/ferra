@@ -237,6 +237,9 @@ pub struct Editor {
     /// The ready language server each buffer is open in, and what it's
     /// busy with, if anything.
     lsp_checks: HashMap<DocumentId, (String, Option<String>)>,
+    /// How many times the inlay hints have been cleared (turned off): the
+    /// servers ask for them afresh after each.
+    inlay_hints_cleared: u64,
     /// More cursors than the one (`multi_cursor.rs`).
     cursors: multi_cursor::MultiCursors,
     /// What the pointer rested on, for the hover it shows.

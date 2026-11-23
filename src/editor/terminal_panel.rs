@@ -115,13 +115,13 @@ impl Editor {
 
     /// Takes the shell's output. Returns whether there's anything new to
     /// draw. A shell that exits while the panel is hidden closes it.
-    pub fn pump_terminal(&mut self) -> bool {
+    pub fn update_terminal(&mut self) -> bool {
         let hidden = self.terminal_panel().is_none();
         let Some(terminal) = self.terminal.as_mut() else {
             return false;
         };
         let was_running = terminal.is_running();
-        let changed = terminal.pump();
+        let changed = terminal.update();
         if was_running && !terminal.is_running() && hidden {
             let why = terminal.exited().unwrap_or("exited").to_string();
             self.terminal = None;
@@ -153,10 +153,10 @@ mod tests {
         editor
     }
 
-    fn pump_until(editor: &mut Editor, done: impl Fn(&Editor) -> bool) {
+    fn update_until(editor: &mut Editor, done: impl Fn(&Editor) -> bool) {
         let start = Instant::now();
         while !done(editor) && start.elapsed() < Duration::from_secs(3) {
-            editor.pump_terminal();
+            editor.update_terminal();
             std::thread::sleep(Duration::from_millis(10));
         }
     }
@@ -166,7 +166,7 @@ mod tests {
         let mut editor = editor_with_shell(
             "i=1; while [ $i -le 50 ]; do echo line$i; i=$((i+1)); done; sleep 3",
         );
-        pump_until(&mut editor, |e| {
+        update_until(&mut editor, |e| {
             e.terminal
                 .as_ref()
                 .and_then(Terminal::running_command)
@@ -205,7 +205,7 @@ mod tests {
             "for i in 1 2 3 4 5 6; do [ $i -gt 1 ] && printf '\\033[15A\\033[J'; \
              k=1; while [ $k -le 15 ]; do echo \"w$k $i/6\"; k=$((k+1)); done; done; echo finished",
         );
-        pump_until(&mut editor, |e| {
+        update_until(&mut editor, |e| {
             e.terminal
                 .as_ref()
                 .is_some_and(|t| t.text_lines().iter().any(|l| l == "finished"))
@@ -230,7 +230,7 @@ mod tests {
     fn opens_hides_and_refocuses_the_same_shell() {
         let mut editor = editor_with_shell("echo ready");
         assert_eq!(editor.mode(), Mode::Terminal);
-        pump_until(&mut editor, |e| {
+        update_until(&mut editor, |e| {
             e.terminal_panel()
                 .is_some_and(|t| t.screen().contents().contains("ready\n"))
         });
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn a_key_after_the_shell_exits_closes_the_panel() {
         let mut editor = editor_with_shell("exit");
-        pump_until(&mut editor, |e| !e.terminal_running());
+        update_until(&mut editor, |e| !e.terminal_running());
         assert!(editor.terminal_panel().unwrap().exited().is_some());
         editor.terminal_keys(&crate::input::parse_keys("x").unwrap());
         assert!(editor.terminal_panel().is_none());

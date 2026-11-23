@@ -786,7 +786,7 @@ fn with_server_in(
 fn until(app: &mut App, done: impl Fn(&App) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
-        app.update_lsp();
+        app.update();
         if done(app) {
             return;
         }
@@ -909,7 +909,7 @@ fn a_server_that_isnt_installed_is_reported_once() {
     let mut app = app();
     app.lsp_mut().set_spawner(Box::new(Missing));
     app.open(&dir.path().join("a.rs"));
-    app.update_lsp();
+    app.update();
     let message = app.editor().message().unwrap().text.clone();
     assert_eq!(
         message,
@@ -917,7 +917,7 @@ fn a_server_that_isnt_installed_is_reported_once() {
     );
     keys(&mut app, ":echo<CR>");
     app.open(&dir.path().join("b.rs"));
-    app.update_lsp();
+    app.update();
     assert!(
         !app.editor().message().unwrap().text.contains("not found"),
         "once"
@@ -1015,7 +1015,7 @@ fn ready(app: &mut App) {
             .any(|l| l.contains("running"))
     });
     // And until it has the document open.
-    app.update_lsp();
+    app.update();
 }
 
 #[test]
@@ -1044,7 +1044,7 @@ fn k_shows_the_hover_and_any_other_key_closes_it() {
     );
 
     keys(&mut app, "0K");
-    app.update_lsp();
+    app.update();
     until(&mut app, |a| a.editor().message().is_some());
     assert_eq!(
         app.editor().message().unwrap().text,
@@ -1096,9 +1096,9 @@ fn resting_the_pointer_shows_the_hover_under_the_problem() {
 
     // Nothing to say about `fine`: nothing shows, and nothing's said.
     rest(&mut app, x, y + 1);
-    app.update_lsp();
+    app.update();
     std::thread::sleep(Duration::from_millis(50));
-    app.update_lsp();
+    app.update();
     assert!(app.editor().hover().is_none());
     assert!(app.editor().message().is_none());
 }
@@ -1183,13 +1183,13 @@ fn servers_that_cant_answer_say_so() {
     let (_dir, mut app, _) = with_server("bad\n", false);
     ready(&mut app);
     keys(&mut app, "K");
-    app.update_lsp();
+    app.update();
     assert_eq!(
         app.editor().message().unwrap().text,
         "rust-analyzer doesn't offer hover information"
     );
     keys(&mut app, ":e notes.txt<CR>gd");
-    app.update_lsp();
+    app.update();
     assert_eq!(
         app.editor().message().unwrap().text,
         "No language server for this buffer (see :lsp)"
@@ -1208,7 +1208,7 @@ fn typing_shows_the_servers_completions_and_more_narrows_them() {
     let (_dir, mut app, _) = with_server("\n", true);
     ready(&mut app);
     keys(&mut app, "ib");
-    app.update_lsp();
+    app.update();
     assert!(menu(&app).is_empty(), "not after one letter");
     keys(&mut app, "a");
     until(&mut app, |a| !menu(a).is_empty());
@@ -1229,7 +1229,7 @@ fn typing_shows_the_servers_completions_and_more_narrows_them() {
     );
 
     keys(&mut app, "dg");
-    app.update_lsp();
+    app.update();
     assert_eq!(menu(&app), ["badge()"]);
     keys(&mut app, "<Tab>");
     assert_eq!(text(&app), "badge", "the text to put in, not the label");
@@ -1271,12 +1271,12 @@ fn characters_the_server_completes_after_start_it() {
     let (_dir, mut app, _) = with_server("\n", true);
     ready(&mut app);
     keys(&mut app, "ix;");
-    app.update_lsp();
+    app.update();
     assert!(menu(&app).is_empty(), "`;` isn't one of the server's");
     keys(&mut app, "x.");
     until(&mut app, |a| menu(a).len() == 6);
     keys(&mut app, "fi");
-    app.update_lsp();
+    app.update();
     assert_eq!(menu(&app), ["fine"]);
 }
 
@@ -1306,7 +1306,7 @@ fn without_auto_complete_ctrl_space_asks() {
     let (_dir, mut app, _) = with_server("\n", true);
     ready(&mut app);
     keys(&mut app, ":set noauto-complete<CR>ibad");
-    app.update_lsp();
+    app.update();
     assert!(menu(&app).is_empty());
     keys(&mut app, "<C-Space>");
     until(&mut app, |a| menu(a) == ["bad_word", "badge()"]);
@@ -1591,7 +1591,7 @@ fn a_server_without_code_actions_says_so() {
     let (_dir, mut app, _) = with_server("x\n", false);
     ready(&mut app);
     keys(&mut app, "<Space>a");
-    app.update_lsp();
+    app.update();
     assert_eq!(
         app.editor().message().unwrap().text,
         "rust-analyzer doesn't offer code actions"
@@ -1623,7 +1623,7 @@ fn a_list_for_text_since_changed_is_left_out() {
     until(&mut app, |a| seen.lock().unwrap().text == text(a));
     // Let the server's (out of date) list through.
     for _ in 0..20 {
-        app.update_lsp();
+        app.update();
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(
@@ -1765,7 +1765,7 @@ fn space_shift_d_lists_the_projects_with_files_not_open() {
     until(&mut app, |a| a.editor().diagnostics(doc(a)).len() == 1);
     // The other file's comes in after (no way to wait on it but to look).
     for _ in 0..20 {
-        app.update_lsp();
+        app.update();
         std::thread::sleep(Duration::from_millis(5));
     }
     keys(&mut app, "<Space>D");
@@ -1858,7 +1858,7 @@ fn lsp_restart_starts_the_server_again() {
     until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
     assert_eq!(seen.lock().unwrap().starts, 1);
     keys(&mut app, ":lsp-restart<CR>");
-    app.update_lsp();
+    app.update();
     assert_eq!(
         app.editor().message().unwrap().text,
         "Restarting rust-analyzer"
@@ -1867,7 +1867,7 @@ fn lsp_restart_starts_the_server_again() {
     until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
     assert_eq!(seen.lock().unwrap().starts, 2);
     keys(&mut app, ":lsp-restart nothing<CR>");
-    app.update_lsp();
+    app.update();
     assert_eq!(
         app.editor().message().unwrap().text,
         "No language server to restart (see :lsp)"
@@ -1893,11 +1893,11 @@ fn lsp_restart_tries_servers_that_werent_found_again() {
     app.lsp_mut()
         .set_spawner(Box::new(MissingCounted(Arc::clone(&tries))));
     app.open(&dir.path().join("a.rs"));
-    app.update_lsp();
-    app.update_lsp();
+    app.update();
+    app.update();
     assert_eq!(*tries.lock().unwrap(), 1, "tried once");
     keys(&mut app, ":lsp-restart<CR>");
-    app.update_lsp();
+    app.update();
     assert_eq!(
         *tries.lock().unwrap(),
         2,
@@ -1946,7 +1946,7 @@ fn highlight_references_can_be_turned_off() {
     ready(&mut app);
     keys(&mut app, ":set nohighlight-references<CR>w");
     for _ in 0..40 {
-        app.update_lsp();
+        app.update();
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(references(&app).is_empty());
@@ -2018,7 +2018,7 @@ fn drawn_until(app: &mut App, done: impl Fn(&App) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
         render(app, 90, 20);
-        app.update_lsp();
+        app.update();
         if done(app) {
             return;
         }
@@ -2437,7 +2437,7 @@ fn the_agents_question_waits_for_a_server_still_starting() {
     // Asked straight away, before the server's answered `initialize`.
     let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
     let path = dir.path().join("main.rs");
-    app.update_lsp();
+    app.update();
     tool(
         &mut app,
         1,
@@ -2681,12 +2681,12 @@ fn checks_on_save_are_placed_where_their_lines_are_now() {
     });
     // And again on the next change: still there.
     keys(&mut app, "ggA!<Esc>");
-    app.update_lsp();
+    app.update();
     until(&mut app, |a| {
         a.editor().document.buffer().line(0).ends_with('!')
     });
     std::thread::sleep(Duration::from_millis(50));
-    app.update_lsp();
+    app.update();
     assert!(
         diagnostic_starts(&app).contains(&(3, 8)),
         "{:?}",

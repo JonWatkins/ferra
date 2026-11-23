@@ -52,7 +52,7 @@
 //! with the status. Fetch, pull and push (`git::start_remote`) run on a thread
 //! that reads git's `--progress` lines (redrawn with `\r`) from stderr and
 //! sends them, then the result, through a channel; the editor keeps the
-//! receiver (`GitState::job`, one at a time) and the event loop pumps it while
+//! receiver (`GitState::job`, one at a time) and the event loop updates it while
 //! it runs, as it does the terminal panel's shell. They run with
 //! `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true` and (unless you've set your own
 //! ssh command) `ssh -o BatchMode=yes`, so nothing can stop to ask on the
@@ -79,7 +79,7 @@
 //! `DiffJob` in `GitGui::diff_job`), since `git show` takes tens of
 //! milliseconds and a held `j` repeats faster than that: the selection moves at
 //! once and the diff follows, the event loop taking it with
-//! `pump_git_gui_diff`. Only the latest request is kept; an earlier one's
+//! `update_git_diff`. Only the latest request is kept; an earlier one's
 //! answer is dropped with its receiver. Commits' diffs are cached (up to 100,
 //! by hash and paths), so moving back is instant. A file's diff stays
 //! synchronous, as staging a hunk needs it exactly as it is.
@@ -521,7 +521,7 @@ impl Editor {
 
     /// Takes the diff loaded in the background, if it's come. Returns
     /// whether there's anything new to draw.
-    pub fn pump_git_gui_diff(&mut self) -> bool {
+    pub fn update_git_diff(&mut self) -> bool {
         let Some(gui) = self.git_gui.as_mut() else {
             return false;
         };

@@ -11,6 +11,7 @@ mod mouse;
 mod mouse_hover;
 mod normal;
 mod repeat;
+mod sources;
 mod terminal;
 
 use std::collections::HashMap;
@@ -924,6 +925,9 @@ impl App {
                     .set_message(Message::error(format!("{report} (details in :log)")));
                 redraw = true;
             }
+            // What the sources have (see `sources.rs`): taken in before
+            // each draw, and each time round while they're busy.
+            redraw |= self.update();
             if redraw {
                 match crash::catching(|| terminal.draw(|frame| self.draw(frame))) {
                     Ok(drawn) => {
@@ -978,16 +982,9 @@ impl App {
             let watch = self.editor.options.watch_files.then_some(next_watch);
             let hover_due = self.hover_due();
             let due = [deadline, watch, hover_due].into_iter().flatten().min();
-            // Language servers' messages arrive on their own threads, so
-            // keep checking while any are running.
-            let busy = self.background.busy()
-                || self.lsp.borrow().active()
-                || self.agents.running()
-                || self.editor.agent_wants_attention()
-                || self.editor.terminal_running()
-                || self.editor.git_job_running()
-                || self.editor.git_gui_diff_loading()
-                || self.editor.git_blame_waiting();
+            // What's busy sends on its own threads, so keep looking while
+            // any source is.
+            let busy = self.sources_busy();
             let wait = match (due, busy) {
                 (Some(due), busy) => {
                     let left = due.saturating_duration_since(Instant::now());
@@ -1004,22 +1001,7 @@ impl App {
                 Some(wait) => event::poll(wait)?,
                 None => true,
             };
-            match crash::catching(|| {
-                self.handle_background()
-                    | self.editor.pump_terminal()
-                    | self.editor.pump_git_job()
-                    | self.editor.pump_git_gui_diff()
-                    | self.editor.git_blame_tick()
-            }) {
-                Ok(changed) => redraw |= changed,
-                Err(panic) => {
-                    self.caught_panic("handling a background job", &panic);
-                    redraw = true;
-                }
-            }
             if !input_ready {
-                redraw |= self.update_lsp();
-                redraw |= self.update_agents();
                 if deadline.is_some_and(|due| Instant::now() >= due) {
                     self.handle_key_timeout();
                     deadline = None;
@@ -1385,46 +1367,27 @@ impl App {
         }
     }
 
-    /// The language servers, to replace how they're started (tests).
-    /// Sends the agent what the editor wants sent, and takes in what it
-    /// said. Public so tests can drive it. Returns whether anything
-    /// changed.
-    pub fn update_agents(&mut self) -> bool {
-        let changed = self.agents.update(&mut self.editor);
-        // The sidebar's spinner turns while the agent works.
-        let spinning = self.editor.agent_sidebar_shown()
-            && matches!(
-                self.editor.agent_chat().status,
-                crate::editor::agent::AgentStatus::Busy
-                    | crate::editor::agent::AgentStatus::Starting
-            );
-        let frame = spinning.then(ui::agent::spinner_frame);
-        let turned = frame.is_some() && frame != self.agent_spinner;
-        self.agent_spinner = frame;
-        changed || turned
-    }
-
     /// The agents (tests give them a fake one).
     pub fn agents_mut(&mut self) -> &mut crate::agent::Agents {
         &mut self.agents
     }
 
-    pub fn lsp_mut(&mut self) -> std::cell::RefMut<'_, crate::lsp::Lsp> {
-        self.lsp.borrow_mut()
-    }
-
-    /// Handles what language servers sent and sends them the latest
-    /// changes. Called before each draw; public so tests can drive it.
-    /// Returns whether anything happened that changes what's shown.
+    /// The language servers alone, for tests that ask them as an agent's
+    /// tool would, with no agent (whose updates would take the answers).
+    /// Everything else goes through `update`. Returns whether anything
+    /// changed that's shown.
     pub fn update_lsp(&mut self) -> bool {
         self.lsp.borrow_mut().update(&mut self.editor)
+    }
+
+    /// The language servers, to replace how they're started (tests).
+    pub fn lsp_mut(&mut self) -> std::cell::RefMut<'_, crate::lsp::Lsp> {
+        self.lsp.borrow_mut()
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
         // The Outline and breadcrumbs' symbols, asked for if out of date.
         self.editor.ask_for_outline();
-        self.update_lsp();
-        self.update_agents();
         self.refresh_plugin_statuses();
         self.make_plugin_view();
         self.editor.update_git_changes();

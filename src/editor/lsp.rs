@@ -836,12 +836,19 @@ impl Editor {
 
     /// `inlay-hints = false` (or `:inlay_hints`): takes them away.
     pub fn clear_inlay_hints(&mut self) {
+        self.inlay_hints_cleared += 1;
         let ids: Vec<DocumentId> = self.buffers().iter().map(|b| b.id).collect();
         for id in ids {
             if let Some(document) = self.document_by_id_mut(id) {
                 document.clear_virtual_text("inlay");
             }
         }
+    }
+
+    /// How many times the inlay hints have been cleared: after each, the
+    /// servers ask for them afresh.
+    pub fn inlay_hints_cleared(&self) -> u64 {
+        self.inlay_hints_cleared
     }
 
     /// `<Space>a`: asks the language server what it can do here: at the
