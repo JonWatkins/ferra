@@ -8,7 +8,8 @@ use std::path::Path;
 use super::Editor;
 use super::agent::short_path;
 use super::lsp::{
-    Answer, Applied, Busy, Calls, Edits, Location, LspFeature, LspRequest, NoAnswer, without_html,
+    Answer, Applied, Busy, Calls, Edits, Location, LspFeature, LspQuery, LspRequest, NoAnswer,
+    without_html,
 };
 
 impl Editor {
@@ -24,14 +25,14 @@ impl Editor {
                 self.agent_lsp_edits(call, request, edits);
                 return;
             }
-            Ok(Answer::Calls(calls)) => Ok(calls_text(&calls, request.feature)),
+            Ok(Answer::Calls(calls)) => Ok(calls_text(&calls, request.feature())),
             Ok(Answer::Hover(markdown)) => Ok(hover_text(&markdown)),
             Ok(Answer::Locations { found, busy }) => {
-                Ok(locations_text(found, request.feature, busy.as_ref()))
+                Ok(locations_text(found, request.feature(), busy.as_ref()))
             }
             // Nothing there isn't the call failing: it's the answer.
-            Err(NoAnswer::NothingThere) => Ok(nothing_there(request.feature)),
-            Err(why) => Err(no_answer_text(request.feature, &why)),
+            Err(NoAnswer::NothingThere) => Ok(nothing_there(request.feature())),
+            Err(why) => Err(no_answer_text(request.feature(), &why)),
         };
         self.agent_lsp_answer(call, text);
     }
@@ -46,7 +47,10 @@ impl Editor {
             self.agent_lsp_answer(call, Err("Nothing to rename there".into()));
             return;
         }
-        let name = request.text.as_deref().unwrap_or_default();
+        let name = match &request.query {
+            LspQuery::Rename { name } => name.as_str(),
+            _ => "",
+        };
         let text = format!("Renamed to {name}: {}{saved}", saved_describe(applied));
         if changed.is_empty() {
             self.agent_lsp_answer(call, Ok(text));

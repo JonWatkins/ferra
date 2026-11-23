@@ -13,7 +13,8 @@ use super::{Lsp, State};
 use crate::core::Position;
 use crate::editor::DocumentId;
 use crate::editor::lsp::{
-    Answer, Applied, Busy, Call, Calls, Edits, Location, LspFeature, LspRequest, NoAnswer, Reply,
+    Answer, Applied, Busy, Call, Calls, Edits, Location, LspFeature, LspQuery, LspRequest,
+    NoAnswer, Reply,
 };
 use crate::editor::server_completion::ServerItem;
 use crate::editor::signature::SignatureHelp;
@@ -21,7 +22,7 @@ use crate::editor::{Editor, Message};
 
 /// The kind of code actions the agent's asked for when it gives no line:
 /// the file-wide ones (organize imports, fix all, remove unused imports).
-pub const FILE_WIDE_ACTIONS: &str = "source";
+const FILE_WIDE_ACTIONS: &str = "source";
 
 /// A kept answer: its number, its items, and the buffer and edit count it
 /// was made for.
@@ -76,7 +77,9 @@ impl Lsp {
         let Some(call) = request.reply.agent() else {
             return;
         };
-        let to = std::path::PathBuf::from(request.text.clone().unwrap_or_default());
+        let LspQuery::MoveFile { to } = request.query.clone() else {
+            return;
+        };
         let Some(from) = editor
             .document_by_id(request.document)
             .and_then(|d| d.path())
@@ -181,17 +184,12 @@ impl Lsp {
         }
         let buffer = editor.document.buffer();
         let request = LspRequest {
-            feature: LspFeature::Format,
+            query: LspQuery::Format,
             document,
             position: editor.document.cursor(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
             reply: Reply::Key,
-            trigger: None,
-            word_start: editor.document.cursor(),
-            item: None,
-            text: None,
-            end: editor.document.cursor(),
         };
         let (tab_size, spaces) = editor.format_indent(document);
         let (name, encoding, client_id) = (client.name.clone(), client.encoding, client.id);
@@ -251,7 +249,7 @@ impl Lsp {
         requests.extend(editor.take_lsp_requests().into_iter().map(|r| (r, now)));
         let any = !requests.is_empty();
         for (request, since) in requests {
-            if request.feature == LspFeature::MoveFile {
+            if request.feature() == LspFeature::MoveFile {
                 self.start_move(editor, request, since);
                 continue;
             }
@@ -276,33 +274,32 @@ impl Lsp {
                 continue;
             };
             let mut request = request;
-            if request.feature == LspFeature::SignatureHelp && !request.reply.explicit() {
+            let typing = !request.reply.explicit();
+            match &mut request.query {
                 // Asked as you type: on a character the server names, or on
                 // any change while it's showing (so the parameter follows).
-                let showing = editor.signature_help().is_some();
-                let triggered = request
-                    .trigger
-                    .is_some_and(|c| client.signature_triggered_by(c));
-                if !showing && !triggered {
-                    continue;
+                LspQuery::SignatureHelp { trigger, retrigger } if typing => {
+                    let showing = editor.signature_help().is_some();
+                    let triggered = trigger.is_some_and(|c| client.signature_triggered_by(c));
+                    if !showing && !triggered {
+                        continue;
+                    }
+                    *retrigger = showing;
                 }
-                // `isRetrigger` in the request.
-                request.text = showing.then(String::new);
-            } else if let Some(c) = request.trigger
-                && request.feature == LspFeature::Completion
-                && !client.completes_after(c)
-            {
-                continue;
+                LspQuery::Completion {
+                    trigger: Some(c), ..
+                } if !client.completes_after(*c) => continue,
+                _ => {}
             }
-            if !client.supports(request.feature) {
+            if !client.supports(request.feature()) {
                 editor.lsp_answered(&request, Err(NoAnswer::Unsupported(client.name.clone())));
                 continue;
             }
-            if request.feature == LspFeature::ApplyCodeAction {
+            if let LspQuery::ApplyCodeAction { item } = request.query {
                 // Its edits are for the text it was made for: not since changed.
-                let changed = request
-                    .item
-                    .and_then(|(list, _)| self.actions.made_for(list))
+                let changed = self
+                    .actions
+                    .made_for(item.0)
                     .is_some_and(|(document, seq)| {
                         editor
                             .document_by_id(document)
@@ -317,7 +314,7 @@ impl Lsp {
                     }
                     continue;
                 }
-                let action = request.item.and_then(|i| self.actions.item(i)).cloned();
+                let action = self.actions.item(item).cloned();
                 let Some(action) = action else {
                     let text = "That list of code actions is too old (or has no such number)";
                     match request.reply.agent() {
@@ -342,7 +339,7 @@ impl Lsp {
                 if !made {
                     if client.resolves_code_actions() || action.get("data").is_some() {
                         let request = LspRequest {
-                            feature: LspFeature::ResolveCodeAction,
+                            query: LspQuery::ResolveCodeAction,
                             ..request
                         };
                         client.resolve_code_action(request, action);
@@ -356,16 +353,24 @@ impl Lsp {
             }
             // The agent's formatting: answered in `answer` (the app's own
             // waits for its answer when saving).
-            if request.feature == LspFeature::Format {
+            if request.feature() == LspFeature::Format {
                 let (tab_size, spaces) = editor.format_indent(request.document);
                 client.request_format(request, tab_size, spaces);
                 continue;
             }
-            if request.feature == LspFeature::CodeAction {
+            if request.feature() == LspFeature::CodeAction {
                 let buffer = document.buffer();
-                let start = convert::to_lsp(buffer, request.word_start, client.encoding);
-                let end = convert::to_lsp(buffer, request.end, client.encoding);
-                let (first, last) = (request.word_start.row as u64, request.end.row as u64);
+                let LspQuery::CodeActions {
+                    start,
+                    end,
+                    file_wide,
+                } = request.query
+                else {
+                    continue;
+                };
+                let (first, last) = (start.row as u64, end.row as u64);
+                let start = convert::to_lsp(buffer, start, client.encoding);
+                let end = convert::to_lsp(buffer, end, client.encoding);
                 let diagnostics = self
                     .raw_diagnostics
                     .get(&request.document)
@@ -378,15 +383,12 @@ impl Lsp {
                     })
                     .cloned()
                     .collect();
-                // The agent's file-wide ones: source actions only.
-                let only = request
-                    .text
-                    .clone()
-                    .filter(|kind| kind == FILE_WIDE_ACTIONS);
-                client.request_code_actions(request, start, end, diagnostics, only.as_deref());
+                // The file-wide ones: source actions only.
+                let only = file_wide.then_some(FILE_WIDE_ACTIONS);
+                client.request_code_actions(request, start, end, diagnostics, only);
                 continue;
             }
-            if request.feature == LspFeature::InlayHint {
+            if request.feature() == LspFeature::InlayHint {
                 // The whole buffer.
                 let buffer = document.buffer();
                 let last = buffer.line_count() - 1;
@@ -396,8 +398,11 @@ impl Lsp {
                 client.request_inlay_hints(request, start, end);
                 continue;
             }
-            if request.feature == LspFeature::ResolveCompletion {
-                let item = request.item.and_then(|i| self.completions.item(i));
+            if request.feature() == LspFeature::ResolveCompletion {
+                let LspQuery::ResolveCompletion { item } = request.query else {
+                    continue;
+                };
+                let item = self.completions.item(item);
                 if let Some(item) = item {
                     client.resolve_completion(request, item.clone());
                 }
@@ -434,11 +439,13 @@ pub(super) fn answer(
     stashes: Stashes,
 ) {
     // The agent's move: the server's edits for it, then the move.
-    if request.feature == LspFeature::MoveFile {
+    if request.feature() == LspFeature::MoveFile {
         let Some(call) = request.reply.agent() else {
             return;
         };
-        let to = std::path::PathBuf::from(request.text.clone().unwrap_or_default());
+        let LspQuery::MoveFile { to } = request.query.clone() else {
+            return;
+        };
         let from = editor
             .document_by_id(request.document)
             .and_then(|d| d.path())
@@ -473,12 +480,12 @@ pub(super) fn answer(
     }
     // Call hierarchy: the function at the place, then the calls to or
     // from it.
-    if matches!(request.feature, LspFeature::Callers | LspFeature::Callees) {
+    if matches!(request.feature(), LspFeature::Callers | LspFeature::Callees) {
         calls_answer(editor, client, request, result);
         return;
     }
     if matches!(
-        request.feature,
+        request.feature(),
         LspFeature::Hover
             | LspFeature::Definition
             | LspFeature::Declaration
@@ -487,7 +494,7 @@ pub(super) fn answer(
             | LspFeature::References
     ) {
         let answer = match result {
-            Ok(result) if request.feature == LspFeature::Hover => {
+            Ok(result) if request.feature() == LspFeature::Hover => {
                 Ok(Answer::Hover(hover_markdown(&result["contents"])))
             }
             Ok(result) => Ok(Answer::Locations {
@@ -502,7 +509,7 @@ pub(super) fn answer(
         editor.lsp_answered(&request, answer);
         return;
     }
-    if request.feature == LspFeature::Rename {
+    if request.feature() == LspFeature::Rename {
         let answer = match result {
             Ok(result) => workspace_edits(editor, &result, client.encoding)
                 .map(Answer::Edits)
@@ -514,7 +521,7 @@ pub(super) fn answer(
     }
     // The coding agent's: the answer as text, back to it.
     if let Some(call) = request.reply.agent()
-        && request.feature == LspFeature::CodeAction
+        && request.feature() == LspFeature::CodeAction
     {
         let list: Vec<Value> = result
             .as_ref()
@@ -528,7 +535,13 @@ pub(super) fn answer(
         // For the whole file: one asking, answered as it is, with only
         // the source actions (servers send quick fixes too, for the
         // diagnostics sent with it; the client's to filter by `only`).
-        if request.text.as_deref() == Some(FILE_WIDE_ACTIONS) {
+        if matches!(
+            request.query,
+            LspQuery::CodeActions {
+                file_wide: true,
+                ..
+            }
+        ) {
             let list = list
                 .into_iter()
                 .filter(|a| {
@@ -551,7 +564,9 @@ pub(super) fn answer(
         // The symbol's range is empty, the line's isn't, unless the line is
         // empty too: then both are the same range, and the second to come
         // is taken as the line's.
-        if request.word_start == request.end && at_symbol.is_none() {
+        let empty =
+            matches!(request.query, LspQuery::CodeActions { start, end, .. } if start == end);
+        if empty && at_symbol.is_none() {
             *at_symbol = Some(list);
         } else {
             *for_line = Some(list);
@@ -589,7 +604,7 @@ pub(super) fn answer(
                     // Nothing about the project, from a server still at
                     // work: maybe not yet.
                     let project_wide = matches!(
-                        request.feature,
+                        request.feature(),
                         LspFeature::References
                             | LspFeature::WorkspaceSymbols
                             | LspFeature::Implementation
@@ -606,7 +621,7 @@ pub(super) fn answer(
             Err(error) => {
                 let mut text = format!("{}: {}", client.name, error.message);
                 if matches!(
-                    request.feature,
+                    request.feature(),
                     LspFeature::ApplyCodeAction | LspFeature::ResolveCodeAction
                 ) {
                     text.push_str(" (the file may have changed since: run lsp_code_actions again)");
@@ -618,7 +633,7 @@ pub(super) fn answer(
         return;
     }
     let stash = stashes.completions;
-    let current = match request.feature {
+    let current = match request.feature() {
         LspFeature::Completion => editor.still_completing(&request),
         // Shown if the picker's still open with that query (checked there).
         LspFeature::WorkspaceSymbols => true,
@@ -652,7 +667,7 @@ pub(super) fn answer(
             return;
         }
     };
-    if request.feature == LspFeature::Completion {
+    if request.feature() == LspFeature::Completion {
         let resolves = client.resolves_completions();
         let (items, incomplete, raw) = completion_items(editor, &request, &result, client.encoding);
         // Resolved when taken, for its import: if the server says it
@@ -676,7 +691,7 @@ pub(super) fn answer(
         editor.show_server_completion(&request, items, incomplete);
         return;
     }
-    if request.feature == LspFeature::ResolveCompletion {
+    if request.feature() == LspFeature::ResolveCompletion {
         let buffer = editor.document.buffer();
         let edits = result["additionalTextEdits"]
             .as_array()
@@ -691,7 +706,7 @@ pub(super) fn answer(
         editor.make_other_edits(edits);
         return;
     }
-    if request.feature == LspFeature::InlayHint {
+    if request.feature() == LspFeature::InlayHint {
         let Some(document) = editor.document_by_id(request.document) else {
             return;
         };
@@ -699,7 +714,7 @@ pub(super) fn answer(
         editor.set_inlay_hints(&request, hints);
         return;
     }
-    if request.feature == LspFeature::DocumentHighlight {
+    if request.feature() == LspFeature::DocumentHighlight {
         let buffer = editor.document.buffer();
         let ranges = result
             .as_array()
@@ -715,25 +730,29 @@ pub(super) fn answer(
         editor.set_references(request.document, request.edit_seq, ranges);
         return;
     }
-    if request.feature == LspFeature::Outline {
+    if request.feature() == LspFeature::Outline {
         let symbols = outline(editor, request.document, &result, client.encoding);
         editor.set_outline(request.document, request.edit_seq, symbols);
         return;
     }
     if matches!(
-        request.feature,
+        request.feature(),
         LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols
     ) {
         let symbols = symbols(editor, request.document, &result, client.encoding);
-        editor.show_symbols(request.feature, request.text.as_deref(), symbols);
+        let query = match &request.query {
+            LspQuery::WorkspaceSymbols { query } => Some(query.as_str()),
+            _ => None,
+        };
+        editor.show_symbols(request.feature(), query, symbols);
         return;
     }
-    if request.feature == LspFeature::SignatureHelp {
+    if request.feature() == LspFeature::SignatureHelp {
         let help = signature_help(&result);
         editor.show_signature_help(&request, help);
         return;
     }
-    if request.feature == LspFeature::CodeAction {
+    if request.feature() == LspFeature::CodeAction {
         // Those the server says can't be done here are left out.
         let actions: Vec<Value> = result
             .as_array()
@@ -755,7 +774,7 @@ pub(super) fn answer(
         editor.show_code_actions(answer, titles);
         return;
     }
-    if request.feature == LspFeature::ResolveCodeAction {
+    if request.feature() == LspFeature::ResolveCodeAction {
         make_code_action(editor, client, &result, false);
     }
 }
@@ -782,7 +801,7 @@ fn agent_change(
     result: &Value,
 ) -> Option<Result<(String, Vec<crate::editor::DocumentId>), String>> {
     let before = editor.agent_unsaved();
-    let done = match request.feature {
+    let done = match request.feature() {
         LspFeature::Format => {
             let document = editor.document_by_id(request.document)?;
             let buffer = document.buffer();
@@ -820,7 +839,7 @@ fn agent_change(
         _ => return None,
     };
     let (saved, changed) = editor.agent_save_changed(&before);
-    let done = if request.feature == LspFeature::ResolveCodeAction && !changed.is_empty() {
+    let done = if request.feature() == LspFeature::ResolveCodeAction && !changed.is_empty() {
         format!("{done} in {}", editor.agent_names(&changed))
     } else {
         done
@@ -856,9 +875,6 @@ fn agent_actions_list(
     )
 }
 
-/// Marks a call hierarchy request's second step (the calls).
-const CALLS_STEP: &str = "calls";
-
 /// A call hierarchy answer: after `prepareCallHierarchy`, asks for the
 /// calls to or from the function found; after that, answers with them.
 fn calls_answer(
@@ -874,13 +890,20 @@ fn calls_answer(
             return;
         }
     };
-    if request.text.as_deref() != Some(CALLS_STEP) {
+    let found = matches!(
+        request.query,
+        LspQuery::Callers { found: true } | LspQuery::Callees { found: true }
+    );
+    if !found {
         match result.as_array().and_then(|items| items.first()) {
             Some(item) => {
                 let item = item.clone();
                 client.request_calls(
                     LspRequest {
-                        text: Some(CALLS_STEP.to_string()),
+                        query: match request.query {
+                            LspQuery::Callers { .. } => LspQuery::Callers { found: true },
+                            _ => LspQuery::Callees { found: true },
+                        },
                         ..request
                     },
                     item,
@@ -890,7 +913,7 @@ fn calls_answer(
         }
         return;
     }
-    let callers = request.feature == LspFeature::Callers;
+    let callers = request.feature() == LspFeature::Callers;
     let calls = calls(&result, callers, &client.root);
     editor.lsp_answered(&request, Ok(Answer::Calls(calls)));
 }
@@ -1370,7 +1393,7 @@ fn completion_items(
     };
     // Items' edits are nearly all on the word's line: it's read once, not
     // once per item (there can be hundreds).
-    let row = request.word_start.row;
+    let row = request.word_start().row;
     let line = buffer.line(row);
     let start_of = |range: &Value| {
         let start = &range["start"];
@@ -1403,8 +1426,8 @@ fn completion_items(
                 .or_else(|| edit.get("replace"));
             let start = edit_range
                 .map(start_of)
-                .filter(|s| s.row == request.word_start.row && *s < request.word_start)
-                .unwrap_or(request.word_start);
+                .filter(|s| s.row == request.word_start().row && *s < request.word_start())
+                .unwrap_or(request.word_start());
             let mut cursor = None;
             if item["insertTextFormat"].as_u64() == Some(2) {
                 (text, cursor) = expand_snippet(&text);
@@ -1713,17 +1736,15 @@ mod tests {
         let mut editor = Editor::default();
         editor.document.insert(Position::new(0, 0), "x.ar");
         let request = LspRequest {
-            feature: LspFeature::Completion,
+            query: LspQuery::Completion {
+                trigger: None,
+                word_start: Position::new(0, 2),
+            },
             document: editor.document.id(),
             position: Position::new(0, 4),
             buffer_id: 0,
             edit_seq: 0,
             reply: Reply::Typing,
-            trigger: None,
-            word_start: Position::new(0, 2),
-            item: None,
-            text: None,
-            end: editor.document.cursor(),
         };
         let range = |from: u64| {
             json!({"start": {"line": 0, "character": from},

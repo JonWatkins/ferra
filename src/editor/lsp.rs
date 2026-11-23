@@ -107,28 +107,148 @@ impl LspFeature {
     }
 }
 
-/// A request waiting to be sent: `feature` at `position` in `document`,
-/// as its text was at `edit_seq`.
+/// An LSP query waiting to be sent: `query` at `position` in `document`,
+/// as its text was at `edit_seq`, and who asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspRequest {
-    pub feature: LspFeature,
+    pub query: LspQuery,
     pub document: DocumentId,
     pub position: Position,
     pub buffer_id: u64,
     pub edit_seq: u64,
     /// Who asked, and so where the answer goes.
     pub reply: Reply,
-    /// For completion: the character typed that might start one (`.`),
-    /// and where the word being completed starts. For code actions: where
-    /// their range starts (the cursor, or a selection's start).
-    pub trigger: Option<char>,
-    pub word_start: Position,
-    /// For resolving: which completion item (see `ServerItem::resolve`).
-    pub item: Option<(u64, usize)>,
-    /// For renaming: the new name.
-    pub text: Option<String>,
-    /// For code actions: the end of the range they're for.
-    pub end: Position,
+}
+
+impl LspRequest {
+    /// What's asked, without its details.
+    pub fn feature(&self) -> LspFeature {
+        self.query.feature()
+    }
+
+    /// Where the word being completed starts (the place, for others).
+    pub fn word_start(&self) -> Position {
+        match self.query {
+            LspQuery::Completion { word_start, .. } => word_start,
+            _ => self.position,
+        }
+    }
+}
+
+/// What a language server is asked, with what that question needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LspQuery {
+    Hover,
+    Definition,
+    Declaration,
+    TypeDefinition,
+    Implementation,
+    References,
+    /// Completing the word that starts at `word_start`, maybe on typing
+    /// `trigger` (a `.`).
+    Completion {
+        trigger: Option<char>,
+        word_start: Position,
+    },
+    /// A taken completion item's details (its import): which answer's,
+    /// and which item (see `ServerItem::resolve`).
+    ResolveCompletion {
+        item: (u64, usize),
+    },
+    Format,
+    Rename {
+        name: String,
+    },
+    /// The code actions for `start..end`; with `file_wide`, only the
+    /// file-wide ones (organize imports, fix all).
+    CodeActions {
+        start: Position,
+        end: Position,
+        file_wide: bool,
+    },
+    /// Making one of a list of code actions: which list, and which one.
+    ApplyCodeAction {
+        item: (u64, usize),
+    },
+    /// A chosen code action's edit, from a server that fills it in then.
+    ResolveCodeAction,
+    /// The signature being typed, maybe on typing `trigger` (a `(`);
+    /// `retrigger` while it's showing.
+    SignatureHelp {
+        trigger: Option<char>,
+        retrigger: bool,
+    },
+    DocumentSymbols,
+    WorkspaceSymbols {
+        query: String,
+    },
+    Outline,
+    DocumentHighlight,
+    InlayHint,
+    /// The functions that call the one at the place; `found` once the
+    /// server's found that function, for asking for its calls.
+    Callers {
+        found: bool,
+    },
+    /// The functions it calls (`found` as for `Callers`).
+    Callees {
+        found: bool,
+    },
+    /// Moving the document's file to `to`.
+    MoveFile {
+        to: PathBuf,
+    },
+}
+
+impl LspQuery {
+    /// What's asked, without its details.
+    pub fn feature(&self) -> LspFeature {
+        match self {
+            LspQuery::Hover => LspFeature::Hover,
+            LspQuery::Definition => LspFeature::Definition,
+            LspQuery::Declaration => LspFeature::Declaration,
+            LspQuery::TypeDefinition => LspFeature::TypeDefinition,
+            LspQuery::Implementation => LspFeature::Implementation,
+            LspQuery::References => LspFeature::References,
+            LspQuery::Completion { .. } => LspFeature::Completion,
+            LspQuery::ResolveCompletion { .. } => LspFeature::ResolveCompletion,
+            LspQuery::Format => LspFeature::Format,
+            LspQuery::Rename { .. } => LspFeature::Rename,
+            LspQuery::CodeActions { .. } => LspFeature::CodeAction,
+            LspQuery::ApplyCodeAction { .. } => LspFeature::ApplyCodeAction,
+            LspQuery::ResolveCodeAction => LspFeature::ResolveCodeAction,
+            LspQuery::SignatureHelp { .. } => LspFeature::SignatureHelp,
+            LspQuery::DocumentSymbols => LspFeature::DocumentSymbols,
+            LspQuery::WorkspaceSymbols { .. } => LspFeature::WorkspaceSymbols,
+            LspQuery::Outline => LspFeature::Outline,
+            LspQuery::DocumentHighlight => LspFeature::DocumentHighlight,
+            LspQuery::InlayHint => LspFeature::InlayHint,
+            LspQuery::Callers { .. } => LspFeature::Callers,
+            LspQuery::Callees { .. } => LspFeature::Callees,
+            LspQuery::MoveFile { .. } => LspFeature::MoveFile,
+        }
+    }
+
+    /// The query for `feature` when a place is all it needs (hover,
+    /// definitions, references...); `None` for those that need more.
+    pub fn at(feature: LspFeature) -> Option<LspQuery> {
+        Some(match feature {
+            LspFeature::Hover => LspQuery::Hover,
+            LspFeature::Definition => LspQuery::Definition,
+            LspFeature::Declaration => LspQuery::Declaration,
+            LspFeature::TypeDefinition => LspQuery::TypeDefinition,
+            LspFeature::Implementation => LspQuery::Implementation,
+            LspFeature::References => LspQuery::References,
+            LspFeature::Format => LspQuery::Format,
+            LspFeature::DocumentSymbols => LspQuery::DocumentSymbols,
+            LspFeature::Outline => LspQuery::Outline,
+            LspFeature::DocumentHighlight => LspQuery::DocumentHighlight,
+            LspFeature::InlayHint => LspQuery::InlayHint,
+            LspFeature::Callers => LspQuery::Callers { found: false },
+            LspFeature::Callees => LspQuery::Callees { found: false },
+            _ => return None,
+        })
+    }
 }
 
 /// Who asked an LSP query, and so where its answer goes.
@@ -566,8 +686,16 @@ impl Editor {
         true
     }
 
-    /// Asks the language server for `feature` at the cursor (`K`, `gd`...).
+    /// Asks the language server for `feature` at the cursor (`K`, `gd`...),
+    /// for one that needs no more than the place.
     pub fn request_lsp(&mut self, feature: LspFeature) -> Result<(), String> {
+        let query = LspQuery::at(feature)
+            .ok_or_else(|| format!("Language servers can't be asked for {}", feature.noun()))?;
+        self.ask_lsp(query)
+    }
+
+    /// Asks the language server `query` at the cursor, for the user.
+    pub fn ask_lsp(&mut self, query: LspQuery) -> Result<(), String> {
         if !self.options.lsp {
             return Err("Language servers are off (lsp = false)".into());
         }
@@ -576,17 +704,12 @@ impl Editor {
         }
         let buffer = self.document.buffer();
         self.lsp_requests.push(LspRequest {
-            feature,
+            query,
             document: self.document.id(),
             position: self.document.cursor(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
             reply: Reply::Key,
-            trigger: None,
-            word_start: self.document.cursor(),
-            item: None,
-            text: None,
-            end: self.document.cursor(),
         });
         Ok(())
     }
@@ -616,19 +739,20 @@ impl Editor {
     /// cursor, or with the visual selection (which ends).
     pub fn request_code_actions(&mut self) -> Result<(), String> {
         let range = self.take_selection();
-        self.request_lsp(LspFeature::CodeAction)?;
-        let span = range.map(|range| match range {
-            crate::core::Range::Chars { start, end } => (start, end),
-            crate::core::Range::Lines { first, last } => (
+        let cursor = self.document.cursor();
+        let (start, end) = match range {
+            Some(crate::core::Range::Chars { start, end }) => (start, end),
+            Some(crate::core::Range::Lines { first, last }) => (
                 Position::new(first, 0),
                 self.document.buffer().line_end(last),
             ),
-        });
-        if let (Some((start, end)), Some(request)) = (span, self.lsp_requests.last_mut()) {
-            request.word_start = start;
-            request.end = end;
-        }
-        Ok(())
+            None => (cursor, cursor),
+        };
+        self.ask_lsp(LspQuery::CodeActions {
+            start,
+            end,
+            file_wide: false,
+        })
     }
 
     /// Lists a server's code actions (their titles and kinds), to choose
@@ -653,10 +777,9 @@ impl Editor {
     /// `<Space>S`: opens a picker of the project's symbols, which the
     /// language server searches for as the query is typed.
     pub fn request_workspace_symbols(&mut self) -> Result<(), String> {
-        self.request_lsp(LspFeature::WorkspaceSymbols)?;
-        if let Some(request) = self.lsp_requests.last_mut() {
-            request.text = Some(String::new());
-        }
+        self.ask_lsp(LspQuery::WorkspaceSymbols {
+            query: String::new(),
+        })?;
         self.symbol_query = Some(String::new());
         self.open_picker(
             Picker::new(LspFeature::WorkspaceSymbols.title(), Vec::new()).searched_by_server(),
@@ -681,11 +804,7 @@ impl Editor {
         }
         self.symbol_query = Some(query.clone());
         // The picker's buffer is the one it was opened from.
-        if self.request_lsp(LspFeature::WorkspaceSymbols).is_ok()
-            && let Some(request) = self.lsp_requests.last_mut()
-        {
-            request.text = Some(query);
-        }
+        let _ = self.ask_lsp(LspQuery::WorkspaceSymbols { query });
     }
 
     /// Lists `symbols` (a label, what it is, where) in a picker, or for the
@@ -726,17 +845,14 @@ impl Editor {
     pub fn apply_code_action(&mut self, answer: u64, index: usize) {
         let buffer = self.document.buffer();
         self.lsp_requests.push(LspRequest {
-            feature: LspFeature::ApplyCodeAction,
+            query: LspQuery::ApplyCodeAction {
+                item: (answer, index),
+            },
             document: self.document.id(),
             position: self.document.cursor(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
             reply: Reply::Key,
-            trigger: None,
-            word_start: self.document.cursor(),
-            item: Some((answer, index)),
-            text: None,
-            end: self.document.cursor(),
         });
     }
 
@@ -747,11 +863,9 @@ impl Editor {
         if name.is_empty() {
             return Err("Rename to what? :rename new_name".into());
         }
-        self.request_lsp(LspFeature::Rename)?;
-        if let Some(request) = self.lsp_requests.last_mut() {
-            request.text = Some(name.to_string());
-        }
-        Ok(())
+        self.ask_lsp(LspQuery::Rename {
+            name: name.to_string(),
+        })
     }
 
     /// The requests waiting to be sent (to adjust the one just made).
@@ -946,7 +1060,10 @@ impl Editor {
             Answer::Calls(_) => {}
             Answer::Hover(_) | Answer::Locations { .. } | Answer::Edits(_) if !wanted(self) => {}
             Answer::Edits(edits) => {
-                let name = request.text.clone().unwrap_or_default();
+                let name = match &request.query {
+                    LspQuery::Rename { name } => name.as_str(),
+                    _ => "",
+                };
                 let text = match self.apply_lsp_edits(edits) {
                     Applied { changes: 0, .. } => "Nothing to rename here".to_string(),
                     done => format!("Renamed to {name}: {}", done.describe()),
@@ -960,12 +1077,12 @@ impl Editor {
             Answer::Hover(markdown) => self.show_hover(&markdown),
             // Ctrl held on the pointer's word: the definition peeked at.
             Answer::Locations { found, .. } if pointer => {
-                if request.feature == LspFeature::Definition {
+                if request.feature() == LspFeature::Definition {
                     self.mouse_peek_answer(&found);
                 }
             }
             Answer::Locations { found, .. } => {
-                if let Err(error) = self.show_locations(request.feature, found) {
+                if let Err(error) = self.show_locations(request.feature(), found) {
                     self.set_message(Message::info(error));
                 }
             }
@@ -986,7 +1103,7 @@ impl Editor {
                 self.lsp_failed(format!("{server}: {message}"));
                 return;
             }
-            NoAnswer::NothingThere => format!("No {} here", request.feature.noun()),
+            NoAnswer::NothingThere => format!("No {} here", request.feature().noun()),
             NoAnswer::Unusable(why) => {
                 self.lsp_failed(why);
                 return;
@@ -994,7 +1111,7 @@ impl Editor {
             NoAnswer::NoServer => "No language server for this buffer (see :lsp)".to_string(),
             NoAnswer::Starting(name) => format!("{name} is still starting"),
             NoAnswer::Unsupported(name) => {
-                format!("{name} doesn't offer {}", request.feature.noun())
+                format!("{name} doesn't offer {}", request.feature().noun())
             }
             // Its stopping is said already.
             NoAnswer::Stopped(_) => return,

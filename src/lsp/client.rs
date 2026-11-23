@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::convert::{Encoding, path_to_uri};
 use super::transport::{read_message, write_message};
 use crate::config::ServerConfig;
-use crate::editor::lsp::{LspFeature, LspRequest};
+use crate::editor::lsp::{LspFeature, LspQuery, LspRequest};
 use crate::editor::{Document, DocumentId};
 
 /// Identifies a client among the running ones.
@@ -481,7 +481,7 @@ impl Client {
     /// `Callers`) or from (`Callees`) `item`, as `prepareCallHierarchy`
     /// gave it.
     pub fn request_calls(&mut self, request: LspRequest, item: Value) {
-        let method = if request.feature == LspFeature::Callers {
+        let method = if request.feature() == LspFeature::Callers {
             "callHierarchy/incomingCalls"
         } else {
             "callHierarchy/outgoingCalls"
@@ -558,40 +558,40 @@ impl Client {
         let Some(synced) = self.documents.get(&request.document) else {
             return;
         };
-        let (method, _) = feature_method(request.feature);
+        let (method, _) = feature_method(request.feature());
         let mut params = json!({
             "textDocument": { "uri": synced.uri },
             "position": position,
         });
         // These are about the file, or the project: no position.
         if matches!(
-            request.feature,
+            request.feature(),
             LspFeature::DocumentSymbols | LspFeature::Outline
         ) {
             params = json!({ "textDocument": { "uri": synced.uri } });
-        } else if request.feature == LspFeature::WorkspaceSymbols {
-            params = json!({ "query": request.text.clone().unwrap_or_default() });
+        } else if let LspQuery::WorkspaceSymbols { query } = &request.query {
+            params = json!({ "query": query });
         }
-        match request.feature {
-            LspFeature::References => {
+        match &request.query {
+            LspQuery::References => {
                 params["context"] = json!({ "includeDeclaration": true });
             }
-            LspFeature::Rename => {
-                params["newName"] = json!(request.text.clone().unwrap_or_default());
+            LspQuery::Rename { name } => {
+                params["newName"] = json!(name);
             }
-            LspFeature::SignatureHelp => {
+            LspQuery::SignatureHelp { trigger, retrigger } => {
                 let mut context = json!({
                     "triggerKind": if request.reply.explicit() { 1 } else { 3 },
-                    "isRetrigger": request.text.is_some(),
+                    "isRetrigger": retrigger,
                 });
-                if let Some(c) = request.trigger.filter(|c| self.signature_triggered_by(*c)) {
+                if let Some(c) = trigger.filter(|c| self.signature_triggered_by(*c)) {
                     context["triggerKind"] = json!(2);
                     context["triggerCharacter"] = json!(c.to_string());
                 }
                 params["context"] = context;
             }
-            LspFeature::Completion => {
-                params["context"] = match request.trigger {
+            LspQuery::Completion { trigger, .. } => {
+                params["context"] = match trigger {
                     Some(c) => json!({ "triggerKind": 2, "triggerCharacter": c.to_string() }),
                     None => json!({ "triggerKind": 1 }),
                 };
@@ -666,14 +666,14 @@ impl Client {
             // would only be replaced, so it's not worth reading.
             Some(Pending::Feature(request))
                 if matches!(
-                    request.feature,
+                    request.feature(),
                     LspFeature::Completion
                         | LspFeature::SignatureHelp
                         | LspFeature::WorkspaceSymbols
                 ) && self.pending.iter().any(|(later, pending)| {
                     *later > id
                         && matches!(pending, Pending::Feature(r)
-                                if r.feature == request.feature
+                                if r.feature() == request.feature()
                                     && r.document == request.document)
                 }) =>
             {

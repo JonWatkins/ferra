@@ -18,7 +18,6 @@ pub mod convert;
 pub mod transport;
 
 mod features;
-pub use features::FILE_WIDE_ACTIONS;
 
 pub use client::{ProcessSpawner, Spawner, State, Streams, find_program};
 
@@ -403,7 +402,7 @@ impl Lsp {
                         editor.set_message(Message::error(format!("{}: {error}", client.name)));
                     }
                     Answer::Feature(request, result)
-                        if request.feature == LspFeature::Format
+                        if request.feature() == LspFeature::Format
                             && request.reply.agent().is_none() =>
                     {
                         self.formatted = Some(result);

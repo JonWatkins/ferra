@@ -4,7 +4,7 @@
 //! and again on each change while it's showing, so the parameter follows
 //! the cursor; it goes when the server has none, or insert mode ends.
 
-use super::lsp::{LspFeature, LspRequest, Reply};
+use super::lsp::{LspQuery, LspRequest, Reply};
 use super::{Editor, Message, Mode};
 
 /// One signature to show.
@@ -65,17 +65,15 @@ impl Editor {
         let cursor = self.document.cursor();
         let buffer = self.document.buffer();
         self.lsp_requests.push(LspRequest {
-            feature: LspFeature::SignatureHelp,
+            query: LspQuery::SignatureHelp {
+                trigger: typed,
+                retrigger: false,
+            },
             document: self.document.id(),
             position: cursor,
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
             reply: if manual { Reply::Key } else { Reply::Typing },
-            trigger: typed,
-            word_start: cursor,
-            item: None,
-            text: None,
-            end: cursor,
         });
         Ok(())
     }

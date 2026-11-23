@@ -10,7 +10,7 @@
 //! space, moving away, `<Esc>`) closes it, keeping what's in the text.
 
 use super::completion::{WordCompletion, is_word_char};
-use super::lsp::{LspFeature, LspRequest, Reply};
+use super::lsp::{LspQuery, LspRequest, Reply};
 use super::picker::fuzzy_match;
 use super::{Editor, Mode};
 use crate::core::Position;
@@ -152,17 +152,15 @@ impl Editor {
         let (start, cursor) = self.word_before_cursor();
         let buffer = self.document.buffer();
         self.lsp_requests.push(LspRequest {
-            feature: LspFeature::Completion,
+            query: LspQuery::Completion {
+                trigger,
+                word_start: start,
+            },
             document: self.document.id(),
             position: cursor,
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
             reply: if manual { Reply::Key } else { Reply::Typing },
-            trigger,
-            word_start: start,
-            item: None,
-            text: None,
-            end: cursor,
         });
         Ok(())
     }
@@ -173,7 +171,7 @@ impl Editor {
         let (start, cursor) = self.word_before_cursor();
         self.document.id() == request.document
             && self.mode() == Mode::Insert
-            && start == request.word_start
+            && start == request.word_start()
             && cursor.row == request.position.row
             && self.completion.as_ref().is_none_or(|c| c.server.is_some())
     }
@@ -211,7 +209,7 @@ impl Editor {
             .iter()
             .map(|i| i.start)
             .min()
-            .unwrap_or(request.word_start);
+            .unwrap_or(request.word_start());
         self.completion = Some(WordCompletion {
             start,
             typed: String::new(),
@@ -220,7 +218,7 @@ impl Editor {
             labels: Vec::new(),
             details: Vec::new(),
             server: Some(ServerCompletion {
-                word_start: request.word_start,
+                word_start: request.word_start(),
                 all: items,
                 shown: Vec::new(),
                 incomplete,
@@ -347,17 +345,12 @@ impl Editor {
             // Its import comes when the server answers.
             let buffer = self.document.buffer();
             self.lsp_requests.push(LspRequest {
-                feature: LspFeature::ResolveCompletion,
+                query: LspQuery::ResolveCompletion { item: resolve },
                 document: self.document.id(),
                 position: self.document.cursor(),
                 buffer_id: buffer.id(),
                 edit_seq: buffer.edit_seq(),
                 reply: Reply::Typing,
-                trigger: None,
-                word_start: completion.start,
-                item: Some(resolve),
-                text: None,
-                end: self.document.cursor(),
             });
         }
         // A snippet's cursor place: counted from the completion's start

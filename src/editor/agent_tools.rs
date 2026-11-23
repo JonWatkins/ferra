@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::lsp::{LspFeature, LspRequest, Reply};
+use super::lsp::{LspFeature, LspQuery, LspRequest, Reply};
 use super::{DocumentId, Editor};
 use crate::core::{Position, Range};
 
@@ -587,17 +587,14 @@ impl Editor {
         }
         let buffer = self.document_by_id(id).ok_or("No such buffer")?.buffer();
         self.lsp_requests.push(LspRequest {
-            feature: LspFeature::MoveFile,
+            query: LspQuery::MoveFile {
+                to: target.to_path_buf(),
+            },
             document: id,
             position: Position::default(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
             reply: Reply::Agent(call),
-            trigger: None,
-            word_start: Position::default(),
-            item: None,
-            text: Some(target.to_string_lossy().into_owned()),
-            end: Position::default(),
         });
         Ok(None)
     }
@@ -1278,17 +1275,14 @@ impl Editor {
         let buffer = self.document_by_id(id).ok_or("No such buffer")?.buffer();
         let position = Position::new(0, 0);
         self.lsp_requests.push(LspRequest {
-            feature: LspFeature::ApplyCodeAction,
+            query: LspQuery::ApplyCodeAction {
+                item: (list, number.saturating_sub(1)),
+            },
             document: id,
             position,
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
             reply: Reply::Agent(call),
-            trigger: None,
-            word_start: position,
-            item: Some((list, number.saturating_sub(1))),
-            text: None,
-            end: position,
         });
         Ok(())
     }
@@ -1330,17 +1324,16 @@ impl Editor {
         if feature == LspFeature::CodeAction && line.is_none() {
             let last = buffer.line_count().saturating_sub(1);
             self.lsp_requests.push(LspRequest {
-                feature,
+                query: LspQuery::CodeActions {
+                    start: Position::new(0, 0),
+                    end: buffer.line_end(last),
+                    file_wide: true,
+                },
                 document: id,
                 position: Position::new(0, 0),
                 buffer_id: buffer.id(),
                 edit_seq: buffer.edit_seq(),
                 reply: Reply::Agent(call),
-                trigger: None,
-                word_start: Position::new(0, 0),
-                item: None,
-                text: Some(crate::lsp::FILE_WIDE_ACTIONS.to_string()),
-                end: buffer.line_end(last),
             });
             return Ok(());
         }
@@ -1381,26 +1374,36 @@ impl Editor {
             (None, None) => text.chars().take_while(|c| c.is_whitespace()).count(),
         };
         let position = Position::new(row, col);
+        let text = |q: Option<&str>| q.unwrap_or_default().to_string();
+        let lsp_query = match feature {
+            LspFeature::Rename => LspQuery::Rename { name: text(query) },
+            LspFeature::WorkspaceSymbols => LspQuery::WorkspaceSymbols { query: text(query) },
+            LspFeature::CodeAction => LspQuery::CodeActions {
+                start: position,
+                end: position,
+                file_wide: false,
+            },
+            feature => LspQuery::at(feature)
+                .ok_or_else(|| format!("Language servers can't be asked for {}", feature.noun()))?,
+        };
         let request = LspRequest {
-            feature,
+            query: lsp_query,
             document: id,
             position,
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
             reply: Reply::Agent(call),
-            trigger: None,
-            word_start: position,
-            item: None,
-            text: query.map(str::to_string),
-            end: position,
         };
         // Code actions: asked at the symbol (its own refactors), and for
         // the whole line with every problem on it (a fix can hang on a hint
         // beside the error); the two lists are merged.
         if feature == LspFeature::CodeAction {
             self.lsp_requests.push(LspRequest {
-                word_start: Position::new(row, 0),
-                end: buffer.line_end(row),
+                query: LspQuery::CodeActions {
+                    start: Position::new(row, 0),
+                    end: buffer.line_end(row),
+                    file_wide: false,
+                },
                 ..request.clone()
             });
         }
