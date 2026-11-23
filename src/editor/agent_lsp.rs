@@ -7,7 +7,7 @@ use std::path::Path;
 
 use super::Editor;
 use super::agent::short_path;
-use super::lsp::{Answer, Calls, LspFeature, LspRequest, NoAnswer};
+use super::lsp::{Answer, Busy, Calls, Location, LspFeature, LspRequest, NoAnswer, without_html};
 
 impl Editor {
     /// The answer to the agent's tool call `call`, or why there's none.
@@ -19,6 +19,10 @@ impl Editor {
     ) {
         let text = match answer {
             Ok(Answer::Calls(calls)) => Ok(calls_text(&calls, request.feature)),
+            Ok(Answer::Hover(markdown)) => Ok(hover_text(&markdown)),
+            Ok(Answer::Locations { found, busy }) => {
+                Ok(locations_text(found, request.feature, busy.as_ref()))
+            }
             // Nothing there isn't the call failing: it's the answer.
             Err(NoAnswer::NothingThere) => Ok(nothing_there(request.feature)),
             Err(why) => Err(no_answer_text(request.feature, &why)),
@@ -40,7 +44,9 @@ fn no_answer_text(feature: LspFeature, why: &NoAnswer) -> String {
         }
         NoAnswer::Unsupported(name) => format!("{name} doesn't offer {}", feature.noun()),
         NoAnswer::Stopped(name) => format!("{name} stopped before answering"),
-        NoAnswer::ServerError(name, message) => format!("{name}: {message}"),
+        NoAnswer::ServerError {
+            server, message, ..
+        } => format!("{server}: {message}"),
         NoAnswer::NothingThere => nothing_there(feature),
     }
 }
@@ -53,6 +59,51 @@ fn nothing_there(feature: LspFeature) -> String {
         }
         _ => "Nothing found".into(),
     }
+}
+
+/// A hover's Markdown, without its HTML.
+fn hover_text(markdown: &str) -> String {
+    let markdown = without_html(markdown);
+    if markdown.trim().is_empty() {
+        "No hover information there".into()
+    } else {
+        markdown
+    }
+}
+
+/// The most places listed.
+const PLACES_LISTED: usize = 200;
+
+/// Places, a line each: `path:line:column  text`; references by file and
+/// place (servers give them in their own order). Nothing found in the
+/// project by a server at work says it may know more in a moment.
+fn locations_text(mut found: Vec<Location>, feature: LspFeature, busy: Option<&Busy>) -> String {
+    if found.is_empty() {
+        let project_wide = matches!(feature, LspFeature::References | LspFeature::Implementation);
+        return match busy {
+            Some(Busy { server, work }) if project_wide => format!(
+                "Nothing found, but {server} is busy ({work}): it may know more in a moment"
+            ),
+            _ => "Nothing found".into(),
+        };
+    }
+    if feature == LspFeature::References {
+        found.sort_by(|a, b| (&a.path, a.position).cmp(&(&b.path, b.position)));
+    }
+    found
+        .iter()
+        .take(PLACES_LISTED)
+        .map(|l| {
+            let path = short_path(&l.path.to_string_lossy());
+            format!(
+                "{path}:{}:{}  {}",
+                l.position.row + 1,
+                l.position.col + 1,
+                l.line.trim()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The most functions a call hierarchy answer lists.
@@ -335,6 +386,44 @@ mod tests {
             ),
             "{text}"
         );
+    }
+
+    #[test]
+    fn places_for_the_agent() {
+        use crate::core::Position;
+        let place = |path: &str, row, col| Location {
+            path: path.into(),
+            position: Position::new(row, col),
+            line: "  let x = bad;  ".into(),
+        };
+        let found = vec![
+            place("/p/b.rs", 0, 0),
+            place("/p/a.rs", 4, 8),
+            place("/p/a.rs", 1, 2),
+        ];
+        assert_eq!(
+            locations_text(found.clone(), LspFeature::References, None),
+            "/p/a.rs:2:3  let x = bad;\n/p/a.rs:5:9  let x = bad;\n/p/b.rs:1:1  let x = bad;",
+            "references by file and place"
+        );
+        assert!(
+            locations_text(found, LspFeature::Definition, None).starts_with("/p/b.rs:1:1"),
+            "others as the server gave them"
+        );
+        let busy = Busy {
+            server: "rust-analyzer".into(),
+            work: "Indexing".into(),
+        };
+        assert_eq!(
+            locations_text(Vec::new(), LspFeature::References, Some(&busy)),
+            "Nothing found, but rust-analyzer is busy (Indexing): it may know more in a moment"
+        );
+        assert_eq!(
+            locations_text(Vec::new(), LspFeature::Definition, Some(&busy)),
+            "Nothing found",
+            "only the project-wide ones wait on indexing"
+        );
+        assert_eq!(hover_text("<b></b>  "), "No hover information there");
     }
 
     #[test]

@@ -12,7 +12,9 @@ use super::convert::{self, Encoding};
 use super::{Lsp, State};
 use crate::core::Position;
 use crate::editor::DocumentId;
-use crate::editor::lsp::{Answer, Call, Calls, Location, LspFeature, LspRequest, NoAnswer, Reply};
+use crate::editor::lsp::{
+    Answer, Busy, Call, Calls, Location, LspFeature, LspRequest, NoAnswer, Reply,
+};
 use crate::editor::server_completion::ServerItem;
 use crate::editor::signature::SignatureHelp;
 use crate::editor::{Editor, Message};
@@ -475,6 +477,31 @@ pub(super) fn answer(
         calls_answer(editor, client, request, result);
         return;
     }
+    if matches!(
+        request.feature,
+        LspFeature::Hover
+            | LspFeature::Definition
+            | LspFeature::Declaration
+            | LspFeature::TypeDefinition
+            | LspFeature::Implementation
+            | LspFeature::References
+    ) {
+        let answer = match result {
+            Ok(result) if request.feature == LspFeature::Hover => {
+                Ok(Answer::Hover(hover_markdown(&result["contents"])))
+            }
+            Ok(result) => Ok(Answer::Locations {
+                found: locations(editor, &result, client.encoding),
+                busy: client.busy_with().map(|work| Busy {
+                    server: client.name.clone(),
+                    work,
+                }),
+            }),
+            Err(error) => Err(server_error(client, error)),
+        };
+        editor.lsp_answered(&request, answer);
+        return;
+    }
     // The coding agent's: the answer as text, back to it.
     if let Some(call) = request.reply.agent()
         && request.feature == LspFeature::CodeAction
@@ -558,12 +585,10 @@ pub(super) fn answer(
                             | LspFeature::Implementation
                     );
                     match client.busy_with() {
-                        Some(work) if project_wide && NOTHING.contains(&text.as_str()) => {
-                            Ok(format!(
-                                "{text}, but {} is busy ({work}): it may know more in a moment",
-                                client.name
-                            ))
-                        }
+                        Some(work) if project_wide && text == NOTHING => Ok(format!(
+                            "{text}, but {} is busy ({work}): it may know more in a moment",
+                            client.name
+                        )),
                         _ => Ok(text),
                     }
                 }
@@ -604,10 +629,6 @@ pub(super) fn answer(
             editor.document.id() == request.document
                 && editor.document.buffer().edit_seq() == request.edit_seq
         }
-        // The pointer's: while it rests there.
-        LspFeature::Hover | LspFeature::Definition if !request.reply.explicit() => {
-            editor.mouse_hover_wanted(&request)
-        }
         _ => editor.still_at(&request),
     };
     if !current {
@@ -616,13 +637,6 @@ pub(super) fn answer(
     let result = match result {
         Ok(result) => result,
         Err(error) if error.is_stale() => return,
-        // The pointer's hover stays quiet about it.
-        Err(_)
-            if matches!(request.feature, LspFeature::Hover | LspFeature::Definition)
-                && !request.reply.explicit() =>
-        {
-            return;
-        }
         Err(error) => {
             editor.lsp_failed(format!("{}: {}", client.name, error.message));
             return;
@@ -745,36 +759,20 @@ pub(super) fn answer(
             Ok(text) => editor.set_message(Message::info(text)),
             Err(error) => editor.lsp_failed(error),
         }
-        return;
-    }
-    if request.feature == LspFeature::Hover {
-        let markdown = hover_markdown(&result["contents"]);
-        if !request.reply.explicit() {
-            editor.mouse_hover_answer(&markdown);
-        } else if markdown.trim().is_empty() {
-            editor.set_message(Message::info("No hover information here"));
-        } else {
-            editor.show_hover(&markdown);
-        }
-        return;
-    }
-    let locations = locations(editor, &result, client.encoding);
-    // Ctrl held on the pointer's word: the definition peeked at.
-    if request.feature == LspFeature::Definition && !request.reply.explicit() {
-        editor.mouse_peek_answer(&locations);
-        return;
-    }
-    if let Err(error) = editor.show_locations(request.feature, locations) {
-        editor.set_message(Message::info(error));
     }
 }
 
 /// What `agent_answer` says when the server found nothing.
-const NOTHING: [&str; 3] = [
-    "Nothing found",
-    "No symbols found",
-    "No hover information there",
-];
+const NOTHING: &str = "No symbols found";
+
+/// A server's error answer, as the reason there's no answer.
+fn server_error(client: &Client, error: ResponseError) -> NoAnswer {
+    NoAnswer::ServerError {
+        server: client.name.clone(),
+        stale: error.is_stale(),
+        message: error.message,
+    }
+}
 
 /// A server's answer that changes things, for the coding agent: a rename,
 /// formatting, a code action (resolved), made; the code actions there are,
@@ -889,8 +887,7 @@ fn calls_answer(
     let result = match result {
         Ok(result) => result,
         Err(error) => {
-            let why = NoAnswer::ServerError(client.name.clone(), error.message);
-            editor.lsp_answered(&request, Err(why));
+            editor.lsp_answered(&request, Err(server_error(client, error)));
             return;
         }
     };
@@ -971,58 +968,31 @@ fn calls(result: &Value, callers: bool, root: &std::path::Path) -> Calls {
     answer
 }
 
-/// A server's answer for the coding agent, as text: places as
-/// `path:line:column  text`, a hover's Markdown, symbols with where they are.
+/// Symbols, for the coding agent, as text: each with where it is.
 fn agent_answer(
     editor: &Editor,
     request: &LspRequest,
     result: &Value,
     encoding: Encoding,
 ) -> String {
-    let place = |l: &Location| {
-        let path = crate::editor::agent::short_path(&l.path.to_string_lossy());
-        format!(
-            "{path}:{}:{}  {}",
-            l.position.row + 1,
-            l.position.col + 1,
-            l.line.trim()
-        )
-    };
-    let listed = |lines: Vec<String>, none: &str| {
-        if lines.is_empty() {
-            none.to_string()
-        } else {
-            lines.join("\n")
-        }
-    };
-    match request.feature {
-        LspFeature::Hover => {
-            let markdown = crate::editor::lsp::without_html(&hover_markdown(&result["contents"]));
-            if markdown.trim().is_empty() {
-                "No hover information there".into()
-            } else {
-                markdown
-            }
-        }
-        LspFeature::DocumentSymbols | LspFeature::WorkspaceSymbols => {
-            let found = symbols(editor, request.document, result, encoding);
-            let lines = found
-                .iter()
-                .take(200)
-                .map(|(name, detail, l)| format!("{name} ({detail})  {}", place(l)))
-                .collect();
-            listed(lines, "No symbols found")
-        }
-        _ => {
-            let mut found = locations(editor, result, encoding);
-            // By file and place (servers give them in their own order).
-            if request.feature == LspFeature::References {
-                found.sort_by(|a, b| (&a.path, a.position).cmp(&(&b.path, b.position)));
-            }
-            let lines = found.iter().take(200).map(place).collect();
-            listed(lines, "Nothing found")
-        }
+    let found = symbols(editor, request.document, result, encoding);
+    if found.is_empty() {
+        return NOTHING.into();
     }
+    found
+        .iter()
+        .take(200)
+        .map(|(name, detail, l)| {
+            let path = crate::editor::agent::short_path(&l.path.to_string_lossy());
+            format!(
+                "{name} ({detail})  {path}:{}:{}  {}",
+                l.position.row + 1,
+                l.position.col + 1,
+                l.line.trim()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The symbols in a `documentSymbol` answer (`DocumentSymbol`s, nested, in

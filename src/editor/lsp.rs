@@ -170,6 +170,24 @@ pub enum Answer {
     /// The functions that call the one asked about (`Callers`), or that
     /// it calls (`Callees`).
     Calls(Calls),
+    /// A hover's Markdown, as the server sent it (maybe with HTML; empty
+    /// if it had nothing to say).
+    Hover(String),
+    /// Places: definitions, declarations, type definitions,
+    /// implementations, references.
+    Locations {
+        found: Vec<Location>,
+        /// What the server was busy with, if it was at work: it may know
+        /// more in a moment (still indexing, say).
+        busy: Option<Busy>,
+    },
+}
+
+/// A server at work, by name, and what it's doing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Busy {
+    pub server: String,
+    pub work: String,
 }
 
 /// A call hierarchy's functions.
@@ -209,8 +227,13 @@ pub enum NoAnswer {
     Unsupported(String),
     /// Its server (by name) stopped before answering.
     Stopped(String),
-    /// Its server (by name) answered with an error.
-    ServerError(String, String),
+    /// Its server answered with an error: `stale` if it's that the text
+    /// changed while it worked (so the question was out of date).
+    ServerError {
+        server: String,
+        message: String,
+        stale: bool,
+    },
     /// Nothing at the place asked about to answer for.
     NothingThere,
 }
@@ -822,19 +845,61 @@ impl Editor {
         }
     }
 
-    /// The screen's side of `lsp_answered`.
+    /// The screen's side of `lsp_answered`: shown if it's still wanted
+    /// (the cursor, or the pointer, still where it was asked).
     fn show_lsp_answer(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
-        let why = match answer {
-            // Only the agent asks for calls.
-            Ok(Answer::Calls(_)) => return,
-            Err(why) => why,
+        let pointer = request.reply == Reply::Pointer;
+        let wanted = |e: &Self| {
+            if pointer {
+                e.mouse_hover_wanted(request)
+            } else {
+                e.still_at(request)
+            }
         };
+        let answer = match answer {
+            Ok(answer) => answer,
+            Err(why) => {
+                if wanted(self) {
+                    self.show_no_answer(request, why);
+                }
+                return;
+            }
+        };
+        match answer {
+            // Only the agent asks for calls.
+            Answer::Calls(_) => {}
+            Answer::Hover(_) | Answer::Locations { .. } if !wanted(self) => {}
+            Answer::Hover(markdown) if pointer => self.mouse_hover_answer(&markdown),
+            Answer::Hover(markdown) if markdown.trim().is_empty() => {
+                self.set_message(Message::info("No hover information here"));
+            }
+            Answer::Hover(markdown) => self.show_hover(&markdown),
+            // Ctrl held on the pointer's word: the definition peeked at.
+            Answer::Locations { found, .. } if pointer => {
+                if request.feature == LspFeature::Definition {
+                    self.mouse_peek_answer(&found);
+                }
+            }
+            Answer::Locations { found, .. } => {
+                if let Err(error) = self.show_locations(request.feature, found) {
+                    self.set_message(Message::info(error));
+                }
+            }
+        }
+    }
+
+    /// Why there's no answer, said if it was asked for with a key.
+    fn show_no_answer(&mut self, request: &LspRequest, why: NoAnswer) {
         if request.reply != Reply::Key {
             return;
         }
         let text = match why {
-            NoAnswer::ServerError(name, message) => {
-                self.set_message(Message::error(format!("{name}: {message}")));
+            // Asked again as the text changes: not worth saying.
+            NoAnswer::ServerError { stale: true, .. } => return,
+            NoAnswer::ServerError {
+                server, message, ..
+            } => {
+                self.lsp_failed(format!("{server}: {message}"));
                 return;
             }
             NoAnswer::NothingThere => format!("No {} here", request.feature.noun()),
