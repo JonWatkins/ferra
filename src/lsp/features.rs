@@ -13,7 +13,7 @@ use super::{Lsp, State};
 use crate::core::Position;
 use crate::editor::DocumentId;
 use crate::editor::lsp::{
-    Answer, Busy, Call, Calls, Location, LspFeature, LspRequest, NoAnswer, Reply,
+    Answer, Applied, Busy, Call, Calls, Edits, Location, LspFeature, LspRequest, NoAnswer, Reply,
 };
 use crate::editor::server_completion::ServerItem;
 use crate::editor::signature::SignatureHelp;
@@ -502,6 +502,16 @@ pub(super) fn answer(
         editor.lsp_answered(&request, answer);
         return;
     }
+    if request.feature == LspFeature::Rename {
+        let answer = match result {
+            Ok(result) => workspace_edits(editor, &result, client.encoding)
+                .map(Answer::Edits)
+                .map_err(NoAnswer::Unusable),
+            Err(error) => Err(server_error(client, error)),
+        };
+        editor.lsp_answered(&request, answer);
+        return;
+    }
     // The coding agent's: the answer as text, back to it.
     if let Some(call) = request.reply.agent()
         && request.feature == LspFeature::CodeAction
@@ -747,18 +757,6 @@ pub(super) fn answer(
     }
     if request.feature == LspFeature::ResolveCodeAction {
         make_code_action(editor, client, &result, false);
-        return;
-    }
-    if request.feature == LspFeature::Rename {
-        let name = request.text.clone().unwrap_or_default();
-        let text = apply_workspace_edit(editor, &result, client.encoding).map(|done| match done {
-            Applied { changes: 0, .. } => "Nothing to rename here".to_string(),
-            done => format!("Renamed to {name}: {}", done.describe()),
-        });
-        match text {
-            Ok(text) => editor.set_message(Message::info(text)),
-            Err(error) => editor.lsp_failed(error),
-        }
     }
 }
 
@@ -774,7 +772,7 @@ fn server_error(client: &Client, error: ResponseError) -> NoAnswer {
     }
 }
 
-/// A server's answer that changes things, for the coding agent: a rename,
+/// A server's answer that changes things, for the coding agent:
 /// formatting, a code action (resolved), made; the code actions there are,
 /// kept to make one. `None` for an answer that's only told.
 fn agent_change(
@@ -785,21 +783,6 @@ fn agent_change(
 ) -> Option<Result<(String, Vec<crate::editor::DocumentId>), String>> {
     let before = editor.agent_unsaved();
     let done = match request.feature {
-        LspFeature::Rename => {
-            let name = request.text.clone().unwrap_or_default();
-            match apply_workspace_edit(editor, result, client.encoding) {
-                Ok(Applied { changes: 0, .. }) => {
-                    return Some(Err("Nothing to rename there".into()));
-                }
-                Ok(applied) => {
-                    let mut done = applied;
-                    // Saved below, not left for :wa.
-                    done.others = 0;
-                    format!("Renamed to {name}: {}", done.describe())
-                }
-                Err(error) => return Some(Err(error)),
-            }
-        }
         LspFeature::Format => {
             let document = editor.document_by_id(request.document)?;
             let buffer = document.buffer();
@@ -1291,80 +1274,46 @@ fn make_code_action(
     true
 }
 
-/// What applying a workspace edit did.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub(super) struct Applied {
-    pub changes: usize,
-    pub files: usize,
-    /// Files changed that aren't the buffer being edited: left unsaved.
-    pub others: usize,
-    /// Creating, renaming or deleting files, which ferra doesn't do.
-    pub skipped: usize,
-}
-
-impl Applied {
-    /// `3 changes in 2 files (1 other file not saved yet: :wa)`.
-    pub fn describe(&self) -> String {
-        let plural =
-            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
-        let mut text = format!(
-            "{} in {}",
-            plural(self.changes, "change", "changes"),
-            plural(self.files, "file", "files")
-        );
-        if self.others > 0 {
-            text.push_str(&format!(
-                " ({} not saved yet: :wa)",
-                plural(self.others, "other file", "other files")
-            ));
-        }
-        if self.skipped > 0 {
-            text.push_str(&format!(
-                "; {} left out",
-                plural(self.skipped, "file operation", "file operations")
-            ));
-        }
-        text
-    }
-}
-
-/// Makes a `WorkspaceEdit`'s changes (`changes` by URI, or
-/// `documentChanges`), each file's as one undo step, opening files that
-/// aren't open in the background. Creating, renaming and deleting files
-/// is left out (and counted).
-pub(super) fn apply_workspace_edit(
+/// A `WorkspaceEdit`'s changes (`changes` by URI, or `documentChanges`)
+/// in the editor's terms, opening files that aren't open in the
+/// background to read their columns. Creating, renaming and deleting
+/// files is left out (and counted).
+pub(super) fn workspace_edits(
     editor: &mut Editor,
     edit: &Value,
     encoding: Encoding,
-) -> Result<Applied, String> {
+) -> Result<Edits, String> {
     let mut files: Vec<(&str, &Vec<Value>)> = Vec::new();
-    let mut applied = Applied::default();
+    let mut edits = Edits::default();
     if let Some(changes) = edit["documentChanges"].as_array() {
         for change in changes {
             match (
                 change["textDocument"]["uri"].as_str(),
                 change["edits"].as_array(),
             ) {
-                (Some(uri), Some(edits)) => files.push((uri, edits)),
-                _ => applied.skipped += 1,
+                (Some(uri), Some(changes)) => files.push((uri, changes)),
+                _ => edits.skipped += 1,
             }
         }
     } else if let Some(changes) = edit["changes"].as_object() {
-        for (uri, edits) in changes {
-            if let Some(edits) = edits.as_array() {
-                files.push((uri, edits));
+        for (uri, changes) in changes {
+            if let Some(changes) = changes.as_array() {
+                files.push((uri, changes));
             }
         }
     }
-    let active = editor.document.id();
-    for (uri, edits) in files {
-        if edits.is_empty() {
+    for (uri, changes) in files {
+        if changes.is_empty() {
             continue;
         }
         let path = convert::uri_to_path(uri).ok_or_else(|| format!("Can't edit {uri}"))?;
+        let was_open = editor.find_open_path(&path).is_some();
         let id = editor.buffer_for_path(&path)?;
+        if !was_open {
+            edits.opened.push(id);
+        }
         let buffer = editor.document_by_id(id).expect("just found").buffer();
-        let converted = edits
+        let converted = changes
             .iter()
             .map(|e| {
                 let start = convert::from_lsp(buffer, &e["range"]["start"], encoding);
@@ -1372,14 +1321,20 @@ pub(super) fn apply_workspace_edit(
                 (start, end, e["newText"].as_str().unwrap_or("").to_string())
             })
             .collect();
-        editor.edit_document(id, converted);
-        applied.changes += edits.len();
-        applied.files += 1;
-        if id != active {
-            applied.others += 1;
-        }
+        edits.documents.push((id, converted));
     }
-    Ok(applied)
+    Ok(edits)
+}
+
+/// Makes a `WorkspaceEdit`'s changes (see `workspace_edits`), each file's
+/// as one undo step.
+pub(super) fn apply_workspace_edit(
+    editor: &mut Editor,
+    edit: &Value,
+    encoding: Encoding,
+) -> Result<Applied, String> {
+    let edits = workspace_edits(editor, edit, encoding)?;
+    Ok(editor.apply_lsp_edits(edits))
 }
 
 /// The items in a completion answer (`CompletionItem[]`, a

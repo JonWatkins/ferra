@@ -1425,6 +1425,37 @@ fn rename_changes_the_name_everywhere_as_one_change() {
 }
 
 #[test]
+fn the_agents_rename_saves_the_files_it_opened_and_they_are_its() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("use other;\nother();\n", true);
+    let other = dir.path().join(OTHER);
+    fs::write(&other, "pub fn other() {}\n").unwrap();
+    ready(&mut app);
+    let main = dir.path().join("main.rs");
+    app.editor_mut()
+        .agent_ask_lsp(
+            1,
+            LspFeature::Rename,
+            Some(main.to_str().unwrap()),
+            (Some(2), Some("other"), None, None),
+            Some("another"),
+        )
+        .unwrap();
+    let said = agent_answer(&mut app, 1).unwrap();
+    assert_eq!(said, "Renamed to another: 3 changes in 2 files");
+    // Both saved (neither had the user's unsaved changes), the other file
+    // opened for the agent's tools, to close after its turn.
+    assert_eq!(fs::read_to_string(&other).unwrap(), "pub fn another() {}\n");
+    assert_eq!(
+        fs::read_to_string(&main).unwrap(),
+        "use another;\nanother();\n"
+    );
+    let state = app.editor().agent_editor_state();
+    assert!(state.contains("other.rs (opened for your tools"), "{state}");
+    assert!(!state.contains("main.rs (opened for your tools"), "{state}");
+}
+
+#[test]
 fn rename_changes_other_files_and_leaves_them_to_save() {
     let (dir, mut app, _) = with_server("use other;\nother();\n", true);
     let other = dir.path().join(OTHER);

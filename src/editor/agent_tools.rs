@@ -1177,6 +1177,26 @@ impl Editor {
             .collect()
     }
 
+    /// An agent change: makes `change`, then saves the files it changed
+    /// that had no unsaved changes before, leaving the user's unsaved work
+    /// as it is. `opened`: buffers already opened for it (to hold a
+    /// server's edits), which are the agent's, as those it opens are.
+    /// Returns what `change` did, the note on what was saved, and the
+    /// documents changed.
+    pub fn agent_change<R>(
+        &mut self,
+        opened: &[DocumentId],
+        change: impl FnOnce(&mut Self) -> R,
+    ) -> (R, String, Vec<DocumentId>) {
+        let mut before = self.agent_unsaved();
+        for id in opened {
+            before.remove(id);
+        }
+        let done = change(self);
+        let (saved, changed) = self.agent_save_changed(&before);
+        (done, saved, changed)
+    }
+
     /// After the agent's changes: the files they changed that had no
     /// unsaved changes before are saved (so what the agent runs sees
     /// them); the others are left to the user. Says which, for the agent.

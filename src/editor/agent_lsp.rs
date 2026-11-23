@@ -7,7 +7,9 @@ use std::path::Path;
 
 use super::Editor;
 use super::agent::short_path;
-use super::lsp::{Answer, Busy, Calls, Location, LspFeature, LspRequest, NoAnswer, without_html};
+use super::lsp::{
+    Answer, Applied, Busy, Calls, Edits, Location, LspFeature, LspRequest, NoAnswer, without_html,
+};
 
 impl Editor {
     /// The answer to the agent's tool call `call`, or why there's none.
@@ -18,6 +20,10 @@ impl Editor {
         answer: Result<Answer, NoAnswer>,
     ) {
         let text = match answer {
+            Ok(Answer::Edits(edits)) => {
+                self.agent_lsp_edits(call, request, edits);
+                return;
+            }
             Ok(Answer::Calls(calls)) => Ok(calls_text(&calls, request.feature)),
             Ok(Answer::Hover(markdown)) => Ok(hover_text(&markdown)),
             Ok(Answer::Locations { found, busy }) => {
@@ -29,6 +35,35 @@ impl Editor {
         };
         self.agent_lsp_answer(call, text);
     }
+
+    /// A server's edits for the agent (a rename's): made as an agent
+    /// change, so the files it changes are saved unless the user has
+    /// unsaved work there, and the agent hears of the problems after.
+    fn agent_lsp_edits(&mut self, call: u64, request: &LspRequest, edits: Edits) {
+        let opened = edits.opened.clone();
+        let (applied, saved, changed) = self.agent_change(&opened, |e| e.apply_lsp_edits(edits));
+        if applied.changes == 0 {
+            self.agent_lsp_answer(call, Err("Nothing to rename there".into()));
+            return;
+        }
+        let name = request.text.as_deref().unwrap_or_default();
+        let text = format!("Renamed to {name}: {}{saved}", saved_describe(applied));
+        if changed.is_empty() {
+            self.agent_lsp_answer(call, Ok(text));
+        } else {
+            self.agent_lsp_changed(call, text, changed);
+        }
+    }
+}
+
+/// What edits did, for the agent: other files aren't left for `:wa`, as
+/// the agent change saves them.
+fn saved_describe(applied: Applied) -> String {
+    Applied {
+        others: 0,
+        ..applied
+    }
+    .describe()
 }
 
 /// Why there's no answer, for the agent: what to do about it, too.
@@ -48,6 +83,7 @@ fn no_answer_text(feature: LspFeature, why: &NoAnswer) -> String {
             server, message, ..
         } => format!("{server}: {message}"),
         NoAnswer::NothingThere => nothing_there(feature),
+        NoAnswer::Unusable(why) => why.clone(),
     }
 }
 

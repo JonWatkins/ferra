@@ -173,6 +173,8 @@ pub enum Answer {
     /// A hover's Markdown, as the server sent it (maybe with HTML; empty
     /// if it had nothing to say).
     Hover(String),
+    /// Changes the server proposes: a rename's.
+    Edits(Edits),
     /// Places: definitions, declarations, type definitions,
     /// implementations, references.
     Locations {
@@ -181,6 +183,59 @@ pub enum Answer {
         /// more in a moment (still indexing, say).
         busy: Option<Busy>,
     },
+}
+
+/// One document's changes: ranges and their new text (see
+/// [`Document::apply_edits`]).
+pub type TextEdits = Vec<(Position, Position, String)>;
+
+/// Changes to documents a language server proposed, in the editor's own
+/// terms, for the asker to make.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Edits {
+    /// Each document's changes.
+    pub documents: Vec<(DocumentId, TextEdits)>,
+    /// The buffers opened in the background to hold them.
+    pub opened: Vec<DocumentId>,
+    /// File operations (creating, renaming, deleting) left out.
+    pub skipped: usize,
+}
+
+/// What applying a workspace edit did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Applied {
+    pub changes: usize,
+    pub files: usize,
+    /// Files changed that aren't the buffer being edited: left unsaved.
+    pub others: usize,
+    /// Creating, renaming or deleting files, which ferra doesn't do.
+    pub skipped: usize,
+}
+
+impl Applied {
+    /// `3 changes in 2 files (1 other file not saved yet: :wa)`.
+    pub fn describe(&self) -> String {
+        let plural =
+            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let mut text = format!(
+            "{} in {}",
+            plural(self.changes, "change", "changes"),
+            plural(self.files, "file", "files")
+        );
+        if self.others > 0 {
+            text.push_str(&format!(
+                " ({} not saved yet: :wa)",
+                plural(self.others, "other file", "other files")
+            ));
+        }
+        if self.skipped > 0 {
+            text.push_str(&format!(
+                "; {} left out",
+                plural(self.skipped, "file operation", "file operations")
+            ));
+        }
+        text
+    }
 }
 
 /// A server at work, by name, and what it's doing.
@@ -236,6 +291,9 @@ pub enum NoAnswer {
     },
     /// Nothing at the place asked about to answer for.
     NothingThere,
+    /// The server's answer couldn't be used (edits for a file that can't
+    /// be opened, say): why.
+    Unusable(String),
 }
 
 /// A place a server pointed to: a file, and a row and char column in it.
@@ -845,6 +903,24 @@ impl Editor {
         }
     }
 
+    /// Makes a language server's edits, each document's as one undo step.
+    pub fn apply_lsp_edits(&mut self, edits: Edits) -> Applied {
+        let active = self.document.id();
+        let mut applied = Applied {
+            skipped: edits.skipped,
+            ..Applied::default()
+        };
+        for (id, changes) in edits.documents {
+            applied.changes += changes.len();
+            applied.files += 1;
+            if id != active {
+                applied.others += 1;
+            }
+            self.edit_document(id, changes);
+        }
+        applied
+    }
+
     /// The screen's side of `lsp_answered`: shown if it's still wanted
     /// (the cursor, or the pointer, still where it was asked).
     fn show_lsp_answer(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
@@ -868,7 +944,15 @@ impl Editor {
         match answer {
             // Only the agent asks for calls.
             Answer::Calls(_) => {}
-            Answer::Hover(_) | Answer::Locations { .. } if !wanted(self) => {}
+            Answer::Hover(_) | Answer::Locations { .. } | Answer::Edits(_) if !wanted(self) => {}
+            Answer::Edits(edits) => {
+                let name = request.text.clone().unwrap_or_default();
+                let text = match self.apply_lsp_edits(edits) {
+                    Applied { changes: 0, .. } => "Nothing to rename here".to_string(),
+                    done => format!("Renamed to {name}: {}", done.describe()),
+                };
+                self.set_message(Message::info(text));
+            }
             Answer::Hover(markdown) if pointer => self.mouse_hover_answer(&markdown),
             Answer::Hover(markdown) if markdown.trim().is_empty() => {
                 self.set_message(Message::info("No hover information here"));
@@ -903,6 +987,10 @@ impl Editor {
                 return;
             }
             NoAnswer::NothingThere => format!("No {} here", request.feature.noun()),
+            NoAnswer::Unusable(why) => {
+                self.lsp_failed(why);
+                return;
+            }
             NoAnswer::NoServer => "No language server for this buffer (see :lsp)".to_string(),
             NoAnswer::Starting(name) => format!("{name} is still starting"),
             NoAnswer::Unsupported(name) => {
