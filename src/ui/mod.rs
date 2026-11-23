@@ -282,7 +282,7 @@ pub fn draw(
     // The agent sidebar takes the right of what's left, down to the
     // command line (or the one status line, as the left sidebar).
     let mut agent_cursor = None;
-    let (main, status) = if editor.agent_sidebar_shown() && main.width >= 40 {
+    let (main, status) = if editor.agent_chat().shown() && main.width >= 40 {
         let per_window = editor.options.statusline == StatuslineMode::Windows;
         // At least 24 columns, given room; at most half of what there is.
         let width = editor.options.agent_width.max(24).min(main.width / 2);

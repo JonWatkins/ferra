@@ -1,4 +1,4 @@
-//! The agent sidebar (`editor/agent.rs`), right of the windows, full
+//! The agent sidebar (`editor/agent/chat.rs`), right of the windows, full
 //! height, as VS Code's chat:
 //!
 //! ```text
@@ -36,7 +36,7 @@ use unicode_width::UnicodeWidthChar;
 use super::screen_map::{AgentPart, ScreenMap, Target};
 use crate::config::Theme;
 use crate::editor::agent::AgentStatus;
-use crate::editor::agent_session::SLASH_ROWS;
+use crate::editor::agent::SLASH_ROWS;
 use crate::editor::{Editor, Mode};
 
 /// Rows the box grows to, at most.
@@ -153,7 +153,7 @@ fn draw_parts(
     let header = Rect::new(area.x, area.y, area.width, 1);
     buf.set_style(header, base.patch(theme.get("ui.sidebar.agent.header")));
     let title = chat.title();
-    let (state, state_style) = match &chat.status {
+    let (state, state_style) = match chat.status() {
         AgentStatus::Off => (String::new(), "ui.sidebar.agent.hint"),
         AgentStatus::Starting => (
             format!("{} starting", SPINNER[spinner_frame()]),
@@ -213,7 +213,7 @@ fn draw_parts(
     } else {
         "Ctrl+"
     };
-    let hints = match (&chat.permission, &chat.status) {
+    let hints = match (chat.permission(), chat.status()) {
         (Some(ask), _) => format!("1-{} answer  {ctrl}C stop", ask.options.len()),
         (None, AgentStatus::Busy) => format!("{ctrl}C stop  {ctrl}O tool output  ⇧⇥ mode"),
         _ => "⏎ send  ⇧⏎ new line  ⇧⇥ mode  esc back".to_string(),
@@ -235,14 +235,14 @@ fn draw_parts(
     }
 
     // The box's last row: the settings (chips), and the context used.
-    let chips = editor.agent_chips();
-    let chips_row = u16::from(area.height >= 12 && (!chips.is_empty() || chat.usage.is_some()));
+    let chips = chat.chips();
+    let chips_row = u16::from(area.height >= 12 && (!chips.is_empty() || chat.usage().is_some()));
     // Rows they take: theirs, and a gap above it (given room).
     let chips_rows = chips_row * (1 + pad);
 
     let (input_rows, cursor_at) = wrap_input(
-        chat.input.text(),
-        chat.input.cursor(),
+        chat.input().text(),
+        chat.input().cursor(),
         inner_w.saturating_sub(1),
     );
     let shown = input_rows.len().clamp(1, INPUT_ROWS);
@@ -275,7 +275,7 @@ fn draw_parts(
             x = end + 2;
         }
         // The longest of its labels that fits.
-        let labels = chat.usage.as_ref().map(|u| u.labels()).unwrap_or_default();
+        let labels = chat.usage().map(|u| u.labels()).unwrap_or_default();
         if let Some(usage) = labels
             .iter()
             .find(|l| !l.is_empty() && x + width_of(l) as u16 <= right)
@@ -283,12 +283,10 @@ fn draw_parts(
             put(buf, right - width_of(usage) as u16, y, usage, hint, right);
         }
     }
-    if chat.input.text().is_empty() {
+    if chat.input().text().is_empty() {
         let placeholder = format!(
             "Ask {}…",
-            chat.agent_info
-                .as_deref()
-                .map_or_else(|| chat.title(), short_name)
+            chat.agent_info().map_or_else(|| chat.title(), short_name)
         );
         put(
             buf,
@@ -320,7 +318,7 @@ fn draw_parts(
     line(buf, area.x, line_y, area.width, border);
     bottom = line_y;
     // `/name ` typed: what the command takes, after the cursor.
-    if let Some(hint) = editor.agent_input_hint() {
+    if let Some(hint) = chat.input_hint() {
         let at = inner_x + cursor_at.1 as u16;
         put(
             buf,
@@ -338,7 +336,7 @@ fn draw_parts(
         )
     });
 
-    if let Some(ask) = &chat.permission {
+    if let Some(ask) = chat.permission() {
         // The options as buttons, as many to a row as fit.
         let mut rows: Vec<Vec<(String, usize)>> = vec![Vec::new()];
         let mut used = 0;
@@ -398,7 +396,7 @@ fn draw_parts(
         bottom.saturating_sub(area.y + 1),
     );
     map.chat = chat_area;
-    let lines = editor.agent_transcript(inner_w);
+    let lines = chat.transcript(inner_w);
     if lines.is_empty() {
         let name = chat.title();
         let hello = [
@@ -441,8 +439,8 @@ fn draw_parts(
     }
     let height = chat_area.height as usize;
     let most = rows.len().saturating_sub(height);
-    let scroll = chat.scroll.get().min(most);
-    chat.scroll.set(scroll);
+    let scroll = chat.scrolled().get().min(most);
+    chat.scrolled().set(scroll);
     let top = most - scroll;
     for (i, (row, fill, tool)) in rows.iter().skip(top).take(height).enumerate() {
         let y = chat_area.y + i as u16;
@@ -472,11 +470,11 @@ fn draw_parts(
 /// The slash menu, over the foot of the chat (`chat`): a row a command,
 /// its name then what it does.
 fn draw_slash(buf: &mut Buffer, editor: &Editor, theme: &Theme, chat: Rect, map: &mut AgentMap) {
-    let matches = editor.agent_slash_matches();
+    let matches = editor.agent_chat().slash_matches();
     if matches.is_empty() || chat.height == 0 {
         return;
     }
-    let selected = editor.agent_slash_selected();
+    let selected = editor.agent_chat().slash_selected();
     let rows = matches.len().min(SLASH_ROWS).min(chat.height as usize);
     let first = (selected + 1).saturating_sub(rows);
     let name_w = matches

@@ -2,14 +2,14 @@
 //! open and selected (sent with each prompt, and as a tool), the
 //! diagnostics, and the language servers' answers (the agent's tool calls
 //! become `LspRequest`s whose answers come back here, as text, instead of
-//! being shown). The tools themselves are served in `agent/tools.rs`.
+//! being shown). The tools themselves are served in `src/agent/tools.rs`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-use super::lsp::{LspFeature, LspQuery, LspRequest, Reply};
-use super::{DocumentId, Editor};
 use crate::core::{Position, Range};
+use crate::editor::lsp::{ActionList, LspFeature, LspQuery, LspRequest, Reply};
+use crate::editor::{DocumentId, Editor};
 
 /// A language server's answer to one of the agent's tool calls: what to
 /// tell it, and the buffers it changed (whose problems are waited for).
@@ -18,6 +18,25 @@ pub struct AgentAnswer {
     pub call: u64,
     pub answer: Result<String, String>,
     pub changed: Vec<DocumentId>,
+}
+
+/// The editor's side of the agent's tool calls: what they opened and
+/// changed, those given up on, and the language servers' answers to send.
+#[derive(Debug, Clone, Default)]
+pub struct AgentToolState {
+    /// Buffers opened for the agent's tools, closed when its turn ends.
+    pub(in crate::editor) opened: HashSet<DocumentId>,
+    /// Agent changes still open, by tool call: a code action's command
+    /// whose server sends its edits as it runs. Each is what was unsaved
+    /// before its first edit (see `Editor::agent_change`).
+    pub(in crate::editor) open_changes: HashMap<u64, HashMap<DocumentId, (u64, bool)>>,
+    /// Tool calls given up waiting on a language server: their answers,
+    /// and edits, are dropped if they come after all.
+    pub(in crate::editor) given_up: HashSet<u64>,
+    /// The last few lists of code actions it was given, to make one.
+    pub(in crate::editor) code_actions: VecDeque<ActionList>,
+    /// Language servers' answers to its tool calls, to send it.
+    pub(in crate::editor) answers: Vec<AgentAnswer>,
 }
 
 /// At most this much of a selection goes with a prompt.
@@ -137,7 +156,7 @@ impl Editor {
                 };
                 let note = if d.is_modified() {
                     " (unsaved)"
-                } else if self.agent.opened.contains(&d.id()) {
+                } else if self.agent_tools.opened.contains(&d.id()) {
                     " (opened for your tools: closes when your turn ends)"
                 } else {
                     ""
@@ -207,7 +226,7 @@ impl Editor {
         let height = windows.height(active);
         if height > 0 {
             let top = windows.view_top(active, &self.document, cursor, &self.options);
-            let layout = super::windows::TextLayout::new(
+            let layout = crate::editor::windows::TextLayout::new(
                 windows.width(active),
                 &self.document,
                 &self.options,
@@ -235,10 +254,10 @@ impl Editor {
     /// selected file; and a merge with conflicts, if there's one.
     fn agent_view_notes(&self) -> Vec<String> {
         let mut notes = Vec::new();
-        if self.panel_shown() == Some(super::panel::PanelTab::Problems) {
+        if self.panel_shown() == Some(crate::editor::panel::PanelTab::Problems) {
             let rows = self.problem_rows();
             match rows.get(self.panel.selected) {
-                Some(super::panel::ProblemRow::Problem { path, diagnostic }) => {
+                Some(crate::editor::panel::ProblemRow::Problem { path, diagnostic }) => {
                     notes.push(format!(
                         "Problems panel: open, selected {}:{}: {}",
                         shown(path),
@@ -249,21 +268,21 @@ impl Editor {
                 _ => {
                     let count = rows
                         .iter()
-                        .filter(|r| matches!(r, super::panel::ProblemRow::Problem { .. }))
+                        .filter(|r| matches!(r, crate::editor::panel::ProblemRow::Problem { .. }))
                         .count();
                     let plural = if count == 1 { "" } else { "s" };
                     notes.push(format!("Problems panel: open ({count} problem{plural})"));
                 }
             }
         }
-        if self.panel_shown() == Some(super::panel::PanelTab::Locations)
+        if self.panel_shown() == Some(crate::editor::panel::PanelTab::Locations)
             && let Some(Some((path, position))) = self.panel_selected_place()
         {
             let note = self
                 .location_rows()
                 .get(self.panel.selected)
                 .and_then(|row| match row {
-                    super::panel::LocationRow::Item(item) => Some(item.note.clone()),
+                    crate::editor::panel::LocationRow::Item(item) => Some(item.note.clone()),
                     _ => None,
                 })
                 .unwrap_or_default();
@@ -284,7 +303,7 @@ impl Editor {
         }
         if self.sidebar().is_some() {
             match self.sidebar_shows() {
-                super::sidebar_views::SidebarShows::Search => {
+                crate::editor::sidebar_views::SidebarShows::Search => {
                     let search = self.project_search();
                     let query = search.fields.find.text();
                     if !query.is_empty() {
@@ -294,8 +313,8 @@ impl Editor {
                         ));
                     }
                 }
-                super::sidebar_views::SidebarShows::Git => {
-                    if let Some(super::git::GitRow::File { file, staged }) =
+                crate::editor::sidebar_views::SidebarShows::Git => {
+                    if let Some(crate::editor::git::GitRow::File { file, staged }) =
                         self.git_rows().get(self.git_selected())
                     {
                         notes.push(format!(
@@ -376,7 +395,7 @@ impl Editor {
         };
         // The files (none for a buffer with no name), with their text as
         // saving would write it (final newline, line endings).
-        let as_saved = |d: &super::Document| d.format().encode(&d.buffer().text());
+        let as_saved = |d: &crate::editor::Document| d.format().encode(&d.buffer().text());
         let files: Vec<(Option<PathBuf>, String)> = match path {
             Some(path) => {
                 let full = absolute(Path::new(path));
@@ -526,7 +545,7 @@ impl Editor {
                 .next()
                 .unwrap_or_default()
                 .to_string();
-            items.push(super::panel::LocationItem {
+            items.push(crate::editor::panel::LocationItem {
                 path: full,
                 position: Position::new(line - 1, column - 1),
                 note,
@@ -539,7 +558,7 @@ impl Editor {
         let files = files.len();
         let title = title.trim();
         let title = if title.is_empty() { "Locations" } else { title };
-        self.panel_show_locations(super::panel::LocationList {
+        self.panel_show_locations(crate::editor::panel::LocationList {
             title: title.to_string(),
             items,
         });
@@ -605,7 +624,7 @@ impl Editor {
         &mut self,
         id: DocumentId,
         to: &Path,
-        edits: Option<super::lsp::Edits>,
+        edits: Option<crate::editor::lsp::Edits>,
         asked: bool,
     ) -> Result<(String, Vec<DocumentId>), String> {
         let from = self
@@ -619,7 +638,7 @@ impl Editor {
         // Others aren't left for :wa: the agent change saved them.
         let edits = applied
             .filter(|a| a.changes > 0)
-            .map(|a| super::lsp::Applied { others: 0, ..a }.describe());
+            .map(|a| crate::editor::lsp::Applied { others: 0, ..a }.describe());
         if let Err(error) = self.move_path(&from, to) {
             return Err(match edits {
                 Some(edits) => format!(
@@ -752,7 +771,7 @@ impl Editor {
     /// warnings, for `path` or every file they've reported on.
     pub fn agent_diagnostics(&self, path: Option<&str>) -> String {
         let wanted = path.map(|p| absolute(Path::new(p)));
-        let mut found: Vec<(PathBuf, &super::diagnostics::Diagnostic)> = Vec::new();
+        let mut found: Vec<(PathBuf, &crate::editor::diagnostics::Diagnostic)> = Vec::new();
         for document in std::iter::once(&self.document).chain(&self.background) {
             let Some(path) = document.path() else {
                 continue;
@@ -794,7 +813,7 @@ impl Editor {
 
     /// The `open_file` tool: shows the user `path` (at `line`, from 1).
     pub fn agent_open_file(&mut self, path: &str, line: Option<usize>) -> Result<String, String> {
-        let location = super::lsp::Location {
+        let location = crate::editor::lsp::Location {
             path: absolute(Path::new(path)),
             position: Position::new(line.unwrap_or(1).saturating_sub(1), 0),
             line: String::new(),
@@ -1024,7 +1043,7 @@ impl Editor {
             self.forget_tab(id);
             self.close_hidden_buffer(id);
         }
-        self.agent.opened.remove(&id);
+        self.agent_tools.opened.remove(&id);
         Ok(format!("Closed {}", named(path)))
     }
 
@@ -1035,14 +1054,14 @@ impl Editor {
             return Ok(id);
         }
         let id = self.buffer_for_path(path)?;
-        self.agent.opened.insert(id);
+        self.agent_tools.opened.insert(id);
         Ok(id)
     }
 
     /// The agent's turn ended: the buffers it opened to read or ask about
     /// go, unless they're shown, in a tab, or have unsaved changes.
     pub fn agent_close_its_buffers(&mut self) {
-        for id in std::mem::take(&mut self.agent.opened) {
+        for id in std::mem::take(&mut self.agent_tools.opened) {
             let clean = self.document_by_id(id).is_some_and(|d| !d.is_modified());
             if clean {
                 self.close_hidden_buffer(id);
@@ -1062,7 +1081,7 @@ impl Editor {
             let all = document.diagnostics();
             let unsaved = document.is_modified();
             // rust-analyzer's own guess where rustc says the same, dropped.
-            let said_by_rustc = |d: &super::diagnostics::Diagnostic| {
+            let said_by_rustc = |d: &crate::editor::diagnostics::Diagnostic| {
                 d.source.as_deref() == Some("rust-analyzer")
                     && all
                         .iter()
@@ -1071,7 +1090,7 @@ impl Editor {
             let mut seen = Vec::new();
             let problems: Vec<String> = all
                 .iter()
-                .filter(|d| d.severity <= super::diagnostics::Severity::Warning)
+                .filter(|d| d.severity <= crate::editor::diagnostics::Severity::Warning)
                 .filter(|d| !said_by_rustc(d))
                 // The same problem twice (rust-analyzer can), once.
                 .filter(|d| {
@@ -1171,22 +1190,25 @@ impl Editor {
     /// they come (a code action's command's), unless one's open: the
     /// snapshot `agent_change` takes, kept until `end_agent_change`.
     /// `opened`: buffers already opened for the first edits.
-    pub(super) fn begin_agent_change(&mut self, call: u64, opened: &[DocumentId]) {
-        if self.agent.open_changes.contains_key(&call) {
+    pub(in crate::editor) fn begin_agent_change(&mut self, call: u64, opened: &[DocumentId]) {
+        if self.agent_tools.open_changes.contains_key(&call) {
             return;
         }
         let mut before = self.agent_unsaved();
         for id in opened {
             before.remove(id);
         }
-        self.agent.open_changes.insert(call, before);
+        self.agent_tools.open_changes.insert(call, before);
     }
 
     /// Closes call `call`'s open agent change, if it has one: saves what it
     /// changed as `agent_change` does. The note on what was saved, and the
     /// documents changed.
-    pub(super) fn end_agent_change(&mut self, call: u64) -> Option<(String, Vec<DocumentId>)> {
-        let before = self.agent.open_changes.remove(&call)?;
+    pub(in crate::editor) fn end_agent_change(
+        &mut self,
+        call: u64,
+    ) -> Option<(String, Vec<DocumentId>)> {
+        let before = self.agent_tools.open_changes.remove(&call)?;
         Some(self.agent_save_changed(&before))
     }
 
@@ -1195,13 +1217,13 @@ impl Editor {
     /// command already made for it stay, and are saved as an agent
     /// change's are: the note on that, and the documents, if there were any.
     pub fn agent_give_up(&mut self, call: u64) -> Option<(String, Vec<DocumentId>)> {
-        self.agent.given_up.insert(call);
+        self.agent_tools.given_up.insert(call);
         self.end_agent_change(call)
     }
 
     /// Whether tool call `call` was given up.
-    pub(super) fn agent_given_up(&self, call: u64) -> bool {
-        self.agent.given_up.contains(&call)
+    pub(in crate::editor) fn agent_given_up(&self, call: u64) -> bool {
+        self.agent_tools.given_up.contains(&call)
     }
 
     /// After the agent's changes: the files they changed that had no
@@ -1218,7 +1240,7 @@ impl Editor {
             .map(|d| d.id())
             .filter(|id| !before.contains_key(id))
             .collect();
-        self.agent.opened.extend(opened);
+        self.agent_tools.opened.extend(opened);
         // Those the agent changed (opened for it, or edited since).
         let changed: Vec<(DocumentId, bool)> = std::iter::once(&self.document)
             .chain(&self.background)
@@ -1283,7 +1305,7 @@ impl Editor {
         let full = absolute(Path::new(path));
         self.agent_buffer(&full)?;
         let kept = self
-            .agent
+            .agent_tools
             .code_actions
             .iter()
             .find(|l| l.number == list)
@@ -1298,9 +1320,12 @@ impl Editor {
 
     /// Keeps a list of code actions given to the agent, to make one: the
     /// last few.
-    pub(super) fn keep_agent_code_actions(&mut self, list: super::lsp::ActionList) {
+    pub(in crate::editor) fn keep_agent_code_actions(
+        &mut self,
+        list: crate::editor::lsp::ActionList,
+    ) {
         const KEPT: usize = 4;
-        let lists = &mut self.agent.code_actions;
+        let lists = &mut self.agent_tools.code_actions;
         if lists.len() == KEPT {
             lists.pop_front();
         }
@@ -1423,7 +1448,7 @@ impl Editor {
 
     /// A language server's answer to the agent's tool call `call`.
     pub fn agent_lsp_answer(&mut self, call: u64, answer: Result<String, String>) {
-        self.agent_lsp_answers.push(AgentAnswer {
+        self.agent_tools.answers.push(AgentAnswer {
             call,
             answer,
             changed: Vec::new(),
@@ -1432,7 +1457,7 @@ impl Editor {
 
     /// The same, for an answer that changed buffers `changed`.
     pub fn agent_lsp_changed(&mut self, call: u64, text: String, changed: Vec<DocumentId>) {
-        self.agent_lsp_answers.push(AgentAnswer {
+        self.agent_tools.answers.push(AgentAnswer {
             call,
             answer: Ok(text),
             changed,
@@ -1441,7 +1466,7 @@ impl Editor {
 
     /// The answers that came, for the app to send the agent.
     pub fn take_agent_lsp_answers(&mut self) -> Vec<AgentAnswer> {
-        std::mem::take(&mut self.agent_lsp_answers)
+        std::mem::take(&mut self.agent_tools.answers)
     }
 }
 
@@ -1749,19 +1774,19 @@ fn named(given: &str) -> String {
 
 /// A path as the agent's told it: relative to the project, if it's in it.
 fn shown(path: &Path) -> String {
-    super::agent::short_path(&absolute(path).to_string_lossy())
+    crate::editor::agent::short_path(&absolute(path).to_string_lossy())
 }
 
 /// Whether a diagnostic comes from a check that runs on save (cargo
 /// check's rustc and clippy), so it's about the saved file.
-fn on_save(d: &super::diagnostics::Diagnostic) -> bool {
+fn on_save(d: &crate::editor::diagnostics::Diagnostic) -> bool {
     matches!(d.source.as_deref(), Some("rustc" | "clippy" | "cargo"))
 }
 
 /// A diagnostic, its message's first two lines joined (rustc's second
 /// says what was expected and found), cut short if long; lines like
 /// `#[warn(dead_code)] on by default` left out.
-fn full_message(d: &super::diagnostics::Diagnostic) -> String {
+fn full_message(d: &crate::editor::diagnostics::Diagnostic) -> String {
     const MOST: usize = 200;
     let lines: Vec<&str> = d
         .message
@@ -1842,7 +1867,7 @@ mod tests {
             "PATH=/usr/bin:/bin".into(),
         ]);
         let output = |e: &mut Editor, text: &str, error: bool| {
-            e.panel.output.push(super::super::panel::OutputLine {
+            e.panel.output.push(crate::editor::panel::OutputLine {
                 time: "09:30:05".into(),
                 error,
                 text: text.into(),
@@ -2027,7 +2052,7 @@ mod tests {
 
     #[test]
     fn diagnostics_are_told_in_two_lines_at_most() {
-        use super::super::diagnostics::{Diagnostic, Severity};
+        use crate::editor::diagnostics::{Diagnostic, Severity};
         let d = |message: &str| Diagnostic {
             start: Position::new(0, 0),
             end: Position::new(0, 1),

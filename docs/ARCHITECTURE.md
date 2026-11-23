@@ -19,7 +19,7 @@ All of the editor's state, mutated by commands and read by the UI: the buffers (
 - `document/`: one buffer.
 - `windows/`: the split layout and `TextLayout`, the one place that knows how a window lays out lines.
 - `lsp.rs`: what the editor asks language servers, and the screen's side of their answers ([ADR 0001](adr/0001-lsp-answers-are-structured.md)).
-- `agent.rs`, `agent_session.rs`: the agent's chat and session; `agent_tools.rs`: what its tools do in the editor, and agent changes; `agent_lsp.rs`: the agent's side of language server answers.
+- `agent/`: the agent's side of the editor. `chat.rs` is `AgentChat`, the chat as a module of its own (what's been said, what the agent's asking, the box, the requests for the app), changing only itself; `session.rs` its slash commands and settings; `transcript.rs` the chat as lines for the sidebar. `tools.rs` is what its tools do in the editor, and agent changes, with their state (`AgentToolState`) apart from the chat; `lsp.rs` the agent's side of language server answers. `mod.rs` is the glue: the few `Editor::agent_*` methods that touch more than the chat (focus, pickers, messages, options, the clipboard); the rest is called on `Editor::agent_chat_mut()`.
 - `git.rs`, `git_gui.rs`, `conflicts.rs`: the gutter, Source Control and the git view.
 - `explorer.rs`, `project_search.rs`, `sidebar_views.rs`: the sidebar's views.
 - `modeless.rs`: VS Code's keys over the modal engine ([ADR 0006](adr/0006-vscode-keys-over-a-modal-engine.md)).

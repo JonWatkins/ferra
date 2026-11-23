@@ -11,7 +11,7 @@
 //! reason there's none (no server, still starting, not offered, stopped,
 //! an error, nothing there, unusable). This module never looks at who
 //! asked (docs/adr/0001-lsp-answers-are-structured.md): the screen's side
-//! (`editor/lsp.rs`) and the agent's (`editor/agent_lsp.rs`) present
+//! (`editor/lsp.rs`) and the agent's (`editor/agent/lsp.rs`) present
 //! answers in their own way, and each decides whether a late one is still
 //! wanted, so parsing here must cope with text that's changed since.
 //!

@@ -4,7 +4,7 @@
 //! the agent's questions, and answers its requests for files; the agent
 //! does the rest (its model, tools, memory, login).
 //!
-//! The editor keeps the chat (`editor/agent.rs`) and says what it wants
+//! The editor keeps the chat (`editor/agent/chat.rs`) and says what it wants
 //! sent; `Agents::update`, called each time round the app's loop, sends it
 //! and hands back what the agent said.
 
@@ -239,7 +239,7 @@ impl Agents {
     /// Returns whether anything changed.
     pub fn update(&mut self, editor: &mut Editor) -> bool {
         let mut changed = self.update_tools(editor);
-        for request in editor.take_agent_requests() {
+        for request in editor.agent_chat_mut().take_requests() {
             changed = true;
             self.send(request, editor);
         }
@@ -260,7 +260,7 @@ impl Agents {
         if self.client.as_ref().is_some_and(AgentClient::stopped) {
             self.client = None;
             self.receiver = None;
-            if !matches!(editor.agent_chat().status, AgentStatus::Stopped(_)) {
+            if !matches!(editor.agent_chat().status(), AgentStatus::Stopped(_)) {
                 editor.agent_event(AgentEvent::Status(AgentStatus::Stopped(
                     "it stopped reading its input".into(),
                 )));
@@ -273,7 +273,7 @@ impl Agents {
         if self.client.is_some() {
             return;
         }
-        let name = editor.agent_chat().agent.clone();
+        let name = editor.agent_chat().agent().to_string();
         let Some(config) = self.configs.get(&name).cloned() else {
             editor.agent_failed(format!("No agent named \"{name}\" in [agents]"));
             return;

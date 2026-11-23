@@ -178,7 +178,7 @@ fn the_agent_menu_toggles_its_sidebar() {
             keys(&mut app, "<CR>");
         }
         assert_eq!(open_menu(&app), None);
-        assert!(app.editor().agent_sidebar_shown(), "click: {by_click}");
+        assert!(app.editor().agent_chat().shown(), "click: {by_click}");
         assert_eq!(app.editor().mode(), Mode::Agent, "click: {by_click}");
     }
 }
@@ -194,7 +194,7 @@ fn the_agent_toggle_works_after_a_click_in_the_text() {
         for _ in 0..2 {
             // A click in the text, then the toggle.
             click(&mut app, 40, 5);
-            let before = app.editor().agent_sidebar_shown();
+            let before = app.editor().agent_chat().shown();
             if via_menu {
                 let (x, y) = find(&mut app, "Agent");
                 click(&mut app, x, y);
@@ -204,7 +204,7 @@ fn the_agent_toggle_works_after_a_click_in_the_text() {
                 keys(&mut app, "<C-A-b>");
             }
             assert_ne!(
-                app.editor().agent_sidebar_shown(),
+                app.editor().agent_chat().shown(),
                 before,
                 "menu: {via_menu}, mode {:?}",
                 app.editor().mode()

@@ -312,13 +312,13 @@ fn until(app: &mut App, done: impl Fn(&App) -> bool) {
         }
         thread::sleep(Duration::from_millis(5));
     }
-    panic!("timed out: {:?}", app.editor().agent_chat().entries);
+    panic!("timed out: {:?}", app.editor().agent_chat().entries());
 }
 
 fn said(app: &App) -> String {
     app.editor()
         .agent_chat()
-        .entries
+        .entries()
         .iter()
         .filter_map(|e| match e {
             ChatEntry::Agent(text) => Some(text.as_str()),
@@ -329,7 +329,7 @@ fn said(app: &App) -> String {
 }
 
 fn ready(app: &App) -> bool {
-    app.editor().agent_chat().status == AgentStatus::Ready
+    app.editor().agent_chat().status() == &AgentStatus::Ready
 }
 
 #[test]
@@ -338,17 +338,17 @@ fn a_turn_streams_in_and_ends() {
     keys(&mut app, ":agent_ask hello there<CR>");
     until(&mut app, |a| ready(a) && said(a) == "Hi there.");
     let chat = app.editor().agent_chat();
-    assert_eq!(chat.agent_info.as_deref(), Some("fake 1.0"));
-    assert_eq!(chat.mode.as_deref(), Some("default"));
-    assert_eq!(chat.modes.len(), 2);
-    assert!(matches!(&chat.entries[0], ChatEntry::User(t) if t == "hello there"));
+    assert_eq!(chat.agent_info(), Some("fake 1.0"));
+    assert_eq!(chat.mode(), Some("default"));
+    assert_eq!(chat.modes().len(), 2);
+    assert!(matches!(&chat.entries()[0], ChatEntry::User(t) if t == "hello there"));
     assert!(
-        chat.entries
+        chat.entries()
             .iter()
             .any(|e| matches!(e, ChatEntry::Plan(p) if p[0].status == "completed"))
     );
     // The sidebar's shown.
-    assert!(app.editor().agent_sidebar_shown());
+    assert!(app.editor().agent_chat().shown());
 }
 
 #[test]
@@ -359,10 +359,10 @@ fn the_sidebar_is_typed_in_and_drawn() {
     until(&mut app, ready);
     keys(&mut app, "hello");
     keys(&mut app, "<C-j>world");
-    assert_eq!(app.editor().agent_chat().input.text(), "hello\nworld");
+    assert_eq!(app.editor().agent_chat().input().text(), "hello\nworld");
     keys(&mut app, "<C-u><C-a>hello there<CR>");
     until(&mut app, |a| ready(a) && said(a) == "Hi there.");
-    assert_eq!(app.editor().agent_chat().input.text(), "");
+    assert_eq!(app.editor().agent_chat().input().text(), "");
     let screen = render(&mut app, 100, 30);
     let rows = &screen.rows;
     // Right of the windows, from the top: the header, the chat.
@@ -388,9 +388,9 @@ fn the_sidebar_is_typed_in_and_drawn() {
     // Esc goes back to the text; the sidebar stays.
     keys(&mut app, "<Esc>");
     assert_ne!(app.editor().mode(), Mode::Agent);
-    assert!(app.editor().agent_sidebar_shown());
+    assert!(app.editor().agent_chat().shown());
     keys(&mut app, ":agent_sidebar<CR>");
-    assert!(!app.editor().agent_sidebar_shown());
+    assert!(!app.editor().agent_chat().shown());
 }
 
 fn mouse(app: &mut App, kind: MouseEventKind, x: u16, y: u16) {
@@ -422,11 +422,11 @@ fn find(app: &mut App, text: &str) -> (u16, u16) {
 fn an_option_is_clicked_and_the_edge_dragged() {
     let mut app = app();
     keys(&mut app, ":agent<CR>permission<CR>");
-    until(&mut app, |a| a.editor().agent_chat().permission.is_some());
+    until(&mut app, |a| a.editor().agent_chat().permission().is_some());
     let (x, y) = find(&mut app, "2 Reject");
     click(&mut app, x + 1, y);
     until(&mut app, |a| {
-        a.editor().agent_chat().entries.iter().any(|e| {
+        a.editor().agent_chat().entries().iter().any(|e| {
             matches!(e, ChatEntry::Tool(t) if t.status == ToolStatus::Done && t.text == "chose reject")
         })
     });
@@ -467,7 +467,7 @@ fn files_are_read_from_their_buffers() {
 fn permission_is_asked_and_the_answer_goes_back() {
     let mut app = app();
     keys(&mut app, ":agent<CR>permission<CR>");
-    until(&mut app, |a| a.editor().agent_chat().permission.is_some());
+    until(&mut app, |a| a.editor().agent_chat().permission().is_some());
     let rows = render(&mut app, 100, 30).rows.join("\n");
     assert!(
         rows.contains(" 1 Allow ") && rows.contains(" 2 Reject "),
@@ -475,7 +475,7 @@ fn permission_is_asked_and_the_answer_goes_back() {
     );
     keys(&mut app, "2");
     until(&mut app, |a| {
-        a.editor().agent_chat().entries.iter().any(|e| {
+        a.editor().agent_chat().entries().iter().any(|e| {
             matches!(e, ChatEntry::Tool(t) if t.status == ToolStatus::Done && t.text == "chose reject")
         })
     });
@@ -486,14 +486,14 @@ fn a_turn_is_cancelled() {
     let mut app = app();
     keys(&mut app, ":agent<CR>slow<CR>");
     until(&mut app, |a| {
-        a.editor().agent_chat().status == AgentStatus::Busy
+        a.editor().agent_chat().status() == &AgentStatus::Busy
     });
     keys(&mut app, "<C-c>");
     until(&mut app, ready);
     assert!(
         app.editor()
             .agent_chat()
-            .entries
+            .entries()
             .iter()
             .any(|e| matches!(e, ChatEntry::Notice(n) if n == "Stopped"))
     );
@@ -507,13 +507,13 @@ fn an_agent_that_isnt_installed_says_so() {
     keys(&mut app, ":agent<CR>");
     app.update();
     assert!(matches!(
-        &app.editor().agent_chat().status,
+        &app.editor().agent_chat().status(),
         AgentStatus::Stopped(why) if why.contains("ferra-no-such-agent isn't installed")
     ));
     keys(&mut app, "<Esc>:agent_ask hi<CR>");
     app.update();
     assert!(matches!(
-        app.editor().agent_chat().status,
+        app.editor().agent_chat().status(),
         AgentStatus::Stopped(_)
     ));
 }
@@ -552,7 +552,7 @@ fn at_in_the_box_picks_a_file_to_mention() {
     // None picked: back to the box, the @ kept.
     keys(&mut app, "<Esc>");
     assert_eq!(app.editor().mode(), Mode::Agent);
-    assert_eq!(app.editor().agent_chat().input.text(), "see @");
+    assert_eq!(app.editor().agent_chat().input().text(), "see @");
 }
 
 #[cfg(unix)]
@@ -862,7 +862,7 @@ fn images_dropped_or_pasted_go_with_the_message() {
     );
     app.handle_paste(&dropped);
     keys(&mut app, "<C-v>");
-    let typed = app.editor().agent_chat().input.text().to_string();
+    let typed = app.editor().agent_chat().input().text().to_string();
     assert!(typed.starts_with("blocks [Image #1] @"), "{typed}");
     assert!(typed.ends_with("notes.txt [Image #2] "), "{typed}");
     keys(&mut app, "<CR>");
@@ -873,7 +873,7 @@ fn images_dropped_or_pasted_go_with_the_message() {
     assert!(said.contains("|image/png UE5HMQ=="), "{said}");
     assert!(said.contains("|image/png UE5HMg=="), "{said}");
     assert!(
-        app.editor().agent_chat().images.is_empty(),
+        app.editor().agent_chat().images().is_empty(),
         "sent, and gone"
     );
 }
@@ -888,15 +888,15 @@ fn image_files_dropped_anywhere_go_to_the_agent() {
     assert_ne!(app.editor().mode(), Mode::Agent);
     app.handle_paste(&shot.display().to_string());
     assert_eq!(app.editor().mode(), Mode::Agent);
-    assert_eq!(app.editor().agent_chat().input.text(), "[Image #1] ");
+    assert_eq!(app.editor().agent_chat().input().text(), "[Image #1] ");
     // Text pasted in the editor stays there.
     keys(&mut app, "<Esc>");
     app.handle_paste("hello");
-    assert_eq!(app.editor().agent_chat().input.text(), "[Image #1] ");
+    assert_eq!(app.editor().agent_chat().input().text(), "[Image #1] ");
 }
 
 fn commands_ready(app: &App) -> bool {
-    ready(app) && !app.editor().agent_chat().commands.is_empty()
+    ready(app) && !app.editor().agent_chat().commands().is_empty()
 }
 
 #[test]
@@ -913,7 +913,8 @@ fn slash_lists_the_commands_and_runs_one() {
     keys(&mut app, "/");
     let names: Vec<String> = app
         .editor()
-        .agent_slash_matches()
+        .agent_chat()
+        .slash_matches()
         .into_iter()
         .map(|c| c.name)
         .collect();
@@ -921,7 +922,8 @@ fn slash_lists_the_commands_and_runs_one() {
     keys(&mut app, "c");
     let names: Vec<String> = app
         .editor()
-        .agent_slash_matches()
+        .agent_chat()
+        .slash_matches()
         .into_iter()
         .map(|c| c.name)
         .collect();
@@ -936,11 +938,11 @@ fn slash_lists_the_commands_and_runs_one() {
     // Down, then Enter: /compact (it takes nothing) is sent at once, first.
     keys(&mut app, "<Down><CR>");
     until(&mut app, |a| ready(a) && said(a) == "ran /compact");
-    assert_eq!(app.editor().agent_chat().input.text(), "");
+    assert_eq!(app.editor().agent_chat().input().text(), "");
     // One that takes something: filled in, its hint shown after it.
     keys(&mut app, "/rev<Tab>");
-    assert_eq!(app.editor().agent_chat().input.text(), "/review ");
-    assert!(app.editor().agent_slash_matches().is_empty());
+    assert_eq!(app.editor().agent_chat().input().text(), "/review ");
+    assert!(app.editor().agent_chat().slash_matches().is_empty());
     let rows = render(&mut app, 100, 30).rows;
     assert!(
         rows.iter().any(|r| r.contains("/review [branch]")),
@@ -952,9 +954,9 @@ fn slash_lists_the_commands_and_runs_one() {
     });
     // Esc puts the list away (the box keeps focus), then leaves.
     keys(&mut app, "/");
-    assert!(!app.editor().agent_slash_matches().is_empty());
+    assert!(!app.editor().agent_chat().slash_matches().is_empty());
     keys(&mut app, "<Esc>");
-    assert!(app.editor().agent_slash_matches().is_empty());
+    assert!(app.editor().agent_chat().slash_matches().is_empty());
     assert_eq!(app.editor().mode(), Mode::Agent);
     keys(&mut app, "<Esc>");
     assert_ne!(app.editor().mode(), Mode::Agent);
@@ -978,7 +980,7 @@ fn clear_starts_a_new_session() {
     until(&mut app, |a| ready(a) && said(a) == "in s1");
     keys(&mut app, "/clear<CR>");
     let chat = app.editor().agent_chat();
-    assert!(matches!(&chat.entries[..], [ChatEntry::Notice(n)] if n == "A new conversation"));
+    assert!(matches!(chat.entries(), [ChatEntry::Notice(n)] if n == "A new conversation"));
     until(&mut app, ready);
     keys(&mut app, "session<CR>");
     until(&mut app, |a| ready(a) && said(a) == "in s2");
@@ -990,7 +992,7 @@ fn settings_are_chosen_from_their_chips() {
     keys(&mut app, ":agent<CR>");
     until(&mut app, commands_ready);
     let chat = app.editor().agent_chat();
-    assert_eq!(chat.config.len(), 3);
+    assert_eq!(chat.config().len(), 3);
     // A click on the model's chip: its values.
     let (x, y) = find(&mut app, "Opus ▾");
     click(&mut app, x + 1, y);
@@ -999,7 +1001,7 @@ fn settings_are_chosen_from_their_chips() {
     until(&mut app, |a| {
         a.editor()
             .agent_chat()
-            .config
+            .config()
             .iter()
             .any(|o| o.id == "model" && o.current == "sonnet")
     });
