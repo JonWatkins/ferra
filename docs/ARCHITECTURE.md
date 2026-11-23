@@ -68,7 +68,7 @@ Writing to another program (a server, an agent) on a thread of its own, so a slo
 Drawing, with ratatui: each piece of the screen is a widget reading `&Editor` (windows and `editor_view/`, status line, sidebar, panel, popups, pickers, the git view, the agent sidebar). As it draws, each widget records the regions it drew in a `ScreenMap` (`screen_map.rs`), in paint order, each with a `Target` saying what it is; `ui::draw` returns it. Interface: `ScreenMap::at(cell)`, what's on top there, and `Target::pointer`.
 
 **app** (`src/app/`):
-Owns everything and runs the event loop: keys and their timeouts, the mouse (`mouse.rs`: every event matches on the `Target` at its cell, so clicks, the wheel and the pointer agree), recording for `.` and macros (`repeat.rs`, `macros.rs`), `:normal`, background jobs (`background.rs`), the session, crash handling, and pumping `Lsp`, `Agents`, the terminal and git each time round. The only module that sees everything.
+Owns everything and runs the event loop: keys and their timeouts, the mouse (`mouse.rs`: every event matches on the `Target` at its cell, so clicks, the wheel and the pointer agree), recording for `.` and macros (`repeat.rs`, `macros.rs`), `:normal`, background jobs (`background.rs`), the session, crash handling, and the background sources (`sources.rs`: one table of background jobs, the terminal, git's jobs, `Lsp` and `Agents`, each saying whether it's busy and taking in what arrived). Interface for tests: `App::update`, every source until nothing changes. The only module that sees everything.
 
 **main, cli, log** (`src/main.rs`, `src/cli.rs`, `src/log.rs`):
 Start-up and command-line arguments, and the log file (`:log`).

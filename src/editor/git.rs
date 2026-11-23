@@ -25,7 +25,7 @@
 //! submit runs `git_commit_message`). A popup opened from the sidebar goes back
 //! to it when it closes.
 //!
-//! Line blame (`Editor::git_blame_tick`, each time round the event loop) waits
+//! Line blame (`Editor::update_git_blame`, each time round the event loop) waits
 //! for the cursor to rest 400 ms on a line in normal mode, then runs `git blame
 //! --porcelain -L n,n --contents -` on a thread with the buffer's text on
 //! stdin, so unsaved edits count (their lines come back as git's all-zeros "not
@@ -758,7 +758,7 @@ impl Editor {
     /// it after the line; takes it away when the cursor moves on, the text
     /// changes, or another mode starts. Returns whether there's anything
     /// new to draw.
-    pub fn git_blame_tick(&mut self) -> bool {
+    pub fn update_git_blame(&mut self) -> bool {
         let here = (
             self.document.id(),
             self.document.cursor().row,
@@ -871,7 +871,7 @@ impl Editor {
     /// Takes a running job's news: its progress as the message, and at
     /// the end what happened, everything read again (a pull changes files).
     /// Returns whether there's anything new to draw.
-    pub fn pump_git_job(&mut self) -> bool {
+    pub fn update_git_job(&mut self) -> bool {
         let Some((op, receiver)) = &self.git.job else {
             return false;
         };

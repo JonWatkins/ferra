@@ -2,14 +2,14 @@
 //! (`<Space>t`).
 //!
 //! `portable-pty` starts the shell; a thread reads what it prints and
-//! sends it through a channel, and `pump` (called by the event loop) feeds
+//! sends it through a channel, and `update` (called by the event loop) feeds
 //! it to a `vt100` parser, whose screen the panel draws. Keys typed into
 //! the panel are turned back into the bytes a terminal sends
 //! (`key_bytes`). The parser answers the few queries programs wait on
 //! (the cursor position, the device attributes) and takes the title.
 //!
 //! `terminal/` runs a shell in a pseudo-terminal (`portable-pty`). A thread
-//! reads its output into a channel; `Terminal::pump`, called by the event loop
+//! reads its output into a channel; `Terminal::update`, called by the event loop
 //! (which polls while a shell runs, as it does for language servers), feeds it
 //! to a `vt100` parser, whose screen the panel draws. The parser's callbacks
 //! answer the queries programs wait on (`ESC [ 6 n`, the device attributes) and
@@ -205,7 +205,7 @@ impl Terminal {
 
     /// Takes what the shell printed since last time. Returns whether
     /// anything changed.
-    pub fn pump(&mut self) -> bool {
+    pub fn update(&mut self) -> bool {
         let mut changed = false;
         loop {
             match self.output.try_recv() {
@@ -239,7 +239,7 @@ impl Terminal {
         if self.exited.is_some() {
             return;
         }
-        // A shell that's gone shows up through `pump`.
+        // A shell that's gone shows up through `update`.
         let _ = self.writer.write_all(bytes);
         let _ = self.writer.flush();
     }
@@ -509,7 +509,7 @@ mod tests {
     fn wait_for(terminal: &mut Terminal, done: impl Fn(&Terminal) -> bool) {
         let start = Instant::now();
         while !done(terminal) && start.elapsed() < Duration::from_secs(2) {
-            terminal.pump();
+            terminal.update();
             thread::sleep(Duration::from_millis(10));
         }
     }

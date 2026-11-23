@@ -304,7 +304,7 @@ fn the_git_view_stages_a_hunk_commits_and_shows_commits() {
 fn wait_for_job(app: &mut ferra::App) {
     let start = std::time::Instant::now();
     while app.editor().git_job_running() && start.elapsed() < std::time::Duration::from_secs(20) {
-        app.editor_mut().pump_git_job();
+        app.update();
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     assert!(!app.editor().git_job_running(), "the job finished");
@@ -406,7 +406,7 @@ fn branches_and_pushing_from_the_git_view() {
 fn blame_until(app: &mut ferra::App, done: impl Fn(&ferra::App) -> bool) {
     let start = std::time::Instant::now();
     while !done(app) && start.elapsed() < std::time::Duration::from_secs(5) {
-        app.editor_mut().git_blame_tick();
+        app.update();
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
@@ -444,12 +444,12 @@ fn the_cursors_line_is_blamed_after_it() {
 
     // Insert mode hides it; so does turning it off.
     keys(&mut app, "A");
-    app.editor_mut().git_blame_tick();
+    app.update();
     assert_eq!(blame_shown(&app), None);
     keys(&mut app, "<Esc>:git_blame<CR>");
     // Past the time it'd have been asked for.
     for _ in 0..30 {
-        app.editor_mut().git_blame_tick();
+        app.update();
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     assert_eq!(blame_shown(&app), None);
