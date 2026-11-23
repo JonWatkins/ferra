@@ -48,7 +48,7 @@ The system or terminal (OSC 52) clipboard behind `"+`/`"*`, as a trait tests rep
 Language servers: a client per server and project, keeping open buffers in sync, diagnostics, and turning LSP queries into requests and replies into typed answers for `Editor::lsp_answered`. Never knows who asked ([ADR 0001](adr/0001-lsp-answers-are-structured.md)). Interface: `Lsp::update` (each time round the loop), `Lsp::format` (`:format`'s blocking wait). Seam: `Spawner`, which tests replace with a fake server over pipes.
 
 **agent** (`src/agent/`):
-Coding agents over ACP (`client.rs`), and ferra's tools for them over MCP (`mcp.rs`, `tools.rs`, through `ferra --mcp-bridge`); an agent change's answer waits until its files' diagnostics are settled (`diagnostics_wait.rs`, pure, given the time). Interface: `Agents::update`; a tool call is `tools::call`. Seam: `Spawner`, which tests replace with a fake agent.
+Coding agents over ACP (`client.rs`), and ferra's tools for them over MCP (`mcp.rs`, through `ferra --mcp-bridge`): `tools.rs` is the table of tools (name, description, schema, handler), `tool_calls.rs` takes each tool call from start to answer, giving up on a language server after 60s, and an agent change's answer waits until its files' diagnostics are settled (`diagnostics_wait.rs`). Interface: `Agents::update`; tool calls are `ToolCalls::start` and `poll`, given the time. Seam: `Spawner`, which tests replace with a fake agent.
 
 **git** (`src/git/`):
 Git, by running the `git` program, with line diffs in-process ([ADR 0008](adr/0008-git-is-the-git-program.md)): status, staged text, hunks, log, blame, branches, staging, committing, merges. Plain functions over a repository path; depends on nothing else in the crate.

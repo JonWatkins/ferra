@@ -1270,7 +1270,7 @@ impl Editor {
 
     /// The `lsp_apply_code_action` tool: action `number` (from 1) of the
     /// list `list` that `lsp_code_actions` gave, for `path`.
-    pub fn agent_apply_code_action(
+    pub(crate) fn agent_apply_code_action(
         &mut self,
         call: u64,
         path: &str,
@@ -1311,7 +1311,7 @@ impl Editor {
     /// `path`'s `line` (from 1), at `symbol` on it (or `column`, from 1, or
     /// the line's first word); `query` for the project's symbols. The answer
     /// comes back through [`Editor::agent_lsp_answer`].
-    pub fn agent_ask_lsp(
+    pub(crate) fn agent_ask_lsp(
         &mut self,
         call: u64,
         feature: LspFeature,

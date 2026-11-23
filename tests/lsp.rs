@@ -1430,21 +1430,18 @@ fn rename_changes_the_name_everywhere_as_one_change() {
 
 #[test]
 fn the_agents_rename_saves_the_files_it_opened_and_they_are_its() {
-    use ferra::editor::lsp::LspFeature;
     let (dir, mut app, _) = with_server("use other;\nother();\n", true);
     let other = dir.path().join(OTHER);
     fs::write(&other, "pub fn other() {}\n").unwrap();
     ready(&mut app);
     let main = dir.path().join("main.rs");
-    app.editor_mut()
-        .agent_ask_lsp(
-            1,
-            LspFeature::Rename,
-            Some(main.to_str().unwrap()),
-            (Some(2), Some("other"), None, None),
-            Some("another"),
-        )
-        .unwrap();
+    tool(
+        &mut app,
+        1,
+        "lsp_rename",
+        json!({"path": main.to_str().unwrap(), "line": 2, "symbol": "other", "new_name": "another"}),
+    )
+    .unwrap();
     let said = agent_answer(&mut app, 1).unwrap();
     assert_eq!(said, "Renamed to another: 3 changes in 2 files");
     // Both saved (neither had the user's unsaved changes), the other file
@@ -2070,18 +2067,22 @@ fn the_outline_and_the_breadcrumbs_show_the_files_symbols() {
     });
 }
 
+/// The coding agent's tool call `call`, as MCP makes it: `Ok` once it's
+/// asked a language server (its answer comes from `agent_answer`), or the
+/// error it got at once.
+fn tool(app: &mut App, call: u64, name: &str, args: Value) -> Result<(), String> {
+    use ferra::agent::tools::{Called, call as run};
+    match run(app.editor_mut(), call, name, &args) {
+        Called::Waiting => Ok(()),
+        Called::Done(Err(error)) => Err(error),
+        other => panic!("{other:?}"),
+    }
+}
+
 /// The coding agent's question for a server (as its tools ask): the answer
 /// comes back as text, for it, and nothing shows on the screen.
-fn agent_asks(
-    app: &mut App,
-    feature: ferra::editor::lsp::LspFeature,
-    path: &Path,
-    place: (Option<usize>, Option<&str>, Option<usize>, Option<usize>),
-) -> Result<String, String> {
-    let path = path.to_str().unwrap();
-    app.editor_mut()
-        .agent_ask_lsp(7, feature, Some(path), place, None)
-        .unwrap();
+fn agent_asks(app: &mut App, name: &str, args: Value) -> Result<String, String> {
+    tool(app, 7, name, args).unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
         app.update_lsp();
@@ -2096,15 +2097,14 @@ fn agent_asks(
 
 #[test]
 fn the_agent_asks_servers_and_gets_text() {
-    use ferra::editor::lsp::LspFeature;
     let (dir, mut app, _) = with_server("fn bad() {}\nbad();\nlet x = bad;\n", true);
     ready(&mut app);
     let path = dir.path().join("main.rs");
+    let file = path.to_str().unwrap();
     let uses = agent_asks(
         &mut app,
-        LspFeature::References,
-        &path,
-        (Some(3), Some("bad"), None, None),
+        "lsp_references",
+        json!({"path": file, "line": 3, "symbol": "bad"}),
     );
     let uses = uses.unwrap();
     assert!(uses.contains("main.rs:1:4  fn bad() {}"), "{uses}");
@@ -2112,26 +2112,23 @@ fn the_agent_asks_servers_and_gets_text() {
     assert!(app.editor().picker().is_none(), "nothing shown");
     let found = agent_asks(
         &mut app,
-        LspFeature::Definition,
-        &path,
-        (Some(2), None, Some(1), None),
+        "lsp_definition",
+        json!({"path": file, "line": 2, "column": 1}),
     );
     assert!(found.unwrap().contains("main.rs:1:4"));
     // A symbol that isn't on the line is said to be missing at once.
-    let missing = app.editor_mut().agent_ask_lsp(
+    let missing = tool(
+        &mut app,
         8,
-        LspFeature::Hover,
-        Some(path.to_str().unwrap()),
-        (Some(1), Some("nope"), None, None),
-        None,
+        "lsp_hover",
+        json!({"path": file, "line": 1, "symbol": "nope"}),
     );
     assert!(missing.unwrap_err().contains("isn't on line 1"));
-    let past = app.editor_mut().agent_ask_lsp(
+    let past = tool(
+        &mut app,
         9,
-        LspFeature::Hover,
-        Some(path.to_str().unwrap()),
-        (Some(1), None, Some(500), None),
-        None,
+        "lsp_hover",
+        json!({"path": file, "line": 1, "column": 500}),
     );
     assert_eq!(
         past.unwrap_err(),
@@ -2155,7 +2152,6 @@ fn agent_answer(app: &mut App, call: u64) -> Result<String, String> {
 
 #[test]
 fn the_agent_renames_formats_and_makes_code_actions() {
-    use ferra::editor::lsp::LspFeature;
     let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
     ready(&mut app);
     until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
@@ -2164,15 +2160,13 @@ fn the_agent_renames_formats_and_makes_code_actions() {
 
     // The fixes for the problem on line 2, then the first made: saved, as
     // the file had no unsaved changes.
-    app.editor_mut()
-        .agent_ask_lsp(
-            1,
-            LspFeature::CodeAction,
-            Some(file),
-            (Some(2), Some("bad"), None, None),
-            None,
-        )
-        .unwrap();
+    tool(
+        &mut app,
+        1,
+        "lsp_code_actions",
+        json!({"path": file, "line": 2, "symbol": "bad"}),
+    )
+    .unwrap();
     let listed = agent_answer(&mut app, 1).unwrap();
     assert!(
         listed.starts_with("1. Replace with good (quickfix)"),
@@ -2187,9 +2181,13 @@ fn the_agent_renames_formats_and_makes_code_actions() {
         .unwrap()
         .parse()
         .unwrap();
-    app.editor_mut()
-        .agent_apply_code_action(2, file, list, 1)
-        .unwrap();
+    tool(
+        &mut app,
+        2,
+        "lsp_apply_code_action",
+        json!({"path": file, "list": list, "number": 1}),
+    )
+    .unwrap();
     let made = agent_answer(&mut app, 2).unwrap();
     assert!(
         made.starts_with("Made Replace with good in ") && made.ends_with("main.rs"),
@@ -2200,15 +2198,7 @@ fn the_agent_renames_formats_and_makes_code_actions() {
         "fn bad() {}\nlet  x =  good;\n"
     );
 
-    app.editor_mut()
-        .agent_ask_lsp(
-            3,
-            LspFeature::Format,
-            Some(file),
-            (None, None, None, None),
-            None,
-        )
-        .unwrap();
+    tool(&mut app, 3, "lsp_format", json!({"path": file})).unwrap();
     let formatted = agent_answer(&mut app, 3).unwrap();
     assert!(
         formatted.starts_with("Formatted ") && formatted.ends_with("main.rs (1 change)"),
@@ -2221,15 +2211,13 @@ fn the_agent_renames_formats_and_makes_code_actions() {
 
     // With unsaved changes of the user's, the rename's left unsaved.
     keys(&mut app, "ggA // mine<Esc>");
-    app.editor_mut()
-        .agent_ask_lsp(
-            4,
-            LspFeature::Rename,
-            Some(file),
-            (Some(1), Some("bad"), None, None),
-            Some("worse"),
-        )
-        .unwrap();
+    tool(
+        &mut app,
+        4,
+        "lsp_rename",
+        json!({"path": file, "line": 1, "symbol": "bad", "new_name": "worse"}),
+    )
+    .unwrap();
     let renamed = agent_answer(&mut app, 4).unwrap();
     assert!(
         renamed.starts_with("Renamed to worse: 1 change in 1 file"),
@@ -2248,20 +2236,17 @@ fn the_agent_renames_formats_and_makes_code_actions() {
 
 #[test]
 fn the_agent_asks_for_a_files_source_actions() {
-    use ferra::editor::lsp::LspFeature;
     let (dir, mut app, seen) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
     ready(&mut app);
     let path = dir.path().join("main.rs");
     // No line: the file-wide ones, for all of it.
-    app.editor_mut()
-        .agent_ask_lsp(
-            1,
-            LspFeature::CodeAction,
-            Some(path.to_str().unwrap()),
-            (None, None, None, None),
-            None,
-        )
-        .unwrap();
+    tool(
+        &mut app,
+        1,
+        "lsp_code_actions",
+        json!({"path": path.to_str().unwrap()}),
+    )
+    .unwrap();
     let listed = agent_answer(&mut app, 1).unwrap();
     assert!(
         listed.starts_with("1. Organize imports (source.organizeImports)\nTo make one"),
@@ -2278,9 +2263,13 @@ fn the_agent_asks_for_a_files_source_actions() {
         .parse()
         .unwrap();
     keys(&mut app, "ggOuse x;<Esc>");
-    app.editor_mut()
-        .agent_apply_code_action(2, path.to_str().unwrap(), list, 1)
-        .unwrap();
+    tool(
+        &mut app,
+        2,
+        "lsp_apply_code_action",
+        json!({"path": path.to_str().unwrap(), "list": list, "number": 1}),
+    )
+    .unwrap();
     assert_eq!(
         agent_answer(&mut app, 2),
         Err("The file has changed since that list of code actions: ask for them again".into())
@@ -2305,34 +2294,30 @@ fn the_agent_asks_for_a_files_source_actions() {
 
 #[test]
 fn a_server_that_stops_still_answers_the_agent() {
-    use ferra::editor::lsp::LspFeature;
     let (dir, mut app, _) = with_server("fn die() {}\n", true);
     ready(&mut app);
+    let main = dir.path().join("main.rs");
     let said = agent_asks(
         &mut app,
-        LspFeature::Hover,
-        &dir.path().join("main.rs"),
-        (Some(1), Some("die"), None, None),
+        "lsp_hover",
+        json!({"path": main.to_str().unwrap(), "line": 1, "symbol": "die"}),
     );
     assert_eq!(said, Err("rust-analyzer stopped before answering".into()));
 }
 
 #[test]
 fn the_agent_hears_of_the_edits_an_actions_command_makes() {
-    use ferra::editor::lsp::LspFeature;
     let (dir, mut app, _) = with_server("fine\nalso fine\n", true);
     ready(&mut app);
     let path = dir.path().join("main.rs");
     let file = path.to_str().unwrap();
-    app.editor_mut()
-        .agent_ask_lsp(
-            1,
-            LspFeature::CodeAction,
-            Some(file),
-            (Some(2), None, None, None),
-            None,
-        )
-        .unwrap();
+    tool(
+        &mut app,
+        1,
+        "lsp_code_actions",
+        json!({"path": file, "line": 2}),
+    )
+    .unwrap();
     let listed = agent_answer(&mut app, 1).unwrap();
     let number: usize = listed
         .lines()
@@ -2350,9 +2335,13 @@ fn the_agent_hears_of_the_edits_an_actions_command_makes() {
         .unwrap()
         .parse()
         .unwrap();
-    app.editor_mut()
-        .agent_apply_code_action(2, file, list, number)
-        .unwrap();
+    tool(
+        &mut app,
+        2,
+        "lsp_apply_code_action",
+        json!({"path": file, "list": list, "number": number}),
+    )
+    .unwrap();
     // The command's server sends the edit as it runs: the agent hears of
     // it, and it's saved, as the file had no unsaved changes.
     let made = agent_answer(&mut app, 2).unwrap();
@@ -2368,45 +2357,34 @@ fn the_agent_hears_of_the_edits_an_actions_command_makes() {
 
 #[test]
 fn the_agent_gets_code_actions_on_an_empty_line() {
-    use ferra::editor::lsp::LspFeature;
     let (dir, mut app, _) = with_server("fn bad() {}\n\nlet x = bad;\n", true);
     ready(&mut app);
     let path = dir.path().join("main.rs");
     // Asked at the symbol and for the whole line, which on an empty line
     // are the same place: both answers still have to be told apart.
-    app.editor_mut()
-        .agent_ask_lsp(
-            1,
-            LspFeature::CodeAction,
-            Some(path.to_str().unwrap()),
-            (Some(2), None, None, None),
-            None,
-        )
-        .unwrap();
+    tool(
+        &mut app,
+        1,
+        "lsp_code_actions",
+        json!({"path": path.to_str().unwrap(), "line": 2}),
+    )
+    .unwrap();
     let listed = agent_answer(&mut app, 1).unwrap();
     assert!(listed.contains("Upper-case the line"), "{listed}");
 }
 
 #[test]
 fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
-    use ferra::editor::lsp::LspFeature;
     let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
     ready(&mut app);
     let path = dir.path().join("main.rs");
     let file = path.to_str().unwrap();
-    let ask = |app: &mut App, call: u64, feature, line: usize| {
-        app.editor_mut()
-            .agent_ask_lsp(
-                call,
-                feature,
-                Some(file),
-                (Some(line), None, None, None),
-                None,
-            )
-            .unwrap();
+    let ask = |app: &mut App, call: u64, kind: &str, line: usize| {
+        let args = json!({"path": file, "line": line, "kind": kind});
+        tool(app, call, "lsp_references", args).unwrap();
         agent_answer(app, call)
     };
-    let callers = ask(&mut app, 1, LspFeature::Callers, 1).unwrap();
+    let callers = ask(&mut app, 1, "callers", 1).unwrap();
     assert!(
         callers.starts_with("1 function calls it:\nmain (function)  "),
         "{callers}"
@@ -2415,7 +2393,7 @@ fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
         callers.ends_with("main.rs:5 (calls it on lines 6, 7)"),
         "{callers}"
     );
-    let callees = ask(&mut app, 2, LspFeature::Callees, 1).unwrap();
+    let callees = ask(&mut app, 2, "callees", 1).unwrap();
     assert!(
         callees.starts_with("It calls 2 functions in the project:\n"),
         "{callees}"
@@ -2447,7 +2425,7 @@ fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
         ))
     );
     // Not on a function: said, no second request.
-    let nothing = ask(&mut app, 3, LspFeature::Callers, 2).unwrap();
+    let nothing = ask(&mut app, 3, "callers", 2).unwrap();
     assert!(
         nothing.starts_with("Nothing there to find calls of"),
         "{nothing}"
@@ -2456,20 +2434,17 @@ fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
 
 #[test]
 fn the_agents_question_waits_for_a_server_still_starting() {
-    use ferra::editor::lsp::LspFeature;
     // Asked straight away, before the server's answered `initialize`.
     let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
     let path = dir.path().join("main.rs");
     app.update_lsp();
-    app.editor_mut()
-        .agent_ask_lsp(
-            1,
-            LspFeature::References,
-            Some(path.to_str().unwrap()),
-            (Some(1), Some("bad"), None, None),
-            None,
-        )
-        .unwrap();
+    tool(
+        &mut app,
+        1,
+        "lsp_references",
+        json!({"path": path.to_str().unwrap(), "line": 1, "symbol": "bad"}),
+    )
+    .unwrap();
     let answer = agent_answer(&mut app, 1);
     assert!(answer.is_ok(), "answered once it was ready: {answer:?}");
 }
@@ -2619,7 +2594,6 @@ fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
 
 #[test]
 fn the_agents_fix_in_a_file_not_shown_isnt_called_unsaved() {
-    use ferra::editor::lsp::LspFeature;
     let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
     ready(&mut app);
     until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
@@ -2629,15 +2603,13 @@ fn the_agents_fix_in_a_file_not_shown_isnt_called_unsaved() {
     let other = dir.path().join("notes.txt");
     fs::write(&other, "notes\n").unwrap();
     keys(&mut app, &format!(":e {}<CR>", other.display()));
-    app.editor_mut()
-        .agent_ask_lsp(
-            1,
-            LspFeature::CodeAction,
-            Some(file),
-            (Some(2), Some("bad"), None, None),
-            None,
-        )
-        .unwrap();
+    tool(
+        &mut app,
+        1,
+        "lsp_code_actions",
+        json!({"path": file, "line": 2, "symbol": "bad"}),
+    )
+    .unwrap();
     let listed = agent_answer(&mut app, 1).unwrap();
     let list: u64 = listed
         .split("list ")
@@ -2648,9 +2620,13 @@ fn the_agents_fix_in_a_file_not_shown_isnt_called_unsaved() {
         .unwrap()
         .parse()
         .unwrap();
-    app.editor_mut()
-        .agent_apply_code_action(2, file, list, 1)
-        .unwrap();
+    tool(
+        &mut app,
+        2,
+        "lsp_apply_code_action",
+        json!({"path": file, "list": list, "number": 1}),
+    )
+    .unwrap();
     agent_answer(&mut app, 2).unwrap();
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
