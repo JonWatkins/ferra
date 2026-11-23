@@ -5,6 +5,13 @@
 //! afterwards, like a macro. The lines are tracked through the edits the
 //! keys make, so deleting a line doesn't shift the rest onto the wrong
 //! ones. The whole run is one undo step.
+//!
+//! `:normal` can't feed keys itself (only the app can), so it queues a
+//! `NormalRun` (keys and position) per line, and `:g` calling it once per line
+//! just adds to the queue. After the command, the app (`app/normal.rs`) plays
+//! the queue like a macro: the rows are tracked through the edits the keys
+//! make, a failing command stops the run, an unfinished one gets an `<Esc>`,
+//! and `Editor::hold_undo` keeps the undo step open across every key.
 
 use super::App;
 use crate::core::Position;

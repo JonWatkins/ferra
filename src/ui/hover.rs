@@ -1,6 +1,18 @@
 //! The hover popup: a language server's Markdown about the symbol under the
 //! cursor, highlighted as Markdown (so code blocks are in their language),
 //! with the code fences hidden and long lines wrapped between words.
+//!
+//! - Hover: the contents (Markdown, a marked string, or a list of them) become
+//!   one Markdown text in a document of its own (`HOVER_DOCUMENT`, never a
+//!   buffer). `ui/hover.rs` highlights it as Markdown with `highlight_as`, so
+//!   code blocks get their language's highlighting through the usual
+//!   injections, and draws it in a popup by the cursor: fences hidden, as are
+//!   Markdown's emphasis and code-span markers, headings' `#`s and links' URLs
+//!   (from the inline grammar's spans), blank runs squeezed, `---` drawn as a
+//!   rule, long lines wrapped between words. Inside code blocks Markdown's own
+//!   `text.*` styles are dropped so they don't show through. The popup closes
+//!   on the next key unless that's `K` again, which scrolls a page (the draw
+//!   records how many rows there are and fit).
 
 use ratatui::{
     buffer::Buffer,

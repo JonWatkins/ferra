@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::lsp::{LspFeature, LspRequest};
+use super::lsp::{LspQuery, LspRequest, Reply};
 use super::popup::{PopupLine, PopupSpan};
 use super::sidebar_views::ViewSpec;
 use super::{DocumentId, Editor, Mode};
@@ -126,18 +126,12 @@ impl Editor {
         }
         self.outline.asked = Some((id, seq, Instant::now()));
         self.lsp_requests.push(LspRequest {
-            feature: LspFeature::Outline,
+            query: LspQuery::Outline,
             document: id,
             position: self.document.cursor(),
             buffer_id: buffer.id(),
             edit_seq: seq,
-            manual: false,
-            trigger: None,
-            word_start: Position::default(),
-            item: None,
-            text: None,
-            end: Position::default(),
-            agent: None,
+            reply: Reply::View,
         });
     }
 

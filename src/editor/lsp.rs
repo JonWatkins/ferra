@@ -1,7 +1,58 @@
-//! What the editor asks of language servers (hover, go to definition,
-//! references) and shows from their answers. The editor only queues the
-//! requests; the app's `Lsp` sends them and hands back the answers, so this
-//! layer knows nothing of servers or JSON.
+//! What the editor asks of language servers, and the screen's side of
+//! their answers.
+//!
+//! The editor only queues `LspRequest`s: `request_lsp` for a question that
+//! needs only the cursor's place (`K`, `gd`, `gr`), `ask_lsp` for an
+//! `LspQuery` with arguments (`:rename name`, a selection's code actions,
+//! a project symbol search). The app's `Lsp` sends them and hands each
+//! answer to [`Editor::lsp_answered`], which passes the agent's to its own
+//! side (`editor/agent_lsp.rs`) and shows the rest (`show_lsp_answer`),
+//! so this layer knows nothing of servers or JSON (see
+//! docs/adr/0001-lsp-answers-are-structured.md).
+//!
+//! `show_lsp_answer` first decides whether an answer is still wanted, by
+//! feature: the cursor still where it was asked, the text unchanged, the
+//! word still being completed, the pointer still resting. Then it shows
+//! it: a hover popup, a jump or a picker, a message, a completion menu.
+//! Why there's no answer is said only for a `Key` reply; the pointer,
+//! typing and views stay quiet, and a stale-answer error
+//! (`ContentModified`, cancelled) is never said.
+//!
+//! - Go to: answers become `Location`s with char columns, converted with
+//!   each line's text (from the buffer if the file is open, else read from
+//!   disk once per file). One is gone to as a jump (`goto_location`, which
+//!   opens the file by its path relative to the current folder when it's
+//!   under it); several open a picker whose items are `PickerAction::GoTo`.
+//! - Rename: `:rename name` asks `LspQuery::Rename`; `<F2>` opens the
+//!   command line with `rename <word>` in it. The answer's `Edits` are made
+//!   by `apply_lsp_edits`: each file's in its buffer, through
+//!   `edit_document`, which makes them one undo step of their own in any
+//!   buffer (`Document::apply_edits`, the same as formatting's); files that
+//!   weren't open were opened in the background (no jump, not shown, left
+//!   modified). The message counts changes and files, and the other files
+//!   left unsaved.
+//! - Code actions: `<Space>a` asks for the cursor, or a visual selection's
+//!   range. The answer's actions are kept as the screen's `ActionList`
+//!   (numbered, with the document and edit count they're for) and listed in
+//!   a picker whose items are `PickerAction::CodeAction(list, index)`.
+//!   Choosing one checks the text hasn't changed since, then asks
+//!   `ApplyCodeAction` with it; its edits are made as they come, with the
+//!   action's title (or the server's label) in the message.
+//! - Highlighting references: the answer is kept with the edit count it's
+//!   for (`set_references`), and `references_shown` gives the view the
+//!   ranges only while the text is unchanged, in normal mode, with the
+//!   cursor on one of them, so moving off or editing hides them at once.
+//!   Drawn under search matches and the selection, in
+//!   `ui.highlight.reference`.
+//! - Symbols: `<Space>s` asks for the document's symbols, nested
+//!   `DocumentSymbol`s (flattened, each child's detail naming its parent:
+//!   "method in Circle") or flat `SymbolInformation`s (their
+//!   `containerName`); `<Space>S` opens an empty picker marked
+//!   `searched_by_server` and asks `workspace/symbol` for its query, and
+//!   `search_symbols_after_key` asks again whenever the query changes, the
+//!   answer replacing the picker's items if the query's still the same
+//!   (older answers with a newer request waiting aren't read). Places are
+//!   found as for go to definition, and the items are `PickerAction::GoTo`.
 
 use std::path::{Path, PathBuf};
 
@@ -107,32 +158,371 @@ impl LspFeature {
     }
 }
 
-/// A request waiting to be sent: `feature` at `position` in `document`,
-/// as its text was at `edit_seq`.
+/// An LSP query waiting to be sent: `query` at `position` in `document`,
+/// as its text was at `edit_seq`, and who asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LspRequest {
-    pub feature: LspFeature,
+    pub query: LspQuery,
     pub document: DocumentId,
     pub position: Position,
     pub buffer_id: u64,
     pub edit_seq: u64,
-    /// Asked for with a key, so a server that can't answer says so (rather
-    /// than a completion asked for as you type).
-    pub manual: bool,
-    /// For completion: the character typed that might start one (`.`),
-    /// and where the word being completed starts. For code actions: where
-    /// their range starts (the cursor, or a selection's start).
-    pub trigger: Option<char>,
-    pub word_start: Position,
-    /// For resolving: which completion item (see `ServerItem::resolve`).
-    pub item: Option<(u64, usize)>,
-    /// For renaming: the new name.
-    pub text: Option<String>,
-    /// For code actions: the end of the range they're for.
-    pub end: Position,
-    /// Asked by the coding agent (its tool call, by number): the answer
-    /// goes back to it, not on the screen.
-    pub agent: Option<u64>,
+    /// Who asked, and so where the answer goes.
+    pub reply: Reply,
+}
+
+impl LspRequest {
+    /// What's asked, without its details.
+    pub fn feature(&self) -> LspFeature {
+        self.query.feature()
+    }
+
+    /// Where the word being completed starts (the place, for others).
+    pub fn word_start(&self) -> Position {
+        match self.query {
+            LspQuery::Completion { word_start, .. } => word_start,
+            _ => self.position,
+        }
+    }
+}
+
+/// What a language server is asked, with what that question needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LspQuery {
+    Hover,
+    Definition,
+    Declaration,
+    TypeDefinition,
+    Implementation,
+    References,
+    /// Completing the word that starts at `word_start`, maybe on typing
+    /// `trigger` (a `.`).
+    Completion {
+        trigger: Option<char>,
+        word_start: Position,
+    },
+    /// A taken completion item's details (its import): the item as the
+    /// server sent it (see `ServerItem::resolve`).
+    ResolveCompletion {
+        item: serde_json::Value,
+    },
+    Format,
+    Rename {
+        name: String,
+    },
+    /// The code actions for `start..end`; with `file_wide`, only the
+    /// file-wide ones (organize imports, fix all); `with_line`, those for
+    /// its whole line too (with every problem on it: a fix can hang on a
+    /// hint beside the error), after its own.
+    CodeActions {
+        start: Position,
+        end: Position,
+        file_wide: bool,
+        with_line: bool,
+    },
+    /// Making a code action from a list a server gave.
+    ApplyCodeAction {
+        action: CodeAction,
+    },
+    /// A chosen code action's edit, from a server that fills it in then.
+    ResolveCodeAction {
+        action: CodeAction,
+    },
+    /// The signature being typed, maybe on typing `trigger` (a `(`);
+    /// `retrigger` while it's showing.
+    SignatureHelp {
+        trigger: Option<char>,
+        retrigger: bool,
+    },
+    DocumentSymbols,
+    WorkspaceSymbols {
+        query: String,
+    },
+    Outline,
+    DocumentHighlight,
+    InlayHint,
+    /// The functions that call the one at the place; `found` once the
+    /// server's found that function, for asking for its calls.
+    Callers {
+        found: bool,
+    },
+    /// The functions it calls (`found` as for `Callers`).
+    Callees {
+        found: bool,
+    },
+    /// Moving the document's file to `to`.
+    MoveFile {
+        to: PathBuf,
+    },
+}
+
+impl LspQuery {
+    /// What's asked, without its details.
+    pub fn feature(&self) -> LspFeature {
+        match self {
+            LspQuery::Hover => LspFeature::Hover,
+            LspQuery::Definition => LspFeature::Definition,
+            LspQuery::Declaration => LspFeature::Declaration,
+            LspQuery::TypeDefinition => LspFeature::TypeDefinition,
+            LspQuery::Implementation => LspFeature::Implementation,
+            LspQuery::References => LspFeature::References,
+            LspQuery::Completion { .. } => LspFeature::Completion,
+            LspQuery::ResolveCompletion { .. } => LspFeature::ResolveCompletion,
+            LspQuery::Format => LspFeature::Format,
+            LspQuery::Rename { .. } => LspFeature::Rename,
+            LspQuery::CodeActions { .. } => LspFeature::CodeAction,
+            LspQuery::ApplyCodeAction { .. } => LspFeature::ApplyCodeAction,
+            LspQuery::ResolveCodeAction { .. } => LspFeature::ResolveCodeAction,
+            LspQuery::SignatureHelp { .. } => LspFeature::SignatureHelp,
+            LspQuery::DocumentSymbols => LspFeature::DocumentSymbols,
+            LspQuery::WorkspaceSymbols { .. } => LspFeature::WorkspaceSymbols,
+            LspQuery::Outline => LspFeature::Outline,
+            LspQuery::DocumentHighlight => LspFeature::DocumentHighlight,
+            LspQuery::InlayHint => LspFeature::InlayHint,
+            LspQuery::Callers { .. } => LspFeature::Callers,
+            LspQuery::Callees { .. } => LspFeature::Callees,
+            LspQuery::MoveFile { .. } => LspFeature::MoveFile,
+        }
+    }
+
+    /// The query for `feature` when a place is all it needs (hover,
+    /// definitions, references...); `None` for those that need more.
+    pub fn at(feature: LspFeature) -> Option<LspQuery> {
+        Some(match feature {
+            LspFeature::Hover => LspQuery::Hover,
+            LspFeature::Definition => LspQuery::Definition,
+            LspFeature::Declaration => LspQuery::Declaration,
+            LspFeature::TypeDefinition => LspQuery::TypeDefinition,
+            LspFeature::Implementation => LspQuery::Implementation,
+            LspFeature::References => LspQuery::References,
+            LspFeature::Format => LspQuery::Format,
+            LspFeature::DocumentSymbols => LspQuery::DocumentSymbols,
+            LspFeature::Outline => LspQuery::Outline,
+            LspFeature::DocumentHighlight => LspQuery::DocumentHighlight,
+            LspFeature::InlayHint => LspQuery::InlayHint,
+            LspFeature::Callers => LspQuery::Callers { found: false },
+            LspFeature::Callees => LspQuery::Callees { found: false },
+            _ => return None,
+        })
+    }
+}
+
+/// Who asked an LSP query, and so where its answer goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reply {
+    /// With a key or a command: says so when there's no answer.
+    Key,
+    /// The mouse (a hover, a Ctrl+hover peek): quiet without an answer.
+    Pointer,
+    /// As the user types (completion, signature help): quiet.
+    Typing,
+    /// To fill a view (the outline, inlay hints, highlights): quiet.
+    View,
+    /// The coding agent's tool call, by number: the answer goes back to
+    /// it as text, not on the screen.
+    Agent(u64),
+}
+
+impl Reply {
+    /// The agent's tool call, if it asked.
+    pub fn agent(self) -> Option<u64> {
+        match self {
+            Reply::Agent(call) => Some(call),
+            _ => None,
+        }
+    }
+
+    /// Whether it waits for a server that's still starting, rather than
+    /// being told so at once: the agent's does, as it can't tell when to
+    /// ask again; the user just presses the key again.
+    pub fn waits_for_start(self) -> bool {
+        matches!(self, Reply::Agent(_))
+    }
+
+    /// Asked for on purpose (a key, or the agent), so it's told when there
+    /// is no answer, rather than left quiet.
+    pub fn explicit(self) -> bool {
+        matches!(self, Reply::Key | Reply::Agent(_))
+    }
+}
+
+/// An LSP query's answer. Features move over to it one at a time; until
+/// then their answers go straight from `lsp/` to the screen or the agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Answer {
+    /// The functions that call the one asked about (`Callers`), or that
+    /// it calls (`Callees`).
+    Calls(Calls),
+    /// A hover's Markdown, as the server sent it (maybe with HTML; empty
+    /// if it had nothing to say).
+    Hover(String),
+    /// Changes the server proposes: a rename's.
+    Edits(Edits),
+    /// The code actions there are (those that can be done there).
+    Actions(Vec<CodeAction>),
+    /// Completions for the word being typed; `incomplete` if the server
+    /// has more, to be asked again as more is typed.
+    Completion {
+        items: Vec<super::server_completion::ServerItem>,
+        incomplete: bool,
+    },
+    /// The signature of the call being typed (none: not in one).
+    Signature(Option<super::signature::SignatureHelp>),
+    /// The document's inlay hints.
+    InlayHints(Vec<VirtualText>),
+    /// The other uses of the symbol at the place, in its document.
+    Highlights(Vec<(Position, Position)>),
+    /// The document's symbols, nested, for the outline.
+    Outline(Vec<super::outline::OutlineSymbol>),
+    /// Symbols (the document's, or the project's matching a query): each
+    /// a name, what it is, and where.
+    Symbols {
+        found: Vec<(String, String, Location)>,
+        busy: Option<Busy>,
+    },
+    /// A code action made: its title, and its edits (none if all it does
+    /// is run a command on the server, which sends edits of its own).
+    Action { title: String, edits: Option<Edits> },
+    /// Places: definitions, declarations, type definitions,
+    /// implementations, references.
+    Locations {
+        found: Vec<Location>,
+        /// What the server was busy with, if it was at work: it may know
+        /// more in a moment (still indexing, say).
+        busy: Option<Busy>,
+    },
+}
+
+/// A code action a server offered: its title and kind, and the server's
+/// own form of it, which only `lsp/` reads, to make it later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeAction {
+    pub title: String,
+    /// `quickfix`, `refactor.extract`, `source.organizeImports`... (maybe
+    /// empty).
+    pub kind: String,
+    pub server: serde_json::Value,
+}
+
+/// A list of code actions kept to make one from: its number, and the
+/// document and text (edit count) the actions were made for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionList {
+    pub number: u64,
+    pub actions: Vec<CodeAction>,
+    pub document: DocumentId,
+    pub edit_seq: u64,
+}
+
+/// One document's changes: ranges and their new text (see
+/// [`Document::apply_edits`]).
+pub type TextEdits = Vec<(Position, Position, String)>;
+
+/// Changes to documents a language server proposed, in the editor's own
+/// terms, for the asker to make.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Edits {
+    /// Each document's changes.
+    pub documents: Vec<(DocumentId, TextEdits)>,
+    /// The buffers opened in the background to hold them.
+    pub opened: Vec<DocumentId>,
+    /// File operations (creating, renaming, deleting) left out.
+    pub skipped: usize,
+}
+
+/// What applying a workspace edit did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Applied {
+    pub changes: usize,
+    pub files: usize,
+    /// Files changed that aren't the buffer being edited: left unsaved.
+    pub others: usize,
+    /// Creating, renaming or deleting files, which ferra doesn't do.
+    pub skipped: usize,
+}
+
+impl Applied {
+    /// `3 changes in 2 files (1 other file not saved yet: :wa)`.
+    pub fn describe(&self) -> String {
+        let plural =
+            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+        let mut text = format!(
+            "{} in {}",
+            plural(self.changes, "change", "changes"),
+            plural(self.files, "file", "files")
+        );
+        if self.others > 0 {
+            text.push_str(&format!(
+                " ({} not saved yet: :wa)",
+                plural(self.others, "other file", "other files")
+            ));
+        }
+        if self.skipped > 0 {
+            text.push_str(&format!(
+                "; {} left out",
+                plural(self.skipped, "file operation", "file operations")
+            ));
+        }
+        text
+    }
+}
+
+/// A server at work, by name, and what it's doing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Busy {
+    pub server: String,
+    pub work: String,
+}
+
+/// A call hierarchy's functions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Calls {
+    /// Those in the project, as the server listed them.
+    pub ours: Vec<Call>,
+    /// The names of those outside it (the standard library, dependencies),
+    /// once each.
+    pub outside: Vec<String>,
+}
+
+/// A function in a call hierarchy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Call {
+    pub name: String,
+    /// What it is: "function", "method"...
+    pub kind: &'static str,
+    /// What the server adds (often its signature).
+    pub detail: Option<String>,
+    pub path: PathBuf,
+    /// Where it's named, from 1.
+    pub line: usize,
+    /// The lines the calls are on, from 1: in the caller's file for
+    /// callers, in the function asked about for callees.
+    pub at: Vec<usize>,
+}
+
+/// Why an LSP query has no answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoAnswer {
+    /// No language server has the document.
+    NoServer,
+    /// Its server (by name) is still starting.
+    Starting(String),
+    /// Its server (by name) doesn't offer what was asked.
+    Unsupported(String),
+    /// Its server (by name) stopped before answering.
+    Stopped(String),
+    /// Its server answered with an error: `stale` if it's that the text
+    /// changed while it worked (so the question was out of date).
+    ServerError {
+        server: String,
+        message: String,
+        stale: bool,
+    },
+    /// Nothing at the place asked about to answer for.
+    NothingThere,
+    /// The server's answer couldn't be used (edits for a file that can't
+    /// be opened, say): why.
+    Unusable(String),
 }
 
 /// A place a server pointed to: a file, and a row and char column in it.
@@ -405,8 +795,16 @@ impl Editor {
         true
     }
 
-    /// Asks the language server for `feature` at the cursor (`K`, `gd`...).
+    /// Asks the language server for `feature` at the cursor (`K`, `gd`...),
+    /// for one that needs no more than the place.
     pub fn request_lsp(&mut self, feature: LspFeature) -> Result<(), String> {
+        let query = LspQuery::at(feature)
+            .ok_or_else(|| format!("Language servers can't be asked for {}", feature.noun()))?;
+        self.ask_lsp(query)
+    }
+
+    /// Asks the language server `query` at the cursor, for the user.
+    pub fn ask_lsp(&mut self, query: LspQuery) -> Result<(), String> {
         if !self.options.lsp {
             return Err("Language servers are off (lsp = false)".into());
         }
@@ -415,18 +813,12 @@ impl Editor {
         }
         let buffer = self.document.buffer();
         self.lsp_requests.push(LspRequest {
-            feature,
+            query,
             document: self.document.id(),
             position: self.document.cursor(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual: true,
-            trigger: None,
-            word_start: self.document.cursor(),
-            item: None,
-            text: None,
-            end: self.document.cursor(),
-            agent: None,
+            reply: Reply::Key,
         });
         Ok(())
     }
@@ -456,47 +848,94 @@ impl Editor {
     /// cursor, or with the visual selection (which ends).
     pub fn request_code_actions(&mut self) -> Result<(), String> {
         let range = self.take_selection();
-        self.request_lsp(LspFeature::CodeAction)?;
-        let span = range.map(|range| match range {
-            crate::core::Range::Chars { start, end } => (start, end),
-            crate::core::Range::Lines { first, last } => (
+        let cursor = self.document.cursor();
+        let (start, end) = match range {
+            Some(crate::core::Range::Chars { start, end }) => (start, end),
+            Some(crate::core::Range::Lines { first, last }) => (
                 Position::new(first, 0),
                 self.document.buffer().line_end(last),
             ),
-        });
-        if let (Some((start, end)), Some(request)) = (span, self.lsp_requests.last_mut()) {
-            request.word_start = start;
-            request.end = end;
-        }
-        Ok(())
+            None => (cursor, cursor),
+        };
+        self.ask_lsp(LspQuery::CodeActions {
+            start,
+            end,
+            file_wide: false,
+            with_line: false,
+        })
     }
 
     /// Lists a server's code actions (their titles and kinds), to choose
-    /// one; `answer` says which answer they're from.
-    pub fn show_code_actions(&mut self, answer: u64, actions: Vec<(String, String)>) {
+    /// one; kept as the screen's list of them.
+    fn show_code_actions(&mut self, request: &LspRequest, actions: Vec<CodeAction>) {
         if actions.is_empty() {
             self.set_message(Message::info("No code actions here"));
             return;
         }
-        let items = actions
-            .into_iter()
+        let list = self.keep_code_actions(request, actions);
+        let items = list
+            .actions
+            .iter()
             .enumerate()
-            .map(|(i, (title, kind))| PickerItem {
-                label: title,
-                detail: kind,
-                action: PickerAction::CodeAction(answer, i),
+            .map(|(i, action)| PickerItem {
+                label: action.title.clone(),
+                detail: action.kind.clone(),
+                action: PickerAction::CodeAction(list.number, i),
             })
             .collect();
+        self.code_actions = Some(list);
         self.open_picker(Picker::new("Code actions", items).keep_label_start());
+    }
+
+    /// `actions`, the answer to `request`, as a numbered list to make one
+    /// from.
+    pub(super) fn keep_code_actions(
+        &mut self,
+        request: &LspRequest,
+        actions: Vec<CodeAction>,
+    ) -> ActionList {
+        self.action_lists_made += 1;
+        ActionList {
+            number: self.action_lists_made,
+            actions,
+            document: request.document,
+            edit_seq: request.edit_seq,
+        }
+    }
+
+    /// Asks for code action `index` of `list` to be made, if the text is
+    /// still what the list was made for; `reply` says who for.
+    pub(super) fn make_code_action(
+        &mut self,
+        list: Option<&ActionList>,
+        index: usize,
+        reply: Reply,
+    ) -> Result<(), &'static str> {
+        const TOO_OLD: &str = "That list of code actions is too old (or has no such number)";
+        let list = list.ok_or(TOO_OLD)?;
+        let action = list.actions.get(index).ok_or(TOO_OLD)?.clone();
+        let document = self
+            .document_by_id(list.document)
+            .filter(|d| d.buffer().edit_seq() == list.edit_seq)
+            .ok_or("The file has changed since that list of code actions: ask for them again")?;
+        let buffer = document.buffer();
+        self.lsp_requests.push(LspRequest {
+            query: LspQuery::ApplyCodeAction { action },
+            document: list.document,
+            position: Position::default(),
+            buffer_id: buffer.id(),
+            edit_seq: buffer.edit_seq(),
+            reply,
+        });
+        Ok(())
     }
 
     /// `<Space>S`: opens a picker of the project's symbols, which the
     /// language server searches for as the query is typed.
     pub fn request_workspace_symbols(&mut self) -> Result<(), String> {
-        self.request_lsp(LspFeature::WorkspaceSymbols)?;
-        if let Some(request) = self.lsp_requests.last_mut() {
-            request.text = Some(String::new());
-        }
+        self.ask_lsp(LspQuery::WorkspaceSymbols {
+            query: String::new(),
+        })?;
         self.symbol_query = Some(String::new());
         self.open_picker(
             Picker::new(LspFeature::WorkspaceSymbols.title(), Vec::new()).searched_by_server(),
@@ -521,11 +960,7 @@ impl Editor {
         }
         self.symbol_query = Some(query.clone());
         // The picker's buffer is the one it was opened from.
-        if self.request_lsp(LspFeature::WorkspaceSymbols).is_ok()
-            && let Some(request) = self.lsp_requests.last_mut()
-        {
-            request.text = Some(query);
-        }
+        let _ = self.ask_lsp(LspQuery::WorkspaceSymbols { query });
     }
 
     /// Lists `symbols` (a label, what it is, where) in a picker, or for the
@@ -563,22 +998,12 @@ impl Editor {
     }
 
     /// Makes the code action chosen from the list.
-    pub fn apply_code_action(&mut self, answer: u64, index: usize) {
-        let buffer = self.document.buffer();
-        self.lsp_requests.push(LspRequest {
-            feature: LspFeature::ApplyCodeAction,
-            document: self.document.id(),
-            position: self.document.cursor(),
-            buffer_id: buffer.id(),
-            edit_seq: buffer.edit_seq(),
-            manual: true,
-            trigger: None,
-            word_start: self.document.cursor(),
-            item: Some((answer, index)),
-            text: None,
-            end: self.document.cursor(),
-            agent: None,
-        });
+    pub fn apply_code_action(&mut self, list: u64, index: usize) {
+        let kept = self.code_actions.take().filter(|l| l.number == list);
+        if let Err(why) = self.make_code_action(kept.as_ref(), index, Reply::Key) {
+            self.set_message(Message::info(why));
+        }
+        self.code_actions = kept;
     }
 
     /// `:rename name`: has the language server rename the symbol under
@@ -588,11 +1013,9 @@ impl Editor {
         if name.is_empty() {
             return Err("Rename to what? :rename new_name".into());
         }
-        self.request_lsp(LspFeature::Rename)?;
-        if let Some(request) = self.lsp_requests.last_mut() {
-            request.text = Some(name.to_string());
-        }
-        Ok(())
+        self.ask_lsp(LspQuery::Rename {
+            name: name.to_string(),
+        })
     }
 
     /// The requests waiting to be sent (to adjust the one just made).
@@ -733,6 +1156,180 @@ impl Editor {
     /// Reports a failed or empty answer.
     pub fn lsp_failed(&mut self, text: String) {
         self.set_message(Message::error(text));
+    }
+
+    /// An LSP query's answer, or why there's none: to the agent if it
+    /// asked, else shown (or not) as the reply says.
+    pub fn lsp_answered(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
+        match request.reply {
+            Reply::Agent(call) => self.agent_lsp_answered(call, request, answer),
+            _ => self.show_lsp_answer(request, answer),
+        }
+    }
+
+    /// Makes a language server's edits, each document's as one undo step.
+    pub fn apply_lsp_edits(&mut self, edits: Edits) -> Applied {
+        let active = self.document.id();
+        let mut applied = Applied {
+            skipped: edits.skipped,
+            ..Applied::default()
+        };
+        for (id, changes) in edits.documents {
+            applied.changes += changes.len();
+            applied.files += 1;
+            if id != active {
+                applied.others += 1;
+            }
+            self.edit_document(id, changes);
+        }
+        applied
+    }
+
+    /// Edits a server sends while answering `request` (a code action's
+    /// command's, or the action's own before its command runs): made now,
+    /// as the server waits on them. The screen says so as they come
+    /// (`label`, or the action's title); the agent's are made as one agent
+    /// change, closed with the answer.
+    pub fn lsp_edits_pushed(&mut self, request: &LspRequest, label: Option<&str>, edits: Edits) {
+        if let Reply::Agent(call) = request.reply {
+            self.begin_agent_change(call, &edits.opened);
+            self.apply_lsp_edits(edits);
+            return;
+        }
+        let title = match &request.query {
+            LspQuery::ApplyCodeAction { action } | LspQuery::ResolveCodeAction { action } => {
+                action.title.as_str()
+            }
+            _ => "Changed",
+        };
+        let label = label.unwrap_or(title).to_string();
+        let applied = self.apply_lsp_edits(edits);
+        self.set_message(Message::info(format!("{label}: {}", applied.describe())));
+    }
+
+    /// The screen's side of `lsp_answered`: shown if it's still wanted
+    /// (the cursor, or the pointer, still where it was asked).
+    fn show_lsp_answer(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
+        let pointer = request.reply == Reply::Pointer;
+        let current = |e: &Self| e.document.id() == request.document;
+        let unchanged = |e: &Self| current(e) && e.document.buffer().edit_seq() == request.edit_seq;
+        let wanted = match request.feature() {
+            // Picked from a list: made unless the text changed meanwhile.
+            LspFeature::ApplyCodeAction | LspFeature::ResolveCodeAction => unchanged(self),
+            LspFeature::Completion => self.still_completing(request),
+            // Shown if the picker's still open with that query; kept for
+            // its buffer while the text is as it was (both checked there).
+            LspFeature::WorkspaceSymbols | LspFeature::InlayHint => true,
+            // Shown while the text is as it was (wherever the cursor is
+            // now: it's drawn only while on one of them).
+            LspFeature::DocumentHighlight => unchanged(self),
+            // Shown wherever typing has got to since, in the buffer; a
+            // taken item's import goes in if it's the same buffer.
+            LspFeature::SignatureHelp | LspFeature::ResolveCompletion => current(self),
+            _ if pointer => self.mouse_hover_wanted(request),
+            _ => self.still_at(request),
+        };
+        if !wanted {
+            return;
+        }
+        let answer = match answer {
+            Ok(answer) => answer,
+            Err(why) => return self.show_no_answer(request, why),
+        };
+        match answer {
+            // Only the agent asks for calls.
+            Answer::Calls(_) => {}
+            Answer::Completion { items, incomplete } => {
+                self.show_server_completion(request, items, incomplete);
+            }
+            Answer::Signature(help) => self.show_signature_help(request, help),
+            Answer::InlayHints(hints) => self.set_inlay_hints(request, hints),
+            Answer::Highlights(ranges) => {
+                self.set_references(request.document, request.edit_seq, ranges);
+            }
+            Answer::Outline(symbols) => {
+                self.set_outline(request.document, request.edit_seq, symbols)
+            }
+            Answer::Symbols { found, .. } => {
+                let query = match &request.query {
+                    LspQuery::WorkspaceSymbols { query } => Some(query.as_str()),
+                    _ => None,
+                };
+                self.show_symbols(request.feature(), query, found);
+            }
+            Answer::Actions(actions) => self.show_code_actions(request, actions),
+            Answer::Action { title, edits } => {
+                if let Some(edits) = edits {
+                    let applied = self.apply_lsp_edits(edits);
+                    self.set_message(Message::info(format!("{title}: {}", applied.describe())));
+                }
+            }
+            // A taken completion's other edits (its import).
+            Answer::Edits(edits) if request.feature() == LspFeature::ResolveCompletion => {
+                let edits = edits.documents.into_iter().flat_map(|(_, e)| e).collect();
+                self.make_other_edits(edits);
+            }
+            Answer::Edits(edits) if request.feature() == LspFeature::Rename => {
+                let name = match &request.query {
+                    LspQuery::Rename { name } => name.as_str(),
+                    _ => "",
+                };
+                let text = match self.apply_lsp_edits(edits) {
+                    Applied { changes: 0, .. } => "Nothing to rename here".to_string(),
+                    done => format!("Renamed to {name}: {}", done.describe()),
+                };
+                self.set_message(Message::info(text));
+            }
+            // Only the agent moves files, or formats this way (`:format`
+            // waits for its answer).
+            Answer::Edits(_) => {}
+            Answer::Hover(markdown) if pointer => self.mouse_hover_answer(&markdown),
+            Answer::Hover(markdown) if markdown.trim().is_empty() => {
+                self.set_message(Message::info("No hover information here"));
+            }
+            Answer::Hover(markdown) => self.show_hover(&markdown),
+            // Ctrl held on the pointer's word: the definition peeked at.
+            Answer::Locations { found, .. } if pointer => {
+                if request.feature() == LspFeature::Definition {
+                    self.mouse_peek_answer(&found);
+                }
+            }
+            Answer::Locations { found, .. } => {
+                if let Err(error) = self.show_locations(request.feature(), found) {
+                    self.set_message(Message::info(error));
+                }
+            }
+        }
+    }
+
+    /// Why there's no answer, said if it was asked for with a key.
+    fn show_no_answer(&mut self, request: &LspRequest, why: NoAnswer) {
+        if request.reply != Reply::Key {
+            return;
+        }
+        let text = match why {
+            // Asked again as the text changes: not worth saying.
+            NoAnswer::ServerError { stale: true, .. } => return,
+            NoAnswer::ServerError {
+                server, message, ..
+            } => {
+                self.lsp_failed(format!("{server}: {message}"));
+                return;
+            }
+            NoAnswer::NothingThere => format!("No {} here", request.feature().noun()),
+            NoAnswer::Unusable(why) => {
+                self.lsp_failed(why);
+                return;
+            }
+            NoAnswer::NoServer => "No language server for this buffer (see :lsp)".to_string(),
+            NoAnswer::Starting(name) => format!("{name} is still starting"),
+            NoAnswer::Unsupported(name) => {
+                format!("{name} doesn't offer {}", request.feature().noun())
+            }
+            // Its stopping is said already.
+            NoAnswer::Stopped(_) => return,
+        };
+        self.set_message(Message::info(text));
     }
 }
 

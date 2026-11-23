@@ -4,6 +4,14 @@
 //! Folders are listed as they're opened (`files::list_dir`: `.gitignore`d
 //! files left out, as in the file picker) and kept until `refresh`. The
 //! rows shown are the open folders' contents, depth first.
+//!
+//! `editor/explorer.rs` holds the file tree: the root (the starting folder,
+//! canonicalised), the set of open folders, each folder's listing (from
+//! `files::list_dir`, cached until `refresh`) and the rows, rebuilt depth first
+//! from the open folders whenever one opens or closes, keeping the selected
+//! path selected. `reveal` opens the folders down to a file (how `<Space>e`
+//! starts at the current file), and a save calls `saw_file`, which lists the
+//! file's folder again if the file is new to it.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

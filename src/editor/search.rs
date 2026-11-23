@@ -1,6 +1,30 @@
 //! Searching from the editor: the `/` and `?` prompts with live preview,
 //! `n`/`N`, `*`/`#`, and which pattern to highlight. A search typed after
 //! an operator (`d/foo<CR>`) is that operator's motion.
+//!
+//! - The bottom-line prompt is shared. `CommandLine` has a `Prompt` (`:`, `/`,
+//!   `?`), so search reuses command mode's keymap and editing, and
+//!   `command_line_execute` hands search prompts to `Editor::finish_search`.
+//! - Typing at a search prompt calls `Editor::update_search_preview`, which
+//!   moves the cursor to the first match (incremental search). Leaving the
+//!   prompt any other way puts the cursor back where it started.
+//! - `Editor::search_highlight` gives the UI the pattern to highlight: the one
+//!   being typed, or the last search unless `:noh` hid it.
+//! - After an operator, searches are motions. `/` and `?` in operator-pending
+//!   mode move the pending operator into the search state while the prompt is
+//!   open (cancelling the prompt drops it). `finish_search` then returns
+//!   `SearchDone::Operator` with the match instead of moving, and
+//!   `command_line_execute` applies the operator through the exclusive
+//!   `SEARCH_MATCH` motion, whose target the command supplies (as marks do).
+//!   `n`/`N` do the same with `Editor::find_next`, which finds a match without
+//!   moving. The usual exclusive rules apply, so `d/^foo` from a line start
+//!   takes whole lines. `.` repeats it because the app records search prompts
+//!   for `.`; only `:` prompts are left out.
+//! - In visual mode, `open_search` keeps the selection (so it's drawn,
+//!   following the preview) and remembers it. Finishing or cancelling the
+//!   prompt goes through `return_from_search` (`Editor::leave_command_line` for
+//!   `<Esc>` and backspacing out), which puts visual mode and the selection
+//!   back; a finished search then moves the cursor, extending it.
 
 use super::{Editor, Message, Mode, PendingOperator, Prompt, Selection};
 use crate::core::Position;

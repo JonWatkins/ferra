@@ -1,8 +1,18 @@
 //! Reading and writing files on disk.
 //!
-//! This is the only module that touches the filesystem. It deals in raw
-//! bytes; converting them to buffer text (encoding, line endings, final
-//! newline) is [`core::TextFormat`](crate::core::TextFormat)'s job.
+//! Saving a buffer's file goes only through here (see
+//! docs/adr/0004-saving-goes-through-files.md). It deals in raw bytes;
+//! converting them to buffer text (encoding, line endings, final newline)
+//! is [`core::TextFormat`](crate::core::TextFormat)'s job.
+//!
+//! - `files` is the only module that touches the disk. Writes go to a temp file
+//!   in the same directory, are fsynced, then renamed over the target. Existing
+//!   permissions are copied and symlinks are followed. A rename gives the file
+//!   a new identity, so (like Vim's `backupcopy=auto`) the file is overwritten
+//!   in place instead when it has other hard-linked names, when its owner or
+//!   group can't be kept (the temp file is `chown`ed to match, and if that's
+//!   refused), or when the directory doesn't allow a temp file. In-place writes
+//!   copy the original to a backup first and put it back if writing fails.
 
 mod complete;
 mod error;

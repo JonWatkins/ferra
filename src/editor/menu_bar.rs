@@ -9,6 +9,29 @@
 //!
 //! The letters avoid ⌥E, ⌥U, ⌥I, ⌥N and ⌥`, which a Mac's keyboard keeps
 //! for accents: Edit is `d`, Go `o`.
+//!
+//! The menu bar (`editor/menu_bar.rs`, drawn by `ui/menu_bar.rs`) takes the
+//! screen's top row before anything else is laid out. Its menus are data
+//! (`MENUS`: titles, letters, and items naming commands, with arguments after a
+//! space); an open menu is an ordinary popup (named `menu`, at
+//! `PopupPosition::At` under its title, so placed against the whole screen),
+//! whose own keys run `menu_run` (close it, then run the item's command through
+//! the registry), `menu_prev` and `menu_next`. The keys shown beside items come
+//! from the keymap: the app gives the editor a map of them
+//! (`refresh_menu_hints`) whenever the keymap changes. Each menu also has a
+//! command (`menu_file`...) for keys: `<A-f>`, and the characters a Mac's
+//! Option key types (`ƒ`) in normal mode and the sidebar, so ⌥ works without
+//! the terminal sending it as Alt.
+//!
+//! **Option on macOS, Alt elsewhere, with no configuration.** Key labels show
+//! ⌥F on macOS and Alt+F elsewhere. A Mac terminal sends Option+F as the
+//! character it types (`ƒ`) unless it's set to send Option as Alt, so ferra
+//! reads those characters as ⌥ keys where they can't be text (menus, the
+//! sidebar, popups, normal mode) and the key is bound, for US and UK layouts.
+//! ⌥E, ⌥U, ⌥I, ⌥N and ⌥\` are accent keys the Mac holds back, so menus avoid
+//! those letters. The first time ferra sees such a character it says once how
+//! to send Option as Alt (iTerm2: Left Option key → Esc+, keeping the right one
+//! for `#` and `€` on UK keyboards).
 
 use std::collections::HashMap;
 

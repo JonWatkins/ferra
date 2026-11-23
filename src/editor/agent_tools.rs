@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::lsp::{LspFeature, LspRequest};
+use super::lsp::{LspFeature, LspQuery, LspRequest, Reply};
 use super::{DocumentId, Editor};
 use crate::core::{Position, Range};
 
@@ -553,7 +553,7 @@ impl Editor {
 
     /// The `move_file` tool: checks the move can be made, then asks the
     /// file's language server for the edits it needs (imports), through
-    /// `LspFeature::MoveFile`; [`Editor::agent_finish_move`] makes them and
+    /// `LspQuery::MoveFile`; [`Editor::agent_move_document`] makes them and
     /// the move. With language servers off, the move's made now (`Some`).
     pub fn agent_move_file(
         &mut self,
@@ -580,48 +580,46 @@ impl Editor {
         }
         let id = self.agent_buffer(&source)?;
         if !self.options.lsp {
-            let before = self.agent_unsaved();
-            return self
-                .agent_finish_move(id, &target, &before, None, false)
-                .map(Some);
+            return self.agent_move_document(id, &target, None, false).map(Some);
         }
         let buffer = self.document_by_id(id).ok_or("No such buffer")?.buffer();
         self.lsp_requests.push(LspRequest {
-            feature: LspFeature::MoveFile,
+            query: LspQuery::MoveFile {
+                to: target.to_path_buf(),
+            },
             document: id,
             position: Position::default(),
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual: true,
-            trigger: None,
-            word_start: Position::default(),
-            item: None,
-            text: Some(target.to_string_lossy().into_owned()),
-            end: Position::default(),
-            agent: Some(call),
+            reply: Reply::Agent(call),
         });
         Ok(None)
     }
 
     /// Moves buffer `id`'s file to `to` (its buffer, and any other open in
-    /// it, following), after the language server's edits for it were made
-    /// (`edits`: what they were; `asked`: whether a server was asked); saves
-    /// what the agent changed (as against
-    /// `before`). The answer, and the buffers changed.
-    pub fn agent_finish_move(
+    /// it, following) as an agent change: first the language server's
+    /// `edits` for it, if it had any, (`asked`: whether a server was asked),
+    /// then the files changed saved, then the move. The answer, and the
+    /// buffers changed.
+    pub fn agent_move_document(
         &mut self,
         id: DocumentId,
         to: &Path,
-        before: &HashMap<DocumentId, (u64, bool)>,
-        edits: Option<String>,
+        edits: Option<super::lsp::Edits>,
         asked: bool,
     ) -> Result<(String, Vec<DocumentId>), String> {
         let from = self
             .document_by_id(id)
             .and_then(|d| d.path())
             .map(Path::to_path_buf)
-            .ok_or("The file's buffer is gone")?;
-        let (saved, mut changed) = self.agent_save_changed(before);
+            .ok_or("The file's buffer is gone: nothing was moved")?;
+        let opened = edits.as_ref().map(|e| e.opened.clone()).unwrap_or_default();
+        let (applied, saved, mut changed) =
+            self.agent_change(&opened, |e| edits.map(|edits| e.apply_lsp_edits(edits)));
+        // Others aren't left for :wa: the agent change saved them.
+        let edits = applied
+            .filter(|a| a.changes > 0)
+            .map(|a| super::lsp::Applied { others: 0, ..a }.describe());
         if let Err(error) = self.move_path(&from, to) {
             return Err(match edits {
                 Some(edits) => format!(
@@ -962,9 +960,9 @@ impl Editor {
                 )
             })
             .collect();
-        let before = self.agent_unsaved();
-        self.edit_document(id, edits);
-        let (saved, _) = self.agent_save_changed(&before);
+        let ((), saved, _) = self.agent_change(&[], |e| {
+            e.edit_document(id, edits);
+        });
         let what = if count == 1 {
             "1 replacement".to_string()
         } else {
@@ -1171,17 +1169,60 @@ impl Editor {
 
     /// Each buffer's text (its edit count) and whether it had unsaved
     /// changes, before the agent changes any.
-    pub fn agent_unsaved(&self) -> HashMap<DocumentId, (u64, bool)> {
+    fn agent_unsaved(&self) -> HashMap<DocumentId, (u64, bool)> {
         std::iter::once(&self.document)
             .chain(&self.background)
             .map(|d| (d.id(), (d.buffer().edit_seq(), d.is_modified())))
             .collect()
     }
 
+    /// An agent change: makes `change`, then saves the files it changed
+    /// that had no unsaved changes before, leaving the user's unsaved work
+    /// as it is. `opened`: buffers already opened for it (to hold a
+    /// server's edits), which are the agent's, as those it opens are.
+    /// Returns what `change` did, the note on what was saved, and the
+    /// documents changed.
+    pub fn agent_change<R>(
+        &mut self,
+        opened: &[DocumentId],
+        change: impl FnOnce(&mut Self) -> R,
+    ) -> (R, String, Vec<DocumentId>) {
+        let mut before = self.agent_unsaved();
+        for id in opened {
+            before.remove(id);
+        }
+        let done = change(self);
+        let (saved, changed) = self.agent_save_changed(&before);
+        (done, saved, changed)
+    }
+
+    /// Opens an agent change for tool call `call` that spans edits made as
+    /// they come (a code action's command's), unless one's open: the
+    /// snapshot `agent_change` takes, kept until `end_agent_change`.
+    /// `opened`: buffers already opened for the first edits.
+    pub(super) fn begin_agent_change(&mut self, call: u64, opened: &[DocumentId]) {
+        if self.agent.open_changes.contains_key(&call) {
+            return;
+        }
+        let mut before = self.agent_unsaved();
+        for id in opened {
+            before.remove(id);
+        }
+        self.agent.open_changes.insert(call, before);
+    }
+
+    /// Closes call `call`'s open agent change, if it has one: saves what it
+    /// changed as `agent_change` does. The note on what was saved, and the
+    /// documents changed.
+    pub(super) fn end_agent_change(&mut self, call: u64) -> Option<(String, Vec<DocumentId>)> {
+        let before = self.agent.open_changes.remove(&call)?;
+        Some(self.agent_save_changed(&before))
+    }
+
     /// After the agent's changes: the files they changed that had no
     /// unsaved changes before are saved (so what the agent runs sees
     /// them); the others are left to the user. Says which, for the agent.
-    pub fn agent_save_changed(
+    fn agent_save_changed(
         &mut self,
         before: &HashMap<DocumentId, (u64, bool)>,
     ) -> (String, Vec<DocumentId>) {
@@ -1255,24 +1296,30 @@ impl Editor {
             return Err("Language servers are off in this editor (lsp = false)".into());
         }
         let full = absolute(Path::new(path));
-        let id = self.agent_buffer(&full)?;
-        let buffer = self.document_by_id(id).ok_or("No such buffer")?.buffer();
-        let position = Position::new(0, 0);
-        self.lsp_requests.push(LspRequest {
-            feature: LspFeature::ApplyCodeAction,
-            document: id,
-            position,
-            buffer_id: buffer.id(),
-            edit_seq: buffer.edit_seq(),
-            manual: true,
-            trigger: None,
-            word_start: position,
-            item: Some((list, number.saturating_sub(1))),
-            text: None,
-            end: position,
-            agent: Some(call),
-        });
+        self.agent_buffer(&full)?;
+        let kept = self
+            .agent
+            .code_actions
+            .iter()
+            .find(|l| l.number == list)
+            .cloned();
+        let index = number.saturating_sub(1);
+        if let Err(why) = self.make_code_action(kept.as_ref(), index, Reply::Agent(call)) {
+            // Answered as the server's answer would be.
+            self.agent_lsp_answer(call, Err(why.into()));
+        }
         Ok(())
+    }
+
+    /// Keeps a list of code actions given to the agent, to make one: the
+    /// last few.
+    pub(super) fn keep_agent_code_actions(&mut self, list: super::lsp::ActionList) {
+        const KEPT: usize = 4;
+        let lists = &mut self.agent.code_actions;
+        if lists.len() == KEPT {
+            lists.pop_front();
+        }
+        lists.push_back(list);
     }
 
     /// A language server question for tool call `call`: `feature` at
@@ -1312,18 +1359,17 @@ impl Editor {
         if feature == LspFeature::CodeAction && line.is_none() {
             let last = buffer.line_count().saturating_sub(1);
             self.lsp_requests.push(LspRequest {
-                feature,
+                query: LspQuery::CodeActions {
+                    start: Position::new(0, 0),
+                    end: buffer.line_end(last),
+                    file_wide: true,
+                    with_line: false,
+                },
                 document: id,
                 position: Position::new(0, 0),
                 buffer_id: buffer.id(),
                 edit_seq: buffer.edit_seq(),
-                manual: true,
-                trigger: None,
-                word_start: Position::new(0, 0),
-                item: None,
-                text: Some(crate::lsp::FILE_WIDE_ACTIONS.to_string()),
-                end: buffer.line_end(last),
-                agent: Some(call),
+                reply: Reply::Agent(call),
             });
             return Ok(());
         }
@@ -1364,30 +1410,28 @@ impl Editor {
             (None, None) => text.chars().take_while(|c| c.is_whitespace()).count(),
         };
         let position = Position::new(row, col);
+        let text = |q: Option<&str>| q.unwrap_or_default().to_string();
+        let lsp_query = match feature {
+            LspFeature::Rename => LspQuery::Rename { name: text(query) },
+            LspFeature::WorkspaceSymbols => LspQuery::WorkspaceSymbols { query: text(query) },
+            // At the symbol (its own refactors), and for the whole line.
+            LspFeature::CodeAction => LspQuery::CodeActions {
+                start: position,
+                end: position,
+                file_wide: false,
+                with_line: true,
+            },
+            feature => LspQuery::at(feature)
+                .ok_or_else(|| format!("Language servers can't be asked for {}", feature.noun()))?,
+        };
         let request = LspRequest {
-            feature,
+            query: lsp_query,
             document: id,
             position,
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
-            manual: true,
-            trigger: None,
-            word_start: position,
-            item: None,
-            text: query.map(str::to_string),
-            end: position,
-            agent: Some(call),
+            reply: Reply::Agent(call),
         };
-        // Code actions: asked at the symbol (its own refactors), and for
-        // the whole line with every problem on it (a fix can hang on a hint
-        // beside the error); the two lists are merged.
-        if feature == LspFeature::CodeAction {
-            self.lsp_requests.push(LspRequest {
-                word_start: Position::new(row, 0),
-                end: buffer.line_end(row),
-                ..request.clone()
-            });
-        }
         self.lsp_requests.push(request);
         Ok(())
     }

@@ -12,6 +12,34 @@
 //! | `+`, `*` | The system clipboard (both the same here). |
 //! | `.`      | Read-only: the text typed in the last insert session. |
 //! | `/`, `:`, `%` | Read-only: the last search, the last `:` command, the file name. |
+//!
+//! Single-key shortcuts (`x`, `D`, `C`, `s`, `S`, `Y`, `X`) apply an operator
+//! over a fixed motion. Pastes read registers (`editor/registers.rs`).
+//!
+//! `Registers::store` follows Vim's rules for deletes into the unnamed
+//! register: a line or more (or a delete over a jump motion, `d%`, `d}`, via
+//! `StoreKind::DeleteOverJump`) shifts `"1`-`"8` down and lands in `"1`;
+//! anything smaller goes to `"-`. Yanks go to `"0`. Naming a register, or the
+//!
+//! `Registers` decides which register names use it, per `ClipboardMode`:
+//! `"+`/`"*` only (default), also the unnamed register, or never. Pastes go
+//! through `Registers::read`, which can fail and returns an owned value. Text
+//! ending in a line break reads as linewise, as in Vim. A failed clipboard
+//! write never cancels the yank or delete: the text is still stored, and the
+//! error is reported after the command.
+//!
+//! The read-only registers `"/`, `":` and `"%` live elsewhere in the editor
+//! (the last search, command-line history, the document's path), so
+//! `Editor::read_register` answers them before falling back to `Registers`;
+//! pastes and the register picker go through it.
+//!
+//! `".` holds the text typed in the last insert session. The editor collects it
+//! while in insert mode (typed characters, line breaks, tabs, pastes and
+//! `<C-r>` insertions, with backspaces taking characters back off) and stores
+//! it when insert mode ends, if anything was typed. `<C-r>{register}`
+//! (`insert_register`) takes the register name as its next key, like `f`; in
+//! insert mode it inserts the text exactly, without auto-indent, and on the
+//! `:`/`/` line the first line.
 
 use std::collections::HashMap;
 use std::fmt;

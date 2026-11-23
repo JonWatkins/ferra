@@ -271,7 +271,7 @@ fn parse_bracketed(inner: &str) -> Result<KeyPress, String> {
 
 impl KeyPress {
     /// Whether terminals only send this key apart from others with the
-    /// kitty keyboard protocol (`<C-`>` is otherwise `<C-Space>`, `<C-CR>`
+    /// kitty keyboard protocol (``<C-`>`` is otherwise `<C-Space>`, `<C-CR>`
     /// is `<CR>`).
     pub fn needs_enhanced_keyboard(&self) -> bool {
         let m = self.modifiers;

@@ -11,6 +11,12 @@
 //!   (`//`) is the last search.
 //!
 //! The sort is stable, so lines that sort the same keep their order.
+//!
+//! (`:sort` is parsed and done there too, `commands/ex/sort.rs`: a stable sort
+//! of keys made from each line, the text after or of a pattern's first match,
+//! lowercased with `i` or the first number with `n`. `u` drops lines whose keys
+//! compare equal to the one before, and the command replaces only the range, as
+//! one change.)
 
 use std::cmp::Ordering;
 

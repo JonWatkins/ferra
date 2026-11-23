@@ -3,6 +3,17 @@
 //! The defaults live in `default.toml` (embedded at compile time) and are the
 //! single source of truth. A user config is deep-merged on top, so users only
 //! write what they want to change.
+//!
+//! - `src/config/default.toml` is embedded with `include_str!` and is the
+//!   single source of truth for defaults.
+//! - The user file (`$XDG_CONFIG_HOME/ferra/config.toml`, otherwise
+//!   `~/.config/ferra/config.toml`) is deep-merged over the defaults. Users
+//!   only write what they change. Binding a key to `""` removes it.
+//! - Unknown fields, bad colours and bad key notation are errors. A broken
+//!   config doesn't stop startup: the editor falls back to the defaults and
+//!   shows the error.
+//! - Themes use dot-separated scopes that fall back to their parent
+//!   (`ui.linenr.selected` → `ui.linenr`), which leaves room for syntax scopes.
 
 pub mod edit;
 mod languages;

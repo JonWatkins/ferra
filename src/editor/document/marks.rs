@@ -1,4 +1,12 @@
 //! A document's marks (`ma` … `'a`), kept in place as the text changes.
+//!
+//! Marks are kept by each `Document` (`document/marks.rs`) and adjusted by its
+//! `insert` and `delete`, so they move with text inserted or deleted before
+//! them. Global marks (`A`-`Z`) record which buffer they're in and reuse that
+//! buffer's mark under the same letter. Undo applies changes below `Document`
+//! and doesn't move marks, so positions are clamped when used. `'` and `` ` ``
+//! are motions whose target comes from the mark (`MotionArgs::target`), so they
+//! work after operators and in visual mode.
 
 use std::collections::HashMap;
 

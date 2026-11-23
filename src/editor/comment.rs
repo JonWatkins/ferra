@@ -6,6 +6,17 @@
 //! the shallowest indent so the block stays aligned. Blank lines are left
 //! alone. Languages without line comments (HTML, CSS) wrap each line in
 //! their block comment.
+//!
+//! `gc` is an operator (`Operator::Comment`), so it takes any motion or text
+//! object, `gcc` comes from the operator-pending `c` = current line binding,
+//! and `.` repeats it. It works on the lines its range touches
+//! (`editor/comment.rs`), as Neovim does: if every non-blank line is already
+//! commented they're uncommented, otherwise all are commented with the marker
+//! at the shallowest indent; blank lines are left alone. The markers come from
+//! the file's language in the `[languages]` table (`comment = "//"`, or
+//! `block-comment = ["<!--", "-->"]` wrapping each line), so a language added
+//! in config gets commenting even without a grammar. Lines are edited only
+//! where they change, so marks elsewhere on them stay put.
 
 use super::Editor;
 use crate::config::CommentTokens;

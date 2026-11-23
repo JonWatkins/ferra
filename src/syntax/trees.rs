@@ -10,6 +10,17 @@
 //!
 //! Asking for a tree only needs `&self` (the trees sit in a `RefCell`), so
 //! drawing, which borrows the editor immutably, can bring them up to date.
+//!
+//! - `SyntaxTrees` (`trees.rs`), held by the editor (`Editor::syntax_trees`) so
+//!   indentation and highlighting share it, keeps a tree per document. `Buffer`
+//!   logs every edit (insert and delete, so undo, redo and reloads too) as byte
+//!   offsets and points; asked for a tree, it feeds the edits since the tree
+//!   was built to `Tree::edit`, then re-parses reusing the old tree, reading
+//!   the rope chunk by chunk. A different buffer (`Buffer::id`; clones get new
+//!   ids), a different language or a log that's moved past (it keeps the last
+//!   4,096 edits) means a full parse. Documents over 4M chars aren't parsed.
+//!   Asking needs only `&self` (a `RefCell` inside), since drawing borrows the
+//!   editor immutably; trees come back as clones, which share their nodes.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

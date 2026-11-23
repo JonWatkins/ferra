@@ -3,6 +3,52 @@
 //! [`InputHandler`] accumulates register selections (`"a`), counts (`3`) and
 //! multi-key sequences (`g`, `gg`) and resolves them against the [`Keymap`].
 //! It decides *what* should happen; the app then performs it.
+//!
+//! A command registered with `.takes_char()` (`f`, `t`, `F`, `T`, `r`) gets the
+//! next key as its argument. When the app sees such a command without a
+//! character, it calls `InputHandler::await_char`. The next printable key, even
+//! one bound to a command (`f:`), completes it via `Invocation::char_arg`;
+//! anything else cancels it. A command that only sometimes needs a key (`q`
+//! takes a register to start recording, but not to stop) calls
+//! `Editor::request_char` instead, and the app then waits for the key the same
+//! way.
+//!
+//! ```text
+//! crossterm KeyEvent
+//!   → KeyPress::from_event            (input/key.rs)
+//!   → InputHandler::handle            (input/mod.rs: counts, pending keys)
+//!       → Keymap::lookup(mode, keys)  (input/keymap.rs: trie)
+//!   → Outcome::Execute { command, count } | InsertChar | Pending | Unbound
+//!   → CommandRegistry::execute        (commands/mod.rs)
+//!   → Editor::enforce_cursor_rules    (normal mode can't sit past the last char)
+//! ```
+//!
+//! A few things happen around this. Terminals send Alt+x as Esc then x, so Esc
+//! quickly followed by a key arrives as Alt+key. Where the terminal has the
+//! kitty keyboard protocol, `App::run` asks for it
+//! (`terminal::enable_keyboard_enhancement`, with only
+//! `DISAMBIGUATE_ESCAPE_CODES`; crossterm's query waits for the terminal's
+//! answer, and one that doesn't answer is used the old way), and pops it on
+//! exit. Esc then arrives on its own, so a bound `<A-j>` only runs for Alt+j.
+//! Otherwise, or for an Alt key with no binding in the current mode,
+//! `App::split_alt` turns it back into Esc and the key (Neovim does the same),
+//! before it's recorded for macros.
+//!
+//! The protocol also reports `<C-[>`, `<C-i>` and `<C-m>` apart from `<Esc>`,
+//! `<Tab>` and `<CR>`, which older terminals send for them. `App::as_legacy`
+//! maps them back (`KeyPress::legacy_equivalent`): `<C-[>` always, since Vim
+//! users press it as Esc, and the other two unless the current mode's bindings
+//! use them (`Keymap::uses`), so binding `<C-i>` in normal mode is how to have
+//! it apart from Tab there.
+//!
+//! And when a key sequence is left half typed, the event loop polls with a
+//! deadline (`editor.key-timeout`, from the last key) instead of blocking. When
+//! it passes, `InputHandler::timeout` settles the sequence: keys bound on their
+//! own (`g` alongside `gg`) run (`Keymap::command_at`); in insert and command
+//! mode the first key is typed as text and the rest looked up again; otherwise
+//! (`g` in normal mode) it keeps waiting, like Vim. Counts, registers and
+//! `f`-style arguments never time out. Keys and timeouts share `App::tracked`,
+//! which records sequences for `.`.
 
 mod key;
 mod keymap;

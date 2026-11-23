@@ -1839,4 +1839,4 @@ ferra gives up, first writing buffers with unsaved changes to
 thread crashing is reported the same way. When reporting a bug, the
 log's entry is the thing to include.
 
-See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for the design.
+See [docs/ARCHITECTURE.md](ARCHITECTURE.md) for how ferra is built.

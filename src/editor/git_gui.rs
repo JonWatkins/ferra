@@ -23,6 +23,80 @@
 //! Code does: the old version on the left, the new on the right, lines
 //! level, changes coloured. It's read-only for now; `]c`/`[c` jump
 //! between changes and `<CR>` opens the file at the line.
+//!
+//! The git view (`editor/git_gui.rs`, `ui/git_gui.rs`) is `Mode::Git` with
+//! `[keys.git]`: a `GitGui` with the focused panel, the branches
+//! (`git::branches`), the last 300 commits (`git::log`) and the diff panel's
+//! `Diff`. The files panel uses Source Control's rows and selection, so the two
+//! agree. Whenever the selection or focus changes, the diff is made for what
+//! the focused list has selected: `git::file_diff` (`diff --cached` for a
+//! staged row, `diff --no-index /dev/null` for an untracked file),
+//! `show_commit`, or a branch's log. `Diff::parse` splits it into lines by kind
+//! and finds the hunks, each with its file header, so `hunk_patch` can make a
+//! patch of one hunk; staging it is `git apply --cached` with the patch on
+//! stdin, unstaging the same with `--reverse` (as lazygit does). Picking lines
+//! (`GitGui::line`, and `anchor` for a range) makes a patch of part of a hunk
+//! (`Diff::lines_patch`): chosen lines kept, and of the rest, applied forward,
+//! removed lines turned into context and added ones dropped (in reverse the
+//! other way round, as the new side is what's in the index), with the header's
+//! counts worked out again. After the diff's read again, the selected line goes
+//! to the nearest changed one left. After any action the status, branches,
+//! commits and diff are read again, and the selection stays on the same file in
+//! the same section when it's still there. Commit and discard ask in the input
+//! box and popup, which go back to the git view (they remember the mode they
+//! came from). `ui::draw` draws the view over everything but the command line
+//! and maps its panels and lists for the mouse (`GitGuiMap`).
+//!
+//! Branches are `git switch` (`-c` for a new one) and `git branch -d`/`-D`;
+//! `ahead_behind` is `rev-list --left-right --count HEAD...@{upstream}`, read
+//! with the status. Fetch, pull and push (`git::start_remote`) run on a thread
+//! that reads git's `--progress` lines (redrawn with `\r`) from stderr and
+//! sends them, then the result, through a channel; the editor keeps the
+//! receiver (`GitState::job`, one at a time) and the event loop pumps it while
+//! it runs, as it does the terminal panel's shell. They run with
+//! `GIT_TERMINAL_PROMPT=0`, `GIT_EDITOR=true` and (unless you've set your own
+//! ssh command) `ssh -o BatchMode=yes`, so nothing can stop to ask on the
+//! terminal ferra is drawing on. A branch's first push adds `--set-upstream
+//! <first remote> <branch>`.
+//!
+//! Amending is `commit --amend -m` with the last message (`log -1 --format=%B`)
+//! put in the input box to edit; the title says if the branch isn't ahead of
+//! its upstream (the commit's been pushed). Stashing is `stash push
+//! --include-untracked`, the list `stash list --format=%gd%x00%gs`, and putting
+//! one back `stash pop <name>`. Like switching branch, both refuse while
+//! buffers have unsaved changes (`git_check_saved`) and reload open files
+//! after. With the git view open, a picker, box or `:` line asked from it comes
+//! back to it when it closes (`Editor::set_mode`).
+//!
+//! A file's history (`GitGui::history`) swaps the commits panel's log for `log
+//! --follow --name-only -- <path>` (`git::file_log`), keeping the file's name
+//! in each commit. A commit's diff is then `show -- <name>`
+//! (`git::show_commit_file`), with the name in the commit before it added when
+//! they differ, so a rename shows as one rather than as a new file. `<Esc>`
+//! (`git_gui_back`) leaves the history before it closes the view.
+//!
+//! A commit's diff and a branch's log are read on a thread (`spawn_diff`, a
+//! `DiffJob` in `GitGui::diff_job`), since `git show` takes tens of
+//! milliseconds and a held `j` repeats faster than that: the selection moves at
+//! once and the diff follows, the event loop taking it with
+//! `pump_git_gui_diff`. Only the latest request is kept; an earlier one's
+//! answer is dropped with its receiver. Commits' diffs are cached (up to 100,
+//! by hash and paths), so moving back is instant. A file's diff stays
+//! synchronous, as staging a hunk needs it exactly as it is.
+//!
+//! A file's blame (`GitGui::blame`, a `BlameView`) is drawn over the panels
+//! while it's there, and the view's movement keys act on it first. It's `blame
+//! --porcelain --contents -` (`git::blame_file`) given the buffer encoded as it
+//! would be saved (`TextFormat::encode`), so unchanged lines match what's
+//! committed; from the files panel it's the file on disk. A change side by side
+//! (`GitGui::side`, a `SideView`) is the same kind of page: `git::side_by_side`
+//! diffs the two texts with `similar` and lines them up into `SideRow`s
+//! (unchanged lines level, a changed run's removed and added lines paired,
+//! filler on the shorter side), the old text from `git show :path` or
+//! `HEAD:path` (`git::blob`), the new from the file or the index. Both sides
+//! are scratch documents (`SIDE_DOCUMENTS`) highlighted like the blame's.
+//! Opened from the sidebar (`<CR>` and clicks in the Git tab), `<Esc>` closes
+//! the view back to the sidebar (`return_to`).
 
 use std::cell::Cell;
 use std::collections::HashMap;

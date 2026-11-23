@@ -5,6 +5,18 @@
 //! encoding and byte-order mark, line endings, final newline), so saving
 //! writes it back exactly: a file round-trips byte for byte unless it's
 //! edited.
+//!
+//! - `core::TextFormat` splits file contents into buffer text (always UTF-8 and
+//!   `\n`, no final newline) and the format to write back (encoding and
+//!   byte-order mark, LF/CRLF, final newline). An untouched file round-trips
+//!   byte for byte. Encodings use `encoding_rs`: a byte-order mark decides,
+//!   then valid UTF-8, then the configured fallback (Windows-1252, where every
+//!   byte means something). Decoding refuses bytes invalid in the chosen
+//!   encoding, and encoding refuses characters it can't hold, rather than
+//!   substitute anything. UTF-16 is encoded by hand, since `encoding_rs`
+//!   follows the web standard of never producing it. The document remembers the
+//!   encoding the file has on disk, so `:fenc` converting it counts as an
+//!   unsaved change.
 
 pub use encoding_rs::Encoding;
 use encoding_rs::{UTF_8, UTF_16BE, UTF_16LE, WINDOWS_1252};

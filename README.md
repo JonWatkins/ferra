@@ -113,7 +113,9 @@ one. See
 ## Documentation
 
 - [User guide](docs/GUIDE.md): every key, command and option.
-- [Architecture](docs/ARCHITECTURE.md): how ferra is built, and what's next.
+- [Architecture](docs/ARCHITECTURE.md): a map of how ferra is built; the
+  decisions behind it are in [docs/adr](docs/adr), and plans are
+  [GitHub issues](https://github.com/JonWatkins/ferra/issues).
 
 ## Development
 

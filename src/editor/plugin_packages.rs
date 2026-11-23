@@ -8,6 +8,33 @@
 //! [`PackageRequest`] (`take_plugin_request`), which runs it on a thread
 //! and, when it's done, records it and loads the plugins into the Lua host
 //! commands can't reach. Reloading is asked of the app the same way.
+//!
+//! `:plugin_install` (`editor/plugin_packages.rs`) parses the source
+//! (`owner/repo` is GitHub; URLs and paths pass through to git, with `@tag`
+//! split off where it can't be part of the URL) and asks in a popup. `y` leaves
+//! an `InstallRequest` on the editor, the way the file picker asks for a
+//! listing, since commands can't reach the app's `PluginHost`; the app starts
+//! it as a background job (`Update::PluginInstalled`). The job clones into a
+//! hidden folder beside the others (git with prompts off and ssh in batch mode,
+//! as for push), checks the manifest (name, `main` inside the plugin, the
+//! `ferra` version range), refuses a name already taken, and only then renames
+//! it into place, so a failed install leaves nothing. The app then records it
+//! and loads it: `PluginHost::load_package` puts the plugin's `lua/` folder
+//! first on `package.path`, so `require` finds its modules, and runs the main
+//! file under the plugin's name. At startup `App::load_plugins` loads every
+//! package in `plugins.toml` before `init.lua` and `plugins/*.lua`; one listed
+//! but not cloned is reported.
+//!
+//! Offering language packs (`Editor::plugin_saw`, on each `Opened` event): if
+//! ferra has no language for the file, `packages::suggest` reads the language
+//! packs' manifests from the copy of the directory (`.index`, only entries kept
+//! in the directory itself) and matches the file against their `[languages]`
+//! with the same detection the config uses, skipping packs installed, declined
+//! (`.declined` in the data folder) or offered this session. With no copy, or
+//! one over a day old, a quiet `Refresh` job fetches it first and the offer
+//! follows (`plugin_index_refreshed`). Events can open popups and ask for
+//! background work now, so `dispatch_events` starts both after each round.
+//! `:plugin_install name` looks a bare name up in the same copy.
 
 use super::picker::{Picker, PickerAction, PickerItem};
 use super::popup::{Popup, PopupLine, PopupSpan};

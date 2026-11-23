@@ -25,6 +25,26 @@
 //! Lines that start inside a multi-line string or comment (or an HTML
 //! `<script>`'s raw text) are left alone. Languages where indentation is
 //! meaning (Python, YAML) or that don't nest (Markdown) have no rules.
+//!
+//! - **Only the rows asked for are looked at**: `compute` takes the kept tree
+//!   (`SyntaxTrees`), runs the query over just their bytes (which catches the
+//!   nodes around them, and closers on them), and reads the indentation of
+//!   lines above from the buffer. So Enter, `o` or a closing bracket costs
+//!   about the same in any size of file: `o` on line 12,000 of a 25,600-line
+//!   Rust file takes 0.7 ms in release, down from 128 ms when every new line
+//!   parsed the whole file. The exception is a node closed by a made-up token
+//!   that ends before the rows (the `{` of `if (x) {` on the line above, which
+//!   tree-sitter may close at once): the made-up tokens before the rows are
+//!   found by walking only the branches with errors, and the query is run
+//!   around each.
+//! - **Unclosed brackets while typing**: tree-sitter either makes up the
+//!   closing token (`MISSING`) or leaves the bracket loose in an `ERROR` node.
+//!   Either way the node is taken to be open to the end of the text, which is
+//!   what makes Enter after `fn main() {` indent. Bash's `then` and `do` count
+//!   as opening brackets there (`fi`, `done` closing; `else`, `elif` both). A
+//!   made-up closer is never an `@outdent`: the `fi` tree-sitter supplies for
+//!   an unfinished `if` sits at the start of the empty line being opened, and
+//!   would otherwise pull it out of the block.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::{Range, RangeInclusive};

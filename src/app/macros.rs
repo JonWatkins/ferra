@@ -5,6 +5,17 @@
 //! config uses, so a macro can be pasted, edited and yanked back like any
 //! text. Playing parses the register and feeds the keys through the normal
 //! input path, exactly as if typed.
+//!
+//! Macros are recorded and replayed as keys, like `.`, so they live in the app
+//! (`app/macros.rs`). `q` and `@` are ordinary commands that set an
+//! `Editor::request_macro`, which the app acts on after the command. While
+//! recording, every key the user presses is kept. Stopping drops the `q` that
+//! stopped it and stores the rest in the register as key notation (via
+//! `KeyPress`'s `Display`, which round-trips with `parse_keys`), so a macro is
+//! ordinary register text. Playing parses it and feeds the keys through
+//! `handle_key`. Keys a macro plays aren't recorded into a macro being
+//! recorded, a failing command stops playback, and nesting deeper than 100
+//! stops with an error.
 
 use super::App;
 use crate::editor::{MacroRequest, Message, Register};

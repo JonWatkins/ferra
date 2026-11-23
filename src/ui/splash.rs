@@ -1,5 +1,13 @@
 //! The splash screen shown when ferra starts without a file: the logo, the
 //! version, and a few ways to get going, centred in the editor pane.
+//!
+//! `Editor::splash_visible`: it was asked for (`open_all` with no files) and
+//! the editor still holds just the untouched starting buffer in one window.
+//! After every key the app calls `update_splash`, which turns it off for good
+//! once that stops being true, so undoing back to an empty buffer doesn't bring
+//! it back. Its menu is built when drawing, with `Keymap::keys_for` finding the
+//! shortest keys bound to each command, so rebindings show up and unbound
+//! commands are left out.
 
 use ratatui::{
     buffer::Buffer,

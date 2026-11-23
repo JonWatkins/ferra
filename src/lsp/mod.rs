@@ -12,13 +12,38 @@
 //! messages into a channel, which [`Lsp::update`] drains before each draw,
 //! when it also sends the edits made since. Diagnostics go to the editor
 //! ([`Editor::set_diagnostics`]).
+//!
+//! Inlay hints (`LspQuery::InlayHint`) are asked for the whole buffer once its
+//! text has been still for 300 ms and a ready server has it
+//! (`Lsp::ask_for_inlay_hints`), again after each change and when the server
+//! sends `workspace/inlayHint/refresh` (rust-analyzer does once it's indexed).
+//! The screen keeps an answer only for the text it was asked about
+//! (`Editor::set_inlay_hints`). Labels made of parts are joined, and
+//! `paddingLeft`/`paddingRight` become spaces.
+//!
+//! - `mod.rs`: `Lsp`, owned by `App`. `update`, called before each draw, drains
+//!   the channel (answers, server requests, `publishDiagnostics`, `showMessage`
+//!   errors, servers that closed) and then syncs: each buffer with a file and a
+//!   language that has a server gets a client for its (language, root), started
+//!   if need be, and is opened or changed there; documents no longer open are
+//!   closed. Server requests are answered: `workspace/configuration` with each
+//!   `section` of the settings (`{}` where there's none: the vscode servers
+//!   ignore `null`), `workspace/workspaceFolders` with the root, anything else
+//!   with `null`. The event loop checks every 30 ms while a server runs, but
+//!   only redraws when `update` says something happened (a message handled, a
+//!   request sent, a server's state changed), or after input. On quit,
+//!   `shutdown` then `exit`, waiting up to 300 ms before the processes are
+//!   killed.
+//!
+//! - Highlighting references: `Lsp::update` notes where the cursor is (buffer,
+//!   place, edit count); once it's rested there 150 ms in normal mode it asks
+//!   `LspQuery::DocumentHighlight` (once per place), for a view: quiet.
 
 mod client;
 pub mod convert;
 pub mod transport;
 
 mod features;
-pub use features::FILE_WIDE_ACTIONS;
 
 pub use client::{ProcessSpawner, Spawner, State, Streams, find_program};
 
@@ -29,9 +54,9 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use serde_json::{Value, json};
 
 use crate::editor::diagnostics::{Diagnostic, Severity};
-use crate::editor::lsp::LspFeature;
+use crate::editor::lsp::{LspFeature, NoAnswer};
 use crate::editor::{DocumentId, Editor, Message};
-use client::{Answer, Client, ClientId, Incoming};
+use client::{Client, ClientId, Incoming, Response};
 
 pub struct Lsp {
     clients: Vec<Client>,
@@ -46,13 +71,8 @@ pub struct Lsp {
     /// Off until the editor runs in a terminal (or a test sets a spawner),
     /// so tests that open files don't start real servers.
     enabled: bool,
-    /// The last few completion answers' items as the servers sent them, to
-    /// send one back to be resolved when it's taken.
-    completions: features::Stash,
-    /// The last few code action lists, to make the one chosen.
-    actions: features::Stash,
-    /// The agent's code action lists, as its two asks come in.
-    agent_actions: HashMap<u64, features::AgentActions>,
+    /// Requests asked in parts, and the parts' answers so far.
+    parts: Vec<(crate::editor::lsp::LspRequest, features::Parts)>,
     /// The agent's requests for a server still starting, and since when:
     /// sent once it's ready (or told it isn't, after a while).
     waiting: Vec<(crate::editor::lsp::LspRequest, std::time::Instant)>,
@@ -71,6 +91,8 @@ pub struct Lsp {
     )>,
     /// The answer to the formatting request being waited for.
     formatted: Option<Result<Value, client::ResponseError>>,
+    /// The formatting request `format` waits for: its server, and its id.
+    formatting: Option<(ClientId, i64)>,
     /// Inlay hints: the buffer and text (edit count) last asked about, and
     /// the text last seen, since when (asked once it's been still a moment).
     hints_asked: Option<(DocumentId, u64)>,
@@ -89,12 +111,11 @@ impl Default for Lsp {
             missing: HashSet::new(),
             failed: HashMap::new(),
             enabled: false,
-            completions: features::Stash::default(),
-            actions: features::Stash::default(),
-            agent_actions: HashMap::new(),
+            parts: Vec::new(),
             waiting: Vec::new(),
             raw_diagnostics: HashMap::new(),
             formatted: None,
+            formatting: None,
             resting: None,
             hints_asked: None,
             hints_seen: None,
@@ -153,6 +174,8 @@ impl Lsp {
     /// loop only redraws then.
     pub fn update(&mut self, editor: &mut Editor) -> bool {
         if !self.enabled || !editor.options.lsp {
+            // No servers to tell of moves.
+            editor.take_moved_paths();
             return false;
         }
         let handled = self.receive(editor);
@@ -163,6 +186,12 @@ impl Lsp {
         self.ask_about_resting_cursor(editor);
         self.ask_for_inlay_hints(editor);
         let asked = self.send_requests(editor);
+        // Files moved (by the agent, or in the tree): the servers are told.
+        for (from, to) in editor.take_moved_paths() {
+            for client in self.clients.iter_mut().filter(|c| c.state == State::Ready) {
+                client.did_rename(&from, &to);
+            }
+        }
         // Which files a ready server has open, and whether it's busy, for
         // the agent's wait for diagnostics after an edit.
         let mut checks = HashMap::new();
@@ -220,7 +249,7 @@ impl Lsp {
                     && editor.request_lsp(LspFeature::InlayHint).is_ok()
                     && let Some(request) = editor.lsp_requests_mut().last_mut()
                 {
-                    request.manual = false;
+                    request.reply = crate::editor::lsp::Reply::View;
                     self.hints_asked = Some(here);
                 }
             }
@@ -253,7 +282,7 @@ impl Lsp {
                         && editor.request_lsp(LspFeature::DocumentHighlight).is_ok()
                         && let Some(request) = editor.lsp_requests_mut().last_mut()
                     {
-                        request.manual = false;
+                        request.reply = crate::editor::lsp::Reply::View;
                     }
                 }
             }
@@ -288,6 +317,10 @@ impl Lsp {
             for document in documents {
                 editor.set_diagnostics(document, Vec::new());
                 self.raw_diagnostics.remove(&document);
+            }
+            for request in client.take_unanswered() {
+                self.parts.retain(|(r, _)| *r != request);
+                editor.lsp_answered(&request, Err(NoAnswer::Stopped(client.name.clone())));
             }
             client.shutdown();
             // Dropping it ends the process.
@@ -377,6 +410,11 @@ impl Lsp {
         for document in documents {
             editor.set_diagnostics(document, Vec::new());
         }
+        let name = client.name.clone();
+        for request in client.take_unanswered() {
+            self.parts.retain(|(r, _)| *r != request);
+            editor.lsp_answered(&request, Err(NoAnswer::Stopped(name.clone())));
+        }
     }
 
     fn handle(&mut self, id: ClientId, message: Value, editor: &mut Editor) {
@@ -386,27 +424,44 @@ impl Lsp {
         let method = message["method"].as_str();
         match (method, message.get("id")) {
             // An answer to one of our requests.
-            (None, Some(request)) => {
-                let Some(request) = request.as_i64() else {
+            (None, Some(response)) => {
+                let Some(response) = response.as_i64() else {
                     return;
                 };
-                match client.handle_response(request, &message) {
-                    Answer::Done => {}
-                    Answer::Failed(error) => {
+                let waited = self.formatting == Some((client.id, response));
+                match client.handle_response(response, &message) {
+                    Response::Done => {}
+                    // A code action's command, done: its answer.
+                    Response::Command(request, result) => {
+                        let answer = match result {
+                            Ok(_) => Ok(features::made(&request, None)),
+                            Err(error) => Err(features::server_error(client, error)),
+                        };
+                        editor.lsp_answered(&request, answer);
+                    }
+                    Response::Failed(error) => {
                         editor.set_message(Message::error(format!("{}: {error}", client.name)));
                     }
-                    Answer::Feature(request, result)
-                        if request.feature == LspFeature::Format && request.agent.is_none() =>
-                    {
-                        self.formatted = Some(result);
+                    // `format`'s, waited for there.
+                    Response::Feature(_, result) if waited => self.formatted = Some(result),
+                    Response::Feature(request, result) => {
+                        features::answer(editor, client, request, result);
                     }
-                    Answer::Feature(request, result) => {
-                        let stashes = features::Stashes {
-                            completions: &mut self.completions,
-                            actions: &mut self.actions,
-                            agent_actions: &mut self.agent_actions,
+                    // Answered once every part has its answer.
+                    Response::Part(request, part, result) => {
+                        let at = match self.parts.iter().position(|(r, _)| *r == request) {
+                            Some(at) => at,
+                            None => {
+                                self.parts.push((request.clone(), Default::default()));
+                                self.parts.len() - 1
+                            }
                         };
-                        features::answer(editor, client, request, result, stashes);
+                        self.parts[at].1[part] = Some(result);
+                        if self.parts[at].1.iter().all(Option::is_some) {
+                            let (request, parts) = self.parts.remove(at);
+                            let result = features::merge_actions(parts);
+                            features::answer(editor, client, request, result);
+                        }
                     }
                 }
             }
@@ -434,23 +489,26 @@ impl Lsp {
                         "uri": convert::path_to_uri(&client.root),
                         "name": client.root.display().to_string(),
                     }]),
-                    // A command it ran (a code action's) wants edits made.
+                    // A command it ran (a code action's) wants edits made:
+                    // made now (it waits on them), for the query that ran it.
                     "workspace/applyEdit" => {
                         let params = &message["params"];
-                        match features::apply_workspace_edit(
-                            editor,
-                            &params["edit"],
-                            client.encoding,
-                        ) {
-                            Ok(applied) => {
-                                let label = params["label"]
-                                    .as_str()
-                                    .or(client.command_title.as_deref())
-                                    .unwrap_or("Changed");
-                                editor.set_message(Message::info(format!(
-                                    "{label}: {}",
-                                    applied.describe()
-                                )));
+                        match features::workspace_edits(editor, &params["edit"], client.encoding) {
+                            Ok(edits) => {
+                                let label = params["label"].as_str();
+                                match &client.running {
+                                    Some(request) => editor.lsp_edits_pushed(request, label, edits),
+                                    None => {
+                                        let label = label
+                                            .or(client.command_title.as_deref())
+                                            .unwrap_or("Changed");
+                                        let applied = editor.apply_lsp_edits(edits);
+                                        editor.set_message(Message::info(format!(
+                                            "{label}: {}",
+                                            applied.describe()
+                                        )));
+                                    }
+                                }
                                 json!({ "applied": true })
                             }
                             Err(error) => json!({ "applied": false, "failureReason": error }),

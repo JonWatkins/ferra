@@ -9,6 +9,24 @@
 //! the events the plugin named, or when the plugin asks; the app calls the
 //! function for a stale view before drawing it. The view's own keys run
 //! the plugin's commands, which read `ctx:view_selected()`.
+//!
+//! `editor.view(name, spec)` records a `ViewSpec` (title, keys, the events that
+//! refresh it) and keeps the `lines` function in the plugin host
+//! (`PluginHost::view_lines`). After installing, the app hands new specs to the
+//! editor (`editor/sidebar_views.rs`), which keeps each view's lines, its
+//! selection and scroll, and a *stale* flag. The editor can't call Lua, so it
+//! only marks views stale: when shown, on `R`, after the events in `refresh`
+//! (the app passes every event to `plugin_views_saw` as it fires hooks), on
+//! `ctx:view_refresh`, and when the current buffer isn't the one its lines were
+//! made for. Before drawing, `App::make_plugin_view` calls the function of the
+//! view shown if it's stale, so a view nobody can see costs nothing.
+//!
+//! The sidebar's commands act on whichever view is shown (`sidebar_move` moves
+//! a plugin view's selection, `R` remakes it, the tree's own commands do
+//! nothing there). A view's keys are bound like a popup's: when the view shown
+//! changes, the app rebuilds its keymap copy with them in `Mode::Sidebar`.
+//! `ui/sidebar.rs` draws the tabs (`SidebarTabs`) when there's more than the
+//! file tree, and the view (`PluginViewWidget`).
 
 use std::cell::Cell;
 

@@ -1,7 +1,8 @@
 //! A modal, terminal-based text editor inspired by Vim, Helix and Emacs.
 //!
-//! The crate is layered so that each part can be tested in isolation and,
-//! eventually, split into separate crates (see `docs/ARCHITECTURE.md`):
+//! The crate is layered so that each part can be tested in isolation (the
+//! map is `docs/ARCHITECTURE.md`; the rules,
+//! `docs/adr/0002-app-and-ui-on-top-core-underneath.md`):
 //!
 //! - [`core`]: pure text model and motions. No UI or terminal dependencies.
 //! - [`editor`]: editor state (document, mode, command line, messages).

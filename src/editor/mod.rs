@@ -41,6 +41,7 @@ mod git;
 pub mod git_gui;
 pub use git::GitRow;
 pub mod agent;
+mod agent_lsp;
 pub mod agent_session;
 mod agent_tools;
 pub mod input_box;
@@ -300,6 +301,13 @@ pub struct Editor {
     file_diagnostics: HashMap<std::path::PathBuf, Vec<diagnostics::Diagnostic>>,
     /// The project symbol picker's query when the server was last asked.
     symbol_query: Option<String>,
+    /// Files and folders moved, for the language servers to be told.
+    moved_paths: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    /// The last code actions listed, to make the one picked.
+    code_actions: Option<lsp::ActionList>,
+    /// How many lists of code actions there have been (the screen's and
+    /// the agent's), to number them.
+    action_lists_made: u64,
     /// A language server's signature help, shown while typing a call.
     signature: Option<signature::SignatureHelp>,
     /// Added to the next save's message (see `note_for_save`).
@@ -882,9 +890,15 @@ impl Editor {
         self.insert_repeat = count.filter(|&n| n > 1).map(|n| (n, lines));
     }
 
-    /// Leaving insert mode after a counted insert: puts in what was typed
-    /// the rest of the times. Copies on lines of their own (`o`, `O`) get
-    /// the indentation of the line typed on.
+    /// Leaving insert mode after a counted insert (`3ihi`, `2o`): puts in
+    /// what was typed the rest of the times. Copies on lines of their own
+    /// (`o`, `O`) get the indentation of the line typed on.
+    ///
+    /// `set_mode` calls this after `finish_replace` and before what was
+    /// typed is stored as `".`. The text is the session's `Editor::typed`,
+    /// so pastes, completions and backspaces count as they ended up. It's
+    /// all one insert session: one undo step, and `.` replays the count
+    /// with the keys.
     fn finish_insert_repeat(&mut self) {
         let Some((count, lines)) = self.insert_repeat.take() else {
             return;

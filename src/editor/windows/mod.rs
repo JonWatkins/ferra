@@ -10,6 +10,62 @@
 //! exactly as with one window. Other windows remember which buffer they
 //! show and where their cursor was; switching windows saves the active
 //! window's cursor and swaps the target's buffer in.
+//!
+//! `editor::windows::TextLayout` (the text width beside the gutter, whether to
+//! wrap, the tab width, the continued rows' indent) is the one place that knows
+//! how a window lays out lines, shared by the UI and the commands:
+//!
+//! - Drawing (`EditorView::render`) walks lines from the view's top, drawing
+//!   each of a line's rows (`draw_row`) with the line number on its first only,
+//!   and clips syntax, search and selection highlights to each row's chars (a
+//!   selected line break shows on the last row).
+//! - `windows::follow_cursor` keeps the cursor in sight counting screen rows:
+//!   `scroll-off` is in rows, the view always starts at a line's start, and a
+//!   long jump starts looking a screen above the cursor rather than measuring
+//!   every line on the way.
+//! - `gj`/`gk` move through a line's rows, aiming for a screen column that
+//!   `Editor::wanted_screen_column` remembers while the cursor stays where they
+//!   put it, so a short row on the way doesn't lose it. Without wrap they're
+//!   `j`/`k`.
+//! - `TextLayout::bottom` (the last line at least partly shown) is what `L` and
+//!   the scrolling commands use.
+//!
+//! `j`/`k` still move by lines, as in Vim, and `<C-d>` and friends scroll by
+//! lines too.
+//!
+//! The scroll position stays in the UI (`ViewState`, per window and buffer),
+//! since it's settled while drawing, when the cursor has to be kept in sight.
+//! After drawing a window the UI records where its view starts
+//! (`Windows::note_top`), and scrolling commands (`commands/builtin/
+//! scrolling.rs`: `<C-d>`, `<C-f>`, `<C-e>`, `zz`, `H`...) read it back through
+//! `Windows::view_top`, which also applies the scroll the next draw will do for
+//! the cursor's current row (`windows::follow_cursor`, shared with the UI's
+//! `Viewport`), so commands run before a redraw (a macro's) agree with it. A
+//! command moves the view by asking for a new first row
+//! (`Windows::request_top`), which the UI applies before drawing that window
+//! next. The window's height comes from the layout (`Windows::height`), so it
+//! works before the first draw too. Like Vim, a scroll that leaves the cursor
+//! inside the `scroll-off` margin moves the cursor out of it, not the view
+//! back. `H`, `M` and `L` are a linewise jump motion (`SCREEN_LINE`) given the
+//! row, so operators take them (`dL`).
+//!
+//! - `Layout::arrange` computes window and separator areas in plain cells, with
+//!   no UI types. Directional moves (`<C-w>h`) use the same geometry on a fixed
+//!   nominal area, since direction only depends on relative positions. Nothing
+//!   is ever placed outside the given area, however small.
+//! - The active window's buffer is always `Editor::document`, so commands are
+//!   unchanged. Focusing another window saves the active window's cursor into
+//!   its `Window`, then swaps the target's buffer in and restores its cursor.
+//!   Two windows on one buffer each keep their own cursor.
+//! - Buffers interact with windows in two places: a buffer shown in another
+//!   window is never dropped when a new file replaces it, and closing a buffer
+//!   points any window showing it at the next buffer.
+//! - The UI (`ui/windows.rs`) draws each window's `EditorView`, with that
+//!   window's cursor and scroll state (kept per window and buffer, in
+//!   `App::views`). The cursor line and selection appear only in the active
+//!   window. The app refreshes syntax highlights for every buffer on screen
+//!   before drawing.
+//! - `:q` closes the window and quits only from the last one; `:qa` quits.
 
 mod layout;
 

@@ -16,6 +16,31 @@
 //!   language's shows over its host's for exactly the same range.
 //! - Injections (a Markdown code block's language, `<script>` in HTML) are
 //!   parsed from the parts of the text they cover, as their own layer.
+//!
+//! - `highlight.rs` highlights a range of rows from a syntax tree. It follows
+//!   `tree-sitter-highlight`'s rules (which ferra used before keeping trees),
+//!   and the tests check it gives the same spans on samples of every language
+//!   and on this repo's own Rust, Markdown and TOML:
+//!   - The locals and highlights queries are compiled as one query, so their
+//!     captures arrive in document order. A local definition records the
+//!     highlight its node gets, and references to it in scope take that
+//!     highlight. Patterns with `(#is-not? local)` skip locals.
+//!   - Of several highlight patterns matching one node, the last wins.
+//!   - Highlights paint over earlier ones in the order they start (by position;
+//!     deeper layers first at the same position; otherwise query order). So a
+//!     node's highlight shows over its parent's, unless the parent's pattern
+//!     came later in the query: TOML's `(pair (bare_key)) @property` colours
+//!     the key, though `(bare_key) @type` matches it first. An injected layer
+//!     wins a range its host highlights exactly.
+//!   - Injections in the rows are parsed from the parts of the text their nodes
+//!     cover (`set_included_ranges`, children excluded unless
+//!     `include-children`), up to 4 deep. Matches of an `injection.combined`
+//!     pattern within the rows are parsed together.
+//!   - With locals, the query starts at the top-level node holding the first
+//!     row, so definitions above the rows are seen.
+//!
+//! `HIGHLIGHT_NAMES` are the names captures map to (the one with the most
+//! parts all in the capture's name), and they double as theme scopes.
 
 use std::ops::Range;
 

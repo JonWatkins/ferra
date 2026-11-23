@@ -4,6 +4,22 @@
 //! switching buffers. Before each one the position being left is recorded,
 //! so `<C-o>` can go back to it, across buffers. `''` goes to the place
 //! before the last jump.
+//!
+//! A *jump* is a big move: `gg`, `G`, `%`, `{`/`}`, searches and `n`, marks,
+//! `:42`, and switching buffers. Motions opt in with `Motion::jump()`; other
+//! places (search, `:e`, `]b`, the picker, `goto_line`) call
+//! `Editor::push_jump` before they move. That records where the cursor was in
+//! the `JumpList` (`editor/jumps.rs`), which works like browser history:
+//! `<C-o>` steps back (remembering the current spot first, so `<C-i>` can
+//! return), and jumping while part-way back drops the entries ahead. Entries on
+//! the same line of the same buffer are merged, the list holds 100, and entries
+//! in closed buffers are skipped and dropped. `push_jump` also sets the origin
+//! used by the `''` and `` ` `` marks.
+//!
+//! Each `Document` keeps its own change list: `insert` and `delete` record
+//! where they happened (consecutive edits on one line update the last entry).
+//! `g;`/`g,` step through it, and `'.` is its newest entry. Positions aren't
+//! adjusted for later edits; they're clamped when used.
 
 use super::{DocumentId, Editor};
 use crate::core::Position;

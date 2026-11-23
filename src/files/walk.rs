@@ -1,4 +1,11 @@
 //! Listing the files in a project, for the file picker.
+//!
+//! The file picker lists files with `files::walk_files`, which uses the
+//! `ignore` crate (ripgrep's walker): `.gitignore`, `.ignore` and git excludes
+//! are honoured even outside a repository, hidden files are optional, `.git` is
+//! never listed, and listing stops at `max-files` (`[editor.file-picker]`). The
+//! fuzzy matcher gives matches in a path's file name extra weight, so `main`
+//! finds `src/main.rs` before `domain/lib.rs`.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -5,6 +5,23 @@
 //! line runs commands by name or alias. This indirection is the editor's main
 //! extension point: config can rebind anything, and plugins will register
 //! their own commands through the same [`CommandRegistry::register`] API.
+//!
+//! Every action is a named command such as `move_down`, `delete_line` or
+//! `quit`. This means:
+//!
+//! - **Config** binds keys to command names (`"jk" = "normal_mode"`).
+//! - **The `:` command line** runs any command by name or alias (`:q`,
+//!   `:goto_line 10`, `:42`).
+//! - **Plugins** will call `CommandRegistry::register(name, description,
+//!   handler)`, exactly as built-ins do. Handlers receive a `Context` with the
+//!   editor, the registry (so they can compose other commands), and the
+//!   `Invocation` (count, register and arguments). Invocation details are
+//!   grouped into one struct so the signature stays stable as input features
+//!   are added.
+//! - **Discoverability**: `CommandRegistry::commands()` lists names and
+//!   descriptions, ready for a command palette or completion.
+//!
+//! `tests/extensibility.rs` covers this contract.
 
 mod builtin;
 pub mod ex;

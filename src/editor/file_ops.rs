@@ -231,7 +231,14 @@ impl Editor {
             explorer.reveal(&to);
         }
         self.refresh_options();
+        self.moved_paths.push((from, to));
         Ok(())
+    }
+
+    /// The files and folders moved since last asked (from, to), for the
+    /// language servers to be told.
+    pub fn take_moved_paths(&mut self) -> Vec<(PathBuf, PathBuf)> {
+        std::mem::take(&mut self.moved_paths)
     }
 
     /// A file or folder dragged onto `folder` in the tree: asks before

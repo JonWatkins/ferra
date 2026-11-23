@@ -12,6 +12,43 @@
 //! than replaying the keys that made the selection. The recorder notes
 //! where the operator's key binding began and the selection's shape, keeps
 //! only the keys from there on, and `.` selects that shape first.
+//!
+//! `app/repeat.rs` records the keys of each command sequence that starts and
+//! ends idle (normal mode, nothing partially typed): `dw`, `ct)foo<Esc>`,
+//! `vjd`. If `Document::edit_count` moved during it, the sequence becomes the
+//! last change. Undo/redo don't count as edits, and sequences that went through
+//! the `:` line are skipped. `.` is an ordinary command that sets
+//! `Editor::request_repeat`; the app then feeds the recorded keys back through
+//! the normal input path. That's why recording happens at the app level: only
+//! the app sees keys.
+//!
+//! Recording keys rather than commands makes every change repeatable, including
+//! insert sessions and future plugin commands, without each command having to
+//! support it. Each recorded key notes whether the input layer took it as a
+//! count (`InputHandler::took_count`, in normal and operator-pending mode
+//! only), since only it can tell the `2` of `d2w` from the `2` of `i2` or `f2`.
+//! So `3.` drops every count digit and puts `3` first (`d2w` becomes `3dw`, as
+//! in Vim), and keeps the new count for later `.`. A `"x` register prefix is
+//! kept. A sequence counts as a change when it edited the buffer it started in
+//! (`EditStamp`: buffer and edit count), so switching buffers never does. If
+//! the change was a paste from `"1`-`"8`, `.` moves the prefix on one number
+//! first, so `"1pu.u.` steps back through older deletes.
+//!
+//! A change made by an operator on a visual selection is repeated on the same
+//! *amount* of text from the cursor, as in Vim (`visual-repeat`), not by
+//! replaying the motion: after `ved` on a two-letter word, `.` deletes two
+//! characters wherever it's used. Taking a selection (`take_selection`,
+//! `take_block`, block `I`/`A`) notes its `VisualShape`: a number of characters
+//! on one line, a number of lines and the end column on the last, a number of
+//! lines, or a block's rows and display width (and `$`). The app collects it
+//! after each key (`Editor::take_visual_shape`), and the recorder pairs it with
+//! where that key binding began (the start of `"ad` or `3>`), which it tracks
+//! by noting each key that arrives with nothing half typed. The last change
+//! then keeps only the keys from there on, and `.` first calls
+//! `Editor::select_shape`, which selects that much from the cursor, cut short
+//! at a line's or the buffer's end. A count given to `.` is ignored for these,
+//! since the size comes from the selection. A count on a visual `>` or `<`
+//! shifts that many times.
 
 use crate::editor::{DocumentId, VisualShape};
 use crate::input::{KeyCode, KeyPress};

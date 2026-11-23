@@ -1,4 +1,11 @@
 //! Parsing `:g/pattern/command`.
+//!
+//! `:g` finds the matching rows first, then asks the document to track them
+//! (`Document::track_rows`): insertions and deletions shift tracked rows, and
+//! rows whose line is deleted are forgotten. It then runs the command with the
+//! cursor on each remaining row, through the same `run_command_line` as the `:`
+//! prompt. It's one command, so it's one undo step, and `:g` inside `:g` is
+//! refused.
 
 /// A parsed `:g` (or `:v`) command.
 #[derive(Debug, Clone, PartialEq, Eq)]

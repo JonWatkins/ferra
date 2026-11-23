@@ -6,6 +6,14 @@
 //! A file is matched by its exact name first (`Cargo.toml`, `Dockerfile`),
 //! then its extension; then a language's own icon (`icon` in its
 //! `[languages]` entry, which language packs can set); else a plain file.
+//!
+//! File icons (`ui/icons.rs`, with `icons = "nerd"`): a table of Nerd Font
+//! glyphs and colours (the Seti set, code points checked against Nerd Fonts'
+//! `glyphnames.json`) by exact file name, then extension, then a language's own
+//! `icon`/`icon-color` from `[languages]` (which packs can set). The tree draws
+//! a file's icon, or a folder's open or closed one, in the two columns the
+//! folder marker takes, so names don't move; the picker draws one before items
+//! that open a file.
 
 use std::path::Path;
 use std::str::FromStr;

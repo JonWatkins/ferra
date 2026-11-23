@@ -207,6 +207,10 @@ fn serve(
             }
             "textDocument/hover" => {
                 let word = word_at(&seen.lock().unwrap().text, &params["position"]);
+                // Asked about "die", it stops before answering.
+                if word == "die" {
+                    return;
+                }
                 let result = (word == "bad").then(|| {
                     json!({"contents": {
                         "kind": "markdown",
@@ -409,8 +413,9 @@ fn serve(
                 }]}});
                 reply(&mut output, action);
             }
+            // The edit sent while it runs, then the command's answer, as
+            // servers do.
             "workspace/executeCommand" => {
-                reply(&mut output, Value::Null);
                 let uri = params["arguments"][0].clone();
                 write_message(
                     &mut output,
@@ -423,6 +428,7 @@ fn serve(
                         }]}}}}),
                 )
                 .unwrap();
+                reply(&mut output, Value::Null);
             }
             "textDocument/signatureHelp" => {
                 seen.lock().unwrap().signature_context = params["context"].clone();
@@ -966,6 +972,8 @@ fn a_new_file_named_relatively_gets_a_server_in_this_folder() {
 #[test]
 fn a_new_unsaved_file_gets_its_diagnostics() {
     let (_dir, mut app, _) = with_server("x\n", true);
+    // Started first, so the wait below is only for the diagnostics.
+    ready(&mut app);
     keys(&mut app, ":e not-yet-there.rs<CR>ilet bad = 1;<Esc>");
     until(&mut app, |a| diagnostic_starts(a) == [(0, 4)]);
     keys(&mut app, "0]d");
@@ -1418,6 +1426,37 @@ fn rename_changes_the_name_everywhere_as_one_change() {
     );
     keys(&mut app, "u");
     assert_eq!(text(&app), "fn bad() {}\nbad();\nlet x = bad;", "one undo");
+}
+
+#[test]
+fn the_agents_rename_saves_the_files_it_opened_and_they_are_its() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("use other;\nother();\n", true);
+    let other = dir.path().join(OTHER);
+    fs::write(&other, "pub fn other() {}\n").unwrap();
+    ready(&mut app);
+    let main = dir.path().join("main.rs");
+    app.editor_mut()
+        .agent_ask_lsp(
+            1,
+            LspFeature::Rename,
+            Some(main.to_str().unwrap()),
+            (Some(2), Some("other"), None, None),
+            Some("another"),
+        )
+        .unwrap();
+    let said = agent_answer(&mut app, 1).unwrap();
+    assert_eq!(said, "Renamed to another: 3 changes in 2 files");
+    // Both saved (neither had the user's unsaved changes), the other file
+    // opened for the agent's tools, to close after its turn.
+    assert_eq!(fs::read_to_string(&other).unwrap(), "pub fn another() {}\n");
+    assert_eq!(
+        fs::read_to_string(&main).unwrap(),
+        "use another;\nanother();\n"
+    );
+    let state = app.editor().agent_editor_state();
+    assert!(state.contains("other.rs (opened for your tools"), "{state}");
+    assert!(!state.contains("main.rs (opened for your tools"), "{state}");
 }
 
 #[test]
@@ -2265,6 +2304,90 @@ fn the_agent_asks_for_a_files_source_actions() {
 }
 
 #[test]
+fn a_server_that_stops_still_answers_the_agent() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("fn die() {}\n", true);
+    ready(&mut app);
+    let said = agent_asks(
+        &mut app,
+        LspFeature::Hover,
+        &dir.path().join("main.rs"),
+        (Some(1), Some("die"), None, None),
+    );
+    assert_eq!(said, Err("rust-analyzer stopped before answering".into()));
+}
+
+#[test]
+fn the_agent_hears_of_the_edits_an_actions_command_makes() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("fine\nalso fine\n", true);
+    ready(&mut app);
+    let path = dir.path().join("main.rs");
+    let file = path.to_str().unwrap();
+    app.editor_mut()
+        .agent_ask_lsp(
+            1,
+            LspFeature::CodeAction,
+            Some(file),
+            (Some(2), None, None, None),
+            None,
+        )
+        .unwrap();
+    let listed = agent_answer(&mut app, 1).unwrap();
+    let number: usize = listed
+        .lines()
+        .find(|l| l.contains("Add a note"))
+        .and_then(|l| l.split('.').next())
+        .unwrap()
+        .parse()
+        .unwrap();
+    let list: u64 = listed
+        .split("list ")
+        .nth(1)
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    app.editor_mut()
+        .agent_apply_code_action(2, file, list, number)
+        .unwrap();
+    // The command's server sends the edit as it runs: the agent hears of
+    // it, and it's saved, as the file had no unsaved changes.
+    let made = agent_answer(&mut app, 2).unwrap();
+    assert!(
+        made.starts_with("Made Add a note in ") && made.ends_with("main.rs"),
+        "{made}"
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "// note\nfine\nalso fine\n"
+    );
+}
+
+#[test]
+fn the_agent_gets_code_actions_on_an_empty_line() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("fn bad() {}\n\nlet x = bad;\n", true);
+    ready(&mut app);
+    let path = dir.path().join("main.rs");
+    // Asked at the symbol and for the whole line, which on an empty line
+    // are the same place: both answers still have to be told apart.
+    app.editor_mut()
+        .agent_ask_lsp(
+            1,
+            LspFeature::CodeAction,
+            Some(path.to_str().unwrap()),
+            (Some(2), None, None, None),
+            None,
+        )
+        .unwrap();
+    let listed = agent_answer(&mut app, 1).unwrap();
+    assert!(listed.contains("Upper-case the line"), "{listed}");
+}
+
+#[test]
 fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
     use ferra::editor::lsp::LspFeature;
     let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
@@ -2352,6 +2475,32 @@ fn the_agents_question_waits_for_a_server_still_starting() {
 }
 
 #[test]
+fn moving_a_file_in_the_tree_tells_the_server() {
+    let (dir, mut app, seen) = with_server("fn bad() {}\n", true);
+    ready(&mut app);
+    let helper = dir.path().join("helper.rs");
+    fs::write(&helper, "pub fn help() {}\n").unwrap();
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    app.editor_mut().tree_ask_move(helper, sub).unwrap();
+    app.editor_mut().tree_move().unwrap();
+    until(&mut app, |_| !seen.lock().unwrap().renamed.is_null());
+    let real = fs::canonicalize(dir.path()).unwrap();
+    let renamed = seen.lock().unwrap().renamed.clone();
+    let uri = |p: &std::path::Path| format!("file://{}", p.display());
+    assert_eq!(
+        renamed[0]["oldUri"],
+        uri(&real.join("helper.rs")),
+        "{renamed}"
+    );
+    assert_eq!(
+        renamed[0]["newUri"],
+        uri(&real.join("sub/helper.rs")),
+        "{renamed}"
+    );
+}
+
+#[test]
 fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
     let (dir, mut app, seen) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
     ready(&mut app);
@@ -2386,6 +2535,12 @@ fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
     // Both ends as the file system has them (the test's folder is under a
     // link on macOS: /var is /private/var), so the server's paths agree.
     let real = fs::canonicalize(dir.path()).unwrap();
+    // The server is told after the move, with nothing to answer: wait
+    // until it has read it.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while seen.lock().unwrap().renamed.is_null() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let renamed = seen.lock().unwrap().renamed.clone();
     let uri = |p: &std::path::Path| format!("file://{}", p.display());
     assert_eq!(

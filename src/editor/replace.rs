@@ -6,6 +6,16 @@
 //! only moves left over text it didn't type), `<CR>` breaks the line
 //! without deleting anything, and a count (`3Rab<Esc>`) types the text
 //! that many times over.
+//!
+//! `R` (`editor/replace.rs`) is insert mode with a `Replacing` state, as Vim's
+//! replace mode shares insert mode's keys: typed chars (and pastes) take the
+//! place of the char under the cursor, or add at a line's end, and each records
+//! what it overwrote, so `<BS>` puts that back (over text it didn't type it
+//! just moves left). A line break is added without deleting anything. On
+//! leaving, `set_mode` calls `finish_replace` before what was typed is stored,
+//! which types it again for a count (`3Rab`). The status line shows `REPLACE`
+//! (`ui.statusline.replace`) and the cursor takes `cursor-shape.replace`. `.`
+//! replays the keys like any insert.
 
 use super::{Editor, Mode};
 use crate::core::Position;

@@ -4,6 +4,14 @@
 //! exact file names and `#!` interpreters that mean it. The grammars
 //! themselves are built in (`syntax::LANGUAGES`); this table only decides
 //! which one a file gets, so users can add an extension or a file name.
+//!
+//! - Which file is in which language is config, not code: `config::Languages`
+//!   (the `[languages]` table, shaped like Helix's `languages.toml`) matches
+//!   the exact file name, then the extension, then the interpreter on a `#!`
+//!   first line (via `env`, ignoring flags and version suffixes). The editor
+//!   holds the table so the syntax engine and the status line agree, and
+//!   detection reruns as you type, so writing a `#!` into a new file picks its
+//!   language.
 
 use std::collections::BTreeMap;
 use std::path::Path;

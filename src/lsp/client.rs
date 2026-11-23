@@ -1,5 +1,34 @@
 //! One running language server: its process, the requests waiting for an
 //! answer, and the documents it has open.
+//!
+//! - `client.rs`: one server. `Client::start` spawns it (through a `Spawner`,
+//!   which tests replace with a server in the same process over pipes), starts
+//!   a thread that reads its output into the `Lsp`'s channel, and sends
+//!   `initialize`. Its answer gives the encoding and sync kind; then come
+//!   `initialized` and `workspace/didChangeConfiguration` with the settings
+//!   (pyright waits for that before it checks anything). `change` sends a
+//!   document's edits since its last version: the one edit from the buffer's
+//!   edit log, in place, when there's exactly one and the server counts bytes
+//!   and syncs incrementally; otherwise the whole text. `saved` sends `didSave`
+//!   when the document's save count (`Document::saves`) has moved, after its
+//!   changes; rust-analyzer runs `cargo check` then. Documents are found by the
+//!   URI they were opened as (a new file's path is relative and can't be
+//!   canonicalized), else by path; a document whose path changed (`:saveas`) is
+//!   closed and reopened under the new one.
+//!
+//! - Progress and restarting: ferra says it takes `workDoneProgress`, so
+//!   servers send `$/progress` (begin, report, end, by token; their
+//!   `window/workDoneProgress/create` request is answered like any other). Each
+//!   `Client` keeps the work begun and not ended; the first server busy with
+//!   something gives the status line's `lsp-progress` element its text
+//!   (`rust-analyzer: Indexing 45%`, else the title and message) and `:lsp` its
+//!   "running (…)". `:lsp-restart [name]` (the command line takes a name with
+//!   `-`s when it's a command's, so `:s-a-b-` is still `:s`) leaves a request
+//!   on the editor that `Lsp::update` takes before syncing: the servers it
+//!   names (the buffer's, by command or language, or `all`) are sent `shutdown`
+//!   and dropped (which ends their processes), their diagnostics cleared, and
+//!   which commands weren't found or failed is forgotten; the sync after starts
+//!   what the open files need.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
@@ -13,7 +42,7 @@ use serde_json::{Value, json};
 use super::convert::{Encoding, path_to_uri};
 use super::transport::{read_message, write_message};
 use crate::config::ServerConfig;
-use crate::editor::lsp::{LspFeature, LspRequest};
+use crate::editor::lsp::{LspFeature, LspQuery, LspRequest};
 use crate::editor::{Document, DocumentId};
 
 /// Identifies a client among the running ones.
@@ -124,8 +153,12 @@ enum Pending {
     Initialize,
     Shutdown,
     Feature(LspRequest),
-    /// `workspace/executeCommand`: only an error is worth showing.
-    Command,
+    /// One part of a request asked in parts (code actions at the symbol,
+    /// 0, and for its line, 1), answered together.
+    Part(LspRequest, usize),
+    /// `workspace/executeCommand`: for the query that ran it (a code
+    /// action's), if any, answered when it's done.
+    Command(Option<LspRequest>),
 }
 
 /// An error a server answered with.
@@ -144,13 +177,28 @@ impl ResponseError {
 }
 
 /// What an answer from the server was for.
-pub enum Answer {
+pub enum Response {
     /// Nothing more to do.
     Done,
     /// `initialize` failed: why.
     Failed(String),
     /// The answer to an editor request.
     Feature(LspRequest, Result<Value, ResponseError>),
+    /// The answer to part of one (see `Pending::Part`).
+    Part(LspRequest, usize, Result<Value, ResponseError>),
+    /// A command run for a query has finished (or failed).
+    Command(LspRequest, Result<Value, ResponseError>),
+}
+
+/// A response's result, or the error it has instead.
+fn response(message: &Value) -> Result<Value, ResponseError> {
+    match message.get("error") {
+        Some(error) => Err(ResponseError {
+            code: error["code"].as_i64().unwrap_or(0),
+            message: error["message"].as_str().unwrap_or("failed").to_string(),
+        }),
+        None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+    }
 }
 
 /// The method that asks for `feature`, and the capability that says the
@@ -210,6 +258,9 @@ pub struct Client {
     /// The title of the last command it was asked to run (a code
     /// action's), for the message when it sends edits back.
     pub command_title: Option<String>,
+    /// The query whose command it's running, which the edits it sends
+    /// meanwhile are for.
+    pub running: Option<LspRequest>,
     /// What it's busy with, by progress token, in the order begun: the
     /// title, and the latest message and percentage.
     progress: Vec<(String, String, Option<String>, Option<u64>)>,
@@ -257,6 +308,7 @@ impl Client {
             settings: serde_json::to_value(&config.settings).unwrap_or_else(|_| json!({})),
             capabilities: Value::Null,
             command_title: None,
+            running: None,
             progress: Vec::new(),
         };
         let root_uri = path_to_uri(root);
@@ -427,17 +479,17 @@ impl Client {
         self.capabilities["completionProvider"]["resolveProvider"].as_bool() == Some(true)
     }
 
-    /// Asks for the code actions for `request`'s range (`start`..`end` as
-    /// LSP positions), with the diagnostics there they might fix; only
-    /// those of kind `only` (`source`: organize imports, fix all...), if
-    /// given.
+    /// Asks for the code actions for `start`..`end` (LSP positions) in
+    /// `request`'s document, with the diagnostics there they might fix;
+    /// only those of kind `only` (`source`: organize imports, fix all...),
+    /// if given; as `part` of the request, if it's asked in parts.
     pub fn request_code_actions(
         &mut self,
         request: LspRequest,
-        start: Value,
-        end: Value,
+        (start, end): (Value, Value),
         diagnostics: Vec<Value>,
         only: Option<&str>,
+        part: Option<usize>,
     ) {
         let Some(synced) = self.documents.get(&request.document) else {
             return;
@@ -451,7 +503,11 @@ impl Client {
             "range": { "start": start, "end": end },
             "context": context,
         });
-        self.request("textDocument/codeAction", params, Pending::Feature(request));
+        let pending = match part {
+            Some(part) => Pending::Part(request, part),
+            None => Pending::Feature(request),
+        };
+        self.request("textDocument/codeAction", params, pending);
     }
 
     /// Whether it wants asking before a file's moved (`willRename`).
@@ -481,7 +537,7 @@ impl Client {
     /// `Callers`) or from (`Callees`) `item`, as `prepareCallHierarchy`
     /// gave it.
     pub fn request_calls(&mut self, request: LspRequest, item: Value) {
-        let method = if request.feature == LspFeature::Callers {
+        let method = if request.feature() == LspFeature::Callers {
             "callHierarchy/incomingCalls"
         } else {
             "callHierarchy/outgoingCalls"
@@ -512,14 +568,20 @@ impl Client {
     }
 
     /// Has the server run `command` (a `Command`: its name and arguments),
-    /// for the action titled `title`.
-    pub fn execute_command(&mut self, command: &Value, title: &str) {
+    /// for the action titled `title`, made for `request`: the edits it
+    /// sends while it runs are for that, and it's answered once it's done.
+    pub fn execute_command(&mut self, command: &Value, title: &str, request: Option<LspRequest>) {
         self.command_title = Some(title.to_string());
+        self.running.clone_from(&request);
         let params = json!({
             "command": command["command"],
             "arguments": command.get("arguments").cloned().unwrap_or(json!([])),
         });
-        self.request("workspace/executeCommand", params, Pending::Command);
+        self.request(
+            "workspace/executeCommand",
+            params,
+            Pending::Command(request),
+        );
     }
 
     /// Asks for the rest of completion `item` (as the server sent it).
@@ -558,40 +620,40 @@ impl Client {
         let Some(synced) = self.documents.get(&request.document) else {
             return;
         };
-        let (method, _) = feature_method(request.feature);
+        let (method, _) = feature_method(request.feature());
         let mut params = json!({
             "textDocument": { "uri": synced.uri },
             "position": position,
         });
         // These are about the file, or the project: no position.
         if matches!(
-            request.feature,
+            request.feature(),
             LspFeature::DocumentSymbols | LspFeature::Outline
         ) {
             params = json!({ "textDocument": { "uri": synced.uri } });
-        } else if request.feature == LspFeature::WorkspaceSymbols {
-            params = json!({ "query": request.text.clone().unwrap_or_default() });
+        } else if let LspQuery::WorkspaceSymbols { query } = &request.query {
+            params = json!({ "query": query });
         }
-        match request.feature {
-            LspFeature::References => {
+        match &request.query {
+            LspQuery::References => {
                 params["context"] = json!({ "includeDeclaration": true });
             }
-            LspFeature::Rename => {
-                params["newName"] = json!(request.text.clone().unwrap_or_default());
+            LspQuery::Rename { name } => {
+                params["newName"] = json!(name);
             }
-            LspFeature::SignatureHelp => {
+            LspQuery::SignatureHelp { trigger, retrigger } => {
                 let mut context = json!({
-                    "triggerKind": if request.manual { 1 } else { 3 },
-                    "isRetrigger": request.text.is_some(),
+                    "triggerKind": if request.reply.explicit() { 1 } else { 3 },
+                    "isRetrigger": retrigger,
                 });
-                if let Some(c) = request.trigger.filter(|c| self.signature_triggered_by(*c)) {
+                if let Some(c) = trigger.filter(|c| self.signature_triggered_by(*c)) {
                     context["triggerKind"] = json!(2);
                     context["triggerCharacter"] = json!(c.to_string());
                 }
                 params["context"] = context;
             }
-            LspFeature::Completion => {
-                params["context"] = match request.trigger {
+            LspQuery::Completion { trigger, .. } => {
+                params["context"] = match trigger {
                     Some(c) => json!({ "triggerKind": 2, "triggerCharacter": c.to_string() }),
                     None => json!({ "triggerKind": 1 }),
                 };
@@ -601,14 +663,50 @@ impl Client {
         self.request(method, params, Pending::Feature(request));
     }
 
+    /// The requests it hasn't answered, taken (as it's stopped or being
+    /// stopped), so each can be answered that it won't be.
+    pub fn take_unanswered(&mut self) -> Vec<LspRequest> {
+        let ids: Vec<i64> = self
+            .pending
+            .iter()
+            .filter(|(_, p)| {
+                matches!(
+                    p,
+                    Pending::Feature(_) | Pending::Part(..) | Pending::Command(Some(_))
+                )
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        let mut taken: Vec<(i64, LspRequest)> = ids
+            .into_iter()
+            .filter_map(|id| match self.pending.remove(&id) {
+                Some(
+                    Pending::Feature(request)
+                    | Pending::Part(request, _)
+                    | Pending::Command(Some(request)),
+                ) => Some((id, request)),
+                _ => None,
+            })
+            .collect();
+        taken.sort_by_key(|(id, _)| *id);
+        // A request asked in parts, once.
+        let mut unanswered: Vec<LspRequest> = Vec::new();
+        for (_, request) in taken {
+            if !unanswered.contains(&request) {
+                unanswered.push(request);
+            }
+        }
+        unanswered
+    }
+
     /// Handles the answer to one of our requests.
-    pub fn handle_response(&mut self, id: i64, message: &Value) -> Answer {
+    pub fn handle_response(&mut self, id: i64, message: &Value) -> Response {
         match self.pending.remove(&id) {
             Some(Pending::Initialize) => {
                 if let Some(error) = message.get("error") {
                     let text = error["message"].as_str().unwrap_or("initialize failed");
                     self.state = State::Stopped(text.to_string());
-                    return Answer::Failed(text.to_string());
+                    return Response::Failed(text.to_string());
                 }
                 self.capabilities = message["result"]["capabilities"].clone();
                 let capabilities = &message["result"]["capabilities"];
@@ -632,44 +730,44 @@ impl Client {
                     "workspace/didChangeConfiguration",
                     json!({ "settings": settings }),
                 );
-                Answer::Done
+                Response::Done
             }
             Some(Pending::Shutdown) => {
                 self.notify("exit", Value::Null);
-                Answer::Done
+                Response::Done
             }
-            Some(Pending::Command) => match message.get("error") {
-                Some(error) => Answer::Failed(error["message"].as_str().unwrap_or("failed").into()),
-                None => Answer::Done,
-            },
+            Some(Pending::Command(request)) => {
+                if self.running == request {
+                    self.running = None;
+                }
+                match (request, message.get("error")) {
+                    (Some(request), _) => Response::Command(request, response(message)),
+                    (None, Some(error)) => {
+                        Response::Failed(error["message"].as_str().unwrap_or("failed").into())
+                    }
+                    (None, None) => Response::Done,
+                }
+            }
             // Typing on asks again; an answer with a newer one on its way
             // would only be replaced, so it's not worth reading.
             Some(Pending::Feature(request))
                 if matches!(
-                    request.feature,
+                    request.feature(),
                     LspFeature::Completion
                         | LspFeature::SignatureHelp
                         | LspFeature::WorkspaceSymbols
                 ) && self.pending.iter().any(|(later, pending)| {
                     *later > id
                         && matches!(pending, Pending::Feature(r)
-                                if r.feature == request.feature
+                                if r.feature() == request.feature()
                                     && r.document == request.document)
                 }) =>
             {
-                Answer::Done
+                Response::Done
             }
-            Some(Pending::Feature(request)) => {
-                let result = match message.get("error") {
-                    Some(error) => Err(ResponseError {
-                        code: error["code"].as_i64().unwrap_or(0),
-                        message: error["message"].as_str().unwrap_or("failed").to_string(),
-                    }),
-                    None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
-                };
-                Answer::Feature(request, result)
-            }
-            None => Answer::Done,
+            Some(Pending::Feature(request)) => Response::Feature(request, response(message)),
+            Some(Pending::Part(request, part)) => Response::Part(request, part, response(message)),
+            None => Response::Done,
         }
     }
 

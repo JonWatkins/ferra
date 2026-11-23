@@ -8,7 +8,7 @@
 //! buttons), and a box to type in, which has focus in `Mode::Agent`.
 
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::agent_session::{AgentCommand, ConfigOption, Usage};
 use super::picker::{Picker, PickerAction, PickerItem};
@@ -245,6 +245,12 @@ pub struct AgentChat {
     pub(super) mentioning: bool,
     /// Buffers opened for the agent's tools, closed when its turn ends.
     pub(super) opened: HashSet<super::DocumentId>,
+    /// Agent changes still open, by tool call: a code action's command
+    /// whose server sends its edits as it runs. Each is what was unsaved
+    /// before its first edit (see `Editor::agent_change`).
+    pub(super) open_changes: HashMap<u64, HashMap<super::DocumentId, (u64, bool)>>,
+    /// The last few lists of code actions it was given, to make one.
+    pub(super) code_actions: std::collections::VecDeque<super::lsp::ActionList>,
     /// Whether the agent takes images (it says as it starts).
     pub takes_images: Option<bool>,
     /// Images put in the box, each shown there as `[Image #n]`.

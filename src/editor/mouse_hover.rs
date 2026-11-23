@@ -7,7 +7,7 @@
 //! instead, as VS Code's peek.
 
 use super::diagnostics::Severity;
-use super::lsp::{Location, LspFeature, LspRequest};
+use super::lsp::{Location, LspQuery, LspRequest, Reply};
 use super::{DocumentId, Editor};
 use crate::core::Position;
 
@@ -149,23 +149,17 @@ impl Editor {
             peek,
         };
         let request = LspRequest {
-            feature: if peek {
-                LspFeature::Definition
+            query: if peek {
+                LspQuery::Definition
             } else {
-                LspFeature::Hover
+                LspQuery::Hover
             },
             document: self.document.id(),
             position: at,
             buffer_id: buffer.id(),
             edit_seq: buffer.edit_seq(),
             // Not asked for with a key: quiet if there's no answer.
-            manual: false,
-            trigger: None,
-            word_start: at,
-            item: None,
-            text: None,
-            end: at,
-            agent: None,
+            reply: Reply::Pointer,
         };
         if !rest.problems.is_empty() {
             let problems = rest.problems.clone();

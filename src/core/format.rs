@@ -8,6 +8,20 @@
 //! (`//`, `#`...) with the space after it. A list item (`- `, `* `, `+ `,
 //! `1. `, `1) `) starts a paragraph of its own, and its later lines line up
 //! under its text. A word wider than the width gets a line to itself.
+//!
+//! `gq` is `Operator::Format` (`gw` with `keep_cursor`) over the lines its
+//! range touches. `core/format.rs` does the work, a paragraph at a time: blank
+//! lines (or a comment marker alone) separate paragraphs and are kept, as does
+//! a change between comment and code. Each paragraph's words are joined with
+//! single spaces and broken greedily at `text-width` (0 means 79, Vim's
+//! fallback; it's buffer-local), every line starting with the first line's
+//! leader: its indentation and the language's line-comment marker with its
+//! space (block comments aren't leaders, so Markdown's `#` headings stay put).
+//! A list item (`- `, `* `, `+ `, `1. `, `1) `) starts its own paragraph, its
+//! later lines indented to its text. The lines are replaced as one change; the
+//! cursor goes to the last one's first non-blank, or with `gw` stays where it
+//! was. `gqq`, `gqgq` and `gwgw` come from operator-pending `q`, `gq` and `gw`
+//! bound to `current_line`.
 
 use super::columns::display_width;
 

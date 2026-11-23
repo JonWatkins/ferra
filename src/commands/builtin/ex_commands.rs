@@ -3,6 +3,14 @@
 //!
 //! Each works on the range given before it (`:%s/a/b/`, `:5,10d`), or the
 //! cursor's line when there isn't one (`:g`: the whole file).
+//!
+//! `:s` (`commands/builtin/ex_commands.rs`) compiles the pattern as a
+//! `SearchPattern` and translates Vim's replacement syntax (`&`, `\1`, `\n`)
+//! into the `regex` crate's. It edits from the bottom of the range upwards, so
+//! a replacement that adds line breaks doesn't shift the rows still to be
+//! processed, and it sets the last search so `n` and highlighting follow. The
+//! last `:s` arguments are kept on the editor (`last_substitute`), so `&`,
+//! `:&&` and `g&` parse them again with different flags or patterns.
 
 use super::command_line::run_command_line;
 use crate::commands::ex::{

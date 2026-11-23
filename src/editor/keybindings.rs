@@ -8,6 +8,14 @@
 //! makes the changes asked for here (`take_key_edits`): writing them to
 //! `config.toml` (`[keys.<mode>]`, keeping its comments) and building the
 //! keys again.
+//!
+//! **The keybinding editor** (`editor/keybindings.rs`, `ui/keybindings.rs`):
+//! the app owns the keys, so it builds the rows (`App::binding_rows`: each
+//! binding's source from comparing the keymap, the config's keys and the user's
+//! `[keys]`) and makes the editor's `KeyEdit`s (`App::apply_key_edits`): the
+//! user's keys changed, written with `config::edit::write_key`, and the keymap
+//! built again with the plugins' keys on top. Keys pressed to record go
+//! straight to it from `App::handle_key`, bound or not.
 
 use std::cell::Cell;
 
