@@ -124,6 +124,9 @@ enum Pending {
     Initialize,
     Shutdown,
     Feature(LspRequest),
+    /// One part of a request asked in parts (code actions at the symbol,
+    /// 0, and for its line, 1), answered together.
+    Part(LspRequest, usize),
     /// `workspace/executeCommand`: only an error is worth showing.
     Command,
 }
@@ -151,6 +154,19 @@ pub enum Answer {
     Failed(String),
     /// The answer to an editor request.
     Feature(LspRequest, Result<Value, ResponseError>),
+    /// The answer to part of one (see `Pending::Part`).
+    Part(LspRequest, usize, Result<Value, ResponseError>),
+}
+
+/// A response's result, or the error it has instead.
+fn response(message: &Value) -> Result<Value, ResponseError> {
+    match message.get("error") {
+        Some(error) => Err(ResponseError {
+            code: error["code"].as_i64().unwrap_or(0),
+            message: error["message"].as_str().unwrap_or("failed").to_string(),
+        }),
+        None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+    }
 }
 
 /// The method that asks for `feature`, and the capability that says the
@@ -427,17 +443,17 @@ impl Client {
         self.capabilities["completionProvider"]["resolveProvider"].as_bool() == Some(true)
     }
 
-    /// Asks for the code actions for `request`'s range (`start`..`end` as
-    /// LSP positions), with the diagnostics there they might fix; only
-    /// those of kind `only` (`source`: organize imports, fix all...), if
-    /// given.
+    /// Asks for the code actions for `start`..`end` (LSP positions) in
+    /// `request`'s document, with the diagnostics there they might fix;
+    /// only those of kind `only` (`source`: organize imports, fix all...),
+    /// if given; as `part` of the request, if it's asked in parts.
     pub fn request_code_actions(
         &mut self,
         request: LspRequest,
-        start: Value,
-        end: Value,
+        (start, end): (Value, Value),
         diagnostics: Vec<Value>,
         only: Option<&str>,
+        part: Option<usize>,
     ) {
         let Some(synced) = self.documents.get(&request.document) else {
             return;
@@ -451,7 +467,11 @@ impl Client {
             "range": { "start": start, "end": end },
             "context": context,
         });
-        self.request("textDocument/codeAction", params, Pending::Feature(request));
+        let pending = match part {
+            Some(part) => Pending::Part(request, part),
+            None => Pending::Feature(request),
+        };
+        self.request("textDocument/codeAction", params, pending);
     }
 
     /// Whether it wants asking before a file's moved (`willRename`).
@@ -607,18 +627,25 @@ impl Client {
         let ids: Vec<i64> = self
             .pending
             .iter()
-            .filter(|(_, p)| matches!(p, Pending::Feature(_)))
+            .filter(|(_, p)| matches!(p, Pending::Feature(_) | Pending::Part(..)))
             .map(|(id, _)| *id)
             .collect();
         let mut taken: Vec<(i64, LspRequest)> = ids
             .into_iter()
             .filter_map(|id| match self.pending.remove(&id) {
-                Some(Pending::Feature(request)) => Some((id, request)),
+                Some(Pending::Feature(request) | Pending::Part(request, _)) => Some((id, request)),
                 _ => None,
             })
             .collect();
         taken.sort_by_key(|(id, _)| *id);
-        taken.into_iter().map(|(_, request)| request).collect()
+        // A request asked in parts, once.
+        let mut unanswered: Vec<LspRequest> = Vec::new();
+        for (_, request) in taken {
+            if !unanswered.contains(&request) {
+                unanswered.push(request);
+            }
+        }
+        unanswered
     }
 
     /// Handles the answer to one of our requests.
@@ -679,16 +706,8 @@ impl Client {
             {
                 Answer::Done
             }
-            Some(Pending::Feature(request)) => {
-                let result = match message.get("error") {
-                    Some(error) => Err(ResponseError {
-                        code: error["code"].as_i64().unwrap_or(0),
-                        message: error["message"].as_str().unwrap_or("failed").to_string(),
-                    }),
-                    None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
-                };
-                Answer::Feature(request, result)
-            }
+            Some(Pending::Feature(request)) => Answer::Feature(request, response(message)),
+            Some(Pending::Part(request, part)) => Answer::Part(request, part, response(message)),
             None => Answer::Done,
         }
     }

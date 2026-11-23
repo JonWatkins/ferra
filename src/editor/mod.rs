@@ -301,6 +301,11 @@ pub struct Editor {
     file_diagnostics: HashMap<std::path::PathBuf, Vec<diagnostics::Diagnostic>>,
     /// The project symbol picker's query when the server was last asked.
     symbol_query: Option<String>,
+    /// The last code actions listed, to make the one picked.
+    code_actions: Option<lsp::ActionList>,
+    /// How many lists of code actions there have been (the screen's and
+    /// the agent's), to number them.
+    action_lists_made: u64,
     /// A language server's signature help, shown while typing a call.
     signature: Option<signature::SignatureHelp>,
     /// Added to the next save's message (see `note_for_save`).

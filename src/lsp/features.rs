@@ -11,29 +11,23 @@ use super::client::{Client, ResponseError};
 use super::convert::{self, Encoding};
 use super::{Lsp, State};
 use crate::core::Position;
-use crate::editor::DocumentId;
+use crate::editor::Editor;
 use crate::editor::lsp::{
-    Answer, Applied, Busy, Call, Calls, Edits, Location, LspFeature, LspQuery, LspRequest,
-    NoAnswer, Reply,
+    Answer, Applied, Busy, Call, Calls, CodeAction, Edits, Location, LspFeature, LspQuery,
+    LspRequest, NoAnswer, Reply,
 };
 use crate::editor::server_completion::ServerItem;
 use crate::editor::signature::SignatureHelp;
-use crate::editor::{Editor, Message};
 
 /// The kind of code actions the agent's asked for when it gives no line:
 /// the file-wide ones (organize imports, fix all, remove unused imports).
 const FILE_WIDE_ACTIONS: &str = "source";
 
-/// A kept answer: its number, its items, and the buffer and edit count it
-/// was made for.
-type Kept = (u64, Vec<Value>, Option<(DocumentId, u64)>);
-
-/// Recent completion answers' items, by answer.
+/// Recent completion answers' items, by answer, to resolve the one taken.
 #[derive(Default)]
 pub(super) struct Stash {
-    /// Each answer: its number, its items, and the buffer and edit count
-    /// it was made for (code actions: their edits are for that text).
-    answers: std::collections::VecDeque<Kept>,
+    /// Each answer: its number and its items.
+    answers: std::collections::VecDeque<(u64, Vec<Value>)>,
     next: u64,
 }
 
@@ -43,30 +37,17 @@ impl Stash {
     const KEPT: usize = 4;
 
     fn keep(&mut self, items: Vec<Value>) -> u64 {
-        self.keep_for(items, None)
-    }
-
-    /// Keeps `items`, made for `made_for`'s buffer at that edit count.
-    fn keep_for(&mut self, items: Vec<Value>, made_for: Option<(DocumentId, u64)>) -> u64 {
         self.next += 1;
         if self.answers.len() == Self::KEPT {
             self.answers.pop_front();
         }
-        self.answers.push_back((self.next, items, made_for));
+        self.answers.push_back((self.next, items));
         self.next
     }
 
     fn item(&self, (answer, index): (u64, usize)) -> Option<&Value> {
-        let (_, items, _) = self.answers.iter().find(|(id, ..)| *id == answer)?;
+        let (_, items) = self.answers.iter().find(|(id, _)| *id == answer)?;
         items.get(index)
-    }
-
-    /// The buffer and edit count answer `answer` was made for, if kept.
-    fn made_for(&self, answer: u64) -> Option<(DocumentId, u64)> {
-        self.answers
-            .iter()
-            .find(|(id, ..)| *id == answer)
-            .and_then(|(_, _, made_for)| *made_for)
     }
 }
 
@@ -295,60 +276,9 @@ impl Lsp {
                 editor.lsp_answered(&request, Err(NoAnswer::Unsupported(client.name.clone())));
                 continue;
             }
-            if let LspQuery::ApplyCodeAction { item } = request.query {
-                // Its edits are for the text it was made for: not since changed.
-                let changed = self
-                    .actions
-                    .made_for(item.0)
-                    .is_some_and(|(document, seq)| {
-                        editor
-                            .document_by_id(document)
-                            .is_none_or(|d| d.buffer().edit_seq() != seq)
-                    });
-                if changed {
-                    let text =
-                        "The file has changed since that list of code actions: ask for them again";
-                    match request.reply.agent() {
-                        Some(call) => editor.agent_lsp_answer(call, Err(text.into())),
-                        None => editor.set_message(Message::info(text)),
-                    }
-                    continue;
-                }
-                let action = self.actions.item(item).cloned();
-                let Some(action) = action else {
-                    let text = "That list of code actions is too old (or has no such number)";
-                    match request.reply.agent() {
-                        Some(call) => editor.agent_lsp_answer(call, Err(text.into())),
-                        None => editor.set_message(Message::info(text)),
-                    }
-                    continue;
-                };
-                let before = editor.agent_unsaved();
-                let made =
-                    make_code_action(editor, client, &action, request.reply.agent().is_some());
-                if let Some(call) = request.reply.agent()
-                    && made
-                {
-                    let title = action["title"].as_str().unwrap_or("the action");
-                    let (saved, changed) = editor.agent_save_changed(&before);
-                    let names = editor.agent_names(&changed);
-                    let text = format!("Made {title} in {names}{saved}");
-                    editor.agent_lsp_changed(call, text, changed);
-                    continue;
-                }
-                if !made {
-                    if client.resolves_code_actions() || action.get("data").is_some() {
-                        let request = LspRequest {
-                            query: LspQuery::ResolveCodeAction,
-                            ..request
-                        };
-                        client.resolve_code_action(request, action);
-                    } else if let Some(call) = request.reply.agent() {
-                        editor.agent_lsp_answer(call, Err("That code action does nothing".into()));
-                    } else {
-                        editor.set_message(Message::info("That code action does nothing"));
-                    }
-                }
+            if let LspQuery::ApplyCodeAction { action } = &request.query {
+                let server = action.server.clone();
+                make_action(editor, client, request, &server);
                 continue;
             }
             // The agent's formatting: answered in `answer` (the app's own
@@ -364,14 +294,16 @@ impl Lsp {
                     start,
                     end,
                     file_wide,
+                    with_line,
                 } = request.query
                 else {
                     continue;
                 };
+                // The line too: its own row, start to end.
+                let line =
+                    with_line.then(|| (Position::new(start.row, 0), buffer.line_end(start.row)));
                 let (first, last) = (start.row as u64, end.row as u64);
-                let start = convert::to_lsp(buffer, start, client.encoding);
-                let end = convert::to_lsp(buffer, end, client.encoding);
-                let diagnostics = self
+                let diagnostics: Vec<Value> = self
                     .raw_diagnostics
                     .get(&request.document)
                     .into_iter()
@@ -383,9 +315,26 @@ impl Lsp {
                     })
                     .cloned()
                     .collect();
+                let range = |(start, end)| {
+                    (
+                        convert::to_lsp(buffer, start, client.encoding),
+                        convert::to_lsp(buffer, end, client.encoding),
+                    )
+                };
                 // The file-wide ones: source actions only.
                 let only = file_wide.then_some(FILE_WIDE_ACTIONS);
-                client.request_code_actions(request, start, end, diagnostics, only);
+                match line {
+                    Some(line) => {
+                        let (here, line) = (range((start, end)), range(line));
+                        let again = (request.clone(), diagnostics.clone());
+                        client.request_code_actions(request, here, diagnostics, only, Some(0));
+                        client.request_code_actions(again.0, line, again.1, only, Some(1));
+                    }
+                    None => {
+                        let here = range((start, end));
+                        client.request_code_actions(request, here, diagnostics, only, None);
+                    }
+                }
                 continue;
             }
             if request.feature() == LspFeature::InlayHint {
@@ -415,20 +364,26 @@ impl Lsp {
     }
 }
 
-/// Shows the server's answer to `request`, unless the editor has moved on
-/// since (another buffer, an edit, the cursor moved).
-/// What answers are kept in, to act on later.
-/// The agent's two code action lists for one call, as they come: at the
-/// symbol, and for the whole line.
-pub(super) type AgentActions = (Option<Vec<Value>>, Option<Vec<Value>>);
+/// The answers to a request's parts so far (see `Pending::Part`).
+pub(super) type Parts = [Option<Result<Value, ResponseError>>; 2];
 
-pub(super) struct Stashes<'a> {
-    pub completions: &'a mut Stash,
-    pub actions: &'a mut Stash,
-    /// The agent's code action lists so far, by its call: it asks twice,
-    /// at the symbol and for the whole line, and gets them merged (the
-    /// symbol's first, so the numbers are the same each time).
-    pub agent_actions: &'a mut HashMap<u64, AgentActions>,
+/// Code actions asked for in parts (at the symbol, then for its line), as
+/// one list: the symbol's first, so the numbers stay the same, then the
+/// line's not already there. A part that failed counts as none, unless
+/// both did.
+pub(super) fn merge_actions(parts: Parts) -> Result<Value, ResponseError> {
+    let [here, line] = parts.map(|part| part.unwrap_or(Ok(Value::Null)));
+    let (here, line) = match (here, line) {
+        (Err(error), Err(_)) => return Err(error),
+        (here, line) => (here.unwrap_or_default(), line.unwrap_or_default()),
+    };
+    let mut list: Vec<Value> = here.as_array().cloned().unwrap_or_default();
+    for action in line.as_array().into_iter().flatten() {
+        if !list.iter().any(|a| a["title"] == action["title"]) {
+            list.push(action.clone());
+        }
+    }
+    Ok(Value::Array(list))
 }
 
 pub(super) fn answer(
@@ -436,7 +391,7 @@ pub(super) fn answer(
     client: &mut Client,
     request: LspRequest,
     result: Result<Value, ResponseError>,
-    stashes: Stashes,
+    completions: &mut Stash,
 ) {
     // The agent's move: the server's edits for it, then the move.
     if request.feature() == LspFeature::MoveFile {
@@ -519,76 +474,19 @@ pub(super) fn answer(
         editor.lsp_answered(&request, answer);
         return;
     }
-    // The coding agent's: the answer as text, back to it.
-    if let Some(call) = request.reply.agent()
-        && request.feature() == LspFeature::CodeAction
-    {
-        let list: Vec<Value> = result
-            .as_ref()
-            .ok()
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter(|a| a.get("disabled").is_none())
-            .cloned()
-            .collect();
-        // For the whole file: one asking, answered as it is, with only
-        // the source actions (servers send quick fixes too, for the
-        // diagnostics sent with it; the client's to filter by `only`).
-        if matches!(
-            request.query,
-            LspQuery::CodeActions {
-                file_wide: true,
-                ..
-            }
-        ) {
-            let list = list
-                .into_iter()
-                .filter(|a| {
-                    a["kind"].as_str().is_some_and(|kind| {
-                        kind == FILE_WIDE_ACTIONS
-                            || kind.starts_with(&format!("{FILE_WIDE_ACTIONS}."))
-                    })
-                })
-                .collect::<Vec<_>>();
-            let answer = if list.is_empty() {
-                "No file-wide code actions for this file (organize imports and the like)"
-                    .to_string()
-            } else {
-                agent_actions_list(list, stashes.actions, (request.document, request.edit_seq))
-            };
-            editor.agent_lsp_answer(call, Ok(answer));
-            return;
+    if let LspQuery::CodeActions { file_wide, .. } = request.query {
+        let answer = match result {
+            Ok(result) => Ok(Answer::Actions(code_actions(&result, file_wide))),
+            Err(error) => Err(server_error(client, error)),
+        };
+        editor.lsp_answered(&request, answer);
+        return;
+    }
+    if request.feature() == LspFeature::ResolveCodeAction {
+        match result {
+            Ok(resolved) => make_action(editor, client, request, &resolved),
+            Err(error) => editor.lsp_answered(&request, Err(server_error(client, error))),
         }
-        let (at_symbol, for_line) = stashes.agent_actions.entry(call).or_default();
-        // The symbol's range is empty, the line's isn't, unless the line is
-        // empty too: then both are the same range, and the second to come
-        // is taken as the line's.
-        let empty =
-            matches!(request.query, LspQuery::CodeActions { start, end, .. } if start == end);
-        if empty && at_symbol.is_none() {
-            *at_symbol = Some(list);
-        } else {
-            *for_line = Some(list);
-        }
-        if at_symbol.is_none() || for_line.is_none() {
-            return;
-        }
-        let (at_symbol, for_line) = stashes.agent_actions.remove(&call).unwrap_or_default();
-        let mut list = at_symbol.unwrap_or_default();
-        for action in for_line.unwrap_or_default() {
-            if !list.iter().any(|a| a["title"] == action["title"]) {
-                list.push(action);
-            }
-        }
-        editor.agent_lsp_answer(
-            call,
-            Ok(agent_actions_list(
-                list,
-                stashes.actions,
-                (request.document, request.edit_seq),
-            )),
-        );
         return;
     }
     if let Some(call) = request.reply.agent() {
@@ -618,21 +516,12 @@ pub(super) fn answer(
                     }
                 }
             },
-            Err(error) => {
-                let mut text = format!("{}: {}", client.name, error.message);
-                if matches!(
-                    request.feature(),
-                    LspFeature::ApplyCodeAction | LspFeature::ResolveCodeAction
-                ) {
-                    text.push_str(" (the file may have changed since: run lsp_code_actions again)");
-                }
-                Err(text)
-            }
+            Err(error) => Err(format!("{}: {}", client.name, error.message)),
         };
         editor.agent_lsp_answer(call, text);
         return;
     }
-    let stash = stashes.completions;
+    let stash = completions;
     let current = match request.feature() {
         LspFeature::Completion => editor.still_completing(&request),
         // Shown if the picker's still open with that query (checked there).
@@ -649,11 +538,6 @@ pub(super) fn answer(
         LspFeature::SignatureHelp => editor.document.id() == request.document,
         // The item was taken: its import goes in if it's the same buffer.
         LspFeature::ResolveCompletion => editor.document.id() == request.document,
-        // Chosen from the list: made unless the text changed meanwhile.
-        LspFeature::ResolveCodeAction => {
-            editor.document.id() == request.document
-                && editor.document.buffer().edit_seq() == request.edit_seq
-        }
         _ => editor.still_at(&request),
     };
     if !current {
@@ -750,32 +634,6 @@ pub(super) fn answer(
     if request.feature() == LspFeature::SignatureHelp {
         let help = signature_help(&result);
         editor.show_signature_help(&request, help);
-        return;
-    }
-    if request.feature() == LspFeature::CodeAction {
-        // Those the server says can't be done here are left out.
-        let actions: Vec<Value> = result
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|a| a.get("disabled").is_none())
-            .cloned()
-            .collect();
-        let titles = actions
-            .iter()
-            .map(|a| {
-                let title = a["title"].as_str().unwrap_or("(untitled)").to_string();
-                let kind = a["kind"].as_str().unwrap_or("").to_string();
-                (title, kind)
-            })
-            .collect();
-        let made_for = Some((request.document, request.edit_seq));
-        let answer = stashes.actions.keep_for(actions, made_for);
-        editor.show_code_actions(answer, titles);
-        return;
-    }
-    if request.feature() == LspFeature::ResolveCodeAction {
-        make_code_action(editor, client, &result, false);
     }
 }
 
@@ -792,8 +650,7 @@ fn server_error(client: &Client, error: ResponseError) -> NoAnswer {
 }
 
 /// A server's answer that changes things, for the coding agent:
-/// formatting, a code action (resolved), made; the code actions there are,
-/// kept to make one. `None` for an answer that's only told.
+/// formatting, made. `None` for an answer that's only told.
 fn agent_change(
     editor: &mut Editor,
     client: &mut Client,
@@ -831,48 +688,10 @@ fn agent_change(
             };
             format!("Formatted {name} ({changes})")
         }
-        LspFeature::ResolveCodeAction => {
-            make_code_action(editor, client, result, true);
-            let title = result["title"].as_str().unwrap_or("the action");
-            format!("Made {title}")
-        }
         _ => return None,
     };
     let (saved, changed) = editor.agent_save_changed(&before);
-    let done = if request.feature() == LspFeature::ResolveCodeAction && !changed.is_empty() {
-        format!("{done} in {}", editor.agent_names(&changed))
-    } else {
-        done
-    };
     Some(Ok((format!("{done}{saved}"), changed)))
-}
-
-/// The code actions there are, for the agent: numbered, and kept to make
-/// one.
-fn agent_actions_list(
-    list: Vec<Value>,
-    actions: &mut Stash,
-    made_for: (DocumentId, u64),
-) -> String {
-    if list.is_empty() {
-        return "No code actions there".into();
-    }
-    let lines: Vec<String> = list
-        .iter()
-        .enumerate()
-        .map(|(i, a)| {
-            let title = a["title"].as_str().unwrap_or("(untitled)");
-            match a["kind"].as_str().filter(|k| !k.is_empty()) {
-                Some(kind) => format!("{}. {title} ({kind})", i + 1),
-                None => format!("{}. {title}", i + 1),
-            }
-        })
-        .collect();
-    let kept = actions.keep_for(list, Some(made_for));
-    format!(
-        "{}\nTo make one: lsp_apply_code_action with list {kept}, its number and this path.",
-        lines.join("\n")
-    )
 }
 
 /// A call hierarchy answer: after `prepareCallHierarchy`, asks for the
@@ -1254,47 +1073,73 @@ fn signature_help(result: &Value) -> Option<SignatureHelp> {
     })
 }
 
-/// Makes code action `action`: its edits, then its command (which the
-/// server runs, and may send edits back for). Returns false if it has
-/// neither (so it needs resolving).
-/// Makes `action`: its edit, then its command. For the agent
-/// (`for_agent`), the files it changes are saved after, so they aren't
-/// called unsaved.
-fn make_code_action(
-    editor: &mut Editor,
-    client: &mut Client,
-    action: &Value,
-    for_agent: bool,
-) -> bool {
+/// Makes code action `action` (as the server has it) for `request`: runs
+/// its command, if it has one, and answers with its edits for the asker to
+/// make. One with neither is resolved first, if the server fills them in
+/// then.
+fn make_action(editor: &mut Editor, client: &mut Client, request: LspRequest, action: &Value) {
     let title = action["title"].as_str().unwrap_or("Done").to_string();
     // A bare `Command` rather than a `CodeAction`.
     if action["command"].is_string() {
         client.execute_command(action, &title);
-        return true;
+        editor.lsp_answered(&request, Ok(Answer::Action { title, edits: None }));
+        return;
     }
     let edit = action.get("edit").filter(|e| !e.is_null());
     let command = action.get("command").filter(|c| c.is_object());
     if edit.is_none() && command.is_none() {
-        return false;
-    }
-    if let Some(edit) = edit {
-        match apply_workspace_edit(editor, edit, client.encoding) {
-            Ok(mut applied) => {
-                if for_agent {
-                    applied.others = 0;
-                }
-                editor.set_message(Message::info(format!("{title}: {}", applied.describe())));
-            }
-            Err(error) => {
-                editor.lsp_failed(error);
-                return true;
-            }
+        if let LspQuery::ApplyCodeAction { action: listed } = &request.query
+            && (client.resolves_code_actions() || action.get("data").is_some())
+        {
+            let request = LspRequest {
+                query: LspQuery::ResolveCodeAction {
+                    action: listed.clone(),
+                },
+                ..request
+            };
+            client.resolve_code_action(request, action.clone());
+            return;
         }
+        let why = NoAnswer::Unusable("That code action does nothing".into());
+        editor.lsp_answered(&request, Err(why));
+        return;
     }
+    let edits = match edit.map(|edit| workspace_edits(editor, edit, client.encoding)) {
+        Some(Ok(edits)) => Some(edits),
+        Some(Err(error)) => {
+            editor.lsp_answered(&request, Err(NoAnswer::Unusable(error)));
+            return;
+        }
+        None => None,
+    };
     if let Some(command) = command {
         client.execute_command(command, &title);
     }
-    true
+    editor.lsp_answered(&request, Ok(Answer::Action { title, edits }));
+}
+
+/// The code actions in an answer, but those the server says can't be done
+/// there; with `file_wide`, only the source ones (servers send quick fixes
+/// too, for the diagnostics sent with the request: the client's to filter
+/// by `only`).
+fn code_actions(result: &Value, file_wide: bool) -> Vec<CodeAction> {
+    result
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|a| a.get("disabled").is_none())
+        .filter(|a| {
+            !file_wide
+                || a["kind"].as_str().is_some_and(|kind| {
+                    kind == FILE_WIDE_ACTIONS || kind.starts_with(&format!("{FILE_WIDE_ACTIONS}."))
+                })
+        })
+        .map(|a| CodeAction {
+            title: a["title"].as_str().unwrap_or("(untitled)").to_string(),
+            kind: a["kind"].as_str().unwrap_or("").to_string(),
+            server: a.clone(),
+        })
+        .collect()
 }
 
 /// A `WorkspaceEdit`'s changes (`changes` by URI, or `documentChanges`)
@@ -1861,6 +1706,36 @@ mod tests {
             many.describe(),
             "1 change in 1 file (2 other files not saved yet: :wa)"
         );
+    }
+
+    #[test]
+    fn code_actions_asked_in_parts_are_one_list() {
+        let titles = |v: &Value| -> Vec<String> {
+            v.as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a["title"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let error = || ResponseError {
+            code: -32603,
+            message: "busy".into(),
+        };
+        let merged = merge_actions([
+            Some(Ok(json!([{"title": "Extract"}, {"title": "Fix"}]))),
+            Some(Ok(json!([{"title": "Fix"}, {"title": "Fix the line"}]))),
+        ]);
+        assert_eq!(
+            titles(&merged.unwrap()),
+            ["Extract", "Fix", "Fix the line"],
+            "the symbol's first, then the line's not already there"
+        );
+        let one_failed = merge_actions([Some(Err(error())), Some(Ok(json!([{"title": "Fix"}])))]);
+        assert_eq!(titles(&one_failed.unwrap()), ["Fix"]);
+        let none = merge_actions([Some(Ok(Value::Null)), Some(Ok(json!([])))]);
+        assert_eq!(none.unwrap(), json!([]));
+        let both = merge_actions([Some(Err(error())), Some(Err(error()))]);
+        assert_eq!(both.unwrap_err().message, "busy");
     }
 
     #[test]

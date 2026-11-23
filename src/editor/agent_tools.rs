@@ -1271,20 +1271,30 @@ impl Editor {
             return Err("Language servers are off in this editor (lsp = false)".into());
         }
         let full = absolute(Path::new(path));
-        let id = self.agent_buffer(&full)?;
-        let buffer = self.document_by_id(id).ok_or("No such buffer")?.buffer();
-        let position = Position::new(0, 0);
-        self.lsp_requests.push(LspRequest {
-            query: LspQuery::ApplyCodeAction {
-                item: (list, number.saturating_sub(1)),
-            },
-            document: id,
-            position,
-            buffer_id: buffer.id(),
-            edit_seq: buffer.edit_seq(),
-            reply: Reply::Agent(call),
-        });
+        self.agent_buffer(&full)?;
+        let kept = self
+            .agent
+            .code_actions
+            .iter()
+            .find(|l| l.number == list)
+            .cloned();
+        let index = number.saturating_sub(1);
+        if let Err(why) = self.make_code_action(kept.as_ref(), index, Reply::Agent(call)) {
+            // Answered as the server's answer would be.
+            self.agent_lsp_answer(call, Err(why.into()));
+        }
         Ok(())
+    }
+
+    /// Keeps a list of code actions given to the agent, to make one: the
+    /// last few.
+    pub(super) fn keep_agent_code_actions(&mut self, list: super::lsp::ActionList) {
+        const KEPT: usize = 4;
+        let lists = &mut self.agent.code_actions;
+        if lists.len() == KEPT {
+            lists.pop_front();
+        }
+        lists.push_back(list);
     }
 
     /// A language server question for tool call `call`: `feature` at
@@ -1328,6 +1338,7 @@ impl Editor {
                     start: Position::new(0, 0),
                     end: buffer.line_end(last),
                     file_wide: true,
+                    with_line: false,
                 },
                 document: id,
                 position: Position::new(0, 0),
@@ -1378,10 +1389,12 @@ impl Editor {
         let lsp_query = match feature {
             LspFeature::Rename => LspQuery::Rename { name: text(query) },
             LspFeature::WorkspaceSymbols => LspQuery::WorkspaceSymbols { query: text(query) },
+            // At the symbol (its own refactors), and for the whole line.
             LspFeature::CodeAction => LspQuery::CodeActions {
                 start: position,
                 end: position,
                 file_wide: false,
+                with_line: true,
             },
             feature => LspQuery::at(feature)
                 .ok_or_else(|| format!("Language servers can't be asked for {}", feature.noun()))?,
@@ -1394,19 +1407,6 @@ impl Editor {
             edit_seq: buffer.edit_seq(),
             reply: Reply::Agent(call),
         };
-        // Code actions: asked at the symbol (its own refactors), and for
-        // the whole line with every problem on it (a fix can hang on a hint
-        // beside the error); the two lists are merged.
-        if feature == LspFeature::CodeAction {
-            self.lsp_requests.push(LspRequest {
-                query: LspQuery::CodeActions {
-                    start: Position::new(row, 0),
-                    end: buffer.line_end(row),
-                    file_wide: false,
-                },
-                ..request.clone()
-            });
-        }
         self.lsp_requests.push(request);
         Ok(())
     }

@@ -160,18 +160,23 @@ pub enum LspQuery {
         name: String,
     },
     /// The code actions for `start..end`; with `file_wide`, only the
-    /// file-wide ones (organize imports, fix all).
+    /// file-wide ones (organize imports, fix all); `with_line`, those for
+    /// its whole line too (with every problem on it: a fix can hang on a
+    /// hint beside the error), after its own.
     CodeActions {
         start: Position,
         end: Position,
         file_wide: bool,
+        with_line: bool,
     },
-    /// Making one of a list of code actions: which list, and which one.
+    /// Making a code action from a list a server gave.
     ApplyCodeAction {
-        item: (u64, usize),
+        action: CodeAction,
     },
     /// A chosen code action's edit, from a server that fills it in then.
-    ResolveCodeAction,
+    ResolveCodeAction {
+        action: CodeAction,
+    },
     /// The signature being typed, maybe on typing `trigger` (a `(`);
     /// `retrigger` while it's showing.
     SignatureHelp {
@@ -216,7 +221,7 @@ impl LspQuery {
             LspQuery::Rename { .. } => LspFeature::Rename,
             LspQuery::CodeActions { .. } => LspFeature::CodeAction,
             LspQuery::ApplyCodeAction { .. } => LspFeature::ApplyCodeAction,
-            LspQuery::ResolveCodeAction => LspFeature::ResolveCodeAction,
+            LspQuery::ResolveCodeAction { .. } => LspFeature::ResolveCodeAction,
             LspQuery::SignatureHelp { .. } => LspFeature::SignatureHelp,
             LspQuery::DocumentSymbols => LspFeature::DocumentSymbols,
             LspQuery::WorkspaceSymbols { .. } => LspFeature::WorkspaceSymbols,
@@ -295,6 +300,11 @@ pub enum Answer {
     Hover(String),
     /// Changes the server proposes: a rename's.
     Edits(Edits),
+    /// The code actions there are (those that can be done there).
+    Actions(Vec<CodeAction>),
+    /// A code action made: its title, and its edits (none if all it does
+    /// is run a command on the server, which sends edits of its own).
+    Action { title: String, edits: Option<Edits> },
     /// Places: definitions, declarations, type definitions,
     /// implementations, references.
     Locations {
@@ -303,6 +313,27 @@ pub enum Answer {
         /// more in a moment (still indexing, say).
         busy: Option<Busy>,
     },
+}
+
+/// A code action a server offered: its title and kind, and the server's
+/// own form of it, which only `lsp/` reads, to make it later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeAction {
+    pub title: String,
+    /// `quickfix`, `refactor.extract`, `source.organizeImports`... (maybe
+    /// empty).
+    pub kind: String,
+    pub server: serde_json::Value,
+}
+
+/// A list of code actions kept to make one from: its number, and the
+/// document and text (edit count) the actions were made for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionList {
+    pub number: u64,
+    pub actions: Vec<CodeAction>,
+    pub document: DocumentId,
+    pub edit_seq: u64,
 }
 
 /// One document's changes: ranges and their new text (see
@@ -752,26 +783,73 @@ impl Editor {
             start,
             end,
             file_wide: false,
+            with_line: false,
         })
     }
 
     /// Lists a server's code actions (their titles and kinds), to choose
-    /// one; `answer` says which answer they're from.
-    pub fn show_code_actions(&mut self, answer: u64, actions: Vec<(String, String)>) {
+    /// one; kept as the screen's list of them.
+    fn show_code_actions(&mut self, request: &LspRequest, actions: Vec<CodeAction>) {
         if actions.is_empty() {
             self.set_message(Message::info("No code actions here"));
             return;
         }
-        let items = actions
-            .into_iter()
+        let list = self.keep_code_actions(request, actions);
+        let items = list
+            .actions
+            .iter()
             .enumerate()
-            .map(|(i, (title, kind))| PickerItem {
-                label: title,
-                detail: kind,
-                action: PickerAction::CodeAction(answer, i),
+            .map(|(i, action)| PickerItem {
+                label: action.title.clone(),
+                detail: action.kind.clone(),
+                action: PickerAction::CodeAction(list.number, i),
             })
             .collect();
+        self.code_actions = Some(list);
         self.open_picker(Picker::new("Code actions", items).keep_label_start());
+    }
+
+    /// `actions`, the answer to `request`, as a numbered list to make one
+    /// from.
+    pub(super) fn keep_code_actions(
+        &mut self,
+        request: &LspRequest,
+        actions: Vec<CodeAction>,
+    ) -> ActionList {
+        self.action_lists_made += 1;
+        ActionList {
+            number: self.action_lists_made,
+            actions,
+            document: request.document,
+            edit_seq: request.edit_seq,
+        }
+    }
+
+    /// Asks for code action `index` of `list` to be made, if the text is
+    /// still what the list was made for; `reply` says who for.
+    pub(super) fn make_code_action(
+        &mut self,
+        list: Option<&ActionList>,
+        index: usize,
+        reply: Reply,
+    ) -> Result<(), &'static str> {
+        const TOO_OLD: &str = "That list of code actions is too old (or has no such number)";
+        let list = list.ok_or(TOO_OLD)?;
+        let action = list.actions.get(index).ok_or(TOO_OLD)?.clone();
+        let document = self
+            .document_by_id(list.document)
+            .filter(|d| d.buffer().edit_seq() == list.edit_seq)
+            .ok_or("The file has changed since that list of code actions: ask for them again")?;
+        let buffer = document.buffer();
+        self.lsp_requests.push(LspRequest {
+            query: LspQuery::ApplyCodeAction { action },
+            document: list.document,
+            position: Position::default(),
+            buffer_id: buffer.id(),
+            edit_seq: buffer.edit_seq(),
+            reply,
+        });
+        Ok(())
     }
 
     /// `<Space>S`: opens a picker of the project's symbols, which the
@@ -842,18 +920,12 @@ impl Editor {
     }
 
     /// Makes the code action chosen from the list.
-    pub fn apply_code_action(&mut self, answer: u64, index: usize) {
-        let buffer = self.document.buffer();
-        self.lsp_requests.push(LspRequest {
-            query: LspQuery::ApplyCodeAction {
-                item: (answer, index),
-            },
-            document: self.document.id(),
-            position: self.document.cursor(),
-            buffer_id: buffer.id(),
-            edit_seq: buffer.edit_seq(),
-            reply: Reply::Key,
-        });
+    pub fn apply_code_action(&mut self, list: u64, index: usize) {
+        let kept = self.code_actions.take().filter(|l| l.number == list);
+        if let Err(why) = self.make_code_action(kept.as_ref(), index, Reply::Key) {
+            self.set_message(Message::info(why));
+        }
+        self.code_actions = kept;
     }
 
     /// `:rename name`: has the language server rename the symbol under
@@ -1039,12 +1111,14 @@ impl Editor {
     /// (the cursor, or the pointer, still where it was asked).
     fn show_lsp_answer(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
         let pointer = request.reply == Reply::Pointer;
-        let wanted = |e: &Self| {
-            if pointer {
-                e.mouse_hover_wanted(request)
-            } else {
-                e.still_at(request)
+        let wanted = |e: &Self| match request.feature() {
+            // Picked from a list: made unless the text changed meanwhile.
+            LspFeature::ApplyCodeAction | LspFeature::ResolveCodeAction => {
+                e.document.id() == request.document
+                    && e.document.buffer().edit_seq() == request.edit_seq
             }
+            _ if pointer => e.mouse_hover_wanted(request),
+            _ => e.still_at(request),
         };
         let answer = match answer {
             Ok(answer) => answer,
@@ -1058,7 +1132,19 @@ impl Editor {
         match answer {
             // Only the agent asks for calls.
             Answer::Calls(_) => {}
-            Answer::Hover(_) | Answer::Locations { .. } | Answer::Edits(_) if !wanted(self) => {}
+            Answer::Hover(_)
+            | Answer::Locations { .. }
+            | Answer::Edits(_)
+            | Answer::Actions(_)
+            | Answer::Action { .. }
+                if !wanted(self) => {}
+            Answer::Actions(actions) => self.show_code_actions(request, actions),
+            Answer::Action { title, edits } => {
+                if let Some(edits) = edits {
+                    let applied = self.apply_lsp_edits(edits);
+                    self.set_message(Message::info(format!("{title}: {}", applied.describe())));
+                }
+            }
             Answer::Edits(edits) => {
                 let name = match &request.query {
                     LspQuery::Rename { name } => name.as_str(),

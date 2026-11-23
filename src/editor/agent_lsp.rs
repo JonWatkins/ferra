@@ -8,8 +8,8 @@ use std::path::Path;
 use super::Editor;
 use super::agent::short_path;
 use super::lsp::{
-    Answer, Applied, Busy, Calls, Edits, Location, LspFeature, LspQuery, LspRequest, NoAnswer,
-    without_html,
+    ActionList, Answer, Applied, Busy, Calls, Edits, Location, LspFeature, LspQuery, LspRequest,
+    NoAnswer, without_html,
 };
 
 impl Editor {
@@ -25,6 +25,32 @@ impl Editor {
                 self.agent_lsp_edits(call, request, edits);
                 return;
             }
+            Ok(Answer::Action { title, edits }) => {
+                self.agent_made_action(call, &title, edits);
+                return;
+            }
+            Ok(Answer::Actions(actions)) => {
+                let file_wide = matches!(
+                    request.query,
+                    LspQuery::CodeActions {
+                        file_wide: true,
+                        ..
+                    }
+                );
+                if actions.is_empty() {
+                    Ok(if file_wide {
+                        "No file-wide code actions for this file (organize imports and the like)"
+                    } else {
+                        "No code actions there"
+                    }
+                    .into())
+                } else {
+                    let list = self.keep_code_actions(request, actions);
+                    let text = actions_text(&list);
+                    self.keep_agent_code_actions(list);
+                    Ok(text)
+                }
+            }
             Ok(Answer::Calls(calls)) => Ok(calls_text(&calls, request.feature())),
             Ok(Answer::Hover(markdown)) => Ok(hover_text(&markdown)),
             Ok(Answer::Locations { found, busy }) => {
@@ -35,6 +61,26 @@ impl Editor {
             Err(why) => Err(no_answer_text(request.feature(), &why)),
         };
         self.agent_lsp_answer(call, text);
+    }
+
+    /// A code action made for the agent: its edits as an agent change.
+    fn agent_made_action(&mut self, call: u64, title: &str, edits: Option<Edits>) {
+        let opened = edits.as_ref().map(|e| e.opened.clone()).unwrap_or_default();
+        let ((), saved, changed) = self.agent_change(&opened, |e| {
+            if let Some(edits) = edits {
+                e.apply_lsp_edits(edits);
+            }
+        });
+        let text = if changed.is_empty() {
+            format!("Made {title}{saved}")
+        } else {
+            format!("Made {title} in {}{saved}", self.agent_names(&changed))
+        };
+        if changed.is_empty() {
+            self.agent_lsp_answer(call, Ok(text));
+        } else {
+            self.agent_lsp_changed(call, text, changed);
+        }
     }
 
     /// A server's edits for the agent (a rename's): made as an agent
@@ -83,6 +129,17 @@ fn no_answer_text(feature: LspFeature, why: &NoAnswer) -> String {
         }
         NoAnswer::Unsupported(name) => format!("{name} doesn't offer {}", feature.noun()),
         NoAnswer::Stopped(name) => format!("{name} stopped before answering"),
+        NoAnswer::ServerError {
+            server, message, ..
+        } if matches!(
+            feature,
+            LspFeature::ApplyCodeAction | LspFeature::ResolveCodeAction
+        ) =>
+        {
+            format!(
+                "{server}: {message} (the file may have changed since: run lsp_code_actions again)"
+            )
+        }
         NoAnswer::ServerError {
             server, message, ..
         } => format!("{server}: {message}"),
@@ -144,6 +201,24 @@ fn locations_text(mut found: Vec<Location>, feature: LspFeature, busy: Option<&B
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Code actions for the agent: numbered, with how to make one.
+fn actions_text(list: &ActionList) -> String {
+    let lines: Vec<String> = list
+        .actions
+        .iter()
+        .enumerate()
+        .map(|(i, a)| match a.kind.as_str() {
+            "" => format!("{}. {}", i + 1, a.title),
+            kind => format!("{}. {} ({kind})", i + 1, a.title),
+        })
+        .collect();
+    format!(
+        "{}\nTo make one: lsp_apply_code_action with list {}, its number and this path.",
+        lines.join("\n"),
+        list.number
+    )
 }
 
 /// The most functions a call hierarchy answer lists.

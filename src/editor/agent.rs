@@ -245,6 +245,8 @@ pub struct AgentChat {
     pub(super) mentioning: bool,
     /// Buffers opened for the agent's tools, closed when its turn ends.
     pub(super) opened: HashSet<super::DocumentId>,
+    /// The last few lists of code actions it was given, to make one.
+    pub(super) code_actions: std::collections::VecDeque<super::lsp::ActionList>,
     /// Whether the agent takes images (it says as it starts).
     pub takes_images: Option<bool>,
     /// Images put in the box, each shown there as `[Image #n]`.

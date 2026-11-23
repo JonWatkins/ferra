@@ -48,10 +48,8 @@ pub struct Lsp {
     /// The last few completion answers' items as the servers sent them, to
     /// send one back to be resolved when it's taken.
     completions: features::Stash,
-    /// The last few code action lists, to make the one chosen.
-    actions: features::Stash,
-    /// The agent's code action lists, as its two asks come in.
-    agent_actions: HashMap<u64, features::AgentActions>,
+    /// Requests asked in parts, and the parts' answers so far.
+    parts: Vec<(crate::editor::lsp::LspRequest, features::Parts)>,
     /// The agent's requests for a server still starting, and since when:
     /// sent once it's ready (or told it isn't, after a while).
     waiting: Vec<(crate::editor::lsp::LspRequest, std::time::Instant)>,
@@ -89,8 +87,7 @@ impl Default for Lsp {
             failed: HashMap::new(),
             enabled: false,
             completions: features::Stash::default(),
-            actions: features::Stash::default(),
-            agent_actions: HashMap::new(),
+            parts: Vec::new(),
             waiting: Vec::new(),
             raw_diagnostics: HashMap::new(),
             formatted: None,
@@ -289,6 +286,7 @@ impl Lsp {
                 self.raw_diagnostics.remove(&document);
             }
             for request in client.take_unanswered() {
+                self.parts.retain(|(r, _)| *r != request);
                 editor.lsp_answered(&request, Err(NoAnswer::Stopped(client.name.clone())));
             }
             client.shutdown();
@@ -381,6 +379,7 @@ impl Lsp {
         }
         let name = client.name.clone();
         for request in client.take_unanswered() {
+            self.parts.retain(|(r, _)| *r != request);
             editor.lsp_answered(&request, Err(NoAnswer::Stopped(name.clone())));
         }
     }
@@ -408,12 +407,29 @@ impl Lsp {
                         self.formatted = Some(result);
                     }
                     Answer::Feature(request, result) => {
-                        let stashes = features::Stashes {
-                            completions: &mut self.completions,
-                            actions: &mut self.actions,
-                            agent_actions: &mut self.agent_actions,
+                        features::answer(editor, client, request, result, &mut self.completions);
+                    }
+                    // Answered once every part has its answer.
+                    Answer::Part(request, part, result) => {
+                        let at = match self.parts.iter().position(|(r, _)| *r == request) {
+                            Some(at) => at,
+                            None => {
+                                self.parts.push((request.clone(), Default::default()));
+                                self.parts.len() - 1
+                            }
                         };
-                        features::answer(editor, client, request, result, stashes);
+                        self.parts[at].1[part] = Some(result);
+                        if self.parts[at].1.iter().all(Option::is_some) {
+                            let (request, parts) = self.parts.remove(at);
+                            let result = features::merge_actions(parts);
+                            features::answer(
+                                editor,
+                                client,
+                                request,
+                                result,
+                                &mut self.completions,
+                            );
+                        }
                     }
                 }
             }
