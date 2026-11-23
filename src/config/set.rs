@@ -18,6 +18,40 @@
 //! | `name&` | Puts back its default |
 //!
 //! Plain `:set` shows the options that differ from the defaults.
+//!
+//! - `:set` (`config/set.rs`) changes `[editor]` options while running.
+//!   `EditorOptions` is serialized to a TOML table, the named value (dotted for
+//!   nested tables) replaced, and the table deserialized back, so a value is
+//!   checked exactly as in the config file and the message names the option.
+//!   Text is taken without quotes and coerced by the current value's type;
+//!   `+=`/`-=` work on numbers. Vim names map to ferra's (`ts` → `tab-width`),
+//!   and Vim's `nu`, `rnu`, `ic` and `scs` switches pick values of
+//!   `line-numbers` and `search.case`. Nearly every option is read where it's
+//!   used, so it applies at once; `clipboard` and `clipboard-provider` are
+//!   re-applied to the registers, and `kitty-keyboard` waits for the next
+//!   start.
+//! - Local options, as in Vim: the editor keeps the global options and, per
+//!   window and per buffer, a sparse TOML table of `:setlocal` values
+//!   (`config::set::scope` says which options may: `wrap`, `wrap-indent`,
+//!   `wrap-marker`, `line-numbers`, `cursorline`, `scroll-off` per window;
+//!   `tab-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap` per
+//!   buffer). `Editor::options` is always what's in force for the active window
+//!   and buffer (global, then the buffer's language's `options` from
+//!   `[languages]`, then the buffer's, then the window's, by
+//!   `set::with_locals`), recomputed by `refresh_options` when the active
+//!   buffer (`activate`) or window (`focus_window`) changes, or when
+//!   `finish_command` sees the buffer's language has (a `#!` typed, a scratch
+//!   buffer saved as `Makefile`), so the rest of the code reads options as
+//!   before. Drawing asks `Editor::options_for` per window. `:set` works on the
+//!   options in force (so `:set ts?` shows them), copies the changes to the
+//!   global options and drops the active window's and buffer's own values for
+//!   them (`follow_global_options`), except that where the buffer's language
+//!   sets one, the buffer gets the new value as its own, so `:set et` in a Go
+//!   buffer takes effect there, as in Vim; `:setglobal` changes only the global
+//!   ones; `:setlocal` stores values in the tables and refuses global-only
+//!   options. A split copies its window's table. Language options are checked
+//!   when the config loads (`Languages::check_options`): buffer options only,
+//!   valid values.
 
 use toml::{Table, Value};
 

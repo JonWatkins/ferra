@@ -22,6 +22,16 @@
 //! command (`menu_file`...) for keys: `<A-f>`, and the characters a Mac's
 //! Option key types (`ƒ`) in normal mode and the sidebar, so ⌥ works without
 //! the terminal sending it as Alt.
+//!
+//! **Option on macOS, Alt elsewhere, with no configuration.** Key labels show
+//! ⌥F on macOS and Alt+F elsewhere. A Mac terminal sends Option+F as the
+//! character it types (`ƒ`) unless it's set to send Option as Alt, so ferra
+//! reads those characters as ⌥ keys where they can't be text (menus, the
+//! sidebar, popups, normal mode) and the key is bound, for US and UK layouts.
+//! ⌥E, ⌥U, ⌥I, ⌥N and ⌥\` are accent keys the Mac holds back, so menus avoid
+//! those letters. The first time ferra sees such a character it says once how
+//! to send Option as Alt (iTerm2: Left Option key → Esc+, keeping the right one
+//! for `#` and `€` on UK keyboards).
 
 use std::collections::HashMap;
 

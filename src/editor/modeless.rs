@@ -5,6 +5,19 @@
 //!
 //! The keys themselves are in `config/keymaps/vscode.toml`; these are the
 //! editor's side of the commands they run (`commands/builtin/modeless.rs`).
+//!
+//! **Keymaps.** `keymap = "vscode" | "vim"`. `default.toml`'s `[keys]` are the
+//! modes every keymap shares (the sidebar, pickers, popups, the find box, the
+//! git view, the settings editor, the terminal panel, the `:` line);
+//! `config/keymaps/vim.toml` and `keymaps/vscode.toml` add their editing modes,
+//! and the user's `[keys]` go over the lot (`config::layered_keys`; the app
+//! builds them again when `keymap` changes). With VS Code's keys
+//! (`editor/modeless.rs`) insert mode is where the editor rests: asking for
+//! normal mode gives insert mode, a selection is visual mode with an exclusive
+//! end that typing replaces, there are no counts or registers, and since insert
+//! mode is never left, commands other than typing end an undo step (as does
+//! each new word). Features that showed when resting in normal mode (hover,
+//! blame, references, watching files) ask `Editor::resting` instead.
 
 use super::registers::{Register, StoreKind};
 use super::selection::{Selection, SelectionKind};
