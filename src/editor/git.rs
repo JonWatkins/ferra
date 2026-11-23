@@ -6,6 +6,33 @@
 //! the terminal comes back into focus (git may have run meanwhile); the
 //! changes are diffed again before drawing whenever the text has changed
 //! since. `git = false` turns it all off.
+//!
+//! `editor/git.rs` keeps each open file's staged text and hunks, and the
+//! branch. The staged text is read when a file opens or is saved (the app
+//! passes events to `git_saw`), when the terminal regains focus, and when
+//! leaving the terminal panel (git may have run in either); the hunks are
+//! diffed again before drawing for buffers whose edit count changed. The editor
+//! pane draws a hunk's mark in the gutter's padding after the line number
+//! (`git_mark`), `]c`/`[c` jump between hunks, and the status line's `git`
+//! element shows the branch and counts.
+//!
+//! Source Control is a built-in sidebar view between the files and plugins'
+//! views (`SidebarShows::Git`, the `Git` tab). Its rows (`GitRow`: headers and
+//! files, staged first) come from the status; its keys (`GIT_VIEW_KEYS`) are
+//! bound in `Mode::Sidebar` the way a plugin view's are, and the sidebar's
+//! moving, `R` and clicks act on it. Discarding asks in a built-in popup (whose
+//! `y` runs `git_discard_confirmed`), and committing in an input box (whose
+//! submit runs `git_commit_message`). A popup opened from the sidebar goes back
+//! to it when it closes.
+//!
+//! Line blame (`Editor::git_blame_tick`, each time round the event loop) waits
+//! for the cursor to rest 400 ms on a line in normal mode, then runs `git blame
+//! --porcelain -L n,n --contents -` on a thread with the buffer's text on
+//! stdin, so unsaved edits count (their lines come back as git's all-zeros "not
+//! committed" commit). The answer is shown only if the cursor's still on that
+//! line and the text hasn't changed, as end-of-line virtual text from the
+//! source `"blame"`, and taken away when either changes or another mode starts.
+//! While it waits, the event loop keeps polling.
 
 use std::collections::HashMap;
 

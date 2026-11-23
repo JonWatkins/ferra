@@ -10,6 +10,23 @@
 //! language's position never changes, so it can index caches; a grammar
 //! registered again under the same name (an updated plugin) gets a new
 //! position, and wins.
+//!
+//! - `languages.rs` lists each built-in language by name: its grammar and
+//!   queries. Only a core is built in (Markdown and its inline grammar, TOML,
+//!   JSON, YAML, Bash): ferra's own files and the ones met everywhere. Every
+//!   other language is a language pack (see Plugin packages), which keeps the
+//!   binary small: moving Rust, Python, JavaScript, TypeScript/TSX, Go, C, C++,
+//!   HTML and CSS out took the release binary from 21 MB to 12 MB. `indent.rs`
+//!   holds the core's indentation rules (see Indentation). A language built on
+//!   another lists its own highlight query first and the base one after,
+//!   joined, so its patterns win (the packs do the same in their
+//!   `highlights.scm`).
+//! - The moved languages are still ferra's test languages: the `test-languages`
+//!   cargo feature compiles their grammars, rules (`indent.rs`) and
+//!   `[languages]` entries (`config/test_languages.toml`) back in, and ferra's
+//!   dev-dependency on itself turns it on for tests, so tests can use Rust,
+//!   JavaScript and the rest without installing packs. The packs are the same
+//!   grammar versions, queries and rules, so what's tested is what users get.
 
 use std::sync::RwLock;
 

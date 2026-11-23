@@ -6,6 +6,23 @@
 //! as VS Code's gutter uses: lines you've staged stop showing as changes.
 //! `line_changes` diffs the buffer's lines against it into hunks of added,
 //! changed and removed lines.
+//!
+//! `git/` reads by running `git` (`git show :./file` for a file's staged text,
+//! `symbolic-ref` for the branch), so it behaves exactly as git does with
+//! nothing to link, and diffs in-process with `similar` (Myers, with a 50 ms
+//! deadline) so the gutter keeps up with typing. `line_changes` turns the diff
+//! into hunks of added, changed and removed lines in the buffer's rows (a
+//! removal next to an insertion is one change, as in VS Code).
+//!
+//! `git::status` reads `git status --porcelain=v1 -z -uall` into a `RepoStatus`
+//! (each file's staged and unstaged letter, untracked as `U`, conflicts as
+//! `!`); `stage`, `unstage` (`restore --staged`, or `rm --cached` before the
+//! first commit), `discard` (`restore`, or `clean` for an untracked file) and
+//! `commit` run git and return its own error message. The editor reads the
+//! status with the staged text (on open, save, focus and leaving the terminal
+//! panel) and when Source Control is shown, and after every action.
+//! `git_tree_marks` gives the file tree each changed file's letter by path, and
+//! `•` for the folders above it.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

@@ -2,6 +2,24 @@
 //! side, their side or both (`<Space>co` / `ct` / `cb`), each one undo
 //! step. The conflicts themselves are found with the git changes (before
 //! drawing), for tinting and the hints on their markers.
+//!
+//! Merge conflicts: `git::conflicts` finds complete conflicts in a file's lines
+//! (`<<<<<<<`, an optional diff3 `|||||||`, `=======`, `>>>>>>>`, each seven
+//! characters then the end of the line or a space; a stray marker isn't one).
+//! `update_git_changes` finds them along with the hunks, so the editor pane can
+//! tint each side's rows (`EditorView::conflicts`, `ui.conflict.*`) and the
+//! markers get end-of-line virtual text (source `"conflicts"`) naming the keys.
+//! `editor/conflicts.rs` reads them afresh from the buffer for `]x`/`[x` and
+//! for keeping a side: the conflict's rows are deleted and the kept lines
+//! inserted in their place, in one command, so one undo step. `git::merge` is
+//! `merge --no-edit`; when it fails with `MERGE_HEAD` there, it stopped on
+//! conflicts. `git::merging` reads `MERGE_MSG` (without git's comment lines)
+//! while there's a `MERGE_HEAD`; the editor reads it with the status.
+//! Conflicted files (`FileStatus:: conflicted`, `!`) get their own section
+//! first in `git_rows`; staging one (`git_check_resolved`) is refused while its
+//! buffer's unsaved or the file still has markers, and the commit box is
+//! allowed with nothing staged during a merge and starts with its message. `M`
+//! asks before merging, or before `merge --abort` while a merge is going on.
 
 use super::{Editor, Message, VirtualText};
 use crate::core::{Position, motion};

@@ -17,6 +17,12 @@
 //! ╰─────────────────────╯╰──────────────────────────────────────╯
 //!  s stage  ⏎ hunks  a stage all  x discard  c commit  Tab  q close
 //! ```
+//!
+//! Each line's heat is its commit's rank by time among the file's commits, in
+//! quarters; the code is highlighted from a scratch `Document`
+//! (`BLAME_DOCUMENT`), as the hover's is. `<CR>` opens the line's commit
+//! (selected in the log, or read on its own if it's older than the log goes).
+//! Opened from a buffer, `<Esc>` closes the whole view.
 
 use ratatui::{
     buffer::Buffer,
