@@ -45,7 +45,7 @@
 //! the same section when it's still there. Commit and discard ask in the input
 //! box and popup, which go back to the git view (they remember the mode they
 //! came from). `ui::draw` draws the view over everything but the command line
-//! and maps its panels and lists for the mouse (`GitGuiMap`).
+//! and records its panels and their rows for the mouse (`GitGuiView::record`).
 //!
 //! Branches are `git switch` (`-c` for a new one) and `git branch -d`/`-D`;
 //! `ahead_behind` is `rev-list --left-right --count HEAD...@{upstream}`, read

@@ -14,22 +14,12 @@ use std::path::Path;
 use ratatui::{buffer::Buffer, layout::Rect, style::Style, widgets::Widget};
 use unicode_width::UnicodeWidthStr;
 
+use super::screen_map::{PanelPart, ScreenMap, Target};
 use super::text::truncate_end;
 use crate::config::Theme;
 use crate::editor::diagnostics::Severity as Level;
 use crate::editor::panel::{LocationRow, PanelTab, ProblemRow};
 use crate::editor::{Editor, Mode};
-
-/// Where the panel's parts are, for the mouse.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct PanelMap {
-    pub area: Rect,
-    /// Each tab's columns on the title row.
-    pub tabs: Vec<(u16, u16, PanelTab)>,
-    /// The rows of the Problems' or Output's list, and the row on the first.
-    pub list: Rect,
-    pub first: usize,
-}
 
 /// The tabs along `row`: their columns.
 fn tab_spans(editor: &Editor, row: Rect) -> Vec<(u16, u16, PanelTab, String)> {
@@ -144,17 +134,30 @@ impl<'a> PanelView<'a> {
         }
     }
 
-    pub fn map(editor: &Editor, area: Rect) -> PanelMap {
+    /// Records where its parts are in `area` (the panel, its title row
+    /// included), for the mouse.
+    pub fn record(editor: &Editor, area: Rect, screen: &mut ScreenMap) {
+        let panel = Target::Panel;
         let row = Rect::new(area.x, area.y, area.width, 1);
         let list = Self::list(area);
-        PanelMap {
-            area,
-            tabs: tab_spans(editor, row)
-                .into_iter()
-                .map(|(from, to, tab, _)| (from, to, tab))
-                .collect(),
-            list,
-            first: editor.panel().scroll.get(),
+        screen.add(area, panel(PanelPart::Rest));
+        match editor.panel_shown() {
+            Some(PanelTab::Terminal) => screen.add(list, panel(PanelPart::Terminal)),
+            Some(tab @ (PanelTab::Problems | PanelTab::Locations)) => {
+                let len = if tab == PanelTab::Problems {
+                    editor.problem_rows().len()
+                } else {
+                    editor.location_rows().len()
+                };
+                let first = editor.panel().scroll.get();
+                screen.rows(list, first, len, |i| panel(PanelPart::Row(i)));
+            }
+            _ => {}
+        }
+        screen.add(row, panel(PanelPart::Title));
+        for (from, to, tab, _) in tab_spans(editor, row) {
+            let span = Rect::new(from, row.y, to - from, 1);
+            screen.add(span.intersection(row), panel(PanelPart::Tab(tab)));
         }
     }
 }

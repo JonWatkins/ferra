@@ -28,6 +28,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
+use super::screen_map::{FindPart, ScreenMap, Target};
 use crate::config::Theme;
 use crate::editor::Mode;
 use crate::editor::find::{FindCount, FindField, FindState};
@@ -352,10 +353,12 @@ impl<'a> FindView<'a> {
         }
     }
 
-    /// Where the box's parts are, for the mouse: the fields, and each
-    /// toggle (chip, name and key) with which it is (0 case, 1 word, 2
+    /// Records where the box's parts are, for the mouse: the fields, and
+    /// each toggle (chip, name and key) with which it is (0 case, 1 word, 2
     /// regex).
-    pub fn hits(state: &FindState, keys: &FindKeys, area: Rect) -> FindHits {
+    pub fn record(state: &FindState, keys: &FindKeys, area: Rect, screen: &mut ScreenMap) {
+        let find = Target::Find;
+        screen.add(area, find(FindPart::Rest));
         let parts = Parts::new(state, area);
         let inner = parts.inner;
         let field = |y| Rect::new(parts.field_x, y, parts.field_width, 1);
@@ -363,7 +366,6 @@ impl<'a> FindView<'a> {
         let right = inner.right();
         let (names, show_keys) = toggle_fit(keys, x0, right);
         let mut x = x0;
-        let mut toggles = Vec::new();
         for (i, ((chip, long, short), key)) in
             TOGGLES.into_iter().zip(toggle_keys(keys)).enumerate()
         {
@@ -377,15 +379,14 @@ impl<'a> FindView<'a> {
             if x >= right || parts.toggles_y >= inner.bottom() {
                 break;
             }
-            toggles.push((Rect::new(x, parts.toggles_y, width.min(right - x), 1), i));
+            let toggle = Rect::new(x, parts.toggles_y, width.min(right - x), 1);
+            screen.add(toggle, find(FindPart::Toggle(i)));
             x += width + 3;
         }
-        FindHits {
-            area,
-            find: field(inner.y),
-            replace: (state.replacing && parts.replace_y < inner.bottom())
-                .then(|| field(parts.replace_y)),
-            toggles,
+        screen.add(field(inner.y), find(FindPart::Field(FindField::Find)));
+        if state.replacing && parts.replace_y < inner.bottom() {
+            let replace = field(parts.replace_y);
+            screen.add(replace, find(FindPart::Field(FindField::Replace)));
         }
     }
 
@@ -395,15 +396,6 @@ impl<'a> FindView<'a> {
         let col = field_scroll(field, width) + x.saturating_sub(field_area.x + 1) as usize;
         col.min(field.text().chars().count())
     }
-}
-
-/// Where the find box's parts were drawn.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct FindHits {
-    pub area: Rect,
-    pub find: Rect,
-    pub replace: Option<Rect>,
-    pub toggles: Vec<(Rect, usize)>,
 }
 
 fn name_of(names: Names, long: &'static str, short: &'static str) -> Option<&'static str> {

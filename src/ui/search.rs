@@ -19,6 +19,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthStr;
 
+use super::screen_map::{ScreenMap, SidebarPart, Target};
 use super::text::truncate_end;
 use crate::config::{Icons, Theme};
 use crate::editor::Editor;
@@ -38,16 +39,16 @@ const REPLACE_ROW: u16 = 2;
 /// The replace-all chip after the replace field: plain, and a Nerd Font's.
 const REPLACE_ALL: (&str, &str) = ("All", "\u{eb3c}");
 
-/// Where the view's parts are, for the mouse.
+/// Where the view's parts are.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SearchHits {
+struct SearchHits {
     /// The query field (its text area).
-    pub field: Rect,
+    field: Rect,
     /// Each toggle's chip: match case, whole word, regex.
-    pub toggles: Vec<Rect>,
+    toggles: Vec<Rect>,
     /// The replace field, and its replace-all chip.
-    pub replace: Rect,
-    pub replace_all: Rect,
+    replace: Rect,
+    replace_all: Rect,
 }
 
 pub struct SearchViewWidget<'a> {
@@ -81,8 +82,20 @@ impl<'a> SearchViewWidget<'a> {
         TOGGLES.map(|(plain, nerd_icon)| if nerd { nerd_icon } else { plain })
     }
 
+    /// Records where the field and the toggles go, for the mouse.
+    pub fn record(editor: &Editor, area: Rect, screen: &mut ScreenMap) {
+        let hits = Self::hits(editor, area);
+        let part = Target::Sidebar;
+        screen.add(hits.field, part(SidebarPart::SearchField));
+        screen.add(hits.replace, part(SidebarPart::SearchReplace));
+        screen.add(hits.replace_all, part(SidebarPart::SearchReplaceAll));
+        for (i, toggle) in hits.toggles.into_iter().enumerate() {
+            screen.add(toggle, part(SidebarPart::SearchToggle(i)));
+        }
+    }
+
     /// Where the field and the toggles go.
-    pub fn hits(editor: &Editor, area: Rect) -> SearchHits {
+    fn hits(editor: &Editor, area: Rect) -> SearchHits {
         let y = area.y + 1;
         let chips = Self::chips(editor);
         let chips_width: u16 = chips.iter().map(|c| c.width() as u16 + 2).sum();

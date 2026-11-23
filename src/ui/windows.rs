@@ -13,8 +13,9 @@ use ratatui::{
     layout::{Position, Rect},
 };
 
-use super::breadcrumbs::{Breadcrumbs, BreadcrumbsMap};
-use super::tab_bar::{TabBar, TabBarMap};
+use super::breadcrumbs::Breadcrumbs;
+use super::screen_map::{ScreenMap, Target};
+use super::tab_bar::TabBar;
 use super::{EditorView, StatusLine, ViewState};
 use crate::config::Theme;
 use crate::editor::windows::Area;
@@ -38,18 +39,14 @@ pub struct Drawn {
     pub cursor: Option<Position>,
     /// The active window's area (its text, not its status line).
     pub active: Option<Rect>,
-    /// Every window's area, for the mouse.
-    pub windows: Vec<(WindowId, Rect)>,
-    /// The lines between windows (and whether each is vertical).
-    pub separators: Vec<(Rect, bool)>,
-    /// Each window's tabs and breadcrumbs, for the mouse.
-    pub tab_bars: Vec<TabBarMap>,
-    pub breadcrumbs: Vec<BreadcrumbsMap>,
 }
 
-/// Draws every window into `area`.
+/// Draws every window into `area`, recording in `map` each one's text,
+/// tabs and breadcrumbs, and the lines between them.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_windows(
     frame: &mut Frame,
+    map: &mut ScreenMap,
     editor: &Editor,
     theme: &Theme,
     area: Rect,
@@ -64,8 +61,6 @@ pub fn draw_windows(
     // Each window's own tab row and breadcrumbs, at its top.
     let (tab_bar, crumbs) = (editor.options.tab_bar, editor.options.breadcrumbs);
     windows.note_chrome(u16::from(tab_bar) + u16::from(crumbs));
-    let mut tab_bars = Vec::new();
-    let mut breadcrumbs = Vec::new();
     let (placed, separators) = windows.layout().arrange(area_cells);
 
     let separator_areas: Vec<(Rect, bool)> = separators
@@ -127,17 +122,18 @@ pub fn draw_windows(
             if tab_bar {
                 let row = Rect::new(rect.x, rect.y, rect.width, 1).intersection(screen);
                 frame.render_widget(TabBar::new(editor, theme, id), row);
-                tab_bars.push(TabBar::map(editor, row, id));
+                TabBar::record(editor, row, id, map);
                 rect = Rect::new(rect.x, rect.y + 1, rect.width, rect.height - 1);
             }
             if crumbs {
                 let row = Rect::new(rect.x, rect.y, rect.width, 1).intersection(screen);
                 frame.render_widget(Breadcrumbs::new(editor, theme, id), row);
-                breadcrumbs.push(Breadcrumbs::map(editor, row, id));
+                Breadcrumbs::record(editor, row, id, map);
                 rect = Rect::new(rect.x, rect.y + 1, rect.width, rect.height - 1);
             }
         }
         areas.push((id, rect));
+        map.add(rect, Target::Window(id));
         // Each window draws with its own options (`:setlocal wrap`...).
         let options = editor.options_for(id, document.id());
         let state = views.entry((id, document.id())).or_default();
@@ -208,12 +204,25 @@ pub fn draw_windows(
             }
         }
     }
+    // A line between windows resizes the window before it (to its left,
+    // or above it): each window's stretch of it.
+    for (line, vertical) in separator_areas {
+        for &(window, area) in &areas {
+            let stretch = if vertical && area.right() == line.x {
+                Rect::new(line.x, area.y, line.width, area.height)
+            } else if !vertical && area.bottom() == line.y {
+                Rect::new(area.x, line.y, area.width, line.height)
+            } else {
+                continue;
+            };
+            map.add(
+                stretch.intersection(line),
+                Target::Split { window, vertical },
+            );
+        }
+    }
     Drawn {
         cursor,
         active: active_area,
-        windows: areas,
-        separators: separator_areas,
-        tab_bars,
-        breadcrumbs,
     }
 }

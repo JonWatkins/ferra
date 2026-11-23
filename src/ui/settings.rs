@@ -20,24 +20,24 @@ use ratatui::{buffer::Buffer, layout::Rect, style::Style, widgets::Widget};
 use toml::Value;
 use unicode_width::UnicodeWidthStr;
 
+use super::screen_map::{ScreenMap, SettingsPart, Target};
 use super::text::truncate_end;
 use crate::config::Theme;
 use crate::config::schema::{CATEGORIES, Kind, Setting};
 use crate::editor::Editor;
 use crate::editor::settings::{SettingsFocus, SettingsView};
 
-/// Where its parts went, for the mouse.
+/// Where its parts went.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SettingsMap {
-    pub area: Rect,
-    pub search: Rect,
+struct SettingsMap {
+    search: Rect,
     /// Each category's row.
-    pub categories: Vec<(Rect, usize)>,
+    categories: Vec<(Rect, usize)>,
     /// Each setting drawn: its rows, its value's, and its index in the
     /// list.
-    pub items: Vec<(Rect, Rect, usize)>,
+    items: Vec<(Rect, Rect, usize)>,
     /// The settings' column (the wheel scrolls it).
-    pub list: Rect,
+    list: Rect,
 }
 
 pub struct SettingsWidget<'a> {
@@ -164,8 +164,24 @@ impl<'a> SettingsWidget<'a> {
         first
     }
 
-    /// Where things are, for the mouse (as `render` lays them out).
-    pub fn map(editor: &Editor, area: Rect) -> SettingsMap {
+    /// Records where its parts are, for the mouse.
+    pub fn record(editor: &Editor, area: Rect, screen: &mut ScreenMap) {
+        let map = Self::map(editor, area);
+        let settings = Target::Settings;
+        screen.add(area, settings(SettingsPart::Rest));
+        screen.add(map.list, settings(SettingsPart::List));
+        screen.add(map.search, settings(SettingsPart::Search));
+        for (row, i) in map.categories {
+            screen.add(row, settings(SettingsPart::Category(i)));
+        }
+        for (block, value, i) in map.items {
+            screen.add(block, settings(SettingsPart::Item(i)));
+            screen.add(value.intersection(block), settings(SettingsPart::Value(i)));
+        }
+    }
+
+    /// Where things are (as `render` lays them out).
+    fn map(editor: &Editor, area: Rect) -> SettingsMap {
         let Some(view) = editor.settings() else {
             return SettingsMap::default();
         };
@@ -204,7 +220,6 @@ impl<'a> SettingsWidget<'a> {
             y += rows;
         }
         SettingsMap {
-            area,
             search: parts.search,
             categories,
             items,

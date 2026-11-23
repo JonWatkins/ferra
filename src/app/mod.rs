@@ -1218,8 +1218,8 @@ impl App {
         // its box.
         let over_agent = self
             .pointer_at
-            .zip(self.screen_map.agent.as_ref())
-            .is_some_and(|(at, agent)| agent.area.contains(at));
+            .and_then(|at| self.target_at(at))
+            .is_some_and(|target| matches!(target, ui::Target::Agent(_)));
         if self.editor.agent_sidebar_shown()
             && self.editor.mode() != Mode::Agent
             && (over_agent || crate::editor::agent::only_images(&text))
