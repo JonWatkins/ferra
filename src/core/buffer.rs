@@ -1,3 +1,13 @@
+//! The text of a buffer, as lines in a rope.
+//!
+//! `core::Buffer` wraps a `ropey::Rope`, so inserts, deletes and line lookups
+//! are O(log n) in the file size. Lines are `\n`-separated (file line endings
+//! are `TextFormat`'s job). `Buffer::line` returns `Cow<str>`, which is
+//! borrowed when the line lies in one rope chunk, so the common case doesn't
+//! allocate. `Buffer` still has only two mutators, `insert_text` and
+//! `delete_range`, so the switch to a rope didn't touch anything outside
+//! `core::buffer`.
+
 use std::borrow::Cow;
 
 use ropey::Rope;

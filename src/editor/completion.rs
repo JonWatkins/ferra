@@ -8,6 +8,36 @@
 //! typed. `<C-y>` keeps the choice and `<C-e>` puts back what was typed;
 //! any other key keeps the choice and carries on (the app ends completion
 //! after a key that didn't use it: [`Editor::end_completion_unless_used`]).
+//!
+//! `<C-n>`/`<C-p>` in insert mode complete the word before the cursor
+//! (`editor/completion.rs`). The first press gathers matches: words starting
+//! with what's typed, from the cursor outward through the buffer (forward for
+//! `<C-n>`, backward for `<C-p>`, wrapping, the cursor's own line split at the
+//! cursor), then the other open buffers, without repeats, up to 500. The
+//! nearest goes in at once; later presses step through the matches and what was
+//! typed, as a ring. Each step replaces the word in the buffer, so the text is
+//! always what you see, and the `".` register's text follows.
+//!
+//! `<C-x><C-f>` and `<C-x><C-l>` start the same kind of completion with other
+//! matches (`start_completion` is shared): the entries of the directory the
+//! path before the cursor names (relative to the current file's directory, as
+//! completion plugins do, rather than Vim's working directory; `~/` and
+//! absolute paths too), only the part after the last `/` replaced, directories
+//! with a trailing `/`, hidden ones once a `.` is typed; or the lines (trimmed)
+//! that start with the current line's text after its indentation, nearest above
+//! first, then below, then other buffers. `<C-n>`/`<C-p>` then step through
+//! whichever is open.
+//!
+//! Completion ends with the first key that doesn't use it: `App::process_key`
+//! clears a flag before each key and ends a completion no completion command
+//! set it for. That covers typing on, moving, `<Esc>` and pastes, and works the
+//! same during macros and `.`. `<C-y>` ends it keeping the match; `<C-e>` puts
+//! back what was typed first. The menu (`ui/completion_menu.rs`) is drawn at
+//! the cursor in the `ui.popup` colours with a border like the hover's, its
+//! text lined up with the word, below its row or above when there's no room,
+//! showing up to 10 matches (each label with the letters typed in
+//! `ui.popup.match`, and its detail dimmed beside it) and scrolling to the
+//! selected one, with `n/total` in the border when they don't all fit.
 
 use std::collections::HashSet;
 

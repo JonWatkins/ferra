@@ -8,6 +8,58 @@
 //! chosen one (or the first) and makes its other edits (an import), and
 //! typing more of the word narrows the list, fuzzily. Anything else (a
 //! space, moving away, `<Esc>`) closes it, keeping what's in the text.
+//!
+//! It uses the same `WordCompletion` (its `labels`, `details` and `server`
+//! part are for this), so the menu, `<C-n>`, `<C-p>`,
+//! `<C-e>` and the `.` bookkeeping are shared. What differs:
+//!
+//! - It's asked for, not gathered. `end_completion_unless_used` notes whether
+//!   the key changed the text (`text_before_key`), and if so `auto_complete`
+//!   asks `LspQuery::Completion` when two letters of a word are typed, or with
+//!   the character before the cursor as a possible trigger: `Lsp` drops that
+//!   unless it's one of the server's `triggerCharacters`. Asked as you type,
+//!   the reply is `Typing`, which is quiet: no message when there's no server
+//!   or it can't complete. `<C-Space>` asks with a `Key` reply.
+//! - Nothing goes in until chosen (`selected` starts at `None`). The answer is
+//!   kept whole (`ServerCompletion::all`) and narrowed locally on each key that
+//!   keeps the cursor in the same word (`refilter_server_completion`), instead
+//!   of ending: items starting with what's typed first, then starting with it
+//!   in another case, then fuzzy matches whose first letter starts a word in
+//!   the item (`fm` for `flat_map`, not `0` for `log10`), each tier in the
+//!   server's `sortText` order. A list marked `isIncomplete` is asked for again
+//!   as typing goes on (rust-analyzer marks all of them so): an answer that
+//!   arrives while a newer completion request for the buffer is waiting isn't
+//!   read (`handle_response`), and reading one reads the word's line once
+//!   rather than per item, as narrowing takes the text typed from the buffer
+//!   once rather than per item (there can be a thousand: TypeScript's). An
+//!   answer is used if the editor is still completing the same word
+//!   (`still_completing`: same buffer and row, same word start, insert mode),
+//!   however much more of it was typed, but never replaces an item already
+//!   chosen with `<C-n>`.
+//! - Items become `ServerItem`s in `lsp/features.rs`: the text to put in (the
+//!   `textEdit`'s new text, or `insertText`, or the label) and where it goes in
+//!   (`start`: the edit's start when that's before the word on its line, as the
+//!   TypeScript server's `?.` and clangd's `->` replace the `.` typed, else the
+//!   word's start), the filter and sort text, a detail (`labelDetails`,
+//!   `detail`, or the kind's name) and the other edits (`additionalTextEdits`).
+//!   The completion's `start` is the earliest item start, and each item's text
+//!   is laid out from there (`.` + `area`), so they all replace the same text
+//!   and `<C-n>` steps through them as for words; each is matched against
+//!   what's typed from its own start or the word's, whichever matches better
+//!   (TypeScript's filter text has the `.`, clangd's doesn't, which it only
+//!   sends with `editsNearCursor`).
+//! - Snippets (ferra says it supports them: the CSS and HTML servers complete
+//!   nothing otherwise) go in as text (`expand_snippet`): later placeholders'
+//!   text kept, the first stop's left empty, and taking the item puts the
+//!   cursor there (`call(|)`), or at `$0`. There's no moving on to later stops.
+//! - `<C-y>` and `<Tab>` (`insert_tab` checks for the menu) take the chosen
+//!   item or the first, and make its other edits (last first, the cursor moved
+//!   with text edited before it). Items whose import comes only on asking (the
+//!   server has `resolveProvider`, or the item carries `data`, as
+//!   rust-analyzer's do though it claims not to resolve) carry the item as the
+//!   server sent it (`ServerItem::resolve`); taking one asks
+//!   `LspQuery::ResolveCompletion` with it, and the answer's edits (its
+//!   `additionalTextEdits`) are made as the other edits.
 
 use super::completion::{WordCompletion, is_word_char};
 use super::lsp::{LspQuery, LspRequest, Reply};

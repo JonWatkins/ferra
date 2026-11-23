@@ -7,6 +7,13 @@
 //! by closing a bracket (`}`, `)`, `]`), that line too, so a function folds
 //! with its closing brace. This works the same in every language, Python
 //! and YAML included.
+//!
+//! Fold regions come from indentation (`core/fold.rs`): `region_from(row)` is
+//! the row and the lines after it indented more (blank lines among them
+//! included), plus a closing-bracket line at the row's own indent;
+//! `region_around(row)` is that, or the region of the nearest line above, no
+//! deeper, that reaches the row. `za`/`zc` close the region around the cursor,
+//! `zM` every outermost one, `zf` any operator range (`Operator::Fold`).
 
 use super::Buffer;
 use super::columns::display_width;

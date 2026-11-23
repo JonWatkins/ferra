@@ -2,6 +2,13 @@
 //! reporting the result on the message line. Also noticing when another
 //! program changes an open file: an unmodified buffer reloads itself, a
 //! modified one gets a warning (and `:w` refuses until `:w!` or `:e!`).
+//!
+//! Leaving insert mode sets the buffer's `^` mark (an ordinary local mark, so
+//! it follows edits), which `gi` and `` `^ `` go back to. `gf`
+//! (`Editor::open_file_under_cursor`) takes the run of file-name characters
+//! under the cursor, splits off a `:line[:col]` suffix, and opens the first of
+//! "beside the current file" and "from the working directory" that exists,
+//! through `open`, so it's a jump and `<C-^>` comes back.
 
 use std::path::Path;
 

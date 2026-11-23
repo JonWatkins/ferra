@@ -14,6 +14,10 @@
 //! focus has its label highlighted. The toggles are chips, highlighted
 //! when on, each with what it does and its key. Text put in for you is
 //! shown selected (typing replaces it).
+//!
+//! `ui/find.rs` draws it at the top right of the active window
+//! (`windows::draw_windows` now also returns that window's area), the field
+//! scrolled to keep its cursor in view.
 
 use ratatui::{
     buffer::Buffer,

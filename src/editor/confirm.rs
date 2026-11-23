@@ -4,6 +4,13 @@
 //! answer as the next key (`y`, `n`, `a`, `q`, `l`), so there's no special
 //! mode. While a session is open the undo step stays open, so the whole
 //! substitution undoes at once.
+//!
+//! `:s///c` opens a `ConfirmSession` (`editor/confirm.rs`) that walks forward
+//! through the matches, one at a time, with `SearchPattern::next_replacement`
+//! expanding the replacement for that match. Answers arrive as the next key
+//! (`request_char("substitute_confirm")`), so there's no extra mode. While a
+//! session is open, `finish_command` leaves the undo step open, so the whole
+//! session undoes at once; a non-character key (`<Esc>`) ends it.
 
 use std::collections::BTreeSet;
 

@@ -10,6 +10,28 @@
 //! exactly as with one window. Other windows remember which buffer they
 //! show and where their cursor was; switching windows saves the active
 //! window's cursor and swaps the target's buffer in.
+//!
+//! `editor::windows::TextLayout` (the text width beside the gutter, whether to
+//! wrap, the tab width, the continued rows' indent) is the one place that knows
+//! how a window lays out lines, shared by the UI and the commands:
+//!
+//! - Drawing (`EditorView::render`) walks lines from the view's top, drawing
+//!   each of a line's rows (`draw_row`) with the line number on its first only,
+//!   and clips syntax, search and selection highlights to each row's chars (a
+//!   selected line break shows on the last row).
+//! - `windows::follow_cursor` keeps the cursor in sight counting screen rows:
+//!   `scroll-off` is in rows, the view always starts at a line's start, and a
+//!   long jump starts looking a screen above the cursor rather than measuring
+//!   every line on the way.
+//! - `gj`/`gk` move through a line's rows, aiming for a screen column that
+//!   `Editor::wanted_screen_column` remembers while the cursor stays where they
+//!   put it, so a short row on the way doesn't lose it. Without wrap they're
+//!   `j`/`k`.
+//! - `TextLayout::bottom` (the last line at least partly shown) is what `L` and
+//!   the scrolling commands use.
+//!
+//! `j`/`k` still move by lines, as in Vim, and `<C-d>` and friends scroll by
+//! lines too.
 
 mod layout;
 

@@ -1198,6 +1198,20 @@ impl App {
     /// copied: no auto-indent, no key bindings, one undo step (see
     /// `App::paste`). Macros and `.` record it as `<PasteStart>`, its text
     /// and `<PasteEnd>`, and put it in the same way when replayed.
+    ///
+    /// Recorded as keys, as Neovim does internally (`input::paste_keys`: a
+    /// key per character, `<CR>` for a line break, `<Tab>` for a tab), but
+    /// as a whole, and the text put in at once rather than fed through
+    /// `handle_key` one key at a time, which would be slow for a big paste.
+    /// When keys are replayed (a macro, `.`, `:normal`), `process_key`
+    /// collects those between the markers into `App::paste` instead of
+    /// running them as bindings, then puts the text in the same way. A
+    /// collecting paste isn't idle, so `.` records it as part of the change
+    /// it's in. A `<PasteStart>` with no `<PasteEnd>` (a macro edited by
+    /// hand) is put in when the playback ends, so it can't swallow later
+    /// keys. A count on `.` doesn't multiply a paste. A paste that brings
+    /// its own indentation replaces the auto-indent on an otherwise blank
+    /// line.
     pub fn handle_paste(&mut self, text: &str) {
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         // Dropped on the agent sidebar (or images, with it shown): into

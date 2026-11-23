@@ -4,6 +4,16 @@
 //! pending transaction until [`History::commit`] is called; each committed
 //! transaction is one undo step. The editor decides where the boundaries are
 //! (in Vim terms: one per normal-mode command, one per insert session).
+//!
+//! - `Buffer` has exactly two mutators: `insert_text` and `delete_range`.
+//!   `Document` wraps them and records each edit as a `core::Change`. Nothing
+//!   else can change the text, so every edit is undoable.
+//! - `core::History` groups changes into transactions. Adjacent inserts and
+//!   backspaces merge, so typing a word is stored as one change.
+//! - `Editor::finish_command` runs after every command and closes the undo step
+//!   unless the editor is in insert mode. So, as in Vim, each normal-mode
+//!   command is one step, and an insert session undoes together with the
+//!   command that started it (`o`, `cw`, `A`, ...).
 
 use super::{Buffer, Position};
 

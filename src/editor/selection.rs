@@ -3,6 +3,22 @@
 //! A selection is an anchor (where `v`/`V` was pressed) plus the cursor.
 //! It converts to the same [`Range`] that motions and text objects produce,
 //! so operators work on it unchanged.
+//!
+//! - One `Mode::Visual`, with the kind (`Char` for `v`, `Line` for `V`) on the
+//!   editor's `Selection` (`editor/selection.rs`). Both kinds share one
+//!   `[keys.visual]` table, cursor shape and theme scope. The statusline shows
+//!   `V-LINE` for line selections.
+//! - A selection is the anchor plus the cursor, and `Selection::range` turns it
+//!   into the same `core::Range` that motions and text objects produce. So
+//!   nothing new is needed to operate on it:
+//!   - Motions just move the cursor, which extends the selection.
+//!   - Text objects call `Editor::select_range` instead of applying an
+//!     operator.
+//!   - Operator commands call `Editor::take_selection`, which ends visual mode
+//!     and returns the range, then apply the operator to it right away.
+//! - Leaving visual mode remembers the selection for `gv`.
+//! - The editor pane highlights the selection (`ui.selection`), including one
+//!   cell for a selected line break so selected empty lines are visible.
 
 use super::{Editor, Mode};
 use crate::core::columns::{char_col_at, display_col};

@@ -5,6 +5,26 @@
 //! a fold after an edit moves with its lines, an edit within its first line
 //! leaves it be, and any other edit touching it opens it, as Vim does when
 //! you change folded text.
+//!
+//! Closed folds live on the `Document` (`document/folds.rs`), as sorted,
+//! non-overlapping line ranges in a `RefCell`, so readers with `&Document`
+//! (drawing) can bring them up to date: like the syntax trees, they replay the
+//! buffer's edit log, so undo and reloads move them as well. A fold after an
+//! edit shifts with its lines, an edit within its first line leaves it, and
+//! anything else touching it opens it. A different buffer, or a log that's
+//! moved past, opens them all.
+//!
+//! Everything that walks lines treats a closed fold as one: `j`/`k` turn their
+//! count of visible lines into buffer lines (`over_folds`, via
+//! `Document::step_visible_lines`), `gj`/`gk` step with `next_visible_line`,
+//! `enforce_cursor_rules` keeps the cursor on a fold's first line,
+//! `apply_operator_over` widens line ranges to whole folds,
+//! `TextLayout::rows_in` gives a closed fold one screen row (for keeping the
+//! cursor in sight, the view's last line and the highlight prediction), and
+//! drawing shows the first line, unwrapped, with a dim `⋯ N more lines`
+//! (`ui.fold`). `Editor::reveal_cursor` opens folds at the cursor after
+//! searches, jump motions other than `gg`/`G`, mark jumps, undo and redo, as
+//! Vim's default `foldopen` does.
 
 use std::cell::RefCell;
 

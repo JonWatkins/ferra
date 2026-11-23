@@ -6,6 +6,37 @@
 //! A tab or wide character cut by the block's edge leaves spaces for its
 //! cells outside the block (and yanks as spaces for those inside), so the
 //! text around the block stays where it was on screen.
+//!
+//! - `SelectionKind::Block` is a third kind of selection. Its shape is a
+//!   `core::Block`: rows, plus first and last *display* columns, so it lines up
+//!   on screen with tabs and wide characters (`core/columns.rs` converts
+//!   between character and display columns, for the UI too). A character partly
+//!   inside the block (a tab) counts as inside. `to_eol` (`$`) makes each row
+//!   run to its own end; motions report through `Editor::note_block_motion`,
+//!   and only `$` and vertical moves keep it. `gv` remembers `to_eol` along
+//!   with the corners.
+//! - `Selection::range` gives a block's whole lines, so line-based commands
+//!   (`J`, `:`, `X`, `Y`) work unchanged. Character operators check
+//!   `Editor::take_block` first and go to `editor/block.rs`, which edits row by
+//!   row from the bottom up so earlier rows' positions stay put.
+//! - A tab or wide character cut by an edge is split as in Vim: `Block::row`
+//!   counts its cells outside the block, a delete leaves those as spaces, and a
+//!   yank gives the cells inside as spaces, so the text around the block stays
+//!   put on screen. `I` (or `c`) at a column in the middle of a tab turns the
+//!   tab into spaces first.
+//! - `>` / `<` shift from the block's left edge: the whitespace starting there
+//!   grows or shrinks by one indent (`<` never takes whitespace from left of
+//!   the block) and is rewritten as tabs or spaces as the buffer indents. Rows
+//!   that stop short of the block, or are blank inside it, are skipped.
+//! - Yanks store a `blockwise` register (one line per row). Pasting one inserts
+//!   each row at the same display column on successive lines, padding short
+//!   lines and adding lines at the end, and padding pieces to the block's width
+//!   when text follows.
+//! - `I`, `A` and `c` type on the first row only, with a `BlockInsert` noting
+//!   where and which other rows. When insert mode ends (`set_mode`), the text
+//!   typed on that row is copied to the others, inside the same undo step as
+//!   the insert session. Typing that leaves the row (a line break) copies
+//!   nothing, as in Vim.
 
 use super::registers::{Register, StoreKind};
 use super::transform::CaseChange;

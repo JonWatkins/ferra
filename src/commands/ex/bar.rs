@@ -1,5 +1,13 @@
 //! Splitting a `:` line at `|`, which separates commands
 //! (`:s/a/b/ | normal A!`).
+//!
+//! `|` is split in `run_command_line`, after the command name is known, since
+//! how a command treats `|` is a property of the command (`Command::bar`, like
+//! Vim's `-bar`): it separates commands (the default), it's part of the
+//! arguments (`:g`, `:v`, `:normal`, so `:g/x/a | b` hands `a | b` to each
+//! line), or it's only a separator after a `/pattern/replacement/` (`:s`, where
+//! `|` is regex alternation). `ex::split_bar` does the splitting; the next
+//! command runs after this one succeeds.
 
 /// How a command treats `|` in its arguments.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

@@ -1,4 +1,32 @@
 //! Opening and saving a document's file.
+//!
+//! - `Document` holds the path, format and two pieces of save state:
+//!   - **Modified tracking:** `History` gives each committed state a
+//!     `Revision`. The document is modified when its revision differs from the
+//!     saved one, so undoing back to the save clears `[+]`.
+//!   - **External changes:** the file's `FileStamp` (modified time and size) at
+//!     read/write time. A save refuses to overwrite a file whose stamp has
+//!     changed since, or an existing file the document never read, unless
+//!     forced with `!`. The size catches a change made within the timestamp
+//!     resolution of the last one, unless that kept the size too.
+//! - Noticing external changes: `Document::disk_state` compares the file's
+//!   stamp with the one it last read or wrote (`Changed`, `Deleted`).
+//!   `Editor::check_disk_changes` runs on `FocusGained` (the app turns on
+//!   terminal focus reporting) and `:checktime`, and `switch_to` checks the
+//!   buffer it switches to. With `watch-files` (on by default), the event loop
+//!   also wakes once a second (`WATCH_INTERVAL`, one more deadline beside the
+//!   key timeout's) and runs it through `App::check_files_while_idle`, which
+//!   does nothing unless the app is idle (normal mode, no keys pending), so a
+//!   reload never lands mid-insert or under a pending operator. That's a `stat`
+//!   per open file a second, rather than OS file-change notifications, which
+//!   need a dependency and per-platform care (and miss changes on some network
+//!   filesystems). An unmodified buffer reloads with
+//!   `Document::reload_in_place`, which replaces only the part of the text
+//!   between the common prefix and suffix, as one undo step, so the cursor and
+//!   marks outside it stay put and `u` undoes it. `:e!` uses the same reload. A
+//!   modified buffer (or a deleted file) gets one warning;
+//!   `acknowledge_disk_state` stops it repeating until the file changes again.
+//! - On the `:` line, a trailing `!` sets `Invocation::bang`, which file
 
 use std::path::{Path, PathBuf};
 

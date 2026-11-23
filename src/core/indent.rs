@@ -1,4 +1,16 @@
 //! Working out how a file is indented, so new indentation matches it.
+//!
+//! - **The indent style** (`Editor::indent_style`, an `IndentUnit`: tabs or N
+//!   spaces) is the buffer's `:indent` choice, else what `core/indent.rs`
+//!   detected when the file was read or reloaded (with `detect-indent`), else
+//!   `expand-tab` and `tab-width`. Detection looks at the first 1000 lines:
+//!   mostly tab-indented means tabs; otherwise the commonest step by which a
+//!   line's indent grows over the previous non-blank line's, ignoring one-space
+//!   steps, `*` comment continuations and lines mixing tabs in (alignment, not
+//!   indentation), with ties going to the narrower step. Everything that
+//!   indents (`>`/`<`, block shifts, Tab, `=`, new lines, closing brackets)
+//!   goes through it; `tab-width` still sets how wide a tab is drawn. The
+//!   `indent` status line element shows it.
 
 use super::Buffer;
 

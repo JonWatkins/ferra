@@ -7,6 +7,14 @@
 //! that would be cut by the edge moves to the next row. Display columns
 //! (tabs, wide characters) are counted from the start of the line, as
 //! without wrapping, so the text doesn't shift when wrapping is turned on.
+//!
+//! A wrapped line's later rows are narrower: with `wrap-indent` they start at
+//! the line's indentation, after `wrap-marker` (`↪ `, drawn in
+//! `ui.wrap-marker`), like Vim's `breakindent` and `showbreak`
+//! (`TextLayout::continued`, dropped to just the marker when it would leave
+//! less than half the width). `row_starts_indented` breaks those rows at the
+//! narrower width, drawing shifts their text, highlights and cursor right by
+//! `TextLayout::offset`, and `gj`/`gk` count it in the screen column they keep.
 
 use super::columns::char_width;
 

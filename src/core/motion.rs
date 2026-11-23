@@ -7,6 +7,18 @@
 //! The end of each line is treated as a whitespace "newline" slot, so word
 //! motions flow naturally across lines. Empty lines act as word boundaries,
 //! like in Vim.
+//!
+//! Motion details:
+//!
+//! - A target function returns `None` when the motion fails (`fx` with no `x`):
+//!   the cursor stays put and a pending operator is cancelled.
+//! - `Range::from_motion` applies Vim's `:h exclusive` rules. An exclusive
+//!   motion ending at the start of a later line covers whole lines if it began
+//!   at or before the first non-blank (so `d}` removes a paragraph cleanly),
+//!   and otherwise stops at the end of the previous line. `dw` is special-cased
+//!   first, as in Vim: if the last word ends its line, the operation stops
+//!   there.
+//! - `f`/`t`/`F`/`T` store a `CharSearch` on the editor for `;` and `,`.
 
 use super::{Buffer, Position};
 

@@ -12,6 +12,21 @@
 //! | `+`, `*` | The system clipboard (both the same here). |
 //! | `.`      | Read-only: the text typed in the last insert session. |
 //! | `/`, `:`, `%` | Read-only: the last search, the last `:` command, the file name. |
+//!
+//! Single-key shortcuts (`x`, `D`, `C`, `s`, `S`, `Y`, `X`) apply an operator
+//! over a fixed motion. Pastes read registers (`editor/registers.rs`).
+//!
+//! `Registers::store` follows Vim's rules for deletes into the unnamed
+//! register: a line or more (or a delete over a jump motion, `d%`, `d}`, via
+//! `StoreKind::DeleteOverJump`) shifts `"1`-`"8` down and lands in `"1`;
+//! anything smaller goes to `"-`. Yanks go to `"0`. Naming a register, or the
+//!
+//! `Registers` decides which register names use it, per `ClipboardMode`:
+//! `"+`/`"*` only (default), also the unnamed register, or never. Pastes go
+//! through `Registers::read`, which can fail and returns an owned value. Text
+//! ending in a line break reads as linewise, as in Vim. A failed clipboard
+//! write never cancels the yank or delete: the text is still stored, and the
+//! error is reported after the command.
 
 use std::collections::HashMap;
 use std::fmt;

@@ -3,6 +3,23 @@
 //!
 //! Completion candidates are worked out by the commands layer, which can see
 //! the command registry and the filesystem; this module only applies them.
+//!
+//! `editor/command_line/` holds the prompt's text and cursor, its editing
+//! operations, and two `History`s (one for `:`, one for searches). The
+//! histories are browsed by prefix, as in Vim. `<Tab>` completion is split in
+//! two:
+//!
+//! - The commands layer (`commands/builtin/command_line.rs`) works out the
+//!   candidates, since it can see the registry and the filesystem: command
+//!   names and aliases for the first word, and otherwise whatever the command
+//!   declares with `Command::complete_args` (`ArgCompletion::Path` or
+//!   `ArgCompletion::Buffer`).
+//! - `CommandLine` applies them. A single candidate is inserted and completion
+//!   ends, so `<Tab>` again goes into a directory. Several candidates are
+//!   cycled, with a counter in the prompt.
+//!
+//! Any other edit ends completion and history browsing. Edits at a search
+//! prompt re-run the live preview.
 
 mod history;
 

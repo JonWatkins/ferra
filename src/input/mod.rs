@@ -3,6 +3,15 @@
 //! [`InputHandler`] accumulates register selections (`"a`), counts (`3`) and
 //! multi-key sequences (`g`, `gg`) and resolves them against the [`Keymap`].
 //! It decides *what* should happen; the app then performs it.
+//!
+//! A command registered with `.takes_char()` (`f`, `t`, `F`, `T`, `r`) gets the
+//! next key as its argument. When the app sees such a command without a
+//! character, it calls `InputHandler::await_char`. The next printable key, even
+//! one bound to a command (`f:`), completes it via `Invocation::char_arg`;
+//! anything else cancels it. A command that only sometimes needs a key (`q`
+//! takes a register to start recording, but not to stop) calls
+//! `Editor::request_char` instead, and the app then waits for the key the same
+//! way.
 
 mod key;
 mod keymap;

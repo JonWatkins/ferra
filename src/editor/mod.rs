@@ -890,9 +890,15 @@ impl Editor {
         self.insert_repeat = count.filter(|&n| n > 1).map(|n| (n, lines));
     }
 
-    /// Leaving insert mode after a counted insert: puts in what was typed
-    /// the rest of the times. Copies on lines of their own (`o`, `O`) get
-    /// the indentation of the line typed on.
+    /// Leaving insert mode after a counted insert (`3ihi`, `2o`): puts in
+    /// what was typed the rest of the times. Copies on lines of their own
+    /// (`o`, `O`) get the indentation of the line typed on.
+    ///
+    /// `set_mode` calls this after `finish_replace` and before what was
+    /// typed is stored as `".`. The text is the session's `Editor::typed`,
+    /// so pastes, completions and backspaces count as they ended up. It's
+    /// all one insert session: one undo step, and `.` replays the count
+    /// with the keys.
     fn finish_insert_repeat(&mut self) {
         let Some((count, lines)) = self.insert_repeat.take() else {
             return;

@@ -8,6 +8,44 @@
 //! YAML, plain text, or `auto-indent` off for new lines), a new line copies
 //! the indentation of the one it was opened from, one level more after an
 //! opening bracket (or `:` in Python).
+//!
+//! - **`=`** is `Operator::Reindent`, over the lines its range touches, so
+//!   `==`, `=ip`, `gg=G`, visual `=` and `.` all work. Blank lines are emptied.
+//!   A language without rules, or a file without a language, gets a message
+//!   instead.
+//! - **New lines** (Enter, `o`, `O`; `indent_for_opened_line`) are indented by
+//!   the rules once the line exists, so text carried onto it (`}` after Enter)
+//!   counts. Without rules, the line it was opened from is copied, plus a level
+//!   after an opening bracket, or a trailing `:` in Python and YAML (and YAML's
+//!   `: |` and `: >`), and less a level after Python's `return`, `pass`,
+//!   `raise`, `break` and `continue`. Enter between a pair of brackets (`{|}`)
+//!   puts the closing one on its own line too, with the cursor on an indented
+//!   line between.
+//! - **Typing re-indents the line** when what's typed settles where it goes
+//!   (`type_with_indent`), like Vim's `indentkeys`:
+//!   - A closing bracket first on a line: by the rules, or without rules one
+//!     level less.
+//!   - With rules, the line's first word while it's one of the language's
+//!     keywords (`indent::keywords`: Bash's `fi`, `done`, `esac`, `else`,
+//!     `elif`, `then`, `do`), and the `>` ending a closing tag (`</div>`) first
+//!     on a line in HTML and JSX. The indentation the keyword replaced is
+//!     remembered (`Editor::keyword_indent`), and put back if the word carries
+//!     on (`fi` → `file`), since the half-typed line may not parse as anything
+//!     better.
+//!   - Python has no rules, so the `:` ending an `else:`, `elif`, `except` or
+//!     `finally` line moves it to the nearest line above that starts the block
+//!     it continues (`if`/`elif` for `elif`; `try`/`except` for `except`...),
+//!     looking only at lines no deeper than it and than every line between.
+//!     Waiting for the `:` means `elsewhere = 1` is left alone.
+//! - New lines are skipped with `auto-indent = false`; `=` isn't. Files over
+//!   the highlighting limit fall back to the heuristic.
+//!
+//! `formatoptions` `c`/`t`) does the same as you type: after a non-blank char
+//! lands past `text-width`, `Editor::auto_wrap` breaks the line at the last
+//! space within the width, starting the new line with
+//! `core::format::continuation` (the leader `gq` would use), and moves the
+//! cursor with the text. It's part of the insert session, so one undo and `.`
+//! replays the keys, which wrap the same way.
 
 use std::ops::RangeInclusive;
 
