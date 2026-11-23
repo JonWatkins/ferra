@@ -33,6 +33,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthChar;
 
+use super::screen_map::{AgentPart, ScreenMap, Target};
 use crate::config::Theme;
 use crate::editor::agent::AgentStatus;
 use crate::editor::agent_session::SLASH_ROWS;
@@ -44,26 +45,26 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 
 /// Where the sidebar's parts were drawn, for the mouse.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AgentMap {
-    pub area: Rect,
+struct AgentMap {
+    area: Rect,
     /// The line between it and the windows (dragged to resize it).
-    pub edge: Rect,
+    edge: Rect,
     /// The mode's chip in the header (a click lists the modes).
-    pub mode: Option<Rect>,
+    mode: Option<Rect>,
     /// The agent's name in the header (a click lists the agents).
-    pub title: Rect,
+    title: Rect,
     /// The chat's rows.
-    pub chat: Rect,
+    chat: Rect,
     /// The chat's rows that open or close a tool call, and which.
-    pub tools: Vec<(u16, String)>,
+    tools: Vec<(u16, String)>,
     /// The question's options, as buttons: where, and which (from 1).
-    pub options: Vec<(Rect, usize)>,
+    options: Vec<(Rect, usize)>,
     /// The box (a click focuses it).
-    pub input: Rect,
+    input: Rect,
     /// The settings' chips under the box, and which (its id).
-    pub chips: Vec<(Rect, String)>,
+    chips: Vec<(Rect, String)>,
     /// The slash menu's rows, and which command (its row in the list).
-    pub slash: Vec<(Rect, usize)>,
+    slash: Vec<(Rect, usize)>,
 }
 
 /// The frame of the spinner shown while the agent works.
@@ -81,6 +82,48 @@ type Row = Vec<(char, Style)>;
 /// Returns where things went, and where the cursor goes if the box has
 /// focus.
 pub fn draw(
+    buf: &mut Buffer,
+    area: Rect,
+    edge: Rect,
+    editor: &Editor,
+    theme: &Theme,
+    screen: &mut ScreenMap,
+) -> Option<Position> {
+    let (map, cursor) = draw_parts(buf, area, edge, editor, theme);
+    map.record(screen);
+    cursor
+}
+
+impl AgentMap {
+    /// Records where its parts went, the ones that win where they meet
+    /// (the slash menu over the chat...) last.
+    fn record(self, screen: &mut ScreenMap) {
+        let agent = Target::Agent;
+        screen.add(self.edge, Target::AgentEdge);
+        screen.add(self.area, agent(AgentPart::Rest));
+        screen.add(self.chat, agent(AgentPart::Chat));
+        for (y, id) in self.tools {
+            let row = Rect::new(self.chat.x, y, self.chat.width, 1);
+            screen.add(row.intersection(self.chat), agent(AgentPart::Tool(id)));
+        }
+        screen.add(self.input, agent(AgentPart::Input));
+        screen.add(self.title, agent(AgentPart::Title));
+        if let Some(mode) = self.mode {
+            screen.add(mode, agent(AgentPart::Mode));
+        }
+        for (rect, id) in self.chips {
+            screen.add(rect, agent(AgentPart::Chip(id)));
+        }
+        for (rect, i) in self.slash {
+            screen.add(rect, agent(AgentPart::Slash(i)));
+        }
+        for (rect, n) in self.options {
+            screen.add(rect, agent(AgentPart::Option(n)));
+        }
+    }
+}
+
+fn draw_parts(
     buf: &mut Buffer,
     area: Rect,
     edge: Rect,

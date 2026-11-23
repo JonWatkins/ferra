@@ -21,32 +21,36 @@
 //! over things to click, a text bar over text, arrows over edges), which
 //! the event loop sends to terminals that take it (OSC 22).
 //!
-//! `ui::draw` returns a `ScreenMap` of where things went: each window's text
-//! area and the lines between windows, the sidebar (its tabs, list rows and
-//! edge), the terminal panel, and whichever box is open (the picker's and a
-//! popup's list rows with the index of the first item shown, the find box's
-//! fields and toggles from `FindView::hits`, an input box's field). The app
-//! keeps the last one, and `app/mouse.rs` works out what an event is over from
-//! it. Text positions come from the window's `ViewState`, which records each
-//! screen row as it's drawn (`DrawnRow`: the buffer row, the chars on it, the
-//! display column it starts at and the wrap indent), so
-//! `ViewState::position_at` maps a cell back through wrapping, folds, tabs,
-//! wide chars and sideways scrolling without laying anything out again.
+//! `ui::draw` returns a `ScreenMap` (`ui/screen_map.rs`): the regions it
+//! drew, in paint order, each with a `Target` saying what it is (a window's
+//! text, a tab or its `×`, a row of the picker, the line between two
+//! windows...). The app keeps the last one, and every mouse event starts
+//! from `App::target_at`: what's on top at the cell. Clicks, the wheel,
+//! right-clicks, drops and the pointer's shape all match on that one
+//! answer, so they can't disagree about what's where. Text positions come
+//! from the window's `ViewState`, which records each screen row as it's
+//! drawn (`DrawnRow`: the buffer row, the chars on it, the display column
+//! it starts at and the wrap indent), so `ViewState::position_at` maps a
+//! cell back through wrapping, folds, tabs, wide chars and sideways
+//! scrolling without laying anything out again.
 //!
-//! A click goes first to a box with focus (`click_in_box`): the picker chooses
-//! or closes, a list popup runs its `<CR>` command, the find box flips toggles
-//! and moves between fields (a click outside it closes it and goes on to the
-//! text), an input box places its cursor or cancels. Otherwise an edge starts a
-//! resize drag (`Drag::Sidebar` sets `sidebar-width`, `Drag::Panel`
-//! `terminal-height`, `Drag::Split` resizes the window before the line through
-//! `resize_window`), and anything else is a click on a window, the sidebar or
-//! the panel. A window click focuses it and sets the cursor; double and triple
-//! clicks (same cell, within 400 ms) run `visual_mode` + `inner_word` or
-//! `visual_line_mode`; a drag from it starts visual mode and moves the cursor,
-//! kept inside the window.
+//! What a target does can depend on the mode. A click goes first to a box
+//! with focus (`click_in_box`): the picker chooses or closes, a list popup
+//! runs its `<CR>` command (a key shown in a popup runs what it's bound
+//! to), the find box flips toggles and moves between fields (a click
+//! outside it closes it and goes on to the text), an input box places its
+//! cursor or cancels. Otherwise an edge starts a resize drag
+//! (`Drag::Sidebar` sets `sidebar-width`, `Drag::Panel` `terminal-height`,
+//! `Drag::Split` resizes the window before the line through
+//! `resize_window`), and anything else is a click on a window, the sidebar,
+//! the agent sidebar or the panel. A window click focuses it and sets the
+//! cursor; double and triple clicks (same cell, within 400 ms) run
+//! `visual_mode` + `inner_word` or `visual_line_mode`; a drag from it
+//! starts visual mode and moves the cursor, kept inside the window.
 //!
-//! As the pointer moves, `App::pointer_for` names its shape (CSS names:
-//! `pointer`, `text`, `ew-resize`, `ns-resize`, `default`); the event loop
+//! As the pointer moves, `App::pointer_for` names its shape from the target
+//! (`Target::pointer`, CSS names: `pointer`, `text`, `ew-resize`,
+//! `ns-resize`, `default`); the event loop
 //! sends it with OSC 22 when it changes, and pointer moves don't redraw. iTerm2
 //! only knows X11 names (`hand2`, `xterm`, `sb_h_double_arrow`), so when
 //! `TERM_PROGRAM` or `LC_TERMINAL` says it's iTerm2, `terminal::x11_pointer`
@@ -62,9 +66,14 @@ use ratatui::layout::{Position, Rect};
 use super::App;
 use crate::commands::Invocation;
 use crate::editor::find::FindField;
+use crate::editor::git_gui::GitPanel;
 use crate::editor::windows::SplitDirection;
 use crate::editor::{Message, Mode, WindowId};
 use crate::input::Lookup;
+use crate::ui::screen_map::{
+    AgentPart, FindPart, GitPart, KeybindingsPart, PanelPart, PopupPart, SettingsPart, SidebarPart,
+    Target,
+};
 use crate::ui::{FindView, InputBoxView};
 
 /// Lines the wheel scrolls at a time.
@@ -103,40 +112,6 @@ pub(super) enum Drag {
     },
 }
 
-/// What's at a place on the screen (boxes aside).
-enum Hit {
-    Window(WindowId),
-    /// An activity bar icon: what it shows.
-    Activity(String),
-    /// The activity bar between its icons.
-    ActivityBar,
-    /// The Search view's query field.
-    SearchField,
-    /// Its replace field, and the replace-all chip.
-    SearchReplace,
-    SearchReplaceAll,
-    /// One of the Search view's toggles: match case, whole word, regex.
-    SearchToggle(usize),
-    SidebarTab(usize),
-    /// A line of the sidebar's list, rows down from its top.
-    SidebarLine(usize),
-    Sidebar,
-    /// The agent sidebar's name (lists the agents), its mode (lists the
-    /// modes), a tool call's row (opens it), one of its question's
-    /// options, its box, a setting's chip under the box (lists its
-    /// values), a row of the slash menu, and the rest of it.
-    AgentTitle,
-    AgentMode,
-    AgentChip(String),
-    AgentSlash(usize),
-    AgentTool(String),
-    AgentOption(usize),
-    AgentInput,
-    Agent,
-    Terminal,
-    Nothing,
-}
-
 impl App {
     /// Handles a mouse event. Public so tests can drive the app directly.
     pub fn handle_mouse(&mut self, event: MouseEvent) {
@@ -161,7 +136,8 @@ impl App {
             MouseEventKind::Down(MouseButton::Left)
                 if self.editor.modeless()
                     && event.modifiers == KeyModifiers::CONTROL
-                    && matches!(self.hit(at), Hit::Window(id) if id == self.editor.windows().active()) =>
+                    && self.target_at(at)
+                        == Some(Target::Window(self.editor.windows().active())) =>
             {
                 self.add_cursor_at(at);
             }
@@ -171,7 +147,7 @@ impl App {
             MouseEventKind::Down(MouseButton::Left)
                 if (event.modifiers.contains(KeyModifiers::CONTROL)
                     || event.modifiers.contains(KeyModifiers::ALT))
-                    && matches!(self.hit(at), Hit::Window(_)) =>
+                    && matches!(self.target_at(at), Some(Target::Window(_))) =>
             {
                 self.mouse_down(at);
                 self.dragging = None;
@@ -180,8 +156,11 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => self.mouse_down(at),
             MouseEventKind::Down(MouseButton::Right) => self.right_click(at),
             MouseEventKind::Down(MouseButton::Middle) => {
-                if let Some((window, id, _)) = self.tab_at(at) {
-                    self.close_tab(window, id);
+                if let Some(Target::Tab {
+                    window, document, ..
+                }) = self.target_at(at)
+                {
+                    self.close_tab(window, document);
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => self.mouse_drag(at),
@@ -194,228 +173,34 @@ impl App {
         self.dispatch_events();
     }
 
+    /// What's on top at `at`, as the last frame drew it.
+    pub fn target_at(&self, at: Position) -> Option<Target> {
+        self.screen_map.at(at).map(|region| region.target.clone())
+    }
+
     /// The pointer's shape over `at`: a CSS cursor name.
     pub fn pointer_for(&self, at: Position) -> &'static str {
-        use crate::config::StatusElement as E;
-        if let Some(element) = self.status_item_at(at) {
-            let clickable = !matches!(
-                element,
-                E::Mode | E::Modified | E::PendingKeys | E::Recording | E::Separator | E::Spacer
-            );
-            return if clickable { "pointer" } else { "default" };
-        }
-        let map = &self.screen_map;
-        if let Some(settings) = &map.settings
-            && settings.area.contains(at)
-        {
-            let on = settings.categories.iter().any(|(r, _)| r.contains(at))
-                || settings
-                    .items
-                    .iter()
-                    .any(|(_, value, _)| value.contains(at));
-            return if on {
-                "pointer"
-            } else if settings.search.contains(at) {
-                "text"
-            } else {
-                "default"
-            };
-        }
-        if let Some(git) = &map.git {
-            let on_list = git.lists.iter().any(|(list, panel, _)| {
-                *panel != crate::editor::git_gui::GitPanel::Diff && list.contains(at)
-            });
-            return if on_list { "pointer" } else { "default" };
-        }
-        if let Some(picker) = &map.picker {
-            return if picker.list.contains(at) {
-                "pointer"
-            } else {
-                "default"
-            };
-        }
-        if let Some(popup) = &map.popup
-            && popup.area.contains(at)
-        {
-            let list = self.editor.popup().is_some_and(|p| p.select);
-            return if (list && popup.list.contains(at)) || self.popup_click(at).is_some() {
-                "pointer"
-            } else {
-                "default"
-            };
-        }
-        if let Some(find) = &map.find
-            && find.area.contains(at)
-        {
-            if find.toggles.iter().any(|(area, _)| area.contains(at)) {
-                return "pointer";
-            }
-            let field = find.find.contains(at) || find.replace.is_some_and(|r| r.contains(at));
-            return if field { "text" } else { "default" };
-        }
-        if let Some((area, field)) = map.input
-            && area.contains(at)
-        {
-            return if field.contains(at) {
-                "text"
-            } else {
-                "default"
-            };
-        }
-        if let Some(edge) = self.edge_at(at) {
-            return match edge {
-                Drag::Sidebar | Drag::Agent | Drag::Split { vertical: true, .. } => "ew-resize",
-                _ => "ns-resize",
-            };
-        }
-        match self.hit(at) {
-            Hit::SidebarTab(_)
-            | Hit::Activity(_)
-            | Hit::SearchToggle(_)
-            | Hit::AgentTitle
-            | Hit::AgentMode
-            | Hit::AgentChip(_)
-            | Hit::AgentSlash(_)
-            | Hit::AgentTool(_)
-            | Hit::AgentOption(_) => "pointer",
-            Hit::AgentInput => "text",
-            Hit::SearchField | Hit::SearchReplace => "text",
-            Hit::SearchReplaceAll => "pointer",
-            Hit::SidebarLine(row) if self.sidebar_line_exists(row) => "pointer",
-            Hit::Window(_) | Hit::Terminal => "text",
-            _ => "default",
-        }
+        self.target_at(at)
+            .map_or("default", |target| target.pointer())
     }
 
-    fn sidebar_line_exists(&self, row: usize) -> bool {
-        if self.editor.git_view_shown() {
-            let index = self.editor.git_scroll() + row;
-            return matches!(
-                self.editor.git_rows().get(index),
-                Some(crate::editor::GitRow::File { .. })
-            );
-        }
-        match self.editor.plugin_view() {
-            Some(view) => view.scroll.get() + row < view.lines.len(),
-            None => self
-                .editor
-                .sidebar()
-                .is_some_and(|tree| tree.scroll.get() + row < tree.rows().len()),
-        }
-    }
-
-    fn hit(&self, at: Position) -> Hit {
+    /// The drag an edge starts: the sidebar's, the agent sidebar's, the
+    /// panel's title row, or the line after a window.
+    fn edge(&self, target: &Option<Target>) -> Option<Drag> {
         let map = &self.screen_map;
-        if let Some((bar, items)) = &map.activity
-            && bar.contains(at)
-        {
-            // Anywhere in an icon's block.
-            return items
-                .iter()
-                .find(|(y, _)| (*y..y + crate::ui::activity::BLOCK).contains(&at.y))
-                .map_or(Hit::ActivityBar, |(_, name)| Hit::Activity(name.clone()));
-        }
-        if let Some(sidebar) = &map.sidebar
-            && sidebar.area.contains(at)
-        {
-            if let Some((y, spans)) = &sidebar.tabs
-                && at.y == *y
-            {
-                return spans
-                    .iter()
-                    .position(|&(from, to)| (from..to).contains(&at.x))
-                    .map_or(Hit::Sidebar, Hit::SidebarTab);
-            }
-            if let Some(search) = &sidebar.search {
-                if search.field.contains(at) {
-                    return Hit::SearchField;
-                }
-                if search.replace_all.contains(at) {
-                    return Hit::SearchReplaceAll;
-                }
-                if search.replace.contains(at) {
-                    return Hit::SearchReplace;
-                }
-                if let Some(i) = search.toggles.iter().position(|t| t.contains(at)) {
-                    return Hit::SearchToggle(i);
-                }
-            }
-            if sidebar.list.contains(at) {
-                return Hit::SidebarLine((at.y - sidebar.list.y) as usize);
-            }
-            return Hit::Sidebar;
-        }
-        if let Some(agent) = &map.agent
-            && agent.area.contains(at)
-        {
-            if let Some(&(_, n)) = agent.options.iter().find(|(r, _)| r.contains(at)) {
-                return Hit::AgentOption(n);
-            }
-            if let Some(&(_, i)) = agent.slash.iter().find(|(r, _)| r.contains(at)) {
-                return Hit::AgentSlash(i);
-            }
-            if let Some((_, id)) = agent.chips.iter().find(|(r, _)| r.contains(at)) {
-                return Hit::AgentChip(id.clone());
-            }
-            if agent.mode.is_some_and(|r| r.contains(at)) {
-                return Hit::AgentMode;
-            }
-            if agent.title.contains(at) {
-                return Hit::AgentTitle;
-            }
-            if agent.input.contains(at) {
-                return Hit::AgentInput;
-            }
-            if agent.chat.contains(at)
-                && let Some((_, id)) = agent.tools.iter().find(|(y, _)| *y == at.y)
-            {
-                return Hit::AgentTool(id.clone());
-            }
-            return Hit::Agent;
-        }
-        if map.terminal.is_some_and(|area| area.contains(at)) {
-            return Hit::Terminal;
-        }
-        map.windows
-            .iter()
-            .find(|(_, area)| area.contains(at))
-            .map_or(Hit::Nothing, |&(id, _)| Hit::Window(id))
-    }
-
-    /// An edge to drag at `at`: the sidebar's, the panel's title row, or the
-    /// line after a window.
-    fn edge_at(&self, at: Position) -> Option<Drag> {
-        let map = &self.screen_map;
-        if map.sidebar.as_ref().is_some_and(|s| s.edge.contains(at)) {
-            return Some(Drag::Sidebar);
-        }
-        if map.agent.as_ref().is_some_and(|a| a.edge.contains(at)) {
-            return Some(Drag::Agent);
-        }
-        if let Some(panel) = map.terminal
-            && at.y == panel.y
-            && panel.contains(at)
-        {
-            return Some(Drag::Panel {
-                bottom: panel.bottom(),
-            });
-        }
-        let &(line, vertical) = map.separators.iter().find(|(area, _)| area.contains(at))?;
-        // The window it follows: to its left, or above it.
-        map.windows
-            .iter()
-            .find(|(_, area)| {
-                if vertical {
-                    area.right() == line.x && (area.y..area.bottom()).contains(&at.y)
-                } else {
-                    area.bottom() == line.y && (area.x..area.right()).contains(&at.x)
-                }
-            })
-            .map(|&(window, area)| Drag::Split {
+        match target.as_ref()? {
+            Target::SidebarEdge => Some(Drag::Sidebar),
+            Target::AgentEdge => Some(Drag::Agent),
+            Target::Panel(PanelPart::Title) => Some(Drag::Panel {
+                bottom: map.area(&Target::Panel(PanelPart::Rest))?.bottom(),
+            }),
+            &Target::Split { window, vertical } => Some(Drag::Split {
                 window,
-                area,
+                area: map.area(&Target::Window(window))?,
                 vertical,
-            })
+            }),
+            _ => None,
+        }
     }
 
     /// Whether clicks go to the screen, rather than a box that has focus.
@@ -436,16 +221,14 @@ impl App {
 
     /// A click in the keybinding editor: the search box, or a row (the
     /// selected one again: press new keys for it).
-    fn click_in_keybindings(&mut self, at: Position) -> bool {
-        let Some(map) = self.screen_map.keybindings.clone() else {
+    fn click_in_keybindings(&mut self, target: &Option<Target>) -> bool {
+        let Some(Target::Keybindings(part)) = *target else {
             return false;
         };
-        if !map.area.contains(at)
-            || !matches!(
-                self.editor.mode(),
-                Mode::Keybindings | Mode::Sidebar | Mode::Terminal | Mode::Normal
-            )
-        {
+        if !matches!(
+            self.editor.mode(),
+            Mode::Keybindings | Mode::Sidebar | Mode::Terminal | Mode::Normal
+        ) {
             return false;
         }
         self.input.reset();
@@ -453,48 +236,46 @@ impl App {
         if self.editor.keybindings_recording() {
             return true;
         }
-        if map.search.contains(at) {
-            self.editor.keybindings_search();
-        } else if map.list.contains(at) {
-            let index = map.first + (at.y - map.list.y) as usize;
-            let again = self
-                .editor
-                .keybindings()
-                .is_some_and(|v| v.selected == index);
-            self.editor.keybindings_select(index);
-            if again {
-                self.execute("keybindings_change", Invocation::default());
+        match part {
+            KeybindingsPart::Search => self.editor.keybindings_search(),
+            KeybindingsPart::Row(index) => {
+                let again = self
+                    .editor
+                    .keybindings()
+                    .is_some_and(|v| v.selected == index);
+                self.editor.keybindings_select(index);
+                if again {
+                    self.execute("keybindings_change", Invocation::default());
+                }
             }
+            KeybindingsPart::Rest | KeybindingsPart::List => {}
         }
         true
     }
 
     /// A click in the settings editor: a category shows its settings, a
     /// setting is selected, and one on its value changes it (as `<CR>`).
-    fn click_in_settings(&mut self, at: Position) -> bool {
-        let Some(map) = self.screen_map.settings.clone() else {
+    fn click_in_settings(&mut self, target: &Option<Target>) -> bool {
+        let Some(Target::Settings(part)) = *target else {
             return false;
         };
-        if !map.area.contains(at)
-            || !matches!(
-                self.editor.mode(),
-                Mode::Settings | Mode::Sidebar | Mode::Terminal | Mode::Normal
-            )
-        {
+        if !matches!(
+            self.editor.mode(),
+            Mode::Settings | Mode::Sidebar | Mode::Terminal | Mode::Normal
+        ) {
             return false;
         }
         self.input.reset();
         self.editor.set_mode(Mode::Settings);
-        if map.search.contains(at) {
-            self.editor.settings_search();
-        } else if let Some(&(_, i)) = map.categories.iter().find(|(row, _)| row.contains(at)) {
-            self.editor.settings_category(i);
-        } else if let Some(&(_, value, i)) = map.items.iter().find(|(block, ..)| block.contains(at))
-        {
-            self.editor.settings_select(i);
-            if value.contains(at) {
+        match part {
+            SettingsPart::Search => self.editor.settings_search(),
+            SettingsPart::Category(i) => self.editor.settings_category(i),
+            SettingsPart::Item(i) => self.editor.settings_select(i),
+            SettingsPart::Value(i) => {
+                self.editor.settings_select(i);
                 self.execute("settings_change", Invocation::default());
             }
+            SettingsPart::Rest | SettingsPart::List => {}
         }
         true
     }
@@ -506,99 +287,100 @@ impl App {
         }
         self.hover_wait = None;
         self.editor.end_any_hover();
+        let target = self.target_at(at);
         // The menu bar first: a title opens its menu (another one's open
         // menu switching to it), the open one's closes it.
-        if let Some((y, titles)) = &self.screen_map.menu_bar
-            && at.y == *y
-        {
-            let index = titles
-                .iter()
-                .position(|&(from, to)| (from..to).contains(&at.x));
-            match index {
-                Some(index) => {
-                    let name = crate::editor::menu_bar::MENUS[index].title.to_lowercase();
-                    self.execute(&format!("menu_{name}"), Invocation::default());
-                }
-                None if self.editor.open_menu().is_some() => {
+        match target {
+            Some(Target::MenuBar(Some(index))) => {
+                let name = crate::editor::menu_bar::MENUS[index].title.to_lowercase();
+                self.execute(&format!("menu_{name}"), Invocation::default());
+                return;
+            }
+            Some(Target::MenuBar(None)) => {
+                if self.editor.open_menu().is_some() {
                     self.execute("popup_close", Invocation::default());
                 }
-                None => {}
+                return;
             }
-            return;
+            _ => {}
         }
         // An open menu, popup, picker or input box over the windows: it
         // takes the click before what's under it (the tab bar, the
         // breadcrumbs...).
-        if self.over_focused_box(at) && self.click_in_box(at) {
+        if self.over_focused_box(&target) && self.click_in_box(at, &target) {
             return;
         }
-        // The bottom panel's tabs.
-        if let Some(tab) = self.panel_tab_at(at) {
-            self.input.reset();
-            if let Err(error) = self.editor.panel_show(tab) {
-                self.editor.set_message(Message::error(error));
-            }
-            return;
-        }
-        // The status bar: its items do what they show.
-        if let Some(element) = self.status_item_at(at) {
-            if self.editor.popup().is_some() {
-                self.editor.close_popup();
-            }
-            self.status_click(element, at);
-            return;
-        }
-        // The breadcrumbs: a folder shows in the sidebar, a symbol is gone
-        // to.
-        if let Some((window, crumb)) = self.crumb_at(at) {
-            use crate::ui::breadcrumbs::Crumb;
-            self.input.reset();
-            self.editor.focus_window(window);
-            match crumb {
-                Crumb::Folder(path) => self.editor.reveal_in_tree(&path),
-                Crumb::File => {
-                    if let Some(path) = self
-                        .editor
-                        .document
-                        .path()
-                        .map(std::path::Path::to_path_buf)
-                    {
-                        self.editor.reveal_in_tree(&path);
-                    }
+        match target.clone() {
+            // The bottom panel's tabs.
+            Some(Target::Panel(PanelPart::Tab(tab))) => {
+                self.input.reset();
+                if let Err(error) = self.editor.panel_show(tab) {
+                    self.editor.set_message(Message::error(error));
                 }
-                Crumb::Symbol(index) => self.editor.go_to_symbol(index),
+                return;
             }
-            return;
-        }
-        // The tab bar: a tab shows its buffer, its × closes it.
-        if let Some((window, id, on_close)) = self.tab_at(at) {
-            if self.editor.popup().is_some() {
-                self.editor.close_popup();
+            // The status bar: its items do what they show.
+            Some(Target::Status(element)) => {
+                if self.editor.popup().is_some() {
+                    self.editor.close_popup();
+                }
+                self.status_click(element, at);
+                return;
             }
-            if on_close {
-                self.close_tab(window, id);
-            } else {
-                self.show_tab(window, id);
-                self.dragging = Some(Drag::Tab {
-                    window,
-                    document: id,
-                });
+            // The breadcrumbs: a folder shows in the sidebar, a symbol is
+            // gone to.
+            Some(Target::Crumb { window, crumb }) => {
+                use crate::ui::breadcrumbs::Crumb;
+                self.input.reset();
+                self.editor.focus_window(window);
+                match crumb {
+                    Crumb::Folder(path) => self.editor.reveal_in_tree(&path),
+                    Crumb::File => {
+                        if let Some(path) = self
+                            .editor
+                            .document
+                            .path()
+                            .map(std::path::Path::to_path_buf)
+                        {
+                            self.editor.reveal_in_tree(&path);
+                        }
+                    }
+                    Crumb::Symbol(index) => self.editor.go_to_symbol(index),
+                }
+                return;
             }
-            return;
+            // The tab bar: a tab shows its buffer, its × closes it.
+            Some(Target::Tab {
+                window,
+                document,
+                close,
+            }) => {
+                if self.editor.popup().is_some() {
+                    self.editor.close_popup();
+                }
+                if close {
+                    self.close_tab(window, document);
+                } else {
+                    self.show_tab(window, document);
+                    self.dragging = Some(Drag::Tab { window, document });
+                }
+                return;
+            }
+            _ => {}
         }
         // A hover-like popup goes with any click.
         if self.editor.mode() != Mode::Popup && self.editor.popup().is_some() {
             self.editor.close_popup();
         }
-        if self.click_in_settings(at)
-            || self.click_in_keybindings(at)
-            || self.click_in_box(at)
+        if self.click_in_settings(&target)
+            || self.click_in_keybindings(&target)
+            || self.click_in_box(at, &target)
             || !self.clicks_allowed()
         {
             return;
         }
         self.input.reset();
-        if let Some(edge) = self.edge_at(at) {
+        if let Some(edge) = self.edge(&target) {
             if let Drag::Panel { .. } = edge
                 && let Err(error) = self.editor.focus_terminal()
             {
@@ -608,8 +390,8 @@ impl App {
             return;
         }
         let clicks = self.count_click(at);
-        match self.hit(at) {
-            Hit::Window(id) => {
+        match target {
+            Some(Target::Window(id)) => {
                 self.leave_panes();
                 if self.editor.mode() == Mode::Visual {
                     self.editor.set_mode(Mode::Normal);
@@ -624,27 +406,37 @@ impl App {
                     _ => {}
                 }
             }
-            Hit::Activity(name) => {
+            Some(Target::Activity(Some(name))) => {
                 self.leave_panes();
                 if let Err(error) = self.editor.activity(&name) {
                     self.editor.set_message(Message::error(error));
                 }
             }
-            Hit::ActivityBar => {}
-            Hit::SearchField => self.editor.search_focus_query(),
-            Hit::SearchReplace => self.editor.search_focus_replace(),
-            Hit::SearchReplaceAll => {
+            Some(Target::Sidebar(part)) => self.sidebar_click(part, clicks),
+            Some(Target::Agent(part)) => self.agent_click(part),
+            Some(Target::Panel(part)) => self.panel_click(part),
+            _ => {}
+        }
+    }
+
+    /// A click in the sidebar: it gets focus; a tab shows its view, a line
+    /// is chosen (and can be dragged, in the file tree).
+    fn sidebar_click(&mut self, part: SidebarPart, clicks: u8) {
+        match part {
+            SidebarPart::SearchField => self.editor.search_focus_query(),
+            SidebarPart::SearchReplace => self.editor.search_focus_replace(),
+            SidebarPart::SearchReplaceAll => {
                 if let Err(error) = self.editor.search_ask_replace_all() {
                     self.editor.set_message(Message::error(error));
                 }
             }
-            Hit::SearchToggle(i) => {
+            SidebarPart::SearchToggle(i) => {
                 // Toggled as the keys do, from the query field.
                 self.editor.search_focus_query();
                 let command = ["find_toggle_case", "find_toggle_word", "find_toggle_regex"][i];
                 self.execute(command, Invocation::default());
             }
-            Hit::SidebarTab(index) => {
+            SidebarPart::Tab(index) => {
                 let names: Vec<String> = self
                     .editor
                     .sidebar_view_names()
@@ -657,7 +449,7 @@ impl App {
                     self.editor.set_message(Message::error(error));
                 }
             }
-            Hit::SidebarLine(row) => {
+            SidebarPart::Line(row) => {
                 let dragged = self.editor.tree_row_on_screen(row);
                 if let Err(error) = self.editor.sidebar_click_times(row, clicks) {
                     self.editor.set_message(Message::error(error));
@@ -670,32 +462,38 @@ impl App {
                     });
                 }
             }
-            Hit::Sidebar => self.editor.set_mode(Mode::Sidebar),
-            Hit::AgentTitle => self.agent_click("agent_choose"),
-            Hit::AgentMode => self.agent_click("agent_mode"),
-            Hit::AgentChip(id) => {
-                if let Err(error) = self.editor.agent_config_picker(Some(&id)) {
-                    self.editor.set_message(Message::error(error));
-                }
+            SidebarPart::Rest => self.editor.set_mode(Mode::Sidebar),
+        }
+    }
+
+    /// A click in the agent sidebar: its name and mode list what to choose
+    /// from, a setting's chip its values; anywhere else gives its box focus.
+    fn agent_click(&mut self, part: AgentPart) {
+        let result = match part {
+            AgentPart::Title => {
+                self.execute("agent_choose", Invocation::default());
+                Ok(())
             }
-            Hit::AgentSlash(i) => {
-                if let Err(error) = self.editor.agent_slash_pick(i) {
-                    self.editor.set_message(Message::error(error));
-                }
+            AgentPart::Mode => {
+                self.execute("agent_mode", Invocation::default());
+                Ok(())
             }
-            Hit::AgentTool(id) => self.editor.agent_toggle_tool(&id),
-            Hit::AgentOption(n) => {
-                if let Err(error) = self.editor.agent_choose(n) {
-                    self.editor.set_message(Message::error(error));
-                }
+            AgentPart::Chip(id) => self.editor.agent_config_picker(Some(&id)),
+            AgentPart::Slash(i) => self.editor.agent_slash_pick(i),
+            AgentPart::Tool(id) => {
+                self.editor.agent_toggle_tool(&id);
+                Ok(())
             }
-            Hit::AgentInput | Hit::Agent => {
+            AgentPart::Option(n) => self.editor.agent_choose(n),
+            AgentPart::Input | AgentPart::Chat | AgentPart::Rest => {
                 if self.editor.mode() != Mode::Agent {
                     self.editor.set_mode(Mode::Agent);
                 }
+                Ok(())
             }
-            Hit::Terminal => self.panel_click(at),
-            Hit::Nothing => {}
+        };
+        if let Err(error) = result {
+            self.editor.set_message(Message::error(error));
         }
     }
 
@@ -722,14 +520,13 @@ impl App {
     }
 
     /// A click while a box has focus (the picker, a popup, the find box,
-    /// an input box). Returns whether the click is used up.
-    fn click_in_box(&mut self, at: Position) -> bool {
-        let map = self.screen_map.clone();
+    /// an input box, the git view). Returns whether the click is used up.
+    fn click_in_box(&mut self, at: Position, target: &Option<Target>) -> bool {
+        let drawn = |t: Target| self.screen_map.area(&t).is_some();
         match self.editor.mode() {
             Mode::Picker => {
-                if let Some(picker) = map.picker {
-                    if picker.list.contains(at) {
-                        let index = picker.first + (at.y - picker.list.y) as usize;
+                match *target {
+                    Some(Target::Picker(Some(index))) => {
                         let exists = self
                             .editor
                             .picker()
@@ -740,22 +537,24 @@ impl App {
                             }
                             self.execute("picker_accept", Invocation::default());
                         }
-                    } else if !picker.area.contains(at) {
+                    }
+                    Some(Target::Picker(None)) => {}
+                    _ if drawn(Target::Picker(None)) => {
                         self.execute("picker_cancel", Invocation::default());
                     }
+                    _ => {}
                 }
                 true
             }
             Mode::Popup => {
-                if let Some(area) = map.popup {
-                    let list = self.editor.popup().is_some_and(|p| p.select);
-                    if !list && area.list.contains(at) {
-                        // A key shown in it (`y move it`): as if pressed.
-                        if let Some(command) = self.popup_click(at) {
+                match target {
+                    // A key shown in it (`y move it`): as if pressed.
+                    Some(Target::Popup(PopupPart::Key(key))) => {
+                        if let Some(command) = self.popup_command(key) {
                             self.execute(&command, Invocation::default());
                         }
-                    } else if area.list.contains(at) {
-                        let index = area.first + (at.y - area.list.y) as usize;
+                    }
+                    &Some(Target::Popup(PopupPart::Row(index))) => {
                         let choose = self.editor.popup_mut().and_then(|popup| {
                             if !popup.select || index >= popup.lines.len() {
                                 return None;
@@ -770,22 +569,29 @@ impl App {
                         if let Some(command) = choose {
                             self.execute(&command, Invocation::default());
                         }
-                    } else if !area.area.contains(at) {
+                    }
+                    Some(Target::Popup(PopupPart::Rest)) => {}
+                    _ if drawn(Target::Popup(PopupPart::Rest)) => {
                         self.execute("popup_close", Invocation::default());
                     }
+                    _ => {}
                 }
                 true
             }
             Mode::Input => {
-                if let Some((area, field)) = map.input {
-                    if field.contains(at) {
-                        if let Some(input) = self.editor.input_box() {
+                match target {
+                    Some(Target::Input { field: true }) => {
+                        let area = self.screen_map.area(&Target::Input { field: false });
+                        if let (Some(input), Some(area)) = (self.editor.input_box(), area) {
                             let col = InputBoxView::field_col(input, area, at.x);
                             self.editor.input_box_edit(|f| f.set_cursor(col));
                         }
-                    } else if !area.contains(at) {
+                    }
+                    Some(Target::Input { field: false }) => {}
+                    _ if drawn(Target::Input { field: false }) => {
                         self.execute("input_cancel", Invocation::default());
                     }
+                    _ => {}
                 }
                 true
             }
@@ -796,59 +602,49 @@ impl App {
                 false
             }
             Mode::Find => {
-                let Some(find) = map.find else {
-                    return true;
-                };
-                if !find.area.contains(at) {
+                let Some(Target::Find(part)) = *target else {
+                    if !drawn(Target::Find(FindPart::Rest)) {
+                        return true;
+                    }
                     // Out of the box: it closes, and the click goes on.
                     self.editor.close_find();
                     return false;
-                }
-                if let Some(&(_, toggle)) = find.toggles.iter().find(|(area, _)| area.contains(at))
-                {
-                    self.editor.find_toggle(|f| match toggle {
+                };
+                match part {
+                    FindPart::Toggle(toggle) => self.editor.find_toggle(|f| match toggle {
                         0 => f.match_case = !f.match_case,
                         1 => f.whole_word = !f.whole_word,
                         _ => f.regex = !f.regex,
-                    });
-                } else if find.find.contains(at) {
-                    let field = &self.editor.find_state().find;
-                    let col = FindView::field_col(field, find.find, at.x);
-                    self.editor.find_click_field(FindField::Find, col);
-                } else if let Some(replace) = find.replace.filter(|r| r.contains(at)) {
-                    let field = &self.editor.find_state().replace;
-                    let col = FindView::field_col(field, replace, at.x);
-                    self.editor.find_click_field(FindField::Replace, col);
+                    }),
+                    FindPart::Field(which) => {
+                        let Some(area) = self.screen_map.at(at).map(|r| r.area) else {
+                            return true;
+                        };
+                        let state = self.editor.find_state();
+                        let field = match which {
+                            FindField::Find => &state.find,
+                            FindField::Replace => &state.replace,
+                        };
+                        let col = FindView::field_col(field, area, at.x);
+                        self.editor.find_click_field(which, col);
+                    }
+                    FindPart::Rest => {}
                 }
                 true
             }
             Mode::Git => {
-                let Some(git) = map.git else {
-                    return true;
-                };
-                if let Some((rows, first)) = git.side {
-                    if rows.contains(at) {
-                        self.editor
-                            .git_gui_side_select(first + (at.y - rows.y) as usize);
+                match *target {
+                    Some(Target::Git(GitPart::BlameRow(line))) => {
+                        self.editor.git_gui_blame_select(line);
                     }
-                    return true;
-                }
-                if let Some((rows, first)) = git.blame {
-                    if rows.contains(at) {
-                        self.editor
-                            .git_gui_blame_select(first + (at.y - rows.y) as usize);
+                    Some(Target::Git(GitPart::SideRow(row))) => {
+                        self.editor.git_gui_side_select(row);
                     }
-                    return true;
-                }
-                if let Some(&(list, panel, first)) =
-                    git.lists.iter().find(|(list, ..)| list.contains(at))
-                {
-                    self.editor
-                        .git_gui_select(panel, first + (at.y - list.y) as usize);
-                } else if let Some(&(_, panel)) =
-                    git.panels.iter().find(|(area, _)| area.contains(at))
-                {
-                    self.editor.git_gui_focus(panel);
+                    Some(Target::Git(GitPart::Row(panel, index))) => {
+                        self.editor.git_gui_select(panel, index);
+                    }
+                    Some(Target::Git(GitPart::Panel(panel))) => self.editor.git_gui_focus(panel),
+                    _ => {}
                 }
                 true
             }
@@ -858,30 +654,19 @@ impl App {
         }
     }
 
-    /// Whether `at` is on the box that has focus: a popup (a menu...), the
-    /// picker or an input box.
-    fn over_focused_box(&self, at: Position) -> bool {
-        let map = &self.screen_map;
+    /// Whether `target` is the box that has focus: a popup (a menu...),
+    /// the picker or an input box.
+    fn over_focused_box(&self, target: &Option<Target>) -> bool {
         match self.editor.mode() {
-            Mode::Popup => map.popup.as_ref().is_some_and(|p| p.area.contains(at)),
-            Mode::Picker => map.picker.as_ref().is_some_and(|p| p.area.contains(at)),
-            Mode::Input => map.input.is_some_and(|(area, _)| area.contains(at)),
+            Mode::Popup => matches!(target, Some(Target::Popup(_))),
+            Mode::Picker => matches!(target, Some(Target::Picker(_))),
+            Mode::Input => matches!(target, Some(Target::Input { .. })),
             _ => false,
         }
     }
 
-    /// The command a click at `at` in the popup runs: the one bound (in the
-    /// popup) to the key shown there, if any.
-    fn popup_click(&self, at: Position) -> Option<String> {
-        let area = self.screen_map.popup?;
-        if !area.list.contains(at) {
-            return None;
-        }
-        let popup = self.editor.popup()?;
-        // Its text starts a column in from the border.
-        let col = at.x.checked_sub(area.list.x + 1)? as usize;
-        let line = area.first + (at.y - area.list.y) as usize;
-        let key = popup.key_at(line, col)?;
+    /// The command `key`, shown in the popup, runs there (if it's bound).
+    fn popup_command(&self, key: &str) -> Option<String> {
         [key.to_string(), format!("<{key}>")]
             .iter()
             .filter_map(|notation| crate::input::parse_keys(notation).ok())
@@ -891,21 +676,9 @@ impl App {
             })
     }
 
-    /// The bottom panel's tab under `at`.
-    fn panel_tab_at(&self, at: Position) -> Option<crate::editor::panel::PanelTab> {
-        let map = self.screen_map.panel.as_ref()?;
-        if at.y != map.area.y {
-            return None;
-        }
-        map.tabs
-            .iter()
-            .find(|(from, to, _)| (*from..*to).contains(&at.x))
-            .map(|(_, _, tab)| *tab)
-    }
-
     /// A click in the bottom panel: the terminal's focus, or a problem
     /// gone to.
-    fn panel_click(&mut self, at: Position) {
+    fn panel_click(&mut self, part: PanelPart) {
         use crate::editor::panel::PanelTab;
         match self.editor.panel_shown() {
             Some(PanelTab::Terminal) | None => {
@@ -915,11 +688,7 @@ impl App {
             }
             Some(PanelTab::Problems | PanelTab::Locations) => {
                 self.editor.set_mode(Mode::Panel);
-                let Some(map) = self.screen_map.panel.clone() else {
-                    return;
-                };
-                if map.list.contains(at) {
-                    let index = map.first + (at.y - map.list.y) as usize;
+                if let PanelPart::Row(index) = part {
                     let before = self.editor.panel().selected;
                     self.editor.panel_select(index);
                     if self.editor.panel().selected == index || before == index {
@@ -929,18 +698,6 @@ impl App {
             }
             Some(PanelTab::Output) => self.editor.set_mode(Mode::Panel),
         }
-    }
-
-    /// The status bar item under `at`.
-    fn status_item_at(&self, at: Position) -> Option<crate::config::StatusElement> {
-        let (row, items) = self.screen_map.status_bar.as_ref()?;
-        if at.y != *row {
-            return None;
-        }
-        items
-            .iter()
-            .find(|(_, from, to)| (*from..*to).contains(&at.x))
-            .map(|(element, _, _)| element.clone())
     }
 
     /// A status bar item clicked, as in VS Code.
@@ -961,32 +718,6 @@ impl App {
             _ => return,
         };
         self.execute(command, Invocation::default());
-    }
-
-    /// The breadcrumb under `at`.
-    fn crumb_at(&self, at: Position) -> Option<(WindowId, crate::ui::breadcrumbs::Crumb)> {
-        let map = self
-            .screen_map
-            .breadcrumbs
-            .iter()
-            .find(|m| m.row.contains(at))?;
-        map.crumbs
-            .iter()
-            .find(|(from, to, _)| (*from..*to).contains(&at.x))
-            .map(|(_, _, crumb)| (map.window, crumb.clone()))
-    }
-
-    /// The tab under `at`, and whether it's on its `×`.
-    fn tab_at(&self, at: Position) -> Option<(WindowId, crate::editor::DocumentId, bool)> {
-        let map = self
-            .screen_map
-            .tab_bars
-            .iter()
-            .find(|m| m.row.contains(at))?;
-        map.tabs
-            .iter()
-            .find(|(from, to, _, _)| (*from..*to).contains(&at.x))
-            .map(|&(_, _, close, id)| (map.window, id, at.x == close))
     }
 
     /// A tab clicked: its window focused, showing its buffer, there to
@@ -1016,27 +747,21 @@ impl App {
         if self.editor.popup().is_some() {
             self.editor.close_popup();
         }
-        if self
-            .screen_map
-            .menu_bar
-            .as_ref()
-            .is_some_and(|(y, _)| *y == at.y)
-        {
-            return;
-        }
-        match self.hit(at) {
-            Hit::Window(_) if self.clicks_allowed() => {
+        match self.target_at(at) {
+            Some(Target::Window(_)) if self.clicks_allowed() => {
                 if self.editor.mode() != Mode::Visual {
                     self.mouse_down(at);
                     self.dragging = None;
                 }
                 self.editor.context_menu(false, at.x, at.y);
             }
-            Hit::SidebarLine(row) if self.clicks_allowed() && self.editor.tree_select_line(row) => {
+            Some(Target::Sidebar(SidebarPart::Line(row)))
+                if self.clicks_allowed() && self.editor.tree_select_line(row) =>
+            {
                 self.editor.context_menu(true, at.x, at.y);
             }
             // Below the files: the project's folder.
-            Hit::SidebarLine(_) | Hit::Sidebar
+            Some(Target::Sidebar(SidebarPart::Line(_) | SidebarPart::Rest))
                 if self.clicks_allowed() && self.editor.file_tree_shown() =>
             {
                 self.editor.set_mode(Mode::Sidebar);
@@ -1044,11 +769,6 @@ impl App {
             }
             _ => {}
         }
-    }
-
-    /// A click on the agent sidebar's name or mode: a list to choose from.
-    fn agent_click(&mut self, command: &str) {
-        self.execute(command, Invocation::default());
     }
 
     /// A click back into the text leaves the sidebar, the terminal or the
@@ -1100,7 +820,7 @@ impl App {
             Some(Drag::Tree { row, .. }) => {
                 self.pointer = "grabbing";
                 // The row it'd drop on, selected.
-                if let Hit::SidebarLine(over) = self.hit(at)
+                if let Some(Target::Sidebar(SidebarPart::Line(over))) = self.target_at(at)
                     && over != row
                 {
                     self.editor.tree_select_on_screen(over);
@@ -1112,13 +832,13 @@ impl App {
         match self.dragging {
             Some(Drag::Text(id)) => self.drag_select(id, at),
             Some(Drag::Sidebar) => {
-                if let Some(sidebar) = &self.screen_map.sidebar {
-                    self.editor.options.sidebar_width = at.x.saturating_sub(sidebar.area.x).max(10);
+                if let Some(sidebar) = self.screen_map.area(&Target::Sidebar(SidebarPart::Rest)) {
+                    self.editor.options.sidebar_width = at.x.saturating_sub(sidebar.x).max(10);
                 }
             }
             Some(Drag::Agent) => {
-                if let Some(agent) = &self.screen_map.agent {
-                    let width = agent.area.right().saturating_sub(at.x + 1);
+                if let Some(agent) = self.screen_map.area(&Target::Agent(AgentPart::Rest)) {
+                    let width = agent.right().saturating_sub(at.x + 1);
                     self.editor.options.agent_width = width.max(24);
                 }
             }
@@ -1145,38 +865,39 @@ impl App {
         }
     }
 
+    /// Where tab `document` of `window` was drawn (its `×` included).
+    fn tab_area(&self, window: WindowId, document: crate::editor::DocumentId) -> Option<Rect> {
+        self.screen_map.area(&Target::Tab {
+            window,
+            document,
+            close: false,
+        })
+    }
+
     /// A tab dragged along its own row: it takes the place of the tab
     /// it's over, once the pointer's where it would then be (so tabs of
     /// different widths don't swap back and forth).
     fn drag_tab(&mut self, window: WindowId, document: crate::editor::DocumentId, at: Position) {
-        let Some(map) = self
-            .screen_map
-            .tab_bars
-            .iter()
-            .find(|m| m.window == window && m.row.contains(at))
+        let Some(Target::Tab {
+            window: over_window,
+            document: over,
+            ..
+        }) = self.target_at(at)
         else {
             return;
         };
-        let Some(&(from, _, _, _)) = map.tabs.iter().find(|t| t.3 == document) else {
-            return;
-        };
-        let width = map
-            .tabs
-            .iter()
-            .find(|t| t.3 == document)
-            .map_or(0, |t| t.1 - t.0);
-        let Some(&(over_from, over_to, _, over)) =
-            map.tabs.iter().find(|t| (t.0..t.1).contains(&at.x))
-        else {
-            return;
-        };
-        if over == document {
+        if over_window != window || over == document {
             return;
         }
-        let lands = if over_from > from {
-            at.x >= over_to.saturating_sub(width)
+        let (Some(mine), Some(theirs)) =
+            (self.tab_area(window, document), self.tab_area(window, over))
+        else {
+            return;
+        };
+        let lands = if theirs.x > mine.x {
+            at.x >= theirs.right().saturating_sub(mine.width)
         } else {
-            at.x < over_from + width
+            at.x < theirs.x + mine.width
         };
         if !lands {
             return;
@@ -1191,34 +912,24 @@ impl App {
     fn mouse_up(&mut self, at: Position) {
         let dragging = self.dragging.take();
         self.pointer = self.pointer_for(at);
+        let target = self.target_at(at);
         match dragging {
             Some(Drag::Tab { window, document }) => {
                 // On another window's tab row (before the tab it's over),
                 // or in its text (at the end).
-                let row = self
-                    .screen_map
-                    .tab_bars
-                    .iter()
-                    .find(|m| m.row.contains(at))
-                    .map(|m| {
-                        let over = m
-                            .tabs
-                            .iter()
-                            .find(|t| (t.0..t.1).contains(&at.x))
-                            .map(|t| t.3);
-                        (m.window, over)
-                    });
-                let target = match row {
-                    Some((to, over)) => Some((
+                let place = match target {
+                    Some(Target::Tab {
+                        window: to,
+                        document: over,
+                        ..
+                    }) => Some((
                         to,
-                        over.and_then(|o| self.editor.window_tabs(to).iter().position(|&t| t == o)),
+                        self.editor.window_tabs(to).iter().position(|&t| t == over),
                     )),
-                    None => match self.hit(at) {
-                        Hit::Window(to) => Some((to, None)),
-                        _ => None,
-                    },
+                    Some(Target::TabBar(to) | Target::Window(to)) => Some((to, None)),
+                    _ => None,
                 };
-                if let Some((to, index)) = target
+                if let Some((to, index)) = place
                     && to != window
                 {
                     self.editor.move_tab_to_window(document, window, to, index);
@@ -1227,9 +938,11 @@ impl App {
                     }
                 }
             }
-            Some(Drag::Tree { path, row }) => match self.hit(at) {
-                Hit::SidebarLine(over) if over == row => {}
-                Hit::SidebarLine(over) if self.editor.tree_row_on_screen(over).is_some() => {
+            Some(Drag::Tree { path, row }) => match target {
+                Some(Target::Sidebar(SidebarPart::Line(over))) if over == row => {}
+                Some(Target::Sidebar(SidebarPart::Line(over)))
+                    if self.editor.tree_row_on_screen(over).is_some() =>
+                {
                     let Some(target) = self.editor.tree_row_on_screen(over) else {
                         return;
                     };
@@ -1247,7 +960,9 @@ impl App {
                 }
                 // Below the files (or on the sidebar's title): the
                 // project's folder.
-                Hit::SidebarLine(_) | Hit::Sidebar if self.editor.file_tree_shown() => {
+                Some(Target::Sidebar(SidebarPart::Line(_) | SidebarPart::Rest))
+                    if self.editor.file_tree_shown() =>
+                {
                     let Some(root) = self.editor.sidebar().map(|e| e.root().to_path_buf()) else {
                         return;
                     };
@@ -1255,7 +970,7 @@ impl App {
                         self.editor.set_message(Message::error(error));
                     }
                 }
-                Hit::Window(id) if path.is_file() => {
+                Some(Target::Window(id)) if path.is_file() => {
                     self.leave_panes();
                     self.editor.focus_window(id);
                     if let Err(error) = self.editor.open(&path) {
@@ -1274,7 +989,7 @@ impl App {
         if self.editor.windows().active() != id {
             return;
         }
-        let Some(&(_, area)) = self.screen_map.windows.iter().find(|(w, _)| *w == id) else {
+        let Some(area) = self.screen_map.area(&Target::Window(id)) else {
             return;
         };
         if area.is_empty() {
@@ -1309,32 +1024,25 @@ impl App {
         }
         self.hover_wait = None;
         self.editor.end_any_hover();
-        if self
-            .screen_map
-            .agent
-            .as_ref()
-            .is_some_and(|a| a.chat.contains(at))
-        {
-            self.editor.agent_scroll(-sign * WHEEL_LINES as isize);
-            return;
-        }
-        if self
-            .screen_map
-            .settings
-            .as_ref()
-            .is_some_and(|s| s.list.contains(at))
-        {
-            self.editor.settings_move(sign);
-            return;
-        }
-        if self
-            .screen_map
-            .keybindings
-            .as_ref()
-            .is_some_and(|k| k.list.contains(at))
-        {
-            self.editor.keybindings_move(sign * WHEEL_LINES as isize);
-            return;
+        let target = self.target_at(at);
+        match &target {
+            Some(Target::Agent(
+                AgentPart::Chat | AgentPart::Tool(_) | AgentPart::Option(_) | AgentPart::Slash(_),
+            )) => {
+                self.editor.agent_scroll(-sign * WHEEL_LINES as isize);
+                return;
+            }
+            Some(Target::Settings(
+                SettingsPart::List | SettingsPart::Item(_) | SettingsPart::Value(_),
+            )) => {
+                self.editor.settings_move(sign);
+                return;
+            }
+            Some(Target::Keybindings(KeybindingsPart::List | KeybindingsPart::Row(_))) => {
+                self.editor.keybindings_move(sign * WHEEL_LINES as isize);
+                return;
+            }
+            _ => {}
         }
         match self.editor.mode() {
             Mode::Picker => {
@@ -1355,25 +1063,20 @@ impl App {
                 return;
             }
             Mode::Git => {
-                if self
-                    .screen_map
-                    .git
-                    .as_ref()
-                    .is_some_and(|g| g.blame.is_some() || g.side.is_some())
-                {
-                    self.editor.git_gui_scroll(WHEEL_LINES as isize * sign);
-                    return;
-                }
-                let panel = self.screen_map.git.as_ref().and_then(|git| {
-                    git.panels
-                        .iter()
-                        .find(|(area, _)| area.contains(at))
-                        .map(|&(_, panel)| panel)
-                });
-                match panel {
-                    Some(crate::editor::git_gui::GitPanel::Diff) => {
-                        self.editor.git_gui_scroll(WHEEL_LINES as isize * sign);
+                let lines = WHEEL_LINES as isize * sign;
+                let whole = self
+                    .editor
+                    .git_gui()
+                    .is_some_and(|g| g.blame.is_some() || g.side.is_some());
+                let panel = match target {
+                    Some(Target::Git(GitPart::Panel(panel) | GitPart::Row(panel, _))) => {
+                        Some(panel)
                     }
+                    _ => None,
+                };
+                match panel {
+                    _ if whole => self.editor.git_gui_scroll(lines),
+                    Some(GitPanel::Diff) => self.editor.git_gui_scroll(lines),
                     Some(panel) => {
                         self.editor.git_gui_focus(panel);
                         self.editor.git_gui_move(sign);
@@ -1385,8 +1088,8 @@ impl App {
             _ => {}
         }
         let lines = WHEEL_LINES as isize * sign;
-        match self.hit(at) {
-            Hit::Window(id) => {
+        match target {
+            Some(Target::Window(id)) => {
                 // Another window only where moving between them makes sense.
                 if self.editor.windows().active() != id && !self.clicks_allowed() {
                     return;
@@ -1403,35 +1106,22 @@ impl App {
                 };
                 self.execute(command, invocation);
             }
-            Hit::SidebarLine(_) | Hit::Sidebar | Hit::SidebarTab(_)
-                if self.editor.search_view_shown() =>
-            {
-                self.editor.search_scroll(lines);
+            Some(Target::Sidebar(
+                SidebarPart::Line(_) | SidebarPart::Rest | SidebarPart::Tab(_),
+            )) => {
+                if self.editor.search_view_shown() {
+                    self.editor.search_scroll(lines);
+                } else {
+                    self.editor.sidebar_move(lines);
+                }
             }
-            Hit::SidebarLine(_) | Hit::Sidebar | Hit::SidebarTab(_) => {
-                self.editor.sidebar_move(lines);
-            }
-            Hit::Terminal => match self.editor.panel_shown() {
+            Some(Target::Panel(_)) => match self.editor.panel_shown() {
                 Some(crate::editor::panel::PanelTab::Terminal) => {
                     self.editor.terminal_scroll_rows(-lines);
                 }
                 _ => self.editor.panel_move(lines),
             },
-            Hit::Activity(_)
-            | Hit::ActivityBar
-            | Hit::SearchField
-            | Hit::SearchReplace
-            | Hit::SearchReplaceAll
-            | Hit::SearchToggle(_)
-            | Hit::AgentTitle
-            | Hit::AgentMode
-            | Hit::AgentChip(_)
-            | Hit::AgentSlash(_)
-            | Hit::AgentTool(_)
-            | Hit::AgentOption(_)
-            | Hit::AgentInput
-            | Hit::Agent
-            | Hit::Nothing => {}
+            _ => {}
         }
     }
 }

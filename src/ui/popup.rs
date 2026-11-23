@@ -19,6 +19,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
+use super::screen_map::{PopupPart, ScreenMap, Target};
 use super::text::truncate_end;
 use crate::config::Theme;
 use crate::editor::popup::{Popup, PopupLine, PopupPosition};
@@ -33,6 +34,45 @@ fn line_width(line: &PopupLine) -> usize {
 }
 
 impl<'a> PopupView<'a> {
+    /// Records where the popup drawn over `area` is, for the mouse: a
+    /// list's lines, or the keys it shows (`y move it`, all of it).
+    pub fn record(popup: &Popup, area: Rect, screen: &mut ScreenMap) {
+        let part = Target::Popup;
+        screen.add(area, part(PopupPart::Rest));
+        let list = ratatui::widgets::Block::bordered().inner(area);
+        // Set as it drew.
+        let first = popup.scroll.get();
+        if popup.select {
+            screen.rows(list, first, popup.lines.len(), |i| part(PopupPart::Row(i)));
+            return;
+        }
+        // Its text starts a column in from the border.
+        let left = list.x + 1;
+        for row in 0..list.height {
+            let line = first + row as usize;
+            if line >= popup.lines.len() {
+                break;
+            }
+            let y = list.y + row;
+            let mut run: Option<(u16, &str)> = None;
+            for x in left..=list.right() {
+                let key = (x < list.right())
+                    .then(|| popup.key_at(line, (x - left) as usize))
+                    .flatten();
+                if run.map(|(_, k)| k) == key {
+                    continue;
+                }
+                if let Some((from, k)) = run {
+                    screen.add(
+                        Rect::new(from, y, x - from, 1),
+                        part(PopupPart::Key(k.into())),
+                    );
+                }
+                run = key.map(|k| (x, k));
+            }
+        }
+    }
+
     pub fn new(popup: &'a Popup, theme: &'a Theme) -> Self {
         Self { popup, theme }
     }

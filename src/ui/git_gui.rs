@@ -34,25 +34,13 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
+use super::screen_map::{GitPart, ScreenMap, Target};
 use super::text::truncate_end;
 use crate::config::Theme;
 use crate::editor::git_gui::{DiffOf, GitPanel};
 use crate::editor::{Editor, GitRow};
 use crate::git::{DiffLineKind, SideKind};
 use crate::syntax::Highlights;
-
-/// Where the view's parts are, for drawing and the mouse.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct GitGuiMap {
-    /// Each panel's area (border included).
-    pub panels: Vec<(Rect, GitPanel)>,
-    /// Each panel's rows, and the index of the item on the first.
-    pub lists: Vec<(Rect, GitPanel, usize)>,
-    /// The blame's rows and the line on the first, while it's shown.
-    pub blame: Option<(Rect, usize)>,
-    /// The side-by-side view's rows (both halves) and the row on the first.
-    pub side: Option<(Rect, usize)>,
-}
 
 pub struct GitGuiView<'a> {
     editor: &'a Editor,
@@ -100,49 +88,41 @@ impl<'a> GitGuiView<'a> {
         }
     }
 
-    /// Where things go in `area`, with each list's first item as it'll be
-    /// drawn (so call it after drawing, or it scrolls the lists itself).
-    pub fn map(editor: &Editor, area: Rect) -> GitGuiMap {
+    /// Records where its parts are in `area`, with each list's first item
+    /// as it'll be drawn (so call it after drawing, or it scrolls the lists
+    /// itself).
+    pub fn record(editor: &Editor, area: Rect, screen: &mut ScreenMap) {
         let Some(gui) = editor.git_gui() else {
-            return GitGuiMap::default();
+            return;
         };
+        let git = Target::Git;
+        screen.add(area, git(GitPart::Rest));
         let (panels, hint) = layout(area);
+        let body = Rect::new(area.x, area.y, area.width, hint.y - area.y);
         if let Some(blame) = &gui.blame {
-            let body = Rect::new(area.x, area.y, area.width, hint.y - area.y);
-            return GitGuiMap {
-                blame: Some((Block::bordered().inner(body), blame.scroll.get())),
-                ..GitGuiMap::default()
-            };
+            let rows = Block::bordered().inner(body);
+            let (first, len) = (blame.scroll.get(), blame.lines.len());
+            screen.rows(rows, first, len, |i| git(GitPart::BlameRow(i)));
+            return;
         }
         if let Some(side) = &gui.side {
-            let body = Rect::new(area.x, area.y, area.width, hint.y - area.y);
-            let rows = Block::bordered().inner(side_halves(body)[0]);
-            return GitGuiMap {
-                side: Some((
-                    Rect::new(body.x, rows.y, body.width, rows.height),
-                    side.scroll.get(),
-                )),
-                ..GitGuiMap::default()
-            };
+            let half = Block::bordered().inner(side_halves(body)[0]);
+            let rows = Rect::new(body.x, half.y, body.width, half.height);
+            let (first, len) = (side.scroll.get(), side.rows.len());
+            screen.rows(rows, first, len, |i| git(GitPart::SideRow(i)));
+            return;
         }
-        let lists = panels
-            .iter()
-            .map(|&(rect, panel)| {
-                let inner = Block::bordered().inner(rect);
-                let first = match panel {
-                    GitPanel::Files => editor.git_scroll(),
-                    GitPanel::Branches => gui.branch_scroll.get(),
-                    GitPanel::Commits => gui.commit_scroll.get(),
-                    GitPanel::Diff => gui.diff_scroll,
-                };
-                (inner, panel, first)
-            })
-            .collect();
-        GitGuiMap {
-            panels,
-            lists,
-            blame: None,
-            side: None,
+        for (rect, panel) in panels {
+            screen.add(rect, git(GitPart::Panel(panel)));
+            let inner = Block::bordered().inner(rect);
+            let (first, len) = match panel {
+                GitPanel::Files => (editor.git_scroll(), editor.git_rows().len()),
+                GitPanel::Branches => (gui.branch_scroll.get(), gui.branches.len()),
+                GitPanel::Commits => (gui.commit_scroll.get(), gui.commits.len()),
+                // Every row of the diff (a click picks its hunk).
+                GitPanel::Diff => (gui.diff_scroll, gui.diff_scroll + inner.height as usize),
+            };
+            screen.rows(inner, first, len, |i| git(GitPart::Row(panel, i)));
         }
     }
 

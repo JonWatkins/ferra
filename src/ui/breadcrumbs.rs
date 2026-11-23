@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 use unicode_width::UnicodeWidthStr;
 
+use super::screen_map::{ScreenMap, Target};
 use crate::config::Theme;
 use crate::editor::outline::kind_icon;
 use crate::editor::{Editor, WindowId};
@@ -25,15 +26,6 @@ pub enum Crumb {
     File,
     /// A symbol: its index in the outline.
     Symbol(usize),
-}
-
-/// Where each crumb went, for the mouse.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct BreadcrumbsMap {
-    pub row: Rect,
-    pub crumbs: Vec<(u16, u16, Crumb)>,
-    /// The window they're for.
-    pub window: WindowId,
 }
 
 const SEPARATOR: &str = " › ";
@@ -140,16 +132,19 @@ impl<'a> Breadcrumbs<'a> {
         }
     }
 
-    pub fn map(editor: &Editor, row: Rect, window: WindowId) -> BreadcrumbsMap {
+    /// Records window `window`'s crumbs in `row`, for the mouse.
+    pub fn record(editor: &Editor, row: Rect, window: WindowId, map: &mut ScreenMap) {
         let (crumbs, _) = laid_out(editor, window, row.width);
-        BreadcrumbsMap {
-            row,
-            crumbs: crumbs
-                .into_iter()
-                .map(|(text, _, crumb, x)| (row.x + x, row.x + x + text.width() as u16, crumb))
-                .filter(|(from, _, _)| *from < row.right())
-                .collect(),
-            window,
+        for (text, _, crumb, x) in crumbs {
+            let from = row.x + x;
+            if from >= row.right() {
+                continue;
+            }
+            let width = (text.width() as u16).min(row.right() - from);
+            map.add(
+                Rect::new(from, row.y, width, 1),
+                Target::Crumb { window, crumb },
+            );
         }
     }
 }

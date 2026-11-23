@@ -31,6 +31,7 @@ mod menu_bar;
 pub mod panel;
 mod picker;
 mod popup;
+pub mod screen_map;
 mod search;
 pub mod settings;
 mod sidebar;
@@ -49,6 +50,7 @@ pub use find::{FindKeys, FindView, key_label};
 pub use input_box::{InputBoxView, InputKeys};
 pub use picker::PickerView;
 pub use popup::PopupView;
+pub use screen_map::{Region, ScreenMap, Target};
 pub use sidebar::{GitViewWidget, PluginViewWidget, SidebarTabs, SidebarView};
 pub use splash::{LOGO, Splash, SplashEntry};
 pub use statusline::StatusLine;
@@ -61,6 +63,7 @@ use ratatui::{
 };
 
 use crate::config::{StatuslineMode, Theme};
+use screen_map::SidebarPart;
 
 use crate::editor::{Editor, Mode};
 use crate::syntax::SyntaxEngine;
@@ -76,75 +79,6 @@ pub struct KeyHints {
     pub terminal: TerminalKeys,
     /// A plugin's input box's (only while it's open).
     pub input: InputKeys,
-}
-
-/// Where things were drawn, for the mouse.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ScreenMap {
-    /// Each window's text area (status line not included).
-    pub windows: Vec<(crate::editor::WindowId, Rect)>,
-    /// The activity bar: its area, and each icon's row and what it shows.
-    pub activity: Option<(Rect, Vec<(u16, String)>)>,
-    /// The menu bar: its row, and each title's columns.
-    pub menu_bar: Option<(u16, Vec<(u16, u16)>)>,
-    pub sidebar: Option<SidebarMap>,
-    /// The agent sidebar, on the right.
-    pub agent: Option<agent::AgentMap>,
-    /// The terminal panel, title row included.
-    pub terminal: Option<Rect>,
-    /// The lines between windows, and whether each is vertical.
-    pub separators: Vec<(Rect, bool)>,
-    /// A plugin's popup, the picker: where, and their lines.
-    pub popup: Option<ListMap>,
-    pub picker: Option<ListMap>,
-    pub find: Option<find::FindHits>,
-    /// An input box, and its field.
-    pub input: Option<(Rect, Rect)>,
-    /// The git view's panels and lists.
-    pub git: Option<git_gui::GitGuiMap>,
-    /// The settings editor's parts.
-    pub settings: Option<settings::SettingsMap>,
-    /// The keybinding editor's.
-    pub keybindings: Option<keybindings::KeybindingsMap>,
-    /// The tab bar's tabs.
-    /// Each window's tab row.
-    pub tab_bars: Vec<tab_bar::TabBarMap>,
-    /// The bottom panel's tabs and list.
-    pub panel: Option<panel::PanelMap>,
-    /// The breadcrumbs' crumbs.
-    /// Each window's breadcrumbs.
-    pub breadcrumbs: Vec<breadcrumbs::BreadcrumbsMap>,
-    /// The hover popup, while it's shown.
-    pub hover: Option<Rect>,
-    /// The status bar's row and each of its items' columns (with one
-    /// status bar, not one per window).
-    pub status_bar: Option<(u16, Vec<StatusPlace>)>,
-}
-
-/// A status bar item and its columns.
-pub type StatusPlace = (crate::config::StatusElement, u16, u16);
-
-/// A box with a list: its area, the list's rows, and the index of the item
-/// on the first.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ListMap {
-    pub area: Rect,
-    pub list: Rect,
-    pub first: usize,
-}
-
-/// Where the sidebar's parts were drawn.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SidebarMap {
-    pub area: Rect,
-    /// The tabs' row and each tab's columns, when there are tabs.
-    pub tabs: Option<(u16, Vec<(u16, u16)>)>,
-    /// The rows of the list.
-    pub list: Rect,
-    /// The line between it and the windows (dragged to resize it).
-    pub edge: Rect,
-    /// The Search view's field and toggles, when it's shown.
-    pub search: Option<search::SearchHits>,
 }
 
 /// Draws the whole screen and positions the terminal cursor. Returns where
@@ -170,7 +104,14 @@ pub fn draw(
     let area = if editor.options.menu_bar && area.height > 5 {
         let row = Rect::new(area.x, area.y, area.width, 1);
         frame.render_widget(menu_bar::MenuBar::new(editor.open_menu(), theme), row);
-        map.menu_bar = Some((row.y, crate::editor::menu_bar::title_spans(row.x)));
+        map.add(row, Target::MenuBar(None));
+        for (i, (from, to)) in crate::editor::menu_bar::title_spans(row.x)
+            .into_iter()
+            .enumerate()
+        {
+            let title = Rect::new(from, row.y, to.saturating_sub(from), 1);
+            map.add(title.intersection(row), Target::MenuBar(Some(i)));
+        }
         horizontal_line(
             frame,
             Rect::new(area.x, area.y + 1, area.width, 1),
@@ -201,12 +142,19 @@ pub fn draw(
         let (items, settings) = editor.activity_items();
         frame.render_widget(activity::ActivityBar::new(&items, &settings, theme), bar);
         let (rows, settings_row) = activity::layout(bar, items.len());
-        let mut hits: Vec<(u16, String)> = rows
+        map.add(bar, Target::Activity(None));
+        // Anywhere in an icon's block.
+        let blocks = rows
             .into_iter()
-            .zip(items.iter().map(|i| i.name.clone()))
-            .collect();
-        hits.extend(settings_row.map(|y| (y, settings.name.clone())));
-        map.activity = Some((bar, hits));
+            .zip(items.iter().map(|i| &i.name))
+            .chain(settings_row.map(|y| (y, &settings.name)));
+        for (y, name) in blocks {
+            let block = Rect::new(bar.x, y, bar.width, activity::BLOCK);
+            map.add(
+                block.intersection(bar),
+                Target::Activity(Some(name.clone())),
+            );
+        }
         let main = Rect::new(
             main.x + bar.width,
             main.y,
@@ -258,24 +206,6 @@ pub fn draw(
             let plugin_view = editor.plugin_view();
             let git_view = editor.git_view_shown();
             let search_view = editor.search_view_shown();
-            map.sidebar = Some(SidebarMap {
-                area: side,
-                tabs: tabs.then(|| {
-                    (
-                        side.y,
-                        sidebar::tab_spans(&titles, shown, side.x, side.width),
-                    )
-                }),
-                list: if git_view {
-                    GitViewWidget::list(content)
-                } else if search_view {
-                    search::SearchViewWidget::list(content)
-                } else {
-                    sidebar::list_rows(content)
-                },
-                edge: separator,
-                search: search_view.then(|| search::SearchViewWidget::hits(editor, content)),
-            });
             match plugin_view {
                 Some(view) => {
                     frame.render_widget(PluginViewWidget::new(view, focused, theme), content);
@@ -304,6 +234,40 @@ pub fn draw(
                     frame.render_widget(view, content);
                 }
             }
+            // Recorded once drawn, with the lists scrolled as drawn.
+            let part = Target::Sidebar;
+            map.add(side, part(SidebarPart::Rest));
+            map.add(separator, Target::SidebarEdge);
+            if tabs {
+                for (i, (from, to)) in sidebar::tab_spans(&titles, shown, side.x, side.width)
+                    .into_iter()
+                    .enumerate()
+                {
+                    let tab = Rect::new(from, side.y, to.saturating_sub(from), 1);
+                    map.add(tab.intersection(side), part(SidebarPart::Tab(i)));
+                }
+            }
+            let (list, first, len) = if git_view {
+                let list = GitViewWidget::list(content);
+                (list, editor.git_scroll(), editor.git_rows().len())
+            } else if search_view {
+                let search = editor.project_search();
+                let list = search::SearchViewWidget::list(content);
+                (list, search.scroll.get(), search.row_count())
+            } else if let Some(view) = plugin_view {
+                (
+                    sidebar::list_rows(content),
+                    view.scroll.get(),
+                    view.lines.len(),
+                )
+            } else {
+                let list = sidebar::list_rows(content);
+                (list, explorer.scroll.get(), explorer.rows().len())
+            };
+            map.rows(list, first, len, |i| part(SidebarPart::Line(i - first)));
+            if search_view {
+                search::SearchViewWidget::record(editor, content, &mut map);
+            }
             let separator_style = theme.get("ui.window.separator");
             for y in separator.y..separator.bottom() {
                 frame.buffer_mut()[(separator.x, y)]
@@ -326,9 +290,7 @@ pub fn draw(
         let side = Rect::new(main.right() - width, main.y, width, height);
         let edge = Rect::new(side.x - 1, main.y, 1, height);
         let rest = main.width - width - 1;
-        let (drawn, cursor) = agent::draw(frame.buffer_mut(), side, edge, editor, theme);
-        map.agent = Some(drawn);
-        agent_cursor = cursor;
+        agent_cursor = agent::draw(frame.buffer_mut(), side, edge, editor, theme, &mut map);
         let main = Rect::new(main.x, main.y, rest, main.height);
         let status = if per_window {
             Rect::new(status.x, status.y, rest, status.height)
@@ -366,7 +328,6 @@ pub fn draw(
                 } else {
                     status
                 };
-                map.terminal = Some(panel);
                 match (tab, editor.terminal_panel()) {
                     (crate::editor::panel::PanelTab::Terminal, Some(terminal)) => {
                         let focused = editor.mode() == Mode::Terminal;
@@ -381,7 +342,7 @@ pub fn draw(
                     }
                     _ => frame.render_widget(panel::PanelView::new(editor, theme), panel),
                 }
-                map.panel = Some(panel::PanelView::map(editor, panel));
+                panel::PanelView::record(editor, panel, &mut map);
                 (main, status)
             } else {
                 (main, status)
@@ -398,6 +359,7 @@ pub fn draw(
             };
             windows::draw_windows(
                 frame,
+                &mut map,
                 editor,
                 theme,
                 main,
@@ -409,6 +371,7 @@ pub fn draw(
         StatuslineMode::Global => {
             let drawn = windows::draw_windows(
                 frame,
+                &mut map,
                 editor,
                 theme,
                 main,
@@ -417,15 +380,14 @@ pub fn draw(
                 None,
             );
             frame.render_widget(StatusLine::new(editor, theme, pending), status);
-            map.status_bar = Some((status.y, StatusLine::places(editor, theme, pending, status)));
+            for (element, from, to) in StatusLine::places(editor, theme, pending, status) {
+                let item = Rect::new(from, status.y, to.saturating_sub(from), 1);
+                map.add(item.intersection(status), Target::Status(element));
+            }
             drawn
         }
     };
     let window_cursor = drawn.cursor;
-    map.windows = drawn.windows.clone();
-    map.tab_bars = drawn.tab_bars.clone();
-    map.breadcrumbs = drawn.breadcrumbs.clone();
-    map.separators = drawn.separators.clone();
     frame.render_widget(CommandLineView::new(editor, theme), command);
     if editor.splash_visible() && !splash.is_empty() {
         frame.render_widget(Splash::new(splash, theme), main);
@@ -470,7 +432,7 @@ pub fn draw(
         let view = hover::HoverView::new(hover, highlights, theme);
         let area = view.area(cursor, main, hover.anchor.is_some());
         frame.render_widget(view, area);
-        map.hover = Some(area);
+        map.add(area, Target::Hover);
     }
 
     // The settings editor takes the windows' place (under a tab row).
@@ -480,10 +442,9 @@ pub fn draw(
     {
         let row = Rect::new(main.x, main.y, main.width, 1);
         frame.render_widget(ratatui::widgets::Clear, row);
-        frame.render_widget(
-            tab_bar::TabBar::new(editor, theme, editor.windows().active()),
-            row,
-        );
+        let active = editor.windows().active();
+        frame.render_widget(tab_bar::TabBar::new(editor, theme, active), row);
+        tab_bar::TabBar::record(editor, row, active, &mut map);
         Rect::new(main.x, main.y + 1, main.width, main.height - 1)
     } else {
         main
@@ -491,13 +452,13 @@ pub fn draw(
     let mut settings_cursor = None;
     if editor.settings().is_some() {
         frame.render_widget(settings::SettingsWidget::new(editor, theme), main);
-        map.settings = Some(settings::SettingsWidget::map(editor, main));
+        settings::SettingsWidget::record(editor, main, &mut map);
         settings_cursor = settings::SettingsWidget::cursor_position(editor, main);
     }
     // So does the keybinding editor.
     if editor.keybindings().is_some() {
         frame.render_widget(keybindings::KeybindingsWidget::new(editor, theme), main);
-        map.keybindings = Some(keybindings::KeybindingsWidget::map(editor, main));
+        keybindings::KeybindingsWidget::record(editor, main, &mut map);
         settings_cursor = keybindings::KeybindingsWidget::cursor_position(editor, main);
     }
 
@@ -510,7 +471,7 @@ pub fn draw(
         let view = FindView::new(editor.find_state(), editor.find_count(), find_keys, theme);
         let area = FindView::area(editor.find_state(), window);
         find_cursor = FindView::cursor_position(editor.find_state(), area);
-        map.find = Some(FindView::hits(editor.find_state(), find_keys, area));
+        FindView::record(editor.find_state(), find_keys, area, &mut map);
         frame.render_widget(view, area);
     }
 
@@ -566,7 +527,7 @@ pub fn draw(
             }
         }
         frame.render_widget(git_gui::GitGuiView::new(editor, theme, highlights), full);
-        map.git = Some(git_gui::GitGuiView::map(editor, full));
+        git_gui::GitGuiView::record(editor, full, &mut map);
     }
 
     // A plugin's popup floats over the windows.
@@ -582,13 +543,7 @@ pub fn draw(
         };
         let area = PopupView::area(popup, bounds, window_cursor, drawn.active);
         frame.render_widget(PopupView::new(popup, theme), area);
-        let inner = ratatui::widgets::Block::bordered().inner(area);
-        map.popup = Some(ListMap {
-            area,
-            list: inner,
-            // Set as it drew.
-            first: popup.scroll.get(),
-        });
+        PopupView::record(popup, area, &mut map);
     }
 
     // A plugin's input box, at the top centre of the windows.
@@ -596,7 +551,8 @@ pub fn draw(
     if let Some(input) = editor.input_box() {
         let area = InputBoxView::area(main);
         input_cursor = Some(InputBoxView::cursor_position(input, area));
-        map.input = Some((area, input_box::field_area(area)));
+        map.add(area, Target::Input { field: false });
+        map.add(input_box::field_area(area), Target::Input { field: true });
         frame.render_widget(InputBoxView::new(input, &keys.input, theme), area);
     }
 
@@ -610,10 +566,9 @@ pub fn draw(
         }
         frame.render_widget(view, popup_area);
         let (list, first) = PickerView::list(picker, popup_area);
-        map.picker = Some(ListMap {
-            area: popup_area,
-            list,
-            first,
+        map.add(popup_area, Target::Picker(None));
+        map.rows(list, first, picker.matches().len(), |i| {
+            Target::Picker(Some(i))
         });
     }
 

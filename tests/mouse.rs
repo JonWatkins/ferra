@@ -356,3 +356,88 @@ fn resting_on_a_problem_shows_it_and_moving_off_hides_it() {
     app.show_pending_hover();
     assert!(app.editor().hover().is_none());
 }
+
+/// What's under the pointer, and its shape, as the frame drew it: no
+/// click needed.
+#[test]
+fn the_pointer_is_a_hand_over_everything_a_click_does_something_on() {
+    use ferra::editor::panel::PanelTab;
+    use ferra::ui::Target;
+    use ferra::ui::screen_map::{PanelPart, SidebarPart};
+    use ratatui::layout::Position;
+    // The menu bar, each window's tab row and breadcrumbs.
+    let mut app = common::app_with_config(
+        "[editor]\nmenu-bar = true\ntab-bar = true\nbreadcrumbs = true\nlsp = false\n",
+    );
+    keys(&mut app, ":e src/lib.rs<CR>:problems<CR><Esc>");
+    let mut at = |text: &str| {
+        let (x, y) = find(&mut app, text);
+        Position::new(x + 1, y)
+    };
+    let (menu, tab, crumb, panel_tab) = (at("File"), at("lib.rs"), at("src ›"), at("PROBLEMS"));
+    let targets = [
+        (menu, "the menu bar's File"),
+        (tab, "lib.rs's tab"),
+        (crumb, "the src crumb"),
+        (panel_tab, "the panel's Problems tab"),
+    ];
+    for (place, what) in targets {
+        assert_eq!(
+            app.pointer_for(place),
+            "pointer",
+            "{what}: {:?}",
+            app.target_at(place)
+        );
+    }
+    assert_eq!(app.target_at(menu), Some(Target::MenuBar(Some(0))));
+    assert!(matches!(
+        app.target_at(tab),
+        Some(Target::Tab { close: false, .. })
+    ));
+    assert!(matches!(app.target_at(crumb), Some(Target::Crumb { .. })));
+    assert_eq!(
+        app.target_at(panel_tab),
+        Some(Target::Panel(PanelPart::Tab(PanelTab::Problems)))
+    );
+    // The rest of the panel's title row resizes it.
+    let title = Position::new(W - 2, panel_tab.y);
+    assert_eq!(app.target_at(title), Some(Target::Panel(PanelPart::Title)));
+    assert_eq!(app.pointer_for(title), "ns-resize");
+
+    // The tree's rows with an entry are hands; the rows under them aren't.
+    let mut app = with_text("some text");
+    keys(&mut app, "<Space>e<Esc>");
+    let (x, y) = find(&mut app, "src");
+    let row = app.target_at(Position::new(x, y));
+    assert!(
+        matches!(row, Some(Target::Sidebar(SidebarPart::Line(_)))),
+        "{row:?}"
+    );
+    let empty = Position::new(x, H - 4);
+    assert_eq!(
+        app.target_at(empty),
+        Some(Target::Sidebar(SidebarPart::Rest))
+    );
+    assert_eq!(app.pointer_for(empty), "default");
+}
+
+/// What's drawn over something else takes the pointer: the picker over
+/// the windows, a row of it over the rest of it.
+#[test]
+fn what_is_drawn_on_top_is_what_is_under_the_pointer() {
+    use ferra::ui::Target;
+    use ratatui::layout::Position;
+    let mut app = with_text("alpha\nbeta\ngamma");
+    render(&mut app, W, H);
+    let place = Position::new(W / 2, H / 2);
+    assert!(matches!(app.target_at(place), Some(Target::Window(_))));
+    keys(&mut app, ":ls<CR>");
+    assert_eq!(app.editor().mode(), Mode::Picker);
+    render(&mut app, W, H);
+    let target = app.target_at(place);
+    assert!(matches!(target, Some(Target::Picker(_))), "{target:?}");
+    let (x, y) = find(&mut app, "> ");
+    let field = Position::new(x, y);
+    assert_eq!(app.target_at(field), Some(Target::Picker(None)));
+    assert_eq!(app.pointer_for(field), "default");
+}

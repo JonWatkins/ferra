@@ -14,18 +14,9 @@ use std::path::Path;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 use unicode_width::UnicodeWidthStr;
 
+use super::screen_map::{ScreenMap, Target};
 use crate::config::{Icons, Theme};
 use crate::editor::{DocumentId, Editor, WindowId};
-
-/// Where each tab went, for the mouse.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct TabBarMap {
-    pub row: Rect,
-    /// Each tab's columns, its `×`'s column, and its buffer.
-    pub tabs: Vec<(u16, u16, u16, DocumentId)>,
-    /// The window it's for.
-    pub window: WindowId,
-}
 
 /// One tab: its buffer, label and width.
 struct Tab {
@@ -127,24 +118,26 @@ impl<'a> TabBar<'a> {
         }
     }
 
-    /// Where window `window`'s tabs are in `row`.
-    pub fn map(editor: &Editor, row: Rect, window: WindowId) -> TabBarMap {
+    /// Records window `window`'s tab row `row` and its tabs, for the mouse.
+    pub fn record(editor: &Editor, row: Rect, window: WindowId, map: &mut ScreenMap) {
+        map.add(row, Target::TabBar(window));
         let tabs = tabs(editor, window);
         let mut x = row.x;
-        let mut out = Vec::new();
         for tab in &tabs[first_shown(&tabs, row.width)..] {
             let width = tab.width();
             if x + width > row.right() {
                 break;
             }
+            let (document, y) = (tab.id, row.y);
+            let tab = |close| Target::Tab {
+                window,
+                document,
+                close,
+            };
+            map.add(Rect::new(x, y, width, 1), tab(false));
             // The `×` (or `●`) is three columns before the end.
-            out.push((x, x + width, x + width - 3, tab.id));
+            map.add(Rect::new(x + width - 3, y, 1, 1), tab(true));
             x += width;
-        }
-        TabBarMap {
-            row,
-            tabs: out,
-            window,
         }
     }
 }

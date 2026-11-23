@@ -23,7 +23,7 @@ pub struct HoverWait {
 impl App {
     /// Whether `at` is over the hover popup.
     pub(super) fn over_hover(&self, at: Position) -> bool {
-        self.editor.hover().is_some() && self.screen_map.hover.is_some_and(|area| area.contains(at))
+        self.editor.hover().is_some() && self.target_at(at) == Some(crate::ui::Target::Hover)
     }
 
     /// The char of the active window's text under `at`, and its word, if
@@ -38,8 +38,7 @@ impl App {
             return None;
         }
         let id = self.editor.windows().active();
-        let (_, area) = self.screen_map.windows.iter().find(|(w, _)| *w == id)?;
-        if !area.contains(at) {
+        if self.target_at(at) != Some(crate::ui::Target::Window(id)) {
             return None;
         }
         let document = self.editor.document.id();

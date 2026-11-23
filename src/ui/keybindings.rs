@@ -16,6 +16,7 @@ use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 use unicode_width::UnicodeWidthStr;
 
 use super::find::key_label;
+use super::screen_map::{KeybindingsPart, ScreenMap, Target};
 use super::text::truncate_end;
 use crate::config::Theme;
 use crate::editor::Editor;
@@ -24,16 +25,6 @@ use crate::editor::keybindings::{BindingSource, KeysFocus, Recording};
 const KEYS: u16 = 18;
 const MODE: u16 = 13;
 const SOURCE: u16 = 9;
-
-/// Where its parts went, for the mouse.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct KeybindingsMap {
-    pub area: Rect,
-    pub search: Rect,
-    /// The rows of the table, and the shown row on the first.
-    pub list: Rect,
-    pub first: usize,
-}
 
 pub struct KeybindingsWidget<'a> {
     editor: &'a Editor,
@@ -106,13 +97,16 @@ impl<'a> KeybindingsWidget<'a> {
         first
     }
 
-    pub fn map(editor: &Editor, area: Rect) -> KeybindingsMap {
+    /// Records where its parts are, for the mouse.
+    pub fn record(editor: &Editor, area: Rect, screen: &mut ScreenMap) {
         let parts = parts(area);
-        KeybindingsMap {
-            area,
-            search: parts.search,
-            list: parts.list,
-            first: editor.keybindings().map_or(0, |v| v.scroll.get()),
+        let keys = Target::Keybindings;
+        screen.add(area, keys(KeybindingsPart::Rest));
+        screen.add(parts.search, keys(KeybindingsPart::Search));
+        screen.add(parts.list, keys(KeybindingsPart::List));
+        if let Some(view) = editor.keybindings() {
+            let (first, len) = (view.scroll.get(), view.shown().len());
+            screen.rows(parts.list, first, len, |i| keys(KeybindingsPart::Row(i)));
         }
     }
 
