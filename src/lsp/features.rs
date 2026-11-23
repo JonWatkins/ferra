@@ -524,7 +524,10 @@ pub(super) fn answer(
             return;
         }
         let (at_symbol, for_line) = stashes.agent_actions.entry(call).or_default();
-        if request.word_start == request.end {
+        // The symbol's range is empty, the line's isn't, unless the line is
+        // empty too: then both are the same range, and the second to come
+        // is taken as the line's.
+        if request.word_start == request.end && at_symbol.is_none() {
             *at_symbol = Some(list);
         } else {
             *for_line = Some(list);

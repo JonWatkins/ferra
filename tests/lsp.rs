@@ -2265,6 +2265,27 @@ fn the_agent_asks_for_a_files_source_actions() {
 }
 
 #[test]
+fn the_agent_gets_code_actions_on_an_empty_line() {
+    use ferra::editor::lsp::LspFeature;
+    let (dir, mut app, _) = with_server("fn bad() {}\n\nlet x = bad;\n", true);
+    ready(&mut app);
+    let path = dir.path().join("main.rs");
+    // Asked at the symbol and for the whole line, which on an empty line
+    // are the same place: both answers still have to be told apart.
+    app.editor_mut()
+        .agent_ask_lsp(
+            1,
+            LspFeature::CodeAction,
+            Some(path.to_str().unwrap()),
+            (Some(2), None, None, None),
+            None,
+        )
+        .unwrap();
+    let listed = agent_answer(&mut app, 1).unwrap();
+    assert!(listed.contains("Upper-case the line"), "{listed}");
+}
+
+#[test]
 fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
     use ferra::editor::lsp::LspFeature;
     let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
