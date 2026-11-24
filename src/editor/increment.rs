@@ -37,14 +37,12 @@ impl Editor {
     /// the first number gets `delta`, the next twice that, and so on. The
     /// cursor goes to the start of the selection, as in Vim.
     pub fn increment_selection(&mut self, delta: i128, progressive: bool) -> Result<(), String> {
-        let tab = self.options.tab_width;
         // Each row's selected chars.
         let parts: Vec<(usize, usize, usize)> = if let Some(block) = self.take_block() {
             block
                 .rows()
                 .map(|row| {
-                    let line = self.document.buffer().line(row);
-                    let (from, to) = block.chars_in(&line, tab);
+                    let (from, to) = block.chars_in(&self.line_cells(row));
                     (row, from, to)
                 })
                 .collect()

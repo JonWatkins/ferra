@@ -22,7 +22,9 @@
 //! `to_real` maps back. Everything that lays lines out uses the display line:
 //! `TextLayout::rows_in` and `follow_cursor` (so scrolling counts the extra
 //! rows), the editor pane (wrapping, the cursor, the virtual text's colours
-//! over everything), `ViewState::position_at` for clicks, and `gj`/`gk`.
+//! over everything), `ViewState::position_at` for clicks, `gj`/`gk`, and
+//! visual blocks, whose columns are counted on screen (`line_cells`, as a
+//! `core::columns::LineCells`) so a block over hints is a rectangle there.
 //! Everything that comes in buffer columns (syntax spans, selections, search
 //! matches, diagnostics, references) is mapped as it's drawn; search runs on
 //! the real text, so hints never match.
@@ -41,6 +43,7 @@
 
 use super::Document;
 use crate::core::Position;
+use crate::core::columns::LineCells;
 
 /// A piece of virtual text, before the char at `at`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +106,12 @@ impl DisplayLine {
         }
     }
 
+    /// Where each real char is on screen, in display columns (for visual
+    /// block selections, which are rectangles on screen).
+    pub fn cells(&self, tab_width: usize) -> LineCells {
+        LineCells::drawn(&self.text, &self.to_display, &self.before, tab_width)
+    }
+
     /// The real column shown at display column `col` (in virtual text,
     /// the char it's before).
     pub fn to_real(&self, col: usize) -> usize {
@@ -147,6 +156,14 @@ impl Document {
 
     pub fn virtual_text(&self) -> &[VirtualText] {
         &self.virtual_text
+    }
+
+    /// Where line `row`'s chars are on screen, with its virtual text.
+    pub fn line_cells(&self, row: usize, tab_width: usize) -> LineCells {
+        match self.display_line(row) {
+            Some(display) => display.cells(tab_width),
+            None => LineCells::new(&self.buffer().line(row), tab_width),
+        }
     }
 
     /// Line `row` with its virtual text put in, if it has any.

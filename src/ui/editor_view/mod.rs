@@ -1007,7 +1007,13 @@ impl EditorView<'_> {
         // The selection is drawn last, so it wins over search matches.
         if let Some(block) = self.block {
             if block.rows().contains(&row) {
-                let (from, to) = block.chars_in(real_line, tab_width);
+                // In columns as drawn, so the block lines up on screen
+                // over virtual text (inlay hints).
+                let cells = match display {
+                    Some(d) => d.cells(tab_width),
+                    None => crate::core::columns::LineCells::new(real_line, tab_width),
+                };
+                let (from, to) = block.chars_in(&cells);
                 if from < to {
                     highlight(from, to, self.theme.get("ui.selection"));
                 }
@@ -1576,6 +1582,44 @@ mod tests {
             vec![0, 1, 2, 3],
             "the whole tab it cuts into"
         );
+    }
+
+    #[test]
+    fn a_block_over_inlay_hints_lines_up_on_screen() {
+        use crate::editor::VirtualText;
+        // `f(1, 2)` above `f(x: 1, 2)`, the `x: ` a hint.
+        let mut doc = Document::with_text("f(1, 2)\nf(1, 2)");
+        doc.set_virtual_text(
+            "inlay",
+            vec![VirtualText {
+                at: TextPos::new(1, 2),
+                text: "x: ".into(),
+                style: "ui.virtual.inlay-hint".into(),
+                source: "inlay".into(),
+                end_of_line: false,
+            }],
+        );
+        let mut theme = Theme::default();
+        theme.set("ui.selection", Style::new().bg(ratatui::style::Color::Blue));
+        let block = crate::core::Block {
+            first: 0,
+            last: 1,
+            left: 2,
+            right: 5,
+            to_eol: false,
+        };
+        let area = Rect::new(0, 0, 12, 2);
+        let mut buf = Buffer::empty(area);
+        EditorView::new(&doc, &options(LineNumbers::None), &theme)
+            .block(Some(block))
+            .render(area, &mut buf, &mut ViewState::default());
+        let highlighted = |y: u16| -> Vec<u16> {
+            (0..12)
+                .filter(|&x| buf[(x, y)].bg == ratatui::style::Color::Blue)
+                .collect()
+        };
+        assert_eq!(highlighted(0), vec![2, 3, 4, 5], "`1, 2`");
+        assert_eq!(highlighted(1), vec![5], "the `1`: the hint holds no text");
     }
 
     #[test]

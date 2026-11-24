@@ -21,7 +21,6 @@
 //!   cell for a selected line break so selected empty lines are visible.
 
 use super::{Editor, Mode};
-use crate::core::columns::{char_col_at, display_col};
 use crate::core::{Buffer, Position, Range};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,11 +167,10 @@ impl Editor {
             },
             SelectionKind::Block => {
                 let block = crate::core::Block::between(
-                    self.document.buffer(),
                     (selection.anchor.row, selection.anchor.col),
                     (cursor.row, cursor.col),
                     self.block_to_eol,
-                    self.options.tab_width,
+                    |row| self.line_cells(row),
                 );
                 VisualShape::Block {
                     rows: lines,
@@ -234,14 +232,14 @@ impl Editor {
                 // bottom row ends inside the block and the top one doesn't:
                 // then the top right and bottom left, so the block keeps
                 // its width.
-                let tab = self.options.tab_width;
+                // In columns as drawn, as the block was (with any inlay
+                // hints).
                 let row = last_row(rows);
-                let left = display_col(&buffer.line(start.row), start.col, tab);
+                let left = self.line_cells(start.row).start(start.col);
                 let right = left + width.max(1) - 1;
-                let width_of = |row: usize| display_col(&buffer.line(row), usize::MAX, tab);
-                let col_at = |row: usize, col: usize| {
-                    last_char(row, char_col_at(&buffer.line(row), col, tab))
-                };
+                let width_of = |row: usize| self.line_cells(row).end();
+                let col_at =
+                    |row: usize, col: usize| last_char(row, self.line_cells(row).char_at(col));
                 let short = width_of(row) <= right;
                 if short && width_of(row) > left && width_of(start.row) > right {
                     anchor = Position::new(row, col_at(row, left));
