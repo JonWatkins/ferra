@@ -21,6 +21,11 @@ pub enum FileError {
     AlreadyExists {
         path: PathBuf,
     },
+    /// Making a file or folder, or moving one, where something already is
+    /// (nothing's replaced).
+    Exists {
+        path: PathBuf,
+    },
     Io {
         path: PathBuf,
         source: io::Error,
@@ -55,6 +60,7 @@ impl fmt::Display for FileError {
                     path.display()
                 )
             }
+            FileError::Exists { path } => write!(f, "\"{}\" already exists", path.display()),
             FileError::Io { path, source } => write!(f, "\"{}\": {source}", path.display()),
         }
     }

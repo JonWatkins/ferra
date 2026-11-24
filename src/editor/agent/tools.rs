@@ -998,13 +998,12 @@ impl Editor {
         text: &str,
     ) -> Result<(String, Vec<DocumentId>), String> {
         let full = absolute(Path::new(path));
-        if full.exists() {
-            return Err(format!("{path} already exists: edit_buffer changes it"));
-        }
-        if let Some(parent) = full.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("{path}: {e}"))?;
-        }
-        std::fs::write(&full, text).map_err(|e| format!("{path}: {e}"))?;
+        crate::files::create_file(&full, text.as_bytes()).map_err(|e| match e {
+            crate::files::FileError::Exists { .. } => {
+                format!("{path} already exists: edit_buffer changes it")
+            }
+            other => other.to_string(),
+        })?;
         let id = self.agent_buffer(&absolute(&full))?;
         Ok((format!("Created {}", named(path)), vec![id]))
     }

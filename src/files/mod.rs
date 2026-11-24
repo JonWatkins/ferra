@@ -1,7 +1,10 @@
 //! Reading and writing files on disk.
 //!
-//! Saving a buffer's file goes only through here (see
-//! docs/adr/0004-saving-goes-through-files.md). It deals in raw bytes;
+//! Every change to the user's files goes through here (see
+//! docs/adr/0004-saving-goes-through-files.md): saving a buffer's file
+//! ([`write`]), making a file or folder ([`create_file`], [`create_dir`]),
+//! moving one ([`rename`]) and moving it to the bin ([`trash`]). None of
+//! them replaces what's already there unless that's the point (saving). It deals in raw bytes;
 //! converting them to buffer text (encoding, line endings, final newline)
 //! is [`core::TextFormat`](crate::core::TextFormat)'s job.
 //!
@@ -126,6 +129,65 @@ pub fn write(path: &Path, contents: &[u8]) -> Result<Option<FileStamp>, FileErro
     Ok(stamp(&target))
 }
 
+/// Makes a new file holding `contents` (and the folders it's in), written
+/// and flushed to disk. Never replaces anything: if something's at `path`,
+/// even one that appeared a moment ago, it's [`FileError::Exists`] and
+/// left alone. Returns the file's stamp.
+pub fn create_file(path: &Path, contents: &[u8]) -> Result<Option<FileStamp>, FileError> {
+    make_parent(path)?;
+    let mut file = File::create_new(path).map_err(|e| exists_or_io(path, e))?;
+    let written = file.write_all(contents).and_then(|()| file.sync_all());
+    if let Err(e) = written {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(FileError::io(path, e));
+    }
+    Ok(stamp(path))
+}
+
+/// Makes a new folder (and those it's in). Never accepts one that's
+/// there already: that's [`FileError::Exists`].
+pub fn create_dir(path: &Path) -> Result<(), FileError> {
+    make_parent(path)?;
+    fs::create_dir(path).map_err(|e| exists_or_io(path, e))
+}
+
+/// Moves a file or folder (and what's in it) from `from` to `to`, making
+/// `to`'s folders. Never replaces what's at `to`: that's
+/// [`FileError::Exists`], with both left alone. (Checked just before the
+/// move: std has no rename that refuses, so something made at `to` in
+/// between could still be replaced.)
+pub fn rename(from: &Path, to: &Path) -> Result<(), FileError> {
+    if fs::symlink_metadata(to).is_ok() {
+        return Err(FileError::Exists {
+            path: to.to_path_buf(),
+        });
+    }
+    make_parent(to)?;
+    fs::rename(from, to).map_err(|e| FileError::io(from, e))
+}
+
+/// Makes the folders `path` is in.
+fn make_parent(path: &Path) -> Result<(), FileError> {
+    match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => {
+            fs::create_dir_all(dir).map_err(|e| FileError::io(dir, e))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// An error making `path`: that something's there, or why not.
+fn exists_or_io(path: &Path, e: io::Error) -> FileError {
+    if e.kind() == io::ErrorKind::AlreadyExists {
+        FileError::Exists {
+            path: path.to_path_buf(),
+        }
+    } else {
+        FileError::io(path, e)
+    }
+}
+
 /// Whether the file has other hard-linked names, which a rename would leave
 /// pointing at the old contents.
 #[cfg(unix)]
@@ -234,6 +296,46 @@ fn create_temp_file(dir: &Path, target: &Path) -> io::Result<(PathBuf, File)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_files_and_folders_make_their_folders_and_replace_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a/b/new.txt");
+        assert!(create_file(&file, b"hi\n").unwrap().is_some());
+        assert_eq!(fs::read(&file).unwrap(), b"hi\n");
+        let again = create_file(&file, b"other\n").unwrap_err();
+        assert!(matches!(again, FileError::Exists { .. }), "{again}");
+        assert_eq!(
+            again.to_string(),
+            format!("\"{}\" already exists", file.display())
+        );
+        assert_eq!(fs::read(&file).unwrap(), b"hi\n", "left alone");
+
+        let folder = dir.path().join("c/d");
+        create_dir(&folder).unwrap();
+        assert!(folder.is_dir());
+        assert!(matches!(create_dir(&folder), Err(FileError::Exists { .. })));
+        // A file where the folder would go.
+        assert!(matches!(create_dir(&file), Err(FileError::Exists { .. })));
+    }
+
+    #[test]
+    fn renames_take_what_is_inside_and_replace_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("src");
+        create_file(&from.join("lib.rs"), b"one\n").unwrap();
+        let to = dir.path().join("moved/here/src");
+        rename(&from, &to).unwrap();
+        assert!(!from.exists());
+        assert_eq!(fs::read(to.join("lib.rs")).unwrap(), b"one\n");
+
+        let other = dir.path().join("other.rs");
+        create_file(&other, b"two\n").unwrap();
+        let refused = rename(&other, &to.join("lib.rs")).unwrap_err();
+        assert!(matches!(refused, FileError::Exists { .. }), "{refused}");
+        assert_eq!(fs::read(&other).unwrap(), b"two\n");
+        assert_eq!(fs::read(to.join("lib.rs")).unwrap(), b"one\n");
+    }
 
     fn dir() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()

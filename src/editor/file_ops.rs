@@ -2,12 +2,15 @@
 //! (`Ctrl+N`), saving one that has no name yet (asking for it), and the
 //! file tree's new file and folder, rename, and moving to the bin. Names
 //! are asked for in an input box; moving to the bin is confirmed first.
+//! The disk work itself is `files`' (`create_file`, `create_dir`,
+//! `rename`, `trash`); here's what it means for the buffers and the tree.
 
 use std::path::{Path, PathBuf};
 
 use super::input_box::InputBox;
 use super::popup::{Popup, PopupSpan};
 use super::{Document, Editor, Message, Mode};
+use crate::files::{self, FileError};
 
 impl Editor {
     /// `Ctrl+N`, File → New File: a new, empty buffer with no name yet
@@ -63,6 +66,15 @@ impl Editor {
         } else {
             row.path.parent()?.to_path_buf()
         })
+    }
+
+    /// Why making or moving a file failed, for the message line: what
+    /// was in the way shown from the working directory.
+    fn say_exists(&self, error: FileError) -> String {
+        match error {
+            FileError::Exists { path } => format!("{} already exists", self.relative(&path)),
+            other => other.to_string(),
+        }
     }
 
     /// `path` from the working directory, for showing.
@@ -130,18 +142,12 @@ impl Editor {
             .or_else(|| self.tree_folder())
             .ok_or("No folder")?;
         let path = dir.join(name);
-        if path.exists() {
-            return Err(format!("{} already exists", self.relative(&path)));
-        }
-        let error = |e: std::io::Error| format!("{}: {e}", path.display());
-        if folder {
-            std::fs::create_dir_all(&path).map_err(error)?;
+        let made = if folder {
+            files::create_dir(&path)
         } else {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(error)?;
-            }
-            std::fs::File::create_new(&path).map_err(error)?;
-        }
+            files::create_file(&path, b"").map(|_| ())
+        };
+        made.map_err(|e| self.say_exists(e))?;
         if let Some(explorer) = self.explorer.as_mut() {
             explorer.refresh();
             explorer.reveal(&path);
@@ -204,13 +210,7 @@ impl Editor {
     /// following, and shows it in the tree.
     pub(super) fn move_path(&mut self, from: &Path, to: &Path) -> Result<(), String> {
         let (from, to) = (from.to_path_buf(), to.to_path_buf());
-        if to.exists() {
-            return Err(format!("{} already exists", self.relative(&to)));
-        }
-        if let Some(dir) = to.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        }
-        std::fs::rename(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+        files::rename(&from, &to).map_err(|e| self.say_exists(e))?;
         // Open buffers in it follow it.
         let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         for doc in std::iter::once(&mut self.document).chain(self.background.iter_mut()) {
