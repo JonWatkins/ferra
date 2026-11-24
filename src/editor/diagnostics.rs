@@ -14,7 +14,10 @@
 //! `set_diagnostics` reach them by id), and its `insert` and `delete` shift
 //! those after the change (a start moves with text put in right at it, an end
 //! doesn't, so typing after a word doesn't stretch its underline; text deleted
-//! from under one shrinks it). Undo and redo report the changes they make
+//! from under one shrinks it). Text put in where some of a diagnostic's own
+//! text was deleted in the same undo step is a replacement (`ciw`, a rename,
+//! a paste over a selection, a server's edit) and goes inside it, at its start
+//! or end too, until the step ends (`Document::commit`). Undo and redo report the changes they make
 //! (`History::undo_noting`), so diagnostics follow them too. A list the server
 //! says is for an older version than ferra last sent (`publishDiagnostics`'
 //! `version`) is left out: it would put back places the edits moved diagnostics
