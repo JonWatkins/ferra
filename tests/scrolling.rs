@@ -36,7 +36,7 @@ fn half_pages_move_the_view_and_the_cursor() {
     assert_eq!(first_shown(&mut app), 5);
     assert_eq!(cursor(&app).0, 9);
     keys(&mut app, "3<C-d>");
-    assert_eq!(first_shown(&mut app), 8, "a count is the number of lines");
+    assert_eq!(first_shown(&mut app), 8, "a count is the number of rows");
 }
 
 #[test]
@@ -107,6 +107,36 @@ fn pages_of_wrapped_lines_land_where_they_said() {
     keys(&mut app, "<C-b>");
     assert_eq!(first(&mut app), 8, "not pushed on by the cursor");
     assert_eq!(cursor(&app).0, 10, "two lines up from the bottom");
+}
+
+#[test]
+fn half_pages_of_wrapped_lines_move_half_the_rows() {
+    // Each line takes two rows, so half the 10 rows is two lines (four
+    // rows; three would be six), not five lines (the whole screen).
+    let mut app = app();
+    let text: Vec<String> = (0..100)
+        .map(|i| format!("line {i} {}", "x".repeat(30)))
+        .collect();
+    keys(&mut app, &format!("i{}<Esc>gg", text.join("<CR>")));
+    render(&mut app, 40, 12);
+    let first = |app: &mut App| -> usize {
+        let rows = render(app, 40, 12).rows;
+        let text = rows[0].split("line ").nth(1).unwrap();
+        text.split_whitespace().next().unwrap().parse().unwrap()
+    };
+    keys(&mut app, "<C-d>");
+    assert_eq!(first(&mut app), 2);
+    assert_eq!(cursor(&app).0, 4, "moved 2, then out of the margin");
+    keys(&mut app, "<C-d>");
+    assert_eq!(first(&mut app), 4);
+    assert_eq!(cursor(&app).0, 6);
+    keys(&mut app, "<C-u>");
+    assert_eq!(first(&mut app), 2);
+    assert_eq!(cursor(&app).0, 4);
+    keys(&mut app, "4<C-d>");
+    assert_eq!(first(&mut app), 4, "a count is the number of rows");
+    keys(&mut app, "1<C-d>");
+    assert_eq!(first(&mut app), 5, "at least a line, though it's two rows");
 }
 
 #[test]
