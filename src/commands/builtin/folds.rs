@@ -2,12 +2,13 @@
 //!
 //! Folds come from indentation (see [`core::fold`](crate::core::fold)):
 //! the fold at the cursor is the one its line heads, or else the one it's
-//! inside. `zf` makes one over any motion.
+//! inside. `zc` on a fold that's already closed closes the one around it.
+//! `zf` makes one over any motion.
 
 use super::operators::begin;
 use crate::commands::{CommandRegistry, CommandResult, Context};
 use crate::core::fold::{region_around, region_from};
-use crate::core::{Position, motion};
+use crate::core::{Buffer, Position, motion};
 use crate::editor::{Editor, Operator};
 
 pub fn register(r: &mut CommandRegistry) {
@@ -63,11 +64,27 @@ fn close_here(editor: &mut Editor) -> CommandResult {
     let tab = editor.options.tab_width.max(1);
     let doc = &mut editor.document;
     let row = doc.cursor().row;
-    let (first, last) = region_around(doc.buffer(), row, tab).ok_or("No fold here")?;
+    let mut region = region_around(doc.buffer(), row, tab).ok_or("No fold here")?;
+    // Already closed: close the one around it, as Vim does (or nothing).
+    if doc.closed_fold_at(row) == Some(region) {
+        let Some(outer) = enclosing(doc.buffer(), region, tab) else {
+            return Ok(());
+        };
+        region = outer;
+    }
+    let (first, last) = region;
     doc.close_fold(first, last);
     let col = motion::first_non_blank(doc.buffer(), first);
     doc.set_cursor(Position::new(first, col));
     Ok(())
+}
+
+/// The nearest fold region starting above `inner` that reaches its end.
+fn enclosing(buffer: &Buffer, inner: (usize, usize), tab: usize) -> Option<(usize, usize)> {
+    (0..inner.0)
+        .rev()
+        .filter_map(|r| region_from(buffer, r, tab))
+        .find(|&(_, last)| last >= inner.1)
 }
 
 /// `zM`: closes each outermost fold in the buffer.

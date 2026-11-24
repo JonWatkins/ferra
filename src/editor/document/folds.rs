@@ -6,13 +6,19 @@
 //! leaves it be, and any other edit touching it opens it, as Vim does when
 //! you change folded text.
 //!
-//! Closed folds live on the `Document` (`document/folds.rs`), as sorted,
-//! non-overlapping line ranges in a `RefCell`, so readers with `&Document`
+//! Closed folds live on the `Document` (`document/folds.rs`), as sorted line
+//! ranges that nest but don't cross, in a `RefCell`, so readers with `&Document`
 //! (drawing) can bring them up to date: like the syntax trees, they replay the
 //! buffer's edit log, so undo and reloads move them as well. A fold after an
 //! edit shifts with its lines, an edit within its first line leaves it, and
 //! anything else touching it opens it. A different buffer, or a log that's
 //! moved past, opens them all.
+//!
+//! A fold closed inside another stays closed when the outer one is closed
+//! over it and opened again, as in Vim: `zc` on a fold that's already
+//! closed closes the one around it, and `zo` opens only the outermost. Only
+//! the outermost closed folds hide lines, so everything below reads those
+//! (`closed_folds`, `closed_fold_at`).
 //!
 //! Everything that walks lines treats a closed fold as one: `j`/`k` turn their
 //! count of visible lines into buffer lines (`over_folds`, via
@@ -43,7 +49,8 @@ struct Inner {
     buffer_id: u64,
     /// The buffer's `edit_seq` the folds were last brought up to.
     seq: u64,
-    /// Closed folds, `(first, last)` lines, sorted and not overlapping.
+    /// Closed folds, `(first, last)` lines, sorted by first line and then
+    /// outer before inner; any two are apart or one is inside the other.
     closed: Vec<(usize, usize)>,
 }
 
@@ -78,6 +85,18 @@ impl Inner {
         }
         self.seq = buffer.edit_seq();
     }
+
+    /// The closed folds not inside another closed one: those that hide lines.
+    fn outermost(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        let mut end = None;
+        self.closed.iter().copied().filter(move |&(first, last)| {
+            if end.is_some_and(|end| first <= end) {
+                return false;
+            }
+            end = Some(last);
+            true
+        })
+    }
 }
 
 impl Document {
@@ -87,38 +106,47 @@ impl Document {
         inner
     }
 
-    /// The closed folds, `(first, last)` lines, in order.
+    /// The closed folds that hide lines (not those inside another closed
+    /// one), `(first, last)` lines, in order.
     pub fn closed_folds(&self) -> Vec<(usize, usize)> {
-        self.folds().closed.clone()
+        self.folds().outermost().collect()
     }
 
-    /// The closed fold `row` is in, if any.
+    /// The closed fold `row` is hidden in (or heads), if any: the outermost.
     pub fn closed_fold_at(&self, row: usize) -> Option<(usize, usize)> {
         self.folds()
-            .closed
-            .iter()
-            .copied()
+            .outermost()
             .find(|&(first, last)| first <= row && row <= last)
     }
 
-    /// Closes lines `first..=last` into a fold (folds inside it become
-    /// part of it).
+    /// Closes lines `first..=last` into a fold. Closed folds inside it stay
+    /// closed within it; any that cross its edges open.
     pub fn close_fold(&mut self, first: usize, last: usize) {
         if last <= first {
             return;
         }
         let mut folds = self.folds();
-        folds.closed.retain(|&(a, b)| b < first || a > last);
-        let at = folds.closed.partition_point(|&(a, _)| a < first);
+        folds.closed.retain(|&(a, b)| {
+            let apart = b < first || a > last;
+            let inside = first <= a && b <= last && (a, b) != (first, last);
+            let around = a <= first && last <= b && (a, b) != (first, last);
+            apart || inside || around
+        });
+        let at = folds
+            .closed
+            .partition_point(|&(a, b)| a < first || (a == first && b > last));
         folds.closed.insert(at, (first, last));
     }
 
-    /// Opens the closed fold `row` is in. Returns whether there was one.
+    /// Opens the closed fold `row` is in, the outermost: folds closed inside
+    /// it stay closed. Returns whether there was one.
     pub fn open_fold_at(&mut self, row: usize) -> bool {
+        let Some(fold) = self.closed_fold_at(row) else {
+            return false;
+        };
         let mut folds = self.folds();
-        let before = folds.closed.len();
-        folds.closed.retain(|&(a, b)| row < a || row > b);
-        folds.closed.len() != before
+        folds.closed.retain(|&f| f != fold);
+        true
     }
 
     /// Opens every fold.
@@ -170,10 +198,9 @@ impl Document {
         let (lo, hi) = (a.min(b), a.max(b));
         let hidden: usize = self
             .folds()
-            .closed
-            .iter()
-            .filter(|&&(first, last)| lo <= first && last < hi)
-            .map(|&(first, last)| last - first)
+            .outermost()
+            .filter(|&(first, last)| lo <= first && last < hi)
+            .map(|(first, last)| last - first)
             .sum();
         (hi - lo) - hidden
     }
@@ -235,10 +262,47 @@ mod tests {
     }
 
     #[test]
-    fn closing_takes_in_folds_inside() {
+    fn closing_an_outer_fold_keeps_the_ones_inside() {
         let mut d = doc();
         d.close_fold(2, 3);
         d.close_fold(1, 5);
-        assert_eq!(d.closed_folds(), [(1, 5)]);
+        assert_eq!(d.closed_folds(), [(1, 5)], "only the outer one hides lines");
+        assert_eq!(d.closed_fold_at(3), Some((1, 5)));
+        assert_eq!(d.visible_lines_between(0, 6), 2, "0 [1-5] 6");
+        assert!(d.open_fold_at(1));
+        assert_eq!(d.closed_folds(), [(2, 3)], "the inner one is still closed");
+        assert!(d.open_fold_at(2));
+        assert_eq!(d.closed_folds(), []);
+    }
+
+    #[test]
+    fn closing_a_fold_opens_the_ones_it_crosses() {
+        let mut d = doc();
+        d.close_fold(1, 3);
+        d.close_fold(5, 6);
+        d.close_fold(2, 5);
+        assert_eq!(d.closed_folds(), [(2, 5)]);
+        d.open_fold_at(2);
+        assert_eq!(d.closed_folds(), []);
+    }
+
+    #[test]
+    fn folds_starting_on_the_same_line_nest() {
+        let mut d = doc();
+        d.close_fold(1, 2);
+        d.close_fold(1, 4);
+        d.close_fold(1, 4);
+        assert_eq!(d.closed_folds(), [(1, 4)]);
+        d.open_fold_at(1);
+        assert_eq!(d.closed_folds(), [(1, 2)]);
+    }
+
+    #[test]
+    fn an_edit_in_an_outer_fold_leaves_the_folds_inside_it() {
+        let mut d = doc();
+        d.close_fold(3, 4);
+        d.close_fold(1, 5);
+        d.insert(Position::new(2, 0), "x");
+        assert_eq!(d.closed_folds(), [(3, 4)], "the outer one opens");
     }
 }

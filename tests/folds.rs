@@ -68,6 +68,32 @@ fn zc_from_inside_and_zo() {
 }
 
 #[test]
+fn an_inner_fold_stays_closed_inside_an_outer_one() {
+    let mut app = app();
+    keys(
+        &mut app,
+        "ifn o() {<CR>if x {<CR>one();<CR>}<CR>two();<CR>}<Esc>gg0",
+    );
+    assert_eq!(
+        text(&app),
+        "fn o() {\n    if x {\n        one();\n    }\n    two();\n}"
+    );
+    keys(&mut app, "jzc");
+    assert_eq!(screen(&mut app)[1], "    if x { ⋯ 2 more lines");
+    keys(&mut app, "zc");
+    assert_eq!(
+        cursor(&app).0,
+        0,
+        "zc on a closed fold closes the one around it"
+    );
+    assert_eq!(screen(&mut app)[0], "fn o() { ⋯ 5 more lines");
+    keys(&mut app, "zo");
+    let rows = screen(&mut app);
+    assert_eq!(rows[1], "    if x { ⋯ 2 more lines", "still closed inside");
+    assert_eq!(rows[2], "    two();");
+}
+
+#[test]
 fn zm_closes_everything_and_zr_opens_it() {
     let mut app = code();
     keys(&mut app, "zM");
