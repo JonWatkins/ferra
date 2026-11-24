@@ -475,12 +475,14 @@ pub fn draw(
 
     // The find box floats at the top right of the active window.
     let mut find_cursor = None;
-    if editor.mode() == Mode::Find
-        && !editor.search_typing()
+    if find::shown(editor)
         && let Some(window) = drawn.active
     {
         let view = FindView::new(editor.find_state(), editor.find_count(), find_keys, theme);
-        let area = FindView::area(editor.find_state(), window);
+        let current = drawn
+            .cursor
+            .and_then(|at| find::current_match_cells(editor, at));
+        let area = FindView::area(editor.find_state(), window, current);
         find_cursor = FindView::cursor_position(editor.find_state(), area);
         FindView::record(editor.find_state(), find_keys, area, &mut map);
         frame.render_widget(view, area);

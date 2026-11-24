@@ -241,25 +241,54 @@ impl Windows {
     }
 }
 
+/// How much room [`follow_cursor`] keeps around the cursor. A bare `usize`
+/// is a `scroll_off` with nothing covered.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Margins {
+    /// Screen rows of context above and below the cursor (`scrolloff`), at
+    /// most half the view.
+    pub scroll_off: usize,
+    /// Screen rows at the view's top that something is drawn over (the find
+    /// box): the cursor stays below them where the buffer allows.
+    pub covered: usize,
+}
+
+impl From<usize> for Margins {
+    fn from(scroll_off: usize) -> Self {
+        Self {
+            scroll_off,
+            covered: 0,
+        }
+    }
+}
+
 /// The first line of a view `height` screen rows tall that started at line
 /// `top`, once scrolled just enough to show the cursor (on line `row`, its
-/// `row_in_line`th screen row) with `scroll_off` screen rows of context
-/// above and below it where the buffer allows. `rows_of(line)` is how many
-/// screen rows a line takes (1 each without wrapping). The view always
-/// starts at the start of a line.
+/// `row_in_line`th screen row) with the `margins` above and below it where
+/// the buffer allows. `rows_of(line)` is how many screen rows a line takes
+/// (1 each without wrapping). The view always starts at the start of a
+/// line.
 pub fn follow_cursor(
     top: usize,
     cursor: (usize, usize),
     height: usize,
     line_count: usize,
-    scroll_off: usize,
+    margins: impl Into<Margins>,
     rows_of: impl Fn(usize) -> usize,
 ) -> usize {
     let (row, row_in_line) = cursor;
     if height == 0 {
         return top;
     }
+    let Margins {
+        scroll_off,
+        covered,
+    } = margins.into();
     let margin = scroll_off.min((height - 1) / 2);
+    // The covered rows can take more than half, but the cursor's row must
+    // still show.
+    let above_margin = margin.max(covered).min(height - 1);
+    let below_margin = margin.min(height - 1 - above_margin);
     let mut top = top;
     // Every line takes a row at least, so lines more than a screen above
     // the cursor can't be in the view; start no further back than that.
@@ -267,27 +296,27 @@ pub fn follow_cursor(
         top = row - height;
     }
 
-    // Above: `margin` rows (as many as there are) between the top and the
-    // cursor's row.
+    // Above: `above_margin` rows (as many as there are) between the top
+    // and the cursor's row.
     let mut above = if row < top {
         top = row;
         row_in_line
     } else {
         (top..row).map(&rows_of).sum::<usize>() + row_in_line
     };
-    while above < margin && top > 0 {
+    while above < above_margin && top > 0 {
         top -= 1;
         above += rows_of(top);
     }
 
-    // Below: the cursor's row and `margin` more must fit.
+    // Below: the cursor's row and `below_margin` more must fit.
     let mut below = rows_of(row).saturating_sub(row_in_line + 1);
     let mut next = row + 1;
-    while below < margin && next < line_count {
+    while below < below_margin && next < line_count {
         below += rows_of(next);
         next += 1;
     }
-    let mut used = above + 1 + below.min(margin);
+    let mut used = above + 1 + below.min(below_margin);
     while used > height && top < row {
         used -= rows_of(top);
         top += 1;
@@ -399,7 +428,7 @@ impl TextLayout {
         document: &Document,
         cursor: Position,
         height: usize,
-        scroll_off: usize,
+        margins: impl Into<Margins>,
     ) -> usize {
         let buffer = document.buffer();
         let folded = document.closed_fold_at(cursor.row).is_some();
@@ -423,7 +452,7 @@ impl TextLayout {
             (cursor.row, row_in_line),
             height,
             buffer.line_count(),
-            scroll_off,
+            margins,
             |row| self.rows_in(document, row),
         );
         // The view starts at a fold's first line, not inside it.
@@ -986,7 +1015,7 @@ mod tests {
 
 #[cfg(test)]
 mod follow_tests {
-    use super::follow_cursor;
+    use super::{Margins, follow_cursor};
 
     #[test]
     fn without_wrapping_it_keeps_the_margin_in_lines() {
@@ -1013,5 +1042,32 @@ mod follow_tests {
             497,
             "a long jump"
         );
+    }
+
+    #[test]
+    fn the_cursor_stays_below_covered_rows() {
+        let one = |_| 1;
+        let covered = Margins {
+            scroll_off: 2,
+            covered: 5,
+        };
+        // Row 12 would be the view's 3rd row: up to the 6th, under the box.
+        assert_eq!(follow_cursor(10, (12, 0), 20, 100, covered, one), 7);
+        assert_eq!(
+            follow_cursor(0, (12, 0), 20, 100, covered, one),
+            0,
+            "in view"
+        );
+        assert_eq!(
+            follow_cursor(0, (2, 0), 20, 100, covered, one),
+            0,
+            "the buffer's start can't scroll"
+        );
+        // More covered than fits: the cursor's row still shows, on the last.
+        let deep = Margins {
+            scroll_off: 2,
+            covered: 30,
+        };
+        assert_eq!(follow_cursor(0, (50, 0), 10, 100, deep, one), 41);
     }
 }
