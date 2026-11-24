@@ -146,6 +146,12 @@ impl History {
         !self.pending.is_empty()
     }
 
+    /// The revision the pending changes will have once committed, so state
+    /// kept beside the history can be tied to that undo step.
+    pub fn next_revision(&self) -> Revision {
+        self.last_id + 1
+    }
+
     /// The revision of the last committed state (ignoring pending changes).
     pub fn revision(&self) -> Revision {
         self.undo.last().map_or(0, |t| t.id)

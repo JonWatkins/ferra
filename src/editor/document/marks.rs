@@ -3,18 +3,28 @@
 //! Marks are kept by each `Document` (`document/marks.rs`) and adjusted by its
 //! `insert` and `delete`, so they move with text inserted or deleted before
 //! them. Global marks (`A`-`Z`) record which buffer they're in and reuse that
-//! buffer's mark under the same letter. Undo applies changes below `Document`
-//! and doesn't move marks, so positions are clamped when used. `'` and `` ` ``
+//! buffer's mark under the same letter.
+//!
+//! Undo and redo move marks too, as Vim does: each undo step keeps where the
+//! marks were before it (`begin_step`), and undoing it moves the marks along
+//! with the changes undo makes, then puts the ones it kept back
+//! (`undone_or_redone`). Following the changes alone would leave a mark on a
+//! deleted line one line down once the line came back, since the restored
+//! text goes in front of it. Redo swaps the positions back the same way. Marks
+//! set after the step only follow the changes. `'` and `` ` ``
 //! are motions whose target comes from the mark (`MotionArgs::target`), so they
 //! work after operators and in visual mode.
 
 use std::collections::HashMap;
 
-use crate::core::Position;
+use crate::core::{Change, Position, Revision, end_of};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Marks {
     marks: HashMap<char, Position>,
+    /// For each undo step, where the marks were on the other side of it:
+    /// before it while it's done, after it while it's undone.
+    steps: HashMap<Revision, HashMap<char, Position>>,
 }
 
 impl Marks {
@@ -24,6 +34,35 @@ impl Marks {
 
     pub fn get(&self, name: char) -> Option<Position> {
         self.marks.get(&name).copied()
+    }
+
+    /// An undo step that will be `step` is starting, the latest being
+    /// `latest`: keeps where the marks are now, for undoing it. Steps after
+    /// `latest` were undone and can't be redone any more, so are forgotten.
+    pub fn begin_step(&mut self, step: Revision, latest: Revision) {
+        self.steps.retain(|&id, _| id <= latest);
+        if !self.marks.is_empty() {
+            self.steps.insert(step, self.marks.clone());
+        }
+    }
+
+    /// Undo step `step` was undone or redone, making `changes`: marks move
+    /// with them, then those kept on the other side of it go back there,
+    /// and where they were is kept for going back again.
+    pub fn undone_or_redone(&mut self, step: Revision, changes: &[Change]) {
+        let before = self.marks.clone();
+        for change in changes {
+            match change {
+                Change::Insert { at, text } => self.after_insert(*at, end_of(*at, text)),
+                Change::Delete { at, text } => self.after_delete(*at, end_of(*at, text)),
+            }
+        }
+        if let Some(kept) = self.steps.remove(&step) {
+            self.marks.extend(kept);
+        }
+        if !before.is_empty() {
+            self.steps.insert(step, before);
+        }
     }
 
     /// Text was inserted at `at`, ending at `end`: marks at or after `at`
@@ -101,6 +140,43 @@ mod tests {
         assert_eq!(m.get('b'), Some(pos(1, 2)), "on the end line: joined");
         assert_eq!(m.get('c'), Some(pos(3, 0)), "later: shifted up");
         assert_eq!(m.get('d'), Some(pos(0, 0)), "before: untouched");
+    }
+
+    #[test]
+    fn undo_puts_marks_back_and_redo_swaps_them_again() {
+        let mut m = marks(&[('a', pos(2, 3)), ('b', pos(5, 0))]);
+        m.begin_step(1, 0);
+        // Step 1 deletes line 2 ("two\n").
+        let deleted = Change::Delete {
+            at: pos(2, 0),
+            text: "two\n".into(),
+        };
+        m.after_delete(pos(2, 0), pos(3, 0));
+        assert_eq!((m.get('a'), m.get('b')), (Some(pos(2, 0)), Some(pos(4, 0))));
+        m.set('c', pos(3, 1));
+
+        m.undone_or_redone(1, &[deleted.inverted()]);
+        assert_eq!(m.get('a'), Some(pos(2, 3)), "back on its own line");
+        assert_eq!(m.get('b'), Some(pos(5, 0)));
+        assert_eq!(m.get('c'), Some(pos(4, 1)), "set later: follows the text");
+
+        m.undone_or_redone(1, &[deleted]);
+        assert_eq!(m.get('a'), Some(pos(2, 0)), "redo: where it was after");
+        assert_eq!(m.get('b'), Some(pos(4, 0)));
+        assert_eq!(m.get('c'), Some(pos(3, 1)));
+    }
+
+    #[test]
+    fn a_new_step_forgets_undone_ones() {
+        let mut m = marks(&[('a', pos(0, 0))]);
+        m.begin_step(1, 0);
+        m.begin_step(2, 1);
+        m.undone_or_redone(2, &[]);
+        // Step 2 is undone; a new step (3) replaces it.
+        m.begin_step(3, 1);
+        let mut kept: Vec<_> = m.steps.keys().copied().collect();
+        kept.sort();
+        assert_eq!(kept, [1, 3]);
     }
 
     #[test]
