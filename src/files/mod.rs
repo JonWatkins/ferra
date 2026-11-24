@@ -19,34 +19,25 @@
 
 mod complete;
 mod error;
+mod stamp;
 mod trash;
 mod walk;
 
 pub use complete::{complete_path, complete_path_in};
 pub use error::FileError;
+pub use stamp::{FileStamp, Recheck, recheck, stamp};
 pub use trash::{reveal, trash};
 pub use walk::{DirEntry, FileList, WalkOptions, list_dir, list_files, walk_files};
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 /// A file's bytes, and its stamp when they were read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileContents {
     pub bytes: Vec<u8>,
     pub stamp: Option<FileStamp>,
-}
-
-/// What's compared to tell whether a file changed: its modified time and
-/// size. The size catches a change made within the filesystem's timestamp
-/// resolution of an earlier one (often a second, or 2 s on FAT), unless it
-/// left the size the same too.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FileStamp {
-    pub modified: Option<SystemTime>,
-    pub len: u64,
 }
 
 /// Reads a file. Returns `Ok(None)` if it doesn't exist, so a new file can
@@ -58,18 +49,9 @@ pub fn read(path: &Path) -> Result<Option<FileContents>, FileError> {
         Err(source) => return Err(FileError::io(path, source)),
     };
     Ok(Some(FileContents {
-        stamp: stamp(path),
+        stamp: stamp::stamp_holding(path, &bytes),
         bytes,
     }))
-}
-
-/// The file's stamp, or `None` if it doesn't exist.
-pub fn stamp(path: &Path) -> Option<FileStamp> {
-    let metadata = fs::metadata(path).ok()?;
-    Some(FileStamp {
-        modified: metadata.modified().ok(),
-        len: metadata.len(),
-    })
 }
 
 /// Writes `contents` to `path`, returning the file's new stamp.
@@ -94,13 +76,13 @@ pub fn write(path: &Path, contents: &[u8]) -> Result<Option<FileStamp>, FileErro
 
     if existing.as_ref().is_some_and(has_other_names) {
         write_in_place(&target, &dir, contents).map_err(|e| FileError::io(path, e))?;
-        return Ok(stamp(&target));
+        return Ok(stamp::stamp_holding(&target, contents));
     }
     let (temp_path, mut temp) = match create_temp_file(&dir, &target) {
         Ok(created) => created,
         Err(e) if e.kind() == io::ErrorKind::PermissionDenied && existing.is_some() => {
             write_in_place(&target, &dir, contents).map_err(|e| FileError::io(path, e))?;
-            return Ok(stamp(&target));
+            return Ok(stamp::stamp_holding(&target, contents));
         }
         Err(e) => return Err(FileError::io(path, e)),
     };
@@ -110,7 +92,7 @@ pub fn write(path: &Path, contents: &[u8]) -> Result<Option<FileStamp>, FileErro
         drop(temp);
         let _ = fs::remove_file(&temp_path);
         write_in_place(&target, &dir, contents).map_err(|e| FileError::io(path, e))?;
-        return Ok(stamp(&target));
+        return Ok(stamp::stamp_holding(&target, contents));
     }
 
     let result = (|| {
@@ -126,7 +108,7 @@ pub fn write(path: &Path, contents: &[u8]) -> Result<Option<FileStamp>, FileErro
         let _ = fs::remove_file(&temp_path);
         return Err(FileError::io(path, e));
     }
-    Ok(stamp(&target))
+    Ok(stamp::stamp_holding(&target, contents))
 }
 
 /// Makes a new file holding `contents` (and the folders it's in), written
@@ -142,7 +124,7 @@ pub fn create_file(path: &Path, contents: &[u8]) -> Result<Option<FileStamp>, Fi
         let _ = fs::remove_file(path);
         return Err(FileError::io(path, e));
     }
-    Ok(stamp(path))
+    Ok(stamp::stamp_holding(path, contents))
 }
 
 /// Makes a new folder (and those it's in). Never accepts one that's
@@ -355,7 +337,7 @@ mod tests {
         let contents = read(&path).unwrap().unwrap();
         assert_eq!(contents.bytes, b"hello\n");
         assert_eq!(contents.stamp, stamp);
-        assert_eq!(stamp.unwrap().len, 6);
+        assert_eq!(stamp.unwrap().len(), 6);
     }
 
     #[test]

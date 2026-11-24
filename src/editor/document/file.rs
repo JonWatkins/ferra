@@ -4,13 +4,13 @@
 //!   - **Modified tracking:** `History` gives each committed state a
 //!     `Revision`. The document is modified when its revision differs from the
 //!     saved one, so undoing back to the save clears `[+]`.
-//!   - **External changes:** the file's `FileStamp` (modified time and size) at
-//!     read/write time. A save refuses to overwrite a file whose stamp has
-//!     changed since, or an existing file the document never read, unless
-//!     forced with `!`. The size catches a change made within the timestamp
-//!     resolution of the last one, unless that kept the size too.
-//! - Noticing external changes: `Document::disk_state` compares the file's
-//!   stamp with the one it last read or wrote (`Changed`, `Deleted`).
+//!   - **External changes:** the file's `FileStamp` at read/write time (its
+//!     times, size and identity, and while those are too recent to trust, a
+//!     hash of the contents: see `files::stamp`). A save refuses to overwrite
+//!     a file that `files::recheck` finds changed since, or an existing file
+//!     the document never read, unless forced with `!`.
+//! - Noticing external changes: `Document::disk_state` rechecks the file
+//!   against the stamp it last read or wrote (`Changed`, `Deleted`).
 //!   `Editor::check_disk_changes` runs on `FocusGained` (the app turns on
 //!   terminal focus reporting) and `:checktime`, and `switch_to` checks the
 //!   buffer it switches to. With `watch-files` (on by default), the event loop
@@ -128,14 +128,35 @@ impl Document {
     /// Whether another program changed or deleted the file since it was
     /// read or written. A state already reported with
     /// [`Document::acknowledge_disk_state`] reads as unchanged until the
-    /// file changes again.
-    pub fn disk_state(&self) -> DiskState {
-        let Some(path) = &self.path else {
+    /// file changes again. (`&mut`: a stamp that keeps a hash of the
+    /// contents is swapped for one without once that's safe; see
+    /// [`files::recheck`].)
+    pub fn disk_state(&mut self) -> DiskState {
+        let Some(path) = self.path.clone() else {
             return DiskState::Unchanged;
         };
-        let now = files::stamp(path);
-        if now == self.disk_stamp || self.disk_acknowledged == Some(now) {
-            return DiskState::Unchanged;
+        let now = match self.disk_stamp {
+            Some(known) => match files::recheck(&path, &known) {
+                files::Recheck::Same(fresher) => {
+                    self.disk_stamp = Some(fresher);
+                    return DiskState::Unchanged;
+                }
+                files::Recheck::Changed(now) => now,
+            },
+            None => match files::stamp(&path) {
+                None => return DiskState::Unchanged,
+                now => now,
+            },
+        };
+        match self.disk_acknowledged {
+            Some(None) if now.is_none() => return DiskState::Unchanged,
+            Some(Some(acknowledged)) if now.is_some() => {
+                if let files::Recheck::Same(fresher) = files::recheck(&path, &acknowledged) {
+                    self.disk_acknowledged = Some(Some(fresher));
+                    return DiskState::Unchanged;
+                }
+            }
+            _ => {}
         }
         match now {
             Some(_) => DiskState::Changed,
@@ -256,12 +277,16 @@ impl Document {
 
         if !force {
             let known = if is_own_file { self.disk_stamp } else { None };
-            match (files::stamp(&path), known) {
-                (Some(on_disk), Some(known)) if on_disk != known => {
-                    return Err(FileError::ChangedOnDisk { path });
+            match known {
+                Some(known) => {
+                    if let files::Recheck::Changed(Some(_)) = files::recheck(&path, &known) {
+                        return Err(FileError::ChangedOnDisk { path });
+                    }
                 }
-                (Some(_), None) => return Err(FileError::AlreadyExists { path }),
-                _ => {}
+                None if files::stamp(&path).is_some() => {
+                    return Err(FileError::AlreadyExists { path });
+                }
+                None => {}
             }
         }
 
@@ -522,10 +547,30 @@ mod tests {
     }
 
     #[test]
+    fn a_change_keeping_the_modified_time_and_size_is_noticed() {
+        let fx = Fixture::new();
+        let path = fx.file("a.txt", "one\n");
+        let (mut doc, _) = Document::open(&path).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        fs::write(&path, "two\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert_eq!(doc.disk_state(), DiskState::Changed);
+        assert!(matches!(
+            doc.save(None, false),
+            Err(FileError::ChangedOnDisk { .. })
+        ));
+    }
+
+    #[test]
     fn a_change_with_the_same_modified_time_is_noticed_by_its_size() {
         let fx = Fixture::new();
         let path = fx.file("a.txt", "one\n");
-        let (doc, _) = Document::open(&path).unwrap();
+        let (mut doc, _) = Document::open(&path).unwrap();
         let modified = fs::metadata(&path).unwrap().modified().unwrap();
         fs::write(&path, "one more\n").unwrap();
         fs::File::options()
