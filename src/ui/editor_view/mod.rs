@@ -24,7 +24,7 @@ use crate::config::{EditorOptions, Theme};
 use crate::core::search::{Match, SearchPattern};
 use crate::core::{Position as TextPosition, Range};
 use crate::editor::Document;
-use crate::editor::windows::TextLayout;
+use crate::editor::windows::{Margins, TextLayout};
 use crate::syntax::{HIGHLIGHT_NAMES, Highlights};
 
 /// State kept between frames for an editor pane.
@@ -133,16 +133,15 @@ impl ViewState {
         cursor: TextPosition,
         area: Rect,
         options: &EditorOptions,
+        covered: usize,
     ) -> std::ops::Range<usize> {
         let height = area.height as usize;
         let layout = TextLayout::new(area.width as usize, document, options);
-        let top = layout.follow_cursor(
-            self.viewport.top,
-            document,
-            cursor,
-            height,
-            options.scroll_off,
-        );
+        let margins = Margins {
+            scroll_off: options.scroll_off,
+            covered,
+        };
+        let top = layout.follow_cursor(self.viewport.top, document, cursor, height, margins);
         // Every line up to the last shown (closed folds and wrapped lines
         // change how many that is).
         top..layout.bottom(document, top, height) + 1
@@ -175,6 +174,9 @@ pub struct EditorView<'a> {
     cursor: Option<TextPosition>,
     /// Only the active window shows the cursor line.
     active: bool,
+    /// Rows at the top drawn over (by the find box), kept clear of the
+    /// cursor where the buffer allows.
+    covered: usize,
     /// Bracket pair colours: each line's starting state, and the
     /// language's comments.
     brackets: Option<(
@@ -208,6 +210,7 @@ impl<'a> EditorView<'a> {
             diagnostics: &[],
             cursor: None,
             active: true,
+            covered: 0,
             brackets: None,
             indent_guides: None,
             active_guide: None,
@@ -350,6 +353,20 @@ impl<'a> EditorView<'a> {
         self
     }
 
+    /// Scrolls to keep the cursor below the top `rows`, which something is
+    /// drawn over (the find box, so it doesn't hide the current match).
+    pub fn covered(mut self, rows: usize) -> Self {
+        self.covered = rows;
+        self
+    }
+
+    fn margins(&self) -> Margins {
+        Margins {
+            scroll_off: self.options.scroll_off,
+            covered: self.covered,
+        }
+    }
+
     /// Underlines `diagnostics` and shows their messages.
     pub fn diagnostics(
         mut self,
@@ -476,7 +493,7 @@ impl StatefulWidget for EditorView<'_> {
                 self.document,
                 cursor,
                 height,
-                self.options.scroll_off,
+                self.margins(),
             );
         } else {
             let cursor_col = match self.document.display_line(cursor.row) {
@@ -492,7 +509,7 @@ impl StatefulWidget for EditorView<'_> {
             };
             state
                 .viewport
-                .scroll_to(target, width, height, self.options.scroll_off);
+                .scroll_to(target, width, height, self.margins());
         }
         let Viewport { top, left } = state.viewport;
         state.text_x = text_area.x;

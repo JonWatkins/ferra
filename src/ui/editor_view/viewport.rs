@@ -19,21 +19,21 @@ pub struct ScrollTarget {
 
 impl Viewport {
     /// Adjusts the offset so the cursor is visible in a `width` x `height`
-    /// area, keeping `scroll_off` lines of context above and below it where
-    /// the buffer allows.
+    /// area, keeping the `margins` (`scroll_off` lines of context, or a
+    /// usize for just that) above and below it where the buffer allows.
     pub fn scroll_to(
         &mut self,
         target: ScrollTarget,
         width: usize,
         height: usize,
-        scroll_off: usize,
+        margins: impl Into<crate::editor::windows::Margins>,
     ) {
         self.top = crate::editor::windows::follow_cursor(
             self.top,
             (target.row, 0),
             height,
             target.line_count,
-            scroll_off,
+            margins,
             |_| 1,
         );
 

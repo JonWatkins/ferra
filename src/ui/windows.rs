@@ -141,14 +141,21 @@ pub fn draw_windows(
             let last = document.buffer().line_count().saturating_sub(1);
             state.viewport.top = top.min(last);
         }
+        // The find box covers the active window's top rows.
+        let covered = if active && super::find::shown(editor) {
+            super::FindView::height(editor.find_state()) as usize
+        } else {
+            0
+        };
         let highlights = syntax.as_deref_mut().and_then(|engine| {
-            let rows = state.visible_rows(document, window_cursor, rect, &options);
+            let rows = state.visible_rows(document, window_cursor, rect, &options, covered);
             engine.highlight(document, &editor.languages, &editor.syntax_trees, rows)
         });
 
         let view = EditorView::new(document, &options, theme)
             .cursor(window_cursor)
             .active(active)
+            .covered(covered)
             .selection(if active {
                 editor.selection_range()
             } else {

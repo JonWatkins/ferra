@@ -17,7 +17,11 @@
 //!
 //! `ui/find.rs` draws it at the top right of the active window
 //! (`windows::draw_windows` now also returns that window's area), the field
-//! scrolled to keep its cursor in view.
+//! scrolled to keep its cursor in view. So it doesn't hide the current
+//! match, that window scrolls to keep the cursor below the box's rows
+//! (`EditorView::covered`, a `Margins::covered` for `follow_cursor`); at the
+//! buffer's start, which can't scroll that far, the box goes to the
+//! window's bottom right while it would cover the match.
 
 use ratatui::{
     buffer::Buffer,
@@ -30,9 +34,9 @@ use unicode_width::UnicodeWidthStr;
 
 use super::screen_map::{FindPart, ScreenMap, Target};
 use crate::config::Theme;
-use crate::editor::Mode;
 use crate::editor::find::{FindCount, FindField, FindState};
 use crate::editor::text_field::TextField;
+use crate::editor::{Editor, Mode};
 use crate::input::{KeyCode, KeyPress, Keymap};
 
 /// The keys the box shows, as bound in `[keys.find]` (so rebinding them
@@ -176,6 +180,25 @@ impl Parts {
     }
 }
 
+/// Whether the find box is drawn (over the active window): in find mode,
+/// unless the Search view's fields have the keys.
+pub fn shown(editor: &Editor) -> bool {
+    editor.mode() == Mode::Find && !editor.search_typing()
+}
+
+/// The cells of the current match, which starts at the terminal cursor
+/// `at` (cut at the line's end, as far as the box is concerned).
+pub fn current_match_cells(editor: &Editor, at: Position) -> Option<Rect> {
+    let found = editor.find_current_match()?;
+    let line = editor.document.buffer().line(found.row);
+    let text: String = line
+        .chars()
+        .skip(found.start)
+        .take(found.end - found.start)
+        .collect();
+    Some(Rect::new(at.x, at.y, (text.width() as u16).max(1), 1))
+}
+
 /// The first char shown of a field `width` wide, so its cursor is in view.
 pub(super) fn field_scroll(field: &TextField, width: u16) -> usize {
     field
@@ -233,15 +256,30 @@ impl<'a> FindView<'a> {
         hints
     }
 
-    /// The box's area: the top right of `window`, a column in from its edge.
-    pub fn area(state: &FindState, window: Rect) -> Rect {
-        // Borders, the rows, and a blank row between each.
-        let height = if state.replacing { 7 } else { 5 };
+    /// How many rows the box takes: its borders, its rows, and a blank row
+    /// between each. The window keeps the cursor (on the current match)
+    /// below that many rows where it can scroll that far.
+    pub fn height(state: &FindState) -> u16 {
+        if state.replacing { 7 } else { 5 }
+    }
+
+    /// The box's area: the top right of `window`, a column in from its
+    /// edge; or its bottom right if that would cover `current` (the
+    /// current match's cells), as it can at the buffer's start, which can't
+    /// scroll down from under the box.
+    pub fn area(state: &FindState, window: Rect, current: Option<Rect>) -> Rect {
+        let height = Self::height(state).min(window.height);
         let width = WIDTH
             .min(window.width.saturating_sub(2))
             .max(window.width.min(28));
         let x = window.right().saturating_sub(width + 1).max(window.x);
-        Rect::new(x, window.y, width, height.min(window.height))
+        let top = Rect::new(x, window.y, width, height);
+        match current {
+            Some(current) if top.intersects(current) => {
+                Rect::new(x, window.bottom() - height, width, height)
+            }
+            _ => top,
+        }
     }
 
     /// Where the terminal cursor goes: in the field with focus.
@@ -552,7 +590,7 @@ mod tests {
 
     fn rows(state: &FindState, count: FindCount, width: u16) -> (Vec<String>, Rect, Buffer) {
         let window = Rect::new(0, 0, width, 10);
-        let area = FindView::area(state, window);
+        let area = FindView::area(state, window, None);
         let mut buf = Buffer::empty(window);
         let config = crate::config::Config::default();
         let keys = FindKeys::from_keymap(&config.keys);
