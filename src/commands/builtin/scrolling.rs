@@ -169,10 +169,10 @@ pub fn register(r: &mut CommandRegistry) {
 fn move_screen_rows(editor: &mut Editor, count: usize, down: bool) {
     if !editor.options.wrap {
         // `j`/`k`, stepping over closed folds as over one line.
-        let doc = &mut editor.document;
+        let doc = &editor.document;
         let row = doc.cursor().row;
         let target = doc.step_visible_lines(row, count, down);
-        doc.move_vertical(target as isize - row as isize);
+        editor.move_vertical(target as isize - row as isize);
         return;
     }
     let windows = editor.windows();
@@ -315,9 +315,7 @@ fn scroll(editor: &mut Editor, view_lines: isize, cursor_lines: isize) {
     let moved = row.saturating_add_signed(cursor_lines).min(last);
     let wanted = moved.clamp(lowest.min(highest), highest);
     if wanted != row {
-        editor
-            .document
-            .move_vertical(wanted as isize - row as isize);
+        editor.move_vertical(wanted as isize - row as isize);
     }
 }
 
@@ -339,8 +337,7 @@ fn place_cursor_line(
 ) {
     if let Some(line) = count {
         let row = line.saturating_sub(1).min(last_row(editor));
-        let doc = &mut editor.document;
-        doc.move_vertical(row as isize - doc.cursor().row as isize);
+        editor.move_vertical(row as isize - editor.document.cursor().row as isize);
     }
     if first_non_blank {
         let doc = &mut editor.document;
