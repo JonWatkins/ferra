@@ -2,9 +2,11 @@
 //! `zz`/`zt`/`zb`, and the screen-line motions `H`, `M`, `L`.
 //!
 //! `<C-d>`/`<C-u>` move the cursor with the view, by screen rows (whole
-//! lines that fit in half the screen's rows, when lines wrap); `<C-f>`/`<C-b>` put it at
-//! the new screen's top (or bottom), as in Vim. VS Code's PageDown/PageUp
-//! move it with the view, a page at a time.
+//! lines that fit in half the screen's rows, when lines wrap); `<C-f>`/`<C-b>`
+//! put it at the new screen's top (or bottom), as in Vim. VS Code's
+//! PageDown/PageUp move it with the view, a page at a time. `<C-e>`/`<C-y>`
+//! move just the view, a line at a time, or a screen row when lines wrap, so
+//! the view can start partway through a line.
 //!
 //! The view's first row lives in the UI; [`Windows::view_top`] reports it
 //! (as the next draw will have it) and [`Windows::request_top`] asks the UI
@@ -79,17 +81,17 @@ pub fn register(r: &mut CommandRegistry) {
     );
     r.register(
         "scroll_line_down",
-        "Scroll down [count] lines, moving the cursor only to keep it in sight",
+        "Scroll down [count] lines (screen rows, when wrapping), moving the cursor only to keep it in sight",
         |cx| {
-            scroll_view(cx.editor, cx.count() as isize);
+            scroll_line(cx.editor, cx.count(), true);
             Ok(())
         },
     );
     r.register(
         "scroll_line_up",
-        "Scroll up [count] lines, moving the cursor only to keep it in sight",
+        "Scroll up [count] lines (screen rows, when wrapping), moving the cursor only to keep it in sight",
         |cx| {
-            scroll_view(cx.editor, -(cx.count() as isize));
+            scroll_line(cx.editor, cx.count(), false);
             Ok(())
         },
     );
@@ -364,10 +366,84 @@ fn scroll_with_cursor(editor: &mut Editor, lines: isize) {
     scroll(editor, lines, lines);
 }
 
-/// `<C-e>`, `<C-y>`: moves the view `lines`; the cursor moves only as far
-/// as it must to stay in sight.
-fn scroll_view(editor: &mut Editor, lines: isize) {
-    scroll(editor, lines, 0);
+/// `<C-e>`, `<C-y>`: moves the view `count` lines down (or up), or with
+/// wrapping `count` screen rows (see [`scroll_view_rows`]); the cursor
+/// moves only as far as it must to stay in sight.
+fn scroll_line(editor: &mut Editor, count: usize, down: bool) {
+    if editor.options.wrap {
+        scroll_view_rows(editor, count, down);
+    } else {
+        let lines = signed(count);
+        scroll(editor, if down { lines } else { -lines }, 0);
+    }
+}
+
+/// `<C-e>`, `<C-y>` when wrapping: moves the view `rows` screen rows down
+/// (or up), so it can start partway through a line (its top row marked
+/// `<<<`), as in Vim with 'smoothscroll'. The cursor then goes a screen
+/// row at a time, as `gj`/`gk` do, until the next draw would keep the view
+/// there: out of the `scroll-off` margin, which is rows too, and off the
+/// rows scrolled away. It goes no further than the view's edge; where the
+/// view can't stay (the margin wants rows past the buffer's end), the draw
+/// scrolls it back.
+fn scroll_view_rows(editor: &mut Editor, rows: usize, down: bool) {
+    let (start, height) = view_start(editor);
+    let new = step_view(editor, start, rows, down);
+    if new == start {
+        return;
+    }
+    editor.windows().request_top(editor.windows().active(), new);
+    let bottom = bottom(editor, new, height);
+    // A long way, by lines first.
+    let row = editor.document.cursor().row;
+    let edge = if down { new.line } else { bottom };
+    if (down && row < edge) || (!down && row > edge) {
+        editor.move_vertical(edge as isize - row as isize);
+    }
+    while view_start(editor).0 != new {
+        let before = editor.document.cursor();
+        move_screen_rows(editor, 1, down);
+        let after = editor.document.cursor();
+        if after == before {
+            break;
+        }
+        if after.row < new.line || after.row > bottom {
+            editor.document.set_cursor(before);
+            break;
+        }
+    }
+}
+
+/// Where a view starting at `start` starts `rows` screen rows down (or
+/// up), as far as the buffer goes. A wrapped line counts all its rows, a
+/// closed fold one.
+fn step_view(editor: &Editor, start: ViewStart, rows: usize, down: bool) -> ViewStart {
+    let windows = editor.windows();
+    let doc = &editor.document;
+    let layout = TextLayout::new(windows.width(windows.active()), doc, &editor.options);
+    let ViewStart { mut line, mut skip } = start;
+    let mut rows_in_line = layout.rows_in(doc, line);
+    for _ in 0..rows {
+        if down {
+            if skip + 1 < rows_in_line {
+                skip += 1;
+            } else if let Some(next) = doc.next_visible_line(line) {
+                (line, skip) = (next, 0);
+                rows_in_line = layout.rows_in(doc, line);
+            } else {
+                break;
+            }
+        } else if skip > 0 {
+            skip -= 1;
+        } else if let Some(previous) = doc.previous_visible_line(line) {
+            line = previous;
+            rows_in_line = layout.rows_in(doc, line);
+            skip = rows_in_line.saturating_sub(1);
+        } else {
+            break;
+        }
+    }
+    ViewStart { line, skip }
 }
 
 /// `<C-f>`, `<C-b>`: moves the view `lines` (down if positive), and the

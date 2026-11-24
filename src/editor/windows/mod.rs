@@ -25,7 +25,9 @@
 //!   at a line's start (`ViewStart`), except when the cursor's line is taller
 //!   than the window: then just enough of its rows are scrolled off the top
 //!   for the cursor to show, and the top row starts with `<<<`, as in Vim
-//!   without 'smoothscroll'. The cursor isn't left under the `<<<`.
+//!   without 'smoothscroll'. A view `<C-e>`/`<C-y>` started partway through a
+//!   line stays so while that line is on top. The cursor isn't left under the
+//!   `<<<`.
 //! - `gj`/`gk` move through a line's rows, aiming for a screen column that
 //!   `Editor::wanted_screen_column` remembers while the cursor stays where they
 //!   put it, so a short row on the way doesn't lose it. Without wrap they're
@@ -33,8 +35,9 @@
 //! - `TextLayout::bottom` (the last line at least partly shown) is what `L` and
 //!   the scrolling commands use.
 //!
-//! `j`/`k` still move by lines, as in Vim, and `<C-d>` and friends scroll by
-//! lines too.
+//! `j`/`k` still move by lines, as in Vim. `<C-d>`/`<C-u>` scroll by screen
+//! rows, in whole lines; `<C-e>`/`<C-y>` by single rows, as with Vim's
+//! 'smoothscroll'.
 //!
 //! The scroll position stays in the UI (`ViewState`, per window and buffer),
 //! since it's settled while drawing, when the cursor has to be kept in sight.
@@ -200,7 +203,7 @@ impl Windows {
     }
 
     /// Asks for window `id`'s view to start at `top` (a line, for its
-    /// start) from the next draw.
+    /// start, or rows into one) from the next draw.
     pub fn request_top(&self, id: WindowId, top: impl Into<ViewStart>) {
         self.requested_tops.borrow_mut().insert(id, top.into());
     }
@@ -267,10 +270,10 @@ impl From<usize> for Margins {
 }
 
 /// Where a window's view starts: line `line`, with `skip` of its screen
-/// rows scrolled off the top. Only the cursor's line, when it's wrapped and
-/// taller than the window, is ever partly scrolled off (Vim draws `<<<`
-/// over the top row then); otherwise `skip` is 0 and the view starts at a
-/// line's start.
+/// rows scrolled off the top (Vim draws `<<<` over the top row then). A
+/// wrapped line is partly scrolled off when it's the cursor's and taller
+/// than the window, or when `<C-e>`/`<C-y>` scrolled through its rows;
+/// otherwise `skip` is 0 and the view starts at a line's start.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ViewStart {
     pub line: usize,
@@ -290,11 +293,13 @@ impl From<usize> for ViewStart {
 /// the buffer allows. `rows_of(line)` is how many screen rows a line takes
 /// (1 each without wrapping).
 ///
-/// The view starts at the start of a line, unless the cursor's line is
-/// taller than the window: then rows of it scroll off the top, but only as
-/// many as the cursor and its margins need, and going back up through the
-/// line brings them back a row at a time. The cursor isn't left on the top
-/// row then, under the `<<<` that marks it.
+/// Scrolling starts the view at the start of a line, unless the cursor's
+/// line is taller than the window: then rows of it scroll off the top, but
+/// only as many as the cursor and its margins need, and going back up
+/// through the line brings them back a row at a time. A top line `top`
+/// already starts partway through (`<C-e>`) stays so while it's the top
+/// line and the cursor's below the rows scrolled off. The cursor isn't
+/// left on the top row then, under the `<<<` that marks it.
 pub fn follow_cursor(
     top: impl Into<ViewStart>,
     cursor: (usize, usize),
@@ -317,27 +322,30 @@ pub fn follow_cursor(
     // still show.
     let above_margin = margin.max(covered).min(height - 1);
     let below_margin = margin.min(height - 1 - above_margin);
-    // Only the cursor's line, if it doesn't fit, starts partway.
     let tall = rows_of(row) > height;
     let mut top = start.line;
-    let mut skip = if top == row && tall { start.skip } else { 0 };
+    // The top line keeps the rows scrolled off it (`<C-e>` scrolls by
+    // rows) while it stays the top line, but always shows one.
+    let mut skip = start.skip.min(rows_of(top).saturating_sub(1));
     // Every line takes a row at least, so lines more than a screen above
     // the cursor can't be in the view; start no further back than that.
     if row > top + height {
         top = row - height;
+        skip = 0;
     }
 
     // Above: `above_margin` rows (as many as there are) between the top
     // and the cursor's row.
     let mut above = if row < top {
         top = row;
+        skip = 0;
         row_in_line
     } else if top == row {
         // The cursor above the rows shown starts them.
         skip = skip.min(row_in_line);
         row_in_line - skip
     } else {
-        (top..row).map(&rows_of).sum::<usize>() + row_in_line
+        (top..row).map(&rows_of).sum::<usize>() - skip + row_in_line
     };
     while above < above_margin && (skip > 0 || top > 0) {
         if skip > 0 {
@@ -364,7 +372,8 @@ pub fn follow_cursor(
     }
     let mut used = above + 1 + below.min(below_margin);
     while used > height && top < row {
-        used -= rows_of(top);
+        used -= rows_of(top) - skip;
+        skip = 0;
         top += 1;
     }
     // Still too many: the cursor's line is taller than the window.
@@ -1131,7 +1140,7 @@ mod follow_tests {
     }
 
     #[test]
-    fn only_the_cursors_line_is_partly_scrolled_off() {
+    fn scrolling_starts_the_view_at_a_lines_start() {
         // Onto the next line, the view starts there: not partway through
         // the tall one above it.
         let start = super::follow_cursor(at(1, 20), (2, 0), 10, 3, 0, tall_middle);
@@ -1139,9 +1148,50 @@ mod follow_tests {
         // Back onto it from below, it starts partway again.
         let start = super::follow_cursor(at(2, 0), (1, 29), 10, 3, 0, tall_middle);
         assert_eq!(start, at(1, 20));
-        // A line that fits never starts partway, even if asked to.
-        let start = super::follow_cursor(at(0, 3), (0, 0), 10, 3, 0, |_| 4);
-        assert_eq!(start, at(0, 0));
+        // Up past a line that fits, the view starts at its start.
+        let start = super::follow_cursor(at(5, 2), (3, 0), 10, 20, 0, |_| 4);
+        assert_eq!(start, at(3, 0));
+    }
+
+    #[test]
+    fn a_view_started_partway_through_a_line_stays_so() {
+        let four = |_| 4;
+        // Rows 2 and 3 of line 5 on top (as `<C-e>` leaves it), the cursor
+        // further down: nothing scrolls.
+        assert_eq!(
+            super::follow_cursor(at(5, 2), (6, 0), 10, 20, 0, four),
+            at(5, 2)
+        );
+        assert_eq!(
+            super::follow_cursor(at(5, 2), (5, 3), 10, 20, 0, four),
+            at(5, 2),
+            "on the line, below the <<<"
+        );
+        // The margin, in rows, brings rows back before lines.
+        assert_eq!(
+            super::follow_cursor(at(5, 2), (6, 0), 10, 20, 3, four),
+            at(5, 1)
+        );
+        // Down, the line goes as a whole.
+        assert_eq!(
+            super::follow_cursor(at(5, 2), (8, 0), 10, 20, 0, four),
+            at(6, 0)
+        );
+        // The cursor on rows scrolled off brings them back.
+        assert_eq!(
+            super::follow_cursor(at(5, 2), (5, 0), 10, 20, 0, four),
+            at(5, 0)
+        );
+        // At most all but a row of the line scroll off.
+        assert_eq!(
+            super::follow_cursor(at(5, 9), (6, 0), 10, 20, 0, four),
+            at(5, 3)
+        );
+        // Without wrapping, nothing does.
+        assert_eq!(
+            super::follow_cursor(at(5, 2), (6, 0), 10, 20, 0, |_| 1),
+            at(5, 0)
+        );
     }
 
     #[test]
