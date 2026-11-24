@@ -1373,11 +1373,10 @@ impl App {
         &mut self.agents
     }
 
-    /// The language servers alone, for tests that ask them as an agent's
-    /// tool would, with no agent (whose updates would take the answers).
-    /// Everything else goes through `update`. Returns whether anything
-    /// changed that's shown.
-    pub fn update_lsp(&mut self) -> bool {
+    /// Sends the language servers what's waiting and takes in what they
+    /// said (a source: see `sources.rs`). Returns whether anything changed
+    /// that's shown.
+    fn update_lsp(&mut self) -> bool {
         self.lsp.borrow_mut().update(&mut self.editor)
     }
 

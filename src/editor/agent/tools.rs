@@ -1470,8 +1470,9 @@ impl Editor {
         });
     }
 
-    /// The answers that came, for the app to send the agent.
-    pub fn take_agent_lsp_answers(&mut self) -> Vec<AgentAnswer> {
+    /// The answers that came, for the agent's tool calls to send
+    /// (`agent/tool_calls.rs`).
+    pub(crate) fn take_agent_lsp_answers(&mut self) -> Vec<AgentAnswer> {
         std::mem::take(&mut self.agent_tools.answers)
     }
 }

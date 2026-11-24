@@ -1428,22 +1428,21 @@ fn rename_changes_the_name_everywhere_as_one_change() {
     assert_eq!(text(&app), "fn bad() {}\nbad();\nlet x = bad;", "one undo");
 }
 
+#[cfg(unix)]
 #[test]
 fn the_agents_rename_saves_the_files_it_opened_and_they_are_its() {
-    let (dir, mut app, _) = with_server("use other;\nother();\n", true);
+    let (dir, mut app, _, mut agent) = with_agent("use other;\nother();\n");
     let other = dir.path().join(OTHER);
     fs::write(&other, "pub fn other() {}\n").unwrap();
     ready(&mut app);
     let main = dir.path().join("main.rs");
-    tool(
-        &mut app,
-        1,
-        "lsp_rename",
-        json!({"path": main.to_str().unwrap(), "line": 2, "symbol": "other", "new_name": "another"}),
-    )
-    .unwrap();
-    let said = agent_answer(&mut app, 1).unwrap();
+    agent.call(1, "lsp_rename", json!({"path": main.to_str().unwrap(), "line": 2, "symbol": "other", "new_name": "another"}));
+    let said = agent.answer(&mut app, 1).unwrap();
+    let (said, problems) = said.split_once('\n').unwrap();
     assert_eq!(said, "Renamed to another: 3 changes in 2 files");
+    // Then what the server says of both files now.
+    assert!(problems.contains("No errors or warnings in "), "{problems}");
+    assert!(problems.contains("other.rs."), "{problems}");
     // Both saved (neither had the user's unsaved changes), the other file
     // opened for the agent's tools, to close after its turn.
     assert_eq!(fs::read_to_string(&other).unwrap(), "pub fn another() {}\n");
@@ -2067,42 +2066,129 @@ fn the_outline_and_the_breadcrumbs_show_the_files_symbols() {
     });
 }
 
-/// The coding agent's tool call `call`, as MCP makes it: `Ok` once it's
-/// asked a language server (its answer comes from `agent_answer`), or the
-/// error it got at once.
-fn tool(app: &mut App, call: u64, name: &str, args: Value) -> Result<(), String> {
-    use ferra::agent::tools::{Called, call as run};
-    match run(app.editor_mut(), call, name, &args) {
-        Called::Waiting => Ok(()),
-        Called::Done(Err(error)) => Err(error),
-        other => panic!("{other:?}"),
+/// The coding agent, as these tests talk to it: a fake one that only
+/// starts a session (so ferra serves its tools), and a connection to those
+/// tools as its MCP bridge makes. Answers come back through `App::update`,
+/// as they do for a real agent.
+#[cfg(unix)]
+struct Agent {
+    writer: std::os::unix::net::UnixStream,
+    answers: std::sync::mpsc::Receiver<Value>,
+}
+
+/// A fake agent that answers `initialize` and `session/new`, and nothing
+/// else (the tests here make tool calls, not prompts).
+#[cfg(unix)]
+struct SessionOnly;
+
+#[cfg(unix)]
+impl ferra::agent::Spawner for SessionOnly {
+    fn spawn(
+        &self,
+        _: &ferra::agent::AgentConfig,
+        _: &Path,
+    ) -> io::Result<ferra::agent::client::Streams> {
+        use ferra::agent::client::{read_message, write_message};
+        let (client_reads, mut agent_writes) = io::pipe()?;
+        let (agent_reads, client_writes) = io::pipe()?;
+        std::thread::spawn(move || {
+            let mut input = BufReader::new(agent_reads);
+            while let Ok(Some(message)) = read_message(&mut input) {
+                let result = match message["method"].as_str().unwrap_or_default() {
+                    "initialize" => json!({"protocolVersion": 1}),
+                    "session/new" => json!({"sessionId": "s1"}),
+                    _ => continue,
+                };
+                let reply = json!({"jsonrpc": "2.0", "id": message["id"], "result": result});
+                let _ = write_message(&mut agent_writes, &reply);
+            }
+        });
+        Ok(ferra::agent::client::Streams {
+            reader: Box::new(BufReader::new(client_reads)),
+            writer: Box::new(client_writes),
+            child: None,
+        })
     }
 }
 
-/// The coding agent's question for a server (as its tools ask): the answer
-/// comes back as text, for it, and nothing shows on the screen.
-fn agent_asks(app: &mut App, name: &str, args: Value) -> Result<String, String> {
-    tool(app, 7, name, args).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        app.update_lsp();
-        if let Some(answer) = app.editor_mut().take_agent_lsp_answers().pop() {
-            assert_eq!(answer.call, 7);
-            return answer.answer;
+/// The agent started and connected to ferra's tools, then a file with a
+/// language server, as `with_server` makes. The chat's closed again, so
+/// keys go to the buffer.
+#[cfg(unix)]
+fn with_agent(content: &str) -> (tempfile::TempDir, App, Arc<Mutex<Seen>>, Agent) {
+    use std::os::unix::net::UnixStream;
+    let mut app =
+        app_with_config("[editor]\nagent = \"fake\"\n[agents.fake]\ncommand = \"fake-agent\"\n");
+    app.agents_mut().set_spawner(Box::new(SessionOnly));
+    keys(&mut app, ":agent<CR>");
+    until(&mut app, |a| {
+        a.editor().agent_chat().status() == &ferra::editor::agent::AgentStatus::Ready
+    });
+    app.editor_mut().agent_close();
+    // The file's opened after, so its server's only just starting.
+    let (dir, mut app, seen) = with_server_in(app, content, true);
+    let socket = app.agents_mut().mcp_socket().expect("served").to_path_buf();
+    let stream = UnixStream::connect(&socket).unwrap();
+    let writer = stream.try_clone().unwrap();
+    let (sender, answers) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stream);
+        while let Ok(Some(message)) = ferra::agent::client::read_message(&mut reader) {
+            let _ = sender.send(message);
         }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    panic!("no answer");
+    });
+    (dir, app, seen, Agent { writer, answers })
 }
 
+#[cfg(unix)]
+impl Agent {
+    /// Calls tool `name` with `args`, as request `id`: its answer comes
+    /// from `answer`.
+    fn call(&mut self, id: u64, name: &str, args: Value) {
+        let request = json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+                             "params": {"name": name, "arguments": args}});
+        ferra::agent::client::write_message(&mut self.writer, &request).unwrap();
+    }
+
+    /// The answer to request `id`, once it comes: its text, or the error.
+    /// A call that changed files is answered once their diagnostics have
+    /// settled, so this waits longer than the servers take.
+    fn answer(&mut self, app: &mut App, id: u64) -> Result<String, String> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            app.update();
+            if let Ok(answer) = self.answers.try_recv() {
+                assert_eq!(answer["id"], id, "{answer}");
+                let result = &answer["result"];
+                let text = result["content"][0]["text"].as_str().unwrap().to_string();
+                return if result["isError"] == true {
+                    Err(text)
+                } else {
+                    Ok(text)
+                };
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("no answer to {id}");
+    }
+
+    /// Calls tool `name` with `args` and waits for its answer.
+    fn ask(&mut self, app: &mut App, id: u64, name: &str, args: Value) -> Result<String, String> {
+        self.call(id, name, args);
+        self.answer(app, id)
+    }
+}
+
+#[cfg(unix)]
 #[test]
 fn the_agent_asks_servers_and_gets_text() {
-    let (dir, mut app, _) = with_server("fn bad() {}\nbad();\nlet x = bad;\n", true);
+    let (dir, mut app, _, mut agent) = with_agent("fn bad() {}\nbad();\nlet x = bad;\n");
     ready(&mut app);
     let path = dir.path().join("main.rs");
     let file = path.to_str().unwrap();
-    let uses = agent_asks(
+    let uses = agent.ask(
         &mut app,
+        1,
         "lsp_references",
         json!({"path": file, "line": 3, "symbol": "bad"}),
     );
@@ -2110,21 +2196,22 @@ fn the_agent_asks_servers_and_gets_text() {
     assert!(uses.contains("main.rs:1:4  fn bad() {}"), "{uses}");
     assert!(uses.contains("main.rs:3:9  let x = bad;"), "{uses}");
     assert!(app.editor().picker().is_none(), "nothing shown");
-    let found = agent_asks(
+    let found = agent.ask(
         &mut app,
+        2,
         "lsp_definition",
         json!({"path": file, "line": 2, "column": 1}),
     );
     assert!(found.unwrap().contains("main.rs:1:4"));
     // A symbol that isn't on the line is said to be missing at once.
-    let missing = tool(
+    let missing = agent.ask(
         &mut app,
         8,
         "lsp_hover",
         json!({"path": file, "line": 1, "symbol": "nope"}),
     );
     assert!(missing.unwrap_err().contains("isn't on line 1"));
-    let past = tool(
+    let past = agent.ask(
         &mut app,
         9,
         "lsp_hover",
@@ -2136,23 +2223,10 @@ fn the_agent_asks_servers_and_gets_text() {
     );
 }
 
-/// The answer to the agent's call `call`, once it comes.
-fn agent_answer(app: &mut App, call: u64) -> Result<String, String> {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        app.update_lsp();
-        if let Some(answer) = app.editor_mut().take_agent_lsp_answers().pop() {
-            assert_eq!(answer.call, call);
-            return answer.answer;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    panic!("no answer");
-}
-
+#[cfg(unix)]
 #[test]
 fn the_agent_renames_formats_and_makes_code_actions() {
-    let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    let (dir, mut app, _, mut agent) = with_agent("fn bad() {}\nlet  x =  bad;\n");
     ready(&mut app);
     until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
     let path = dir.path().join("main.rs");
@@ -2160,14 +2234,12 @@ fn the_agent_renames_formats_and_makes_code_actions() {
 
     // The fixes for the problem on line 2, then the first made: saved, as
     // the file had no unsaved changes.
-    tool(
-        &mut app,
+    agent.call(
         1,
         "lsp_code_actions",
         json!({"path": file, "line": 2, "symbol": "bad"}),
-    )
-    .unwrap();
-    let listed = agent_answer(&mut app, 1).unwrap();
+    );
+    let listed = agent.answer(&mut app, 1).unwrap();
     assert!(
         listed.starts_with("1. Replace with good (quickfix)"),
         "{listed}"
@@ -2181,27 +2253,29 @@ fn the_agent_renames_formats_and_makes_code_actions() {
         .unwrap()
         .parse()
         .unwrap();
-    tool(
-        &mut app,
+    agent.call(
         2,
         "lsp_apply_code_action",
         json!({"path": file, "list": list, "number": 1}),
-    )
-    .unwrap();
-    let made = agent_answer(&mut app, 2).unwrap();
+    );
+    let made = agent.answer(&mut app, 2).unwrap();
+    let (said, problems) = made.split_once('\n').unwrap();
     assert!(
-        made.starts_with("Made Replace with good in ") && made.ends_with("main.rs"),
+        said.starts_with("Made Replace with good in ") && said.ends_with("main.rs"),
         "{made}"
     );
+    // Then the problem left: the `bad` it didn't touch.
+    assert!(problems.contains("1:4  error: bad word (fake)"), "{made}");
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         "fn bad() {}\nlet  x =  good;\n"
     );
 
-    tool(&mut app, 3, "lsp_format", json!({"path": file})).unwrap();
-    let formatted = agent_answer(&mut app, 3).unwrap();
+    agent.call(3, "lsp_format", json!({"path": file}));
+    let formatted = agent.answer(&mut app, 3).unwrap();
+    let said = formatted.lines().next().unwrap();
     assert!(
-        formatted.starts_with("Formatted ") && formatted.ends_with("main.rs (1 change)"),
+        said.starts_with("Formatted ") && said.ends_with("main.rs (1 change)"),
         "{formatted}"
     );
     assert_eq!(
@@ -2211,14 +2285,12 @@ fn the_agent_renames_formats_and_makes_code_actions() {
 
     // With unsaved changes of the user's, the rename's left unsaved.
     keys(&mut app, "ggA // mine<Esc>");
-    tool(
-        &mut app,
+    agent.call(
         4,
         "lsp_rename",
         json!({"path": file, "line": 1, "symbol": "bad", "new_name": "worse"}),
-    )
-    .unwrap();
-    let renamed = agent_answer(&mut app, 4).unwrap();
+    );
+    let renamed = agent.answer(&mut app, 4).unwrap();
     assert!(
         renamed.starts_with("Renamed to worse: 1 change in 1 file"),
         "{renamed}"
@@ -2234,20 +2306,19 @@ fn the_agent_renames_formats_and_makes_code_actions() {
     assert_eq!(text(&app), "fn bad() {} // mine\nlet x = good;");
 }
 
+#[cfg(unix)]
 #[test]
 fn the_agent_asks_for_a_files_source_actions() {
-    let (dir, mut app, seen) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    let (dir, mut app, seen, mut agent) = with_agent("fn bad() {}\nlet  x =  bad;\n");
     ready(&mut app);
     let path = dir.path().join("main.rs");
     // No line: the file-wide ones, for all of it.
-    tool(
-        &mut app,
+    agent.call(
         1,
         "lsp_code_actions",
         json!({"path": path.to_str().unwrap()}),
-    )
-    .unwrap();
-    let listed = agent_answer(&mut app, 1).unwrap();
+    );
+    let listed = agent.answer(&mut app, 1).unwrap();
     assert!(
         listed.starts_with("1. Organize imports (source.organizeImports)\nTo make one"),
         "only the source actions: {listed}"
@@ -2263,15 +2334,13 @@ fn the_agent_asks_for_a_files_source_actions() {
         .parse()
         .unwrap();
     keys(&mut app, "ggOuse x;<Esc>");
-    tool(
-        &mut app,
+    agent.call(
         2,
         "lsp_apply_code_action",
         json!({"path": path.to_str().unwrap(), "list": list, "number": 1}),
-    )
-    .unwrap();
+    );
     assert_eq!(
-        agent_answer(&mut app, 2),
+        agent.answer(&mut app, 2),
         Err("The file has changed since that list of code actions: ask for them again".into())
     );
     assert_eq!(
@@ -2292,33 +2361,30 @@ fn the_agent_asks_for_a_files_source_actions() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_server_that_stops_still_answers_the_agent() {
-    let (dir, mut app, _) = with_server("fn die() {}\n", true);
+    let (dir, mut app, _, mut agent) = with_agent("fn die() {}\n");
     ready(&mut app);
     let main = dir.path().join("main.rs");
-    let said = agent_asks(
+    let said = agent.ask(
         &mut app,
+        1,
         "lsp_hover",
         json!({"path": main.to_str().unwrap(), "line": 1, "symbol": "die"}),
     );
     assert_eq!(said, Err("rust-analyzer stopped before answering".into()));
 }
 
+#[cfg(unix)]
 #[test]
 fn the_agent_hears_of_the_edits_an_actions_command_makes() {
-    let (dir, mut app, _) = with_server("fine\nalso fine\n", true);
+    let (dir, mut app, _, mut agent) = with_agent("fine\nalso fine\n");
     ready(&mut app);
     let path = dir.path().join("main.rs");
     let file = path.to_str().unwrap();
-    tool(
-        &mut app,
-        1,
-        "lsp_code_actions",
-        json!({"path": file, "line": 2}),
-    )
-    .unwrap();
-    let listed = agent_answer(&mut app, 1).unwrap();
+    agent.call(1, "lsp_code_actions", json!({"path": file, "line": 2}));
+    let listed = agent.answer(&mut app, 1).unwrap();
     let number: usize = listed
         .lines()
         .find(|l| l.contains("Add a note"))
@@ -2335,18 +2401,17 @@ fn the_agent_hears_of_the_edits_an_actions_command_makes() {
         .unwrap()
         .parse()
         .unwrap();
-    tool(
-        &mut app,
+    agent.call(
         2,
         "lsp_apply_code_action",
         json!({"path": file, "list": list, "number": number}),
-    )
-    .unwrap();
+    );
     // The command's server sends the edit as it runs: the agent hears of
     // it, and it's saved, as the file had no unsaved changes.
-    let made = agent_answer(&mut app, 2).unwrap();
+    let made = agent.answer(&mut app, 2).unwrap();
+    let said = made.lines().next().unwrap();
     assert!(
-        made.starts_with("Made Add a note in ") && made.ends_with("main.rs"),
+        said.starts_with("Made Add a note in ") && said.ends_with("main.rs"),
         "{made}"
     );
     assert_eq!(
@@ -2355,34 +2420,33 @@ fn the_agent_hears_of_the_edits_an_actions_command_makes() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_agent_gets_code_actions_on_an_empty_line() {
-    let (dir, mut app, _) = with_server("fn bad() {}\n\nlet x = bad;\n", true);
+    let (dir, mut app, _, mut agent) = with_agent("fn bad() {}\n\nlet x = bad;\n");
     ready(&mut app);
     let path = dir.path().join("main.rs");
     // Asked at the symbol and for the whole line, which on an empty line
     // are the same place: both answers still have to be told apart.
-    tool(
-        &mut app,
+    agent.call(
         1,
         "lsp_code_actions",
         json!({"path": path.to_str().unwrap(), "line": 2}),
-    )
-    .unwrap();
-    let listed = agent_answer(&mut app, 1).unwrap();
+    );
+    let listed = agent.answer(&mut app, 1).unwrap();
     assert!(listed.contains("Upper-case the line"), "{listed}");
 }
 
+#[cfg(unix)]
 #[test]
 fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
-    let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    let (dir, mut app, _, mut agent) = with_agent("fn bad() {}\nlet  x =  bad;\n");
     ready(&mut app);
     let path = dir.path().join("main.rs");
     let file = path.to_str().unwrap();
-    let ask = |app: &mut App, call: u64, kind: &str, line: usize| {
+    let mut ask = |app: &mut App, call: u64, kind: &str, line: usize| {
         let args = json!({"path": file, "line": line, "kind": kind});
-        tool(app, call, "lsp_references", args).unwrap();
-        agent_answer(app, call)
+        agent.ask(app, call, "lsp_references", args)
     };
     let callers = ask(&mut app, 1, "callers", 1).unwrap();
     assert!(
@@ -2411,18 +2475,10 @@ fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
         callees.ends_with("\nAnd 1 outside the project (the standard library, dependencies): push"),
         "the library's last, enum members left out: {callees}"
     );
-    // A kind that isn't one: said (through the tool).
-    let wrong = ferra::agent::tools::call(
-        app.editor_mut(),
-        4,
-        "lsp_references",
-        &json!({"path": file, "line": 1, "kind": "calls"}),
-    );
+    // A kind that isn't one: said.
     assert_eq!(
-        wrong,
-        ferra::agent::tools::Called::Done(Err(
-            "kind is one of references, callers, callees, not \"calls\"".into()
-        ))
+        ask(&mut app, 4, "calls", 1),
+        Err("kind is one of references, callers, callees, not \"calls\"".into())
     );
     // Not on a function: said, no second request.
     let nothing = ask(&mut app, 3, "callers", 2).unwrap();
@@ -2432,20 +2488,19 @@ fn the_agent_asks_who_calls_a_function_and_what_it_calls() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_agents_question_waits_for_a_server_still_starting() {
     // Asked straight away, before the server's answered `initialize`.
-    let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    let (dir, mut app, _, mut agent) = with_agent("fn bad() {}\nlet  x =  bad;\n");
     let path = dir.path().join("main.rs");
     app.update();
-    tool(
-        &mut app,
+    agent.call(
         1,
         "lsp_references",
         json!({"path": path.to_str().unwrap(), "line": 1, "symbol": "bad"}),
-    )
-    .unwrap();
-    let answer = agent_answer(&mut app, 1);
+    );
+    let answer = agent.answer(&mut app, 1);
     assert!(answer.is_ok(), "answered once it was ready: {answer:?}");
 }
 
@@ -2475,24 +2530,22 @@ fn moving_a_file_in_the_tree_tells_the_server() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
-    let (dir, mut app, seen) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    let (dir, mut app, seen, mut agent) = with_agent("fn bad() {}\nlet  x =  bad;\n");
     ready(&mut app);
     let helper = dir.path().join("helper.rs");
     fs::write(&helper, "pub fn help() {}\n").unwrap();
     fs::write(dir.path().join("uses.rs"), "use helper;\n").unwrap();
     let to = dir.path().join("sub/helper.rs");
-    let call = |app: &mut App, id: i64, args: Value| {
-        ferra::agent::tools::call(app.editor_mut(), id as u64, "move_file", &args)
-    };
-    let started = call(
+    let mut call = |app: &mut App, id: u64, args: Value| agent.ask(app, id, "move_file", args);
+    let said = call(
         &mut app,
         1,
         json!({"from": helper.to_str().unwrap(), "to": to.to_str().unwrap()}),
-    );
-    assert_eq!(started, ferra::agent::tools::Called::Waiting);
-    let said = agent_answer(&mut app, 1).unwrap();
+    )
+    .unwrap();
     assert!(
         said.starts_with("Moved ") && said.contains("sub/helper.rs"),
         "{said}"
@@ -2536,12 +2589,12 @@ fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
 
     // The server made no edits: said, so what refers to it gets checked.
     let quiet = dir.path().join("sub/noedit.rs");
-    call(
+    let said = call(
         &mut app,
         5,
         json!({"from": to.to_str().unwrap(), "to": quiet.to_str().unwrap()}),
-    );
-    let said = agent_answer(&mut app, 5).unwrap();
+    )
+    .unwrap();
     assert!(
         said.contains("the language server made no edits for it"),
         "{said}"
@@ -2555,7 +2608,8 @@ fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
         json!({"from": to.to_str().unwrap(), "to": under_file.to_str().unwrap()}),
     );
     assert!(
-        matches!(&bad, ferra::agent::tools::Called::Done(Err(e)) if e.contains("main.rs is a file, not a folder")),
+        bad.as_ref()
+            .is_err_and(|e| e.contains("main.rs is a file, not a folder")),
         "{bad:?}"
     );
 
@@ -2567,19 +2621,19 @@ fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
         json!({"from": to.to_str().unwrap(), "to": main.to_str().unwrap()}),
     );
     assert!(
-        matches!(&taken, ferra::agent::tools::Called::Done(Err(e)) if e.contains("already exists")),
+        taken.as_ref().is_err_and(|e| e.contains("already exists")),
         "{taken:?}"
     );
     // A file no server's for: just moved.
     let notes = dir.path().join("notes.txt");
     fs::write(&notes, "notes\n").unwrap();
     let moved = dir.path().join("docs/notes.txt");
-    call(
+    let said = call(
         &mut app,
         4,
         json!({"from": notes.to_str().unwrap(), "to": moved.to_str().unwrap()}),
-    );
-    let said = agent_answer(&mut app, 4).unwrap();
+    )
+    .unwrap();
     assert!(
         said.starts_with("Moved ") && !said.contains("updated"),
         "{said}"
@@ -2587,14 +2641,17 @@ fn the_agent_moves_a_file_and_the_server_updates_what_uses_it() {
     assert!(moved.exists() && !notes.exists());
     let missing = call(&mut app, 3, json!({"from": "no/such.rs", "to": "x.rs"}));
     assert!(
-        matches!(&missing, ferra::agent::tools::Called::Done(Err(e)) if e.starts_with("No such file")),
+        missing
+            .as_ref()
+            .is_err_and(|e| e.starts_with("No such file")),
         "{missing:?}"
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn the_agents_fix_in_a_file_not_shown_isnt_called_unsaved() {
-    let (dir, mut app, _) = with_server("fn bad() {}\nlet  x =  bad;\n", true);
+    let (dir, mut app, _, mut agent) = with_agent("fn bad() {}\nlet  x =  bad;\n");
     ready(&mut app);
     until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
     let path = dir.path().join("main.rs");
@@ -2603,14 +2660,12 @@ fn the_agents_fix_in_a_file_not_shown_isnt_called_unsaved() {
     let other = dir.path().join("notes.txt");
     fs::write(&other, "notes\n").unwrap();
     keys(&mut app, &format!(":e {}<CR>", other.display()));
-    tool(
-        &mut app,
+    agent.call(
         1,
         "lsp_code_actions",
         json!({"path": file, "line": 2, "symbol": "bad"}),
-    )
-    .unwrap();
-    let listed = agent_answer(&mut app, 1).unwrap();
+    );
+    let listed = agent.answer(&mut app, 1).unwrap();
     let list: u64 = listed
         .split("list ")
         .nth(1)
@@ -2620,14 +2675,12 @@ fn the_agents_fix_in_a_file_not_shown_isnt_called_unsaved() {
         .unwrap()
         .parse()
         .unwrap();
-    tool(
-        &mut app,
+    agent.call(
         2,
         "lsp_apply_code_action",
         json!({"path": file, "list": list, "number": 1}),
-    )
-    .unwrap();
-    agent_answer(&mut app, 2).unwrap();
+    );
+    agent.answer(&mut app, 2).unwrap();
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         "fn bad() {}\nlet  x =  good;\n"
