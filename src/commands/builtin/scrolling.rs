@@ -20,7 +20,7 @@ use crate::core::Position;
 use crate::core::columns::{char_col_at, display_col};
 use crate::core::wrap;
 use crate::editor::Editor;
-use crate::editor::windows::TextLayout;
+use crate::editor::windows::{TextLayout, ViewStart};
 
 pub fn register(r: &mut CommandRegistry) {
     r.register(
@@ -274,6 +274,13 @@ fn move_screen_rows(editor: &mut Editor, count: usize, down: bool) {
 
 /// The active window's first line on screen and its height in rows.
 fn view(editor: &Editor) -> (usize, usize) {
+    let (start, height) = view_start(editor);
+    (start.line, height)
+}
+
+/// Where the active window's view starts (rows of a line taller than it
+/// may be scrolled off), and its height in rows.
+fn view_start(editor: &Editor) -> (ViewStart, usize) {
     let windows = editor.windows();
     let id = windows.active();
     let doc = &editor.document;
@@ -282,7 +289,7 @@ fn view(editor: &Editor) -> (usize, usize) {
 }
 
 /// The last line at least partly on screen when the view starts at `top`.
-fn bottom(editor: &Editor, top: usize, height: usize) -> usize {
+fn bottom(editor: &Editor, top: ViewStart, height: usize) -> usize {
     let windows = editor.windows();
     let layout = TextLayout::new(
         windows.width(windows.active()),
@@ -312,9 +319,9 @@ fn last_row(editor: &Editor) -> usize {
 
 /// `<C-d>`, `<C-u>`: moves the view and the cursor `rows` screen rows
 /// down (or up), as far as the buffer allows, keeping the cursor's
-/// column. The view starts at a line's start, so each moves whole lines,
-/// as many as fit in `rows` (see [`step_rows`]); without wrapping or
-/// folds that's `rows` lines.
+/// column. Commands ask for a view starting at a line's start, so each
+/// moves whole lines, as many as fit in `rows` (see [`step_rows`]); without
+/// wrapping or folds that's `rows` lines.
 fn scroll_rows_with_cursor(editor: &mut Editor, rows: usize, down: bool) {
     let top = view(editor).0;
     let row = editor.document.cursor().row;
@@ -462,7 +469,7 @@ fn cursor_bounds(editor: &Editor, top: usize) -> Bounds {
             line_count,
             editor.options.scroll_off,
             |line| layout.rows_in(doc, line),
-        ) == top
+        ) == ViewStart::from(top)
     };
     let bottom = layout.bottom(doc, top, height);
     let mut lowest = top;
@@ -531,9 +538,10 @@ enum ScreenLine {
 /// bottom) goes to: never into the `scroll-off` margin, unless that's the
 /// start or end of the buffer, since going there would scroll.
 fn screen_line(editor: &Editor, line: ScreenLine, count: usize) -> usize {
-    let (top, height) = view(editor);
+    let (start, height) = view_start(editor);
+    let top = start.line;
     let last = last_row(editor);
-    let bottom = bottom(editor, top, height);
+    let bottom = bottom(editor, start, height);
     let margin = editor.options.scroll_off.min(height.saturating_sub(1) / 2);
     let lowest = if top == 0 { 0 } else { top + margin };
     let highest = if bottom == last {

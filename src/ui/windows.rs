@@ -139,7 +139,7 @@ pub fn draw_windows(
         let state = views.entry((id, document.id())).or_default();
         if let Some(top) = windows.take_requested_top(id) {
             let last = document.buffer().line_count().saturating_sub(1);
-            state.viewport.top = top.min(last);
+            state.viewport.top = if top.line > last { last.into() } else { top };
         }
         // The find box covers the active window's top rows.
         let covered = if active && super::find::shown(editor) {

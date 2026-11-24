@@ -20,9 +20,12 @@
 //!   and clips syntax, search and selection highlights to each row's chars (a
 //!   selected line break shows on the last row).
 //! - `windows::follow_cursor` keeps the cursor in sight counting screen rows:
-//!   `scroll-off` is in rows, the view always starts at a line's start, and a
-//!   long jump starts looking a screen above the cursor rather than measuring
-//!   every line on the way.
+//!   `scroll-off` is in rows, and a long jump starts looking a screen above
+//!   the cursor rather than measuring every line on the way. The view starts
+//!   at a line's start (`ViewStart`), except when the cursor's line is taller
+//!   than the window: then just enough of its rows are scrolled off the top
+//!   for the cursor to show, and the top row starts with `<<<`, as in Vim
+//!   without 'smoothscroll'. The cursor isn't left under the `<<<`.
 //! - `gj`/`gk` move through a line's rows, aiming for a screen column that
 //!   `Editor::wanted_screen_column` remembers while the cursor stays where they
 //!   put it, so a short row on the way doesn't lose it. Without wrap they're
@@ -102,10 +105,10 @@ pub struct Windows {
     /// Where the windows were last drawn, so resizing can work in cells.
     /// Set by the UI while drawing (hence the `Cell`).
     area: Cell<Area>,
-    /// Each window's first row on screen, as last drawn (set by the UI).
-    tops: RefCell<HashMap<WindowId, usize>>,
-    /// First rows commands asked for, which the UI uses at the next draw.
-    requested_tops: RefCell<HashMap<WindowId, usize>>,
+    /// Where each window's view started, as last drawn (set by the UI).
+    tops: RefCell<HashMap<WindowId, ViewStart>>,
+    /// Starts commands asked for, which the UI uses at the next draw.
+    requested_tops: RefCell<HashMap<WindowId, ViewStart>>,
     /// Rows at the top of each window for its tabs and breadcrumbs (set by
     /// the UI).
     chrome: Cell<u16>,
@@ -190,20 +193,21 @@ impl Windows {
             })
     }
 
-    /// Records the first row window `id` showed when drawn (the UI calls
+    /// Records where window `id`'s view started when drawn (the UI calls
     /// this).
-    pub fn note_top(&self, id: WindowId, top: usize) {
+    pub fn note_top(&self, id: WindowId, top: ViewStart) {
         self.tops.borrow_mut().insert(id, top);
     }
 
-    /// Asks for window `id`'s view to start at `top` from the next draw.
-    pub fn request_top(&self, id: WindowId, top: usize) {
-        self.requested_tops.borrow_mut().insert(id, top);
+    /// Asks for window `id`'s view to start at `top` (a line, for its
+    /// start) from the next draw.
+    pub fn request_top(&self, id: WindowId, top: impl Into<ViewStart>) {
+        self.requested_tops.borrow_mut().insert(id, top.into());
     }
 
-    /// The first row asked for by a command since the last draw (the UI
-    /// calls this).
-    pub fn take_requested_top(&self, id: WindowId) -> Option<usize> {
+    /// The start asked for by a command since the last draw (the UI calls
+    /// this).
+    pub fn take_requested_top(&self, id: WindowId) -> Option<ViewStart> {
         self.requested_tops.borrow_mut().remove(&id)
     }
 
@@ -215,23 +219,23 @@ impl Windows {
             .map_or(0, |(_, area)| area.width as usize)
     }
 
-    /// Where window `id`'s view of `document` starts: the line asked for
-    /// since the last draw, or the one drawn, scrolled as the next draw
-    /// will scroll it to keep `cursor` in sight.
+    /// Where window `id`'s view of `document` starts: where a command asked
+    /// for since the last draw, or where it was drawn, scrolled as the next
+    /// draw will scroll it to keep `cursor` in sight.
     pub fn view_top(
         &self,
         id: WindowId,
         document: &Document,
         cursor: Position,
         options: &crate::config::EditorOptions,
-    ) -> usize {
+    ) -> ViewStart {
         let top = self
             .requested_tops
             .borrow()
             .get(&id)
             .or(self.tops.borrow().get(&id))
             .copied()
-            .unwrap_or(0);
+            .unwrap_or_default();
         let layout = TextLayout::new(self.width(id), document, options);
         layout.follow_cursor(top, document, cursor, self.height(id), options.scroll_off)
     }
@@ -262,23 +266,47 @@ impl From<usize> for Margins {
     }
 }
 
-/// The first line of a view `height` screen rows tall that started at line
-/// `top`, once scrolled just enough to show the cursor (on line `row`, its
+/// Where a window's view starts: line `line`, with `skip` of its screen
+/// rows scrolled off the top. Only the cursor's line, when it's wrapped and
+/// taller than the window, is ever partly scrolled off (Vim draws `<<<`
+/// over the top row then); otherwise `skip` is 0 and the view starts at a
+/// line's start.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ViewStart {
+    pub line: usize,
+    pub skip: usize,
+}
+
+impl From<usize> for ViewStart {
+    /// The start of line `line`.
+    fn from(line: usize) -> Self {
+        Self { line, skip: 0 }
+    }
+}
+
+/// Where a view `height` screen rows tall that started at `top` starts once
+/// scrolled just enough to show the cursor (on line `row`, its
 /// `row_in_line`th screen row) with the `margins` above and below it where
 /// the buffer allows. `rows_of(line)` is how many screen rows a line takes
-/// (1 each without wrapping). The view always starts at the start of a
-/// line.
+/// (1 each without wrapping).
+///
+/// The view starts at the start of a line, unless the cursor's line is
+/// taller than the window: then rows of it scroll off the top, but only as
+/// many as the cursor and its margins need, and going back up through the
+/// line brings them back a row at a time. The cursor isn't left on the top
+/// row then, under the `<<<` that marks it.
 pub fn follow_cursor(
-    top: usize,
+    top: impl Into<ViewStart>,
     cursor: (usize, usize),
     height: usize,
     line_count: usize,
     margins: impl Into<Margins>,
     rows_of: impl Fn(usize) -> usize,
-) -> usize {
+) -> ViewStart {
     let (row, row_in_line) = cursor;
+    let start = top.into();
     if height == 0 {
-        return top;
+        return start;
     }
     let Margins {
         scroll_off,
@@ -289,7 +317,10 @@ pub fn follow_cursor(
     // still show.
     let above_margin = margin.max(covered).min(height - 1);
     let below_margin = margin.min(height - 1 - above_margin);
-    let mut top = top;
+    // Only the cursor's line, if it doesn't fit, starts partway.
+    let tall = rows_of(row) > height;
+    let mut top = start.line;
+    let mut skip = if top == row && tall { start.skip } else { 0 };
     // Every line takes a row at least, so lines more than a screen above
     // the cursor can't be in the view; start no further back than that.
     if row > top + height {
@@ -301,12 +332,27 @@ pub fn follow_cursor(
     let mut above = if row < top {
         top = row;
         row_in_line
+    } else if top == row {
+        // The cursor above the rows shown starts them.
+        skip = skip.min(row_in_line);
+        row_in_line - skip
     } else {
         (top..row).map(&rows_of).sum::<usize>() + row_in_line
     };
-    while above < above_margin && top > 0 {
-        top -= 1;
-        above += rows_of(top);
+    while above < above_margin && (skip > 0 || top > 0) {
+        if skip > 0 {
+            skip -= 1;
+            above += 1;
+        } else {
+            top -= 1;
+            above += rows_of(top);
+        }
+    }
+    // Not on the top row when part of the line is scrolled off: the marker
+    // saying so covers it.
+    if skip > 0 && above == 0 && height > 1 {
+        skip -= 1;
+        above += 1;
     }
 
     // Below: the cursor's row and `below_margin` more must fit.
@@ -321,7 +367,11 @@ pub fn follow_cursor(
         used -= rows_of(top);
         top += 1;
     }
-    top
+    // Still too many: the cursor's line is taller than the window.
+    if used > height && tall {
+        skip += used - height;
+    }
+    ViewStart { line: top, skip }
 }
 
 /// The line-number gutter's width in cells, for a buffer of `line_count`
@@ -420,16 +470,16 @@ impl TextLayout {
         }
     }
 
-    /// The first line of a view of `document` `height` rows tall that
-    /// started at `top`, scrolled to show `cursor` (see [`follow_cursor`]).
+    /// Where a view of `document` `height` rows tall that started at `top`
+    /// starts, scrolled to show `cursor` (see [`follow_cursor`]).
     pub fn follow_cursor(
         &self,
-        top: usize,
+        top: impl Into<ViewStart>,
         document: &Document,
         cursor: Position,
         height: usize,
         margins: impl Into<Margins>,
-    ) -> usize {
+    ) -> ViewStart {
         let buffer = document.buffer();
         let folded = document.closed_fold_at(cursor.row).is_some();
         let row_in_line = if self.wrap && !folded {
@@ -456,7 +506,10 @@ impl TextLayout {
             |row| self.rows_in(document, row),
         );
         // The view starts at a fold's first line, not inside it.
-        document.closed_fold_at(top).map_or(top, |(first, _)| first)
+        match document.closed_fold_at(top.line) {
+            Some((first, _)) => ViewStart::from(first),
+            None => top,
+        }
     }
 
     /// How many screen rows line `row` of `document` takes: a closed fold
@@ -474,7 +527,8 @@ impl TextLayout {
 
     /// The last line at least partly shown in a view `height` rows tall
     /// starting at `top` (a closed fold's last line, if it ends there).
-    pub fn bottom(&self, document: &Document, top: usize, height: usize) -> usize {
+    pub fn bottom(&self, document: &Document, top: impl Into<ViewStart>, height: usize) -> usize {
+        let ViewStart { line: top, skip } = top.into();
         let buffer = document.buffer();
         let last = buffer.line_count() - 1;
         if !self.wrap && document.closed_folds().is_empty() {
@@ -485,8 +539,16 @@ impl TextLayout {
         }
         let mut used = 0;
         let mut row = top.min(last);
+        // Rows of the first line scrolled off the top don't take any.
+        let mut skip = skip;
         loop {
-            used += self.rows_in(document, row);
+            let rows = self.rows_in(document, row);
+            used += if skip > 0 {
+                rows.saturating_sub(skip).max(1)
+            } else {
+                rows
+            };
+            skip = 0;
             match document.next_visible_line(row) {
                 Some(next) if used < height => row = next,
                 _ => return document.closed_fold_at(row).map_or(row, |(_, end)| end),
@@ -1015,7 +1077,72 @@ mod tests {
 
 #[cfg(test)]
 mod follow_tests {
-    use super::{Margins, follow_cursor};
+    use super::{Margins, ViewStart};
+
+    /// The line the view starts at, for lines that all fit: none of one is
+    /// scrolled off.
+    fn follow_cursor(
+        top: usize,
+        cursor: (usize, usize),
+        height: usize,
+        line_count: usize,
+        margins: impl Into<Margins>,
+        rows_of: impl Fn(usize) -> usize,
+    ) -> usize {
+        let start = super::follow_cursor(top, cursor, height, line_count, margins, rows_of);
+        assert_eq!(start.skip, 0, "no line is taller than the window");
+        start.line
+    }
+
+    /// Lines 0 and 2 take a row each; line 1 takes 30.
+    fn tall_middle(line: usize) -> usize {
+        if line == 1 { 30 } else { 1 }
+    }
+
+    fn at(line: usize, skip: usize) -> ViewStart {
+        ViewStart { line, skip }
+    }
+
+    #[test]
+    fn a_line_taller_than_the_window_scrolls_through_its_rows() {
+        let follow = |top: ViewStart, row_in_line, scroll_off| {
+            super::follow_cursor(top, (1, row_in_line), 10, 3, scroll_off, tall_middle)
+        };
+        // Its first rows show from the line's start.
+        assert_eq!(follow(at(1, 0), 9, 0), at(1, 0));
+        // Further down, just enough of it scrolls off for the cursor's row
+        // to be the last.
+        assert_eq!(follow(at(1, 0), 10, 0), at(1, 1));
+        assert_eq!(follow(at(0, 0), 25, 0), at(1, 16));
+        // With `scroll-off`, the margin is in rows.
+        assert_eq!(follow(at(1, 0), 25, 2), at(1, 18));
+        // Its last row, with the next line below it.
+        assert_eq!(follow(at(0, 0), 29, 2), at(1, 21));
+        // Moving within what's shown doesn't scroll.
+        assert_eq!(follow(at(1, 16), 20, 0), at(1, 16));
+        // Back up, the rows come back one at a time, not the whole line.
+        assert_eq!(follow(at(1, 16), 15, 0), at(1, 14), "not under the <<<");
+        assert_eq!(follow(at(1, 16), 15, 2), at(1, 13));
+        // At its first rows the view starts at the line's start again.
+        assert_eq!(follow(at(1, 5), 0, 0), at(1, 0));
+        // From below, the cursor's row comes to the bottom.
+        assert_eq!(follow(at(2, 0), 29, 0), at(1, 20));
+        assert_eq!(follow(at(2, 0), 5, 0), at(1, 0), "or the line's start");
+    }
+
+    #[test]
+    fn only_the_cursors_line_is_partly_scrolled_off() {
+        // Onto the next line, the view starts there: not partway through
+        // the tall one above it.
+        let start = super::follow_cursor(at(1, 20), (2, 0), 10, 3, 0, tall_middle);
+        assert_eq!(start, at(2, 0));
+        // Back onto it from below, it starts partway again.
+        let start = super::follow_cursor(at(2, 0), (1, 29), 10, 3, 0, tall_middle);
+        assert_eq!(start, at(1, 20));
+        // A line that fits never starts partway, even if asked to.
+        let start = super::follow_cursor(at(0, 3), (0, 0), 10, 3, 0, |_| 4);
+        assert_eq!(start, at(0, 0));
+    }
 
     #[test]
     fn without_wrapping_it_keeps_the_margin_in_lines() {
