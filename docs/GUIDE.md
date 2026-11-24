@@ -415,8 +415,9 @@ With `mouse = true` (the default):
   **find box**, a click flips a toggle or puts the cursor in a field. A
   click outside one of these closes it (from the find box, the click then
   goes on into the text).
-- **Drag** the sidebar's edge, the terminal panel's title row, or the line
-  between two windows to resize them.
+- **Drag** the sidebar's edge, the terminal panel's title row, the line
+  left of its list of shells, or the line between two windows to resize
+  them.
 - **Ctrl+click** on a word goes to its definition (with VS Code's keys,
   **Ctrl+Shift+click**: Ctrl+click adds a cursor). **⌥+click** does too, in
   terminals that pass it on.
@@ -643,13 +644,30 @@ focus, every key goes to the shell, except:
 | `<C-\><C-n>` | Back to the editor, leaving the panel open (`<Space>t` goes back to it) |
 | ``<C-`>`` | Hide the panel; the shell keeps running, and `<Space>t` shows it again |
 | `<S-PageUp>` `<S-PageDown>` | Scroll back through what's gone off the top (typing goes back to the bottom) |
+| ``<C-~>`` (``Ctrl+Shift+` ``) | Another shell (`:terminal-new`) |
+| `<C-PageDown>` `<C-PageUp>` | The next or previous shell (`:terminal-next`, `:terminal-prev`) |
 
-The title row shows the shell's title and these keys. Colours, full-screen
-programs (`htop`, `vim`, `less`) and pastes work. When the shell exits, a
-key closes the panel; `:terminal-close` ends it any time. `terminal-height`
-(12 rows) sets its height, and `shell` the shell (`$SHELL` by default).
-``<C-`>`` needs a terminal with the kitty keyboard protocol (Ghostty,
-kitty, WezTerm, iTerm2); elsewhere use `<C-\><C-n>`.
+The title row shows the first two, and at its right end `+` (a new
+shell) and `×` (end the one shown); with `icons = "nerd"` they're VS Code's
+icons. With two or more shells, they're listed down the panel's right
+side, each with its title, as VS Code's tabs; click one to show it, and
+drag the line left of the list to resize it (`terminal-list-width`, 22
+columns, at most half the panel).
+Colours, full-screen programs (`htop`, `vim`, `less`) and pastes work.
+When a shell exits, a key closes it (one that exits while it isn't shown
+goes at once); `:terminal-close` ends the one shown any time, and the
+panel closes with the last. The coding agent's `read_terminal` reads the
+one shown. `terminal-height` (12 rows) sets its height, and `shell` the
+shell (`$SHELL` by default).
+
+Ending a shell (closing it, or quitting ferra) ends everything it
+started, even programs that ignore the hangup (`nohup`, `trap '' HUP`).
+`terminal-close = "hangup"` only hangs up, as closing a terminal app's
+window does, so those keep running. Either way a shell that won't go is
+killed after a second, so quitting never hangs on one. A program that
+starts a session of its own (a daemon, `setsid`) is left alone. ``<C-`>`` and ``<C-~>`` need a terminal with
+the kitty keyboard protocol (Ghostty, kitty, WezTerm, iTerm2); elsewhere
+use `<C-\><C-n>`, and `:terminal-new` or the `+`.
 
 ## The coding agent
 

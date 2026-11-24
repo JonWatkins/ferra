@@ -55,6 +55,7 @@ pub mod settings;
 pub mod sidebar_views;
 pub mod status_actions;
 mod terminal_panel;
+pub use terminal_panel::Shells;
 pub mod text_field;
 mod transform;
 pub mod windows;
@@ -251,9 +252,8 @@ pub struct Editor {
     view_keys_changed: bool,
     /// The find box's fields and toggles (kept while it's closed).
     find: find::FindState,
-    /// The terminal panel's shell (kept while the panel's hidden), and
-    /// whether the panel's open.
-    terminal: Option<crate::terminal::Terminal>,
+    /// The terminal panel's shells (kept while the panel's hidden).
+    terminals: terminal_panel::Shells,
     /// Whether the bottom panel is open (at `panel.tab`).
     panel_open: bool,
     /// The bottom panel: its tab, the Problems' selection, the Output.
@@ -410,7 +410,7 @@ impl Editor {
     }
 
     /// After options `changed` changed: re-applies what was put in place at
-    /// startup (the clipboard).
+    /// startup (the clipboard), and what running shells were given.
     pub fn apply_option_effects(&mut self, changed: &[String]) {
         let options = self.global_options.clone();
         let is = |name: &str| changed.iter().any(|c| c == name);
@@ -419,6 +419,9 @@ impl Editor {
             self.registers.set_clipboard(provider, options.clipboard);
         } else if is("clipboard") {
             self.registers.set_clipboard_mode(options.clipboard);
+        }
+        if is("terminal-close") {
+            self.apply_terminal_close(options.terminal_close);
         }
     }
 

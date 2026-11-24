@@ -359,10 +359,10 @@ impl Editor {
         notes
     }
 
-    /// One line on the terminal panel's shell, if there is one: whether
-    /// it's shown, and what it's doing.
+    /// One line on the terminal panel's shell (the one shown, of more),
+    /// if there is one: whether it's shown, and what it's doing.
     fn agent_terminal_note(&self) -> Option<String> {
-        let terminal = self.terminal.as_ref()?;
+        let terminal = self.terminals.shown()?;
         let shown = if self.terminal_panel().is_some() {
             "shown"
         } else {
@@ -374,8 +374,15 @@ impl Editor {
             (None, None) => "at the shell's prompt".into(),
         };
         let title = terminal.title();
+        let which = match self.terminals.len() {
+            1 => String::new(),
+            count => format!(
+                ", shell {} of {count}; the others aren't read",
+                self.terminals.shown_index() + 1
+            ),
+        };
         Some(format!(
-            "Terminal panel ({shown}, titled \"{title}\"): {doing}"
+            "Terminal panel ({shown}, titled \"{title}\"{which}): {doing}"
         ))
     }
 
@@ -736,8 +743,8 @@ impl Editor {
     /// (scrollback included), and what its shell's doing.
     pub fn agent_read_terminal(&self, lines: Option<usize>) -> Result<String, String> {
         let terminal = self
-            .terminal
-            .as_ref()
+            .terminals
+            .shown()
             .ok_or("The terminal panel has no shell (the user hasn't opened it)")?;
         let note = self.agent_terminal_note().unwrap_or_default();
         let (text, redraws) = without_redraws(terminal.text_lines());

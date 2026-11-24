@@ -1,10 +1,11 @@
 //! The terminal panel (`editor/terminal_panel.rs`), under the windows: a
-//! title row, then the shell's screen.
+//! title row, then the shell's screen; with two or more shells, a list of
+//! them down the right, as VS Code's tabs list.
 //!
 //! ```text
-//!  TERMINAL  zsh                              ⌃\ ⌃N editor   ⌃` hide
-//! ~/Code/ferra $ cargo test
-//!    Compiling ferra v0.1.0
+//!  TERMINAL  zsh                          ⌃\ ⌃N editor   ⌃` hide   +  ×
+//! ~/Code/ferra $ cargo test                         │ $ zsh
+//!    Compiling ferra v0.1.0                         │ $ cargo test
 //! ```
 //!
 //! `ui/terminal.rs` draws the title row and the screen cell by cell (indexed
@@ -14,6 +15,14 @@
 //! drawing. Its key hints come from the keymap like the find box's;
 //! `Keymap::hint_keys` ranks keys that need the kitty protocol (``<C-`>``,
 //! `<C-CR>`) after ones every terminal sends.
+//!
+//! The title row ends in two buttons, a new shell and ending the one shown
+//! (codicons with `icons = "nerd"`, else `+` and `×`). The list (`list_area`,
+//! `terminal-list-width` columns, at most half the panel) has a row per shell,
+//! its icon and title, the one shown highlighted; it's scrolled to keep that
+//! one in sight (`list_first`). The line left of it (`list_edge`) drags to
+//! resize it. The same functions place
+//! them for drawing and for the mouse (`ui/panel.rs` records them).
 
 use ratatui::{
     buffer::Buffer,
@@ -23,6 +32,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
+use super::screen_map::PanelPart;
 use super::text::truncate_end;
 use crate::config::Theme;
 use crate::terminal::Terminal;
@@ -39,22 +49,87 @@ pub struct TerminalKeys {
 }
 
 pub struct TerminalView<'a> {
-    terminal: &'a Terminal,
+    /// The shells, and the one shown.
+    shells: &'a [Terminal],
+    shown: usize,
     focused: bool,
     keys: &'a TerminalKeys,
     theme: &'a Theme,
     /// Drawn in the bottom panel, under its tabs (no title of its own).
     tabbed: bool,
+    /// A Nerd Font's icons (`icons = "nerd"`).
+    nerd: bool,
+    /// The list's width wanted (`terminal-list-width`).
+    list_width: u16,
+}
+
+/// The narrowest the list goes.
+const LIST_MIN: u16 = 8;
+
+/// Where the list of shells goes in the panel's `area` (its title row
+/// included), with two or more: down the right, under the title row,
+/// `width` columns (`terminal-list-width`, at most half the panel), a line
+/// to its left. None without room.
+pub fn list_area(area: Rect, shells: usize, width: u16) -> Option<Rect> {
+    if shells < 2 || area.height < 2 || area.width / 2 < LIST_MIN {
+        return None;
+    }
+    let width = width.clamp(LIST_MIN, area.width / 2);
+    Some(Rect::new(
+        area.right() - width,
+        area.y + 1,
+        width,
+        area.height - 1,
+    ))
+}
+
+/// The editor's list of shells in the panel's `area`, if it's shown.
+pub fn shell_list(editor: &crate::editor::Editor, area: Rect) -> Option<Rect> {
+    list_area(
+        area,
+        editor.terminals().len(),
+        editor.options.terminal_list_width,
+    )
+}
+
+/// The line left of the list, which drags to resize it.
+pub fn list_edge(list: Rect) -> Rect {
+    Rect::new(list.x - 1, list.y, 1, list.height)
+}
+
+/// The first shell the list shows: the one shown kept in sight.
+pub fn list_first(shown: usize, list: Rect) -> usize {
+    shown.saturating_sub(list.height.saturating_sub(1) as usize)
+}
+
+/// The title row's buttons, at its right end: a new shell, and ending the
+/// one shown. None without room.
+pub fn buttons(area: Rect) -> Vec<(Rect, PanelPart)> {
+    if area.width < 30 || area.height == 0 {
+        return Vec::new();
+    }
+    vec![
+        (
+            Rect::new(area.right() - 6, area.y, 3, 1),
+            PanelPart::NewShell,
+        ),
+        (
+            Rect::new(area.right() - 3, area.y, 3, 1),
+            PanelPart::EndShell,
+        ),
+    ]
 }
 
 /// The shell's part of the panel's area: under the title row, a column
-/// in from the left (so it doesn't run into the sidebar's line).
-fn body(area: Rect) -> Rect {
+/// in from the left (so it doesn't run into the sidebar's line), left of
+/// the `list` and its line.
+fn body(area: Rect, list: Option<Rect>) -> Rect {
     let margin = 1.min(area.width.saturating_sub(1));
+    let right = list.map_or(area.right(), |list| list_edge(list).x);
     Rect::new(
         area.x + margin,
         area.y + 1.min(area.height),
-        area.width - margin,
+        right.saturating_sub(area.x + margin),
         area.height.saturating_sub(1),
     )
 }
@@ -68,18 +143,23 @@ fn color(color: vt100::Color) -> Option<Color> {
 }
 
 impl<'a> TerminalView<'a> {
+    /// The panel showing `shells[shown]`.
     pub fn new(
-        terminal: &'a Terminal,
+        shells: &'a [Terminal],
+        shown: usize,
         focused: bool,
         keys: &'a TerminalKeys,
         theme: &'a Theme,
     ) -> Self {
         Self {
-            terminal,
+            shells,
+            shown: shown.min(shells.len().saturating_sub(1)),
             focused,
             keys,
             theme,
             tabbed: false,
+            nerd: false,
+            list_width: 22,
         }
     }
 
@@ -89,19 +169,40 @@ impl<'a> TerminalView<'a> {
         self
     }
 
+    /// The list's width wanted (`terminal-list-width`).
+    pub fn list_width(mut self, width: u16) -> Self {
+        self.list_width = width;
+        self
+    }
+
+    /// With a Nerd Font's icons.
+    pub fn nerd(mut self, nerd: bool) -> Self {
+        self.nerd = nerd;
+        self
+    }
+
     /// Where the terminal cursor goes: the shell's cursor, while the panel
-    /// has focus (and isn't scrolled back, or hiding it).
-    pub fn cursor_position(terminal: &Terminal, area: Rect) -> Option<Position> {
+    /// has focus (and isn't scrolled back, or hiding it). `list` is where
+    /// the list of shells is (`list_area`), if it's shown.
+    pub fn cursor_position(
+        terminal: &Terminal,
+        area: Rect,
+        list: Option<Rect>,
+    ) -> Option<Position> {
         let screen = terminal.screen();
         if screen.hide_cursor() || screen.scrollback() > 0 || !terminal.is_running() {
             return None;
         }
-        let body = body(area);
+        let body = body(area, list);
         let (row, col) = screen.cursor_position();
         (row < body.height && col < body.width).then(|| Position::new(body.x + col, body.y + row))
     }
 
-    fn title_row(&self, area: Rect, buf: &mut Buffer) {
+    fn icon(&self, plain: &'static str, nerd: &'static str) -> &'static str {
+        if self.nerd { nerd } else { plain }
+    }
+
+    fn title_row(&self, terminal: &Terminal, area: Rect, buf: &mut Buffer) {
         let theme = self.theme;
         let title_style = if self.focused {
             theme.get("ui.terminal.title.focused")
@@ -110,10 +211,21 @@ impl<'a> TerminalView<'a> {
         };
         let row = Rect::new(area.x, area.y, area.width, 1);
         buf.set_style(row, theme.get("ui.terminal.title"));
-        let width = area.width as usize;
+
+        // The buttons at the right end, then the hints before them.
+        let buttons = buttons(area);
+        for (rect, part) in &buttons {
+            let glyph = match part {
+                PanelPart::NewShell => self.icon("+", "\u{ea60}"),
+                _ => self.icon("×", "\u{ea81}"),
+            };
+            buf.set_string(rect.x + 1, rect.y, glyph, theme.get("ui.terminal.button"));
+        }
+        let right_end = buttons.first().map_or(area.right(), |(rect, _)| rect.x);
+        let width = (right_end - area.x) as usize;
 
         let pair = |key: &Option<String>, what: &str| key.as_ref().map(|k| format!("{k} {what}"));
-        let right = match self.terminal.exited() {
+        let right = match terminal.exited() {
             Some(why) => Some((
                 format!(" The shell {why}: press a key to close "),
                 theme.get("ui.terminal.exited"),
@@ -139,28 +251,63 @@ impl<'a> TerminalView<'a> {
 
         // In the bottom panel its tabs say what it is: no title of its own.
         if !self.tabbed {
-            let left = format!(" TERMINAL  {}", self.terminal.title());
+            let left = format!(" TERMINAL  {}", terminal.title());
             let left = truncate_end(&left, width.saturating_sub(right_width + 1));
             buf.set_string(area.x, area.y, &left, title_style);
         }
         if let Some((text, style)) = right {
-            buf.set_string(area.right() - right_width as u16, area.y, text, style);
+            buf.set_string(right_end - right_width as u16, area.y, text, style);
+        }
+    }
+
+    /// The list of shells, with the line to its left.
+    fn list(&self, list: Rect, buf: &mut Buffer) {
+        let theme = self.theme;
+        let line = theme.get("ui.terminal.border");
+        let edge = list_edge(list);
+        for y in edge.y..edge.bottom() {
+            buf[(edge.x, y)].set_symbol("│").set_style(line);
+        }
+        let first = list_first(self.shown, list);
+        let icon = self.icon("$", "\u{ea85}");
+        for (i, shell) in self.shells.iter().enumerate().skip(first) {
+            let y = list.y + (i - first) as u16;
+            if y >= list.bottom() {
+                break;
+            }
+            let row = Rect::new(list.x, y, list.width, 1);
+            let style = if i == self.shown {
+                theme.get("ui.terminal.list.shown")
+            } else {
+                theme.get("ui.terminal.list")
+            };
+            buf.set_style(row, style);
+            let text = format!(" {icon} {}", shell.title());
+            let text = truncate_end(&text, list.width as usize - 1);
+            buf.set_stringn(list.x, y, &text, list.width as usize - 1, style);
         }
     }
 }
 
 impl Widget for TerminalView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        let Some(terminal) = self.shells.get(self.shown) else {
+            return;
+        };
         if area.width == 0 || area.height == 0 {
             return;
         }
         let base = self.theme.get("ui.terminal");
         buf.set_style(area, base);
-        self.title_row(area, buf);
+        self.title_row(terminal, area, buf);
+        let list = list_area(area, self.shells.len(), self.list_width);
+        if let Some(list) = list {
+            self.list(list, buf);
+        }
 
-        let body = body(area);
-        self.terminal.note_size(body.height, body.width);
-        let screen = self.terminal.screen();
+        let body = body(area, list);
+        terminal.note_size(body.height, body.width);
+        let screen = terminal.screen();
         let (rows, cols) = screen.size();
         for row in 0..body.height.min(rows.get()) {
             for col in 0..body.width.min(cols.get()) {
@@ -234,11 +381,14 @@ mod tests {
         };
         let area = Rect::new(0, 0, 50, 5);
         let mut buf = Buffer::empty(area);
-        TerminalView::new(&terminal, true, &keys, &theme).render(area, &mut buf);
+        let shells = std::slice::from_ref(&terminal);
+        TerminalView::new(shells, 0, true, &keys, &theme).render(area, &mut buf);
         let row = |y: u16| -> String { (0..50).map(|x| buf[(x, y)].symbol()).collect() };
         assert!(row(0).starts_with(" TERMINAL  sh"), "{:?}", row(0));
         assert!(
-            row(0).trim_end().ends_with("⌃\\ ⌃N editor   ⌃` hide"),
+            row(0)
+                .trim_end()
+                .ends_with("⌃\\ ⌃N editor   ⌃` hide   +  ×"),
             "{:?}",
             row(0)
         );
@@ -253,7 +403,7 @@ mod tests {
             theme.get("ui.terminal").fg.unwrap_or(Color::Reset)
         );
         assert_eq!(
-            TerminalView::cursor_position(&terminal, area),
+            TerminalView::cursor_position(&terminal, area, None),
             Some(Position::new(1, 2)),
             "under what was printed"
         );

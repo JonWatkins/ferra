@@ -118,8 +118,17 @@ icons = "plain"
 color-theme = "ferra-dark"
 # Rows the terminal panel (<Space>t, :terminal) takes, under the windows.
 terminal-height = 12
+# Columns the terminal panel's list of shells takes, down its right side
+# once there are two or more (at most half the panel; drag its line to
+# change it).
+terminal-list-width = 22
 # The terminal panel's shell. "" runs $SHELL (or /bin/sh).
 shell = ""
+# What ending a terminal (closing it, or quitting ferra) does to what its
+# shell started: "kill" ends everything it started, even what ignores the
+# hangup (nohup); "hangup" hangs up, as closing a terminal app's window
+# does, and what ignores it keeps running.
+terminal-close = "kill"
 # The coding agent :agent talks to: one of the [agents] below.
 agent = "claude"
 # Columns the agent sidebar (Ctrl+Alt+B, :agent) takes, right of the
@@ -528,6 +537,9 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.terminal.title.focused" = { fg = "#7aa2f7", bg = "#1f2229", modifiers = ["bold"] }
 "ui.terminal.hint" = { fg = "#565f89", bg = "#1f2229" }
 "ui.terminal.exited" = { fg = "#e0af68", bg = "#1f2229" }
+"ui.terminal.button" = { fg = "#a0a6b0", bg = "#1f2229" }
+"ui.terminal.list" = { fg = "#a0a6b0", bg = "#16181d" }
+"ui.terminal.list.shown" = { fg = "#c0caf5", bg = "#2a2e38" }
 # The find box (<Space>/, <Space>h).
 "ui.find" = { fg = "#d4d7dd", bg = "#1f2229" }
 "ui.find.border" = "#4b5263"
@@ -885,6 +897,9 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "<C-`>" = "terminal_toggle"
 "<S-PageUp>" = "terminal_scroll_up"
 "<S-PageDown>" = "terminal_scroll_down"
+"<C-~>" = "terminal_new"
+"<C-PageDown>" = "terminal_next"
+"<C-PageUp>" = "terminal_prev"
 
 # The find box (<Space>/ find, <Space>h find and replace), while it has
 # focus. Typing edits the field with focus. The toggles have Ctrl keys

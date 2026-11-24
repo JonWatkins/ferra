@@ -106,6 +106,7 @@ inherit = { visual = "insert" }
 "<C-A-b>" = "agent_sidebar"
 "<C-S-e>" = "sidebar_focus"
 "<C-`>" = "terminal_toggle"
+"<C-~>" = "terminal_new"
 "<C-j>" = "panel"
 "<C-S-m>" = "problems"
 "<C-S-u>" = "output"
@@ -147,6 +148,7 @@ inherit = { visual = "insert" }
 
 [keys.terminal]
 "<C-`>" = "terminal_toggle"
+"<C-~>" = "terminal_new"
 
 [keys.settings]
 "<C-p>" = "file_picker"

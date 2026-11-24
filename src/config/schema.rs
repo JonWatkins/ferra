@@ -78,7 +78,7 @@ fn category_of(path: &str) -> &'static str {
         "lsp" | "auto-complete" | "highlight-references" | "inlay-hints" => "Language servers",
         "keymap" | "mouse" | "mouse-hover" | "mouse-hover-delay" | "kitty-keyboard"
         | "key-timeout" | "clipboard" | "clipboard-provider" => "Keyboard and mouse",
-        "terminal-height" | "shell" => "Terminal",
+        "terminal-height" | "terminal-list-width" | "shell" | "terminal-close" => "Terminal",
         "agent" | "agent-width" | "agent-context" => "Agent",
         "cursor-shape" => "Cursor shape",
         "plugin-index" | "plugin-suggestions" => "Plugins",
@@ -238,6 +238,16 @@ pub fn find(path: &str) -> Option<&'static Setting> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_close_is_a_choice_in_the_terminal_settings() {
+        let setting = find("terminal-close").unwrap();
+        assert_eq!(setting.category, "Terminal");
+        assert_eq!(
+            setting.kind,
+            Kind::Choice(vec!["kill".into(), "hangup".into()])
+        );
+    }
 
     #[test]
     fn every_option_is_a_setting_in_a_category() {

@@ -41,6 +41,7 @@
 //! outside it closes it and goes on to the text), an input box places its
 //! cursor or cancels. Otherwise an edge starts a resize drag
 //! (`Drag::Sidebar` sets `sidebar-width`, `Drag::Panel` `terminal-height`,
+//! `Drag::ShellList` `terminal-list-width`,
 //! `Drag::Split` resizes the window before the line through
 //! `resize_window`), and anything else is a click on a window, the sidebar,
 //! the agent sidebar or the panel. A window click focuses it and sets the
@@ -93,6 +94,9 @@ pub(super) enum Drag {
     Agent,
     /// Resizing the terminal panel (its title row), whose bottom is here.
     Panel { bottom: u16 },
+    /// Resizing the terminal panel's list of shells (the line left of
+    /// it), whose right edge is here.
+    ShellList { right: u16 },
     /// Resizing a window from the line after it (to its right or below).
     Split {
         window: WindowId,
@@ -193,6 +197,9 @@ impl App {
             Target::AgentEdge => Some(Drag::Agent),
             Target::Panel(PanelPart::Title) => Some(Drag::Panel {
                 bottom: map.area(&Target::Panel(PanelPart::Rest))?.bottom(),
+            }),
+            Target::Panel(PanelPart::ListEdge) => Some(Drag::ShellList {
+                right: map.area(&Target::Panel(PanelPart::Rest))?.right(),
             }),
             &Target::Split { window, vertical } => Some(Drag::Split {
                 window,
@@ -682,7 +689,16 @@ impl App {
         use crate::editor::panel::PanelTab;
         match self.editor.panel_shown() {
             Some(PanelTab::Terminal) | None => {
-                if let Err(error) = self.editor.focus_terminal() {
+                let done = match part {
+                    PanelPart::Shell(index) => self.editor.select_terminal(index),
+                    PanelPart::NewShell => self.editor.new_terminal(),
+                    PanelPart::EndShell => {
+                        self.editor.close_terminal();
+                        Ok(())
+                    }
+                    _ => self.editor.focus_terminal(),
+                };
+                if let Err(error) = done {
                     self.editor.set_message(Message::error(error));
                 }
             }
@@ -844,6 +860,10 @@ impl App {
             }
             Some(Drag::Panel { bottom }) => {
                 self.editor.options.terminal_height = bottom.saturating_sub(at.y + 1).max(2);
+            }
+            Some(Drag::ShellList { right }) => {
+                // The line follows the pointer; the list is right of it.
+                self.editor.options.terminal_list_width = right.saturating_sub(at.x + 1).max(8);
             }
             Some(Drag::Split {
                 window,
