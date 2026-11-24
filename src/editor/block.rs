@@ -10,7 +10,11 @@
 //! - `SelectionKind::Block` is a third kind of selection. Its shape is a
 //!   `core::Block`: rows, plus first and last *display* columns, so it lines up
 //!   on screen with tabs and wide characters (`core/columns.rs` converts
-//!   between character and display columns, for the UI too). A character partly
+//!   between character and display columns, for the UI too). The columns are
+//!   counted as drawn, inlay hints and all (`Editor::line_cells`, from the
+//!   line's display line): the hints take cells but are never selected, yanked
+//!   or deleted, and text put in at a column goes before any hint there, as
+//!   typing does (so it's drawn where the hint began). A character partly
 //!   inside the block (a tab) counts as inside. `to_eol` (`$`) makes each row
 //!   run to its own end; motions report through `Editor::note_block_motion`,
 //!   and only `$` and vertical moves keep it. `gv` remembers `to_eol` along
@@ -42,7 +46,7 @@ use super::registers::{Register, StoreKind};
 use super::transform::CaseChange;
 use super::transform::whitespace;
 use super::{Editor, Mode, Operator, SelectionKind};
-use crate::core::columns::{char_cells, char_col_at, display_col, display_width};
+use crate::core::columns::{LineCells, display_width};
 use crate::core::{Block, Position, Range};
 
 /// An `I`, `A` or `c` on a block, waiting for insert mode to end.
@@ -76,12 +80,17 @@ impl Editor {
         }
         let cursor = self.document.cursor();
         Some(Block::between(
-            self.document.buffer(),
             (selection.anchor.row, selection.anchor.col),
             (cursor.row, cursor.col),
             self.block_to_eol,
-            self.options.tab_width,
+            |row| self.line_cells(row),
         ))
+    }
+
+    /// Where line `row`'s chars are on screen, with any virtual text (inlay
+    /// hints) in it: the columns a block is counted in.
+    pub(super) fn line_cells(&self, row: usize) -> LineCells {
+        self.document.line_cells(row, self.options.tab_width)
     }
 
     /// Takes the selected block and returns to normal mode.
@@ -107,29 +116,28 @@ impl Editor {
         else {
             return;
         };
-        let tab = self.options.tab_width;
         let cursor = self.document.cursor();
-        let buffer = self.document.buffer();
-        let cursor_line = buffer.line(cursor.row);
-        let anchor_line = buffer.line(selection.anchor.row);
-        let cursor_on_left = char_cells(&cursor_line, cursor.col, tab).0 <= block.left;
+        let cursor_line = self.document.line_cells(cursor.row, self.options.tab_width);
+        let anchor_line = self
+            .document
+            .line_cells(selection.anchor.row, self.options.tab_width);
+        let cursor_on_left = cursor_line.cells(cursor.col).0 <= block.left;
         let (cursor_col, anchor_col) = if cursor_on_left {
             (block.right, block.left)
         } else {
             (block.left, block.right)
         };
-        selection.anchor.col = char_col_at(&anchor_line, anchor_col, tab);
-        let col = char_col_at(&cursor_line, cursor_col, tab);
+        selection.anchor.col = anchor_line.char_at(anchor_col);
+        let col = cursor_line.char_at(cursor_col);
         self.document.set_cursor(cursor.with_col(col));
         self.block_to_eol = false;
     }
 
     /// The text of each row of `block`.
     pub fn block_text(&self, block: Block) -> Vec<String> {
-        let tab = self.options.tab_width;
         block
             .rows()
-            .map(|row| block.text_in(&self.document.buffer().line(row), tab))
+            .map(|row| block.text_in(&self.document.buffer().line(row), &self.line_cells(row)))
             .collect()
     }
 
@@ -141,7 +149,6 @@ impl Editor {
         block: Block,
         register: Option<char>,
     ) -> Result<(), String> {
-        let tab = self.options.tab_width;
         match operator {
             Operator::Comment => return self.toggle_comment(block.first, block.last),
             Operator::Reindent => return self.reindent_lines(block.first, block.last),
@@ -164,7 +171,7 @@ impl Editor {
                     _ => CaseChange::Toggle,
                 };
                 for row in block.rows() {
-                    let (start, end) = block.chars_in(&self.document.buffer().line(row), tab);
+                    let (start, end) = block.chars_in(&self.line_cells(row));
                     if start < end {
                         let range = Range::Chars {
                             start: Position::new(row, start),
@@ -197,7 +204,7 @@ impl Editor {
         // Rows that reach the block, decided before deleting from them.
         let reached: Vec<usize> = block
             .rows()
-            .filter(|&row| block.reaches(&self.document.buffer().line(row), tab))
+            .filter(|&row| block.reaches(&self.line_cells(row)))
             .collect();
         self.delete_block(block);
         if operator == Operator::Change {
@@ -218,10 +225,11 @@ impl Editor {
         let expand_tab = !self.indent_with_tabs();
         for row in block.rows() {
             let line = self.document.buffer().line(row).into_owned();
-            if !block.reaches(&line, tab) {
+            let cells = self.line_cells(row);
+            if !block.reaches(&cells) {
                 continue;
             }
-            let start = char_col_at(&line, block.left, tab);
+            let start = cells.char_at(block.left);
             let blanks = line
                 .chars()
                 .skip(start)
@@ -231,8 +239,8 @@ impl Editor {
             if end == line.chars().count() {
                 continue;
             }
-            let from = display_col(&line, start, tab);
-            let to = display_col(&line, end, tab);
+            let from = cells.start(start);
+            let to = cells.start(end);
             let new_to = if indent {
                 to + unit
             } else if to > block.left {
@@ -255,11 +263,10 @@ impl Editor {
     /// stop short of the block; `A` pads them with spaces, or with `$`
     /// appends to each row's end.
     pub fn block_insert(&mut self, block: Block, append: bool) {
-        let tab = self.options.tab_width;
         let (target, rows): (Target, Vec<usize>) = if !append {
             let rows = block
                 .rows()
-                .filter(|&row| block.reaches(&self.document.buffer().line(row), tab))
+                .filter(|&row| block.reaches(&self.line_cells(row)))
                 .collect();
             (Target::Column(block.left), rows)
         } else if block.to_eol {
@@ -291,13 +298,13 @@ impl Editor {
     /// padded column is past its end, or splitting a tab the column is in
     /// the middle of.
     fn prepare_row(&mut self, row: usize, target: Target) -> Position {
-        let tab = self.options.tab_width;
         let line = self.document.buffer().line(row).to_string();
+        let cells = self.line_cells(row);
         let len = line.chars().count();
         let col = match target {
             Target::LineEnd => len,
             Target::Column(col) | Target::PaddedColumn(col) => {
-                let width = display_width(&line, tab);
+                let width = cells.end();
                 if width < col {
                     if matches!(target, Target::Column(_)) {
                         return Position::new(row, len);
@@ -306,7 +313,7 @@ impl Editor {
                     self.document.insert(Position::new(row, len), &pad);
                     len + pad.len()
                 } else {
-                    self.split_tab_at(row, &line, col)
+                    self.split_tab_at(row, &line, &cells, col)
                 }
             }
         };
@@ -316,11 +323,10 @@ impl Editor {
     /// The character column at display column `col` on `row` (whose text is
     /// `line`). A tab covering `col` but starting before it becomes spaces,
     /// so `col` is a character boundary.
-    fn split_tab_at(&mut self, row: usize, line: &str, col: usize) -> usize {
-        let tab = self.options.tab_width;
-        let at = char_col_at(line, col, tab);
-        let (first, last) = char_cells(line, at, tab);
-        if first == col || line.chars().nth(at) != Some('\t') {
+    fn split_tab_at(&mut self, row: usize, line: &str, cells: &LineCells, col: usize) -> usize {
+        let at = cells.char_at(col);
+        let (first, last) = cells.cells(at);
+        if first >= col || line.chars().nth(at) != Some('\t') {
             return at;
         }
         let spaces = " ".repeat(last - first + 1);
@@ -356,9 +362,8 @@ impl Editor {
     }
 
     fn delete_block(&mut self, block: Block) {
-        let tab = self.options.tab_width;
         for row in block.rows().rev() {
-            let part = block.row(&self.document.buffer().line(row), tab);
+            let part = block.row(&self.line_cells(row));
             if !part.is_empty() {
                 let start = Position::new(row, part.start);
                 self.document.delete(start, Position::new(row, part.end));
@@ -372,8 +377,7 @@ impl Editor {
     }
 
     fn set_cursor_to_block_start(&mut self, block: Block) {
-        let line = self.document.buffer().line(block.first);
-        let col = char_col_at(&line, block.left, self.options.tab_width);
+        let col = self.line_cells(block.first).char_at(block.left);
         self.document.set_cursor(Position::new(block.first, col));
     }
 
@@ -384,11 +388,11 @@ impl Editor {
     pub fn paste_block(&mut self, register: &Register, after: bool, count: usize) {
         let tab = self.options.tab_width;
         let cursor = self.document.cursor();
-        let first_line = self.document.buffer().line(cursor.row).to_string();
+        let first_line = self.line_cells(cursor.row);
         let col = if after && !first_line.is_empty() {
-            char_cells(&first_line, cursor.col, tab).1 + 1
+            first_line.cells(cursor.col).1 + 1
         } else {
-            display_col(&first_line, cursor.col, tab)
+            first_line.start(cursor.col)
         };
         let pieces: Vec<&str> = register.text.split('\n').collect();
         let width = pieces
@@ -404,13 +408,13 @@ impl Editor {
                 let end = buffer.line_end(buffer.line_count() - 1);
                 self.document.insert(end, "\n");
             }
-            let line = self.document.buffer().line(row).to_string();
-            let len = line.chars().count();
-            let line_width = display_width(&line, tab);
+            let line = self.line_cells(row);
+            let len = line.len();
+            let line_width = line.end();
             let (at, mut text) = if line_width < col {
                 (len, " ".repeat(col - line_width))
             } else {
-                (char_col_at(&line, col, tab), String::new())
+                (line.char_at(col), String::new())
             };
             let follows = at < len;
             let padded = format!("{piece}{}", " ".repeat(width - display_width(piece, tab)));
@@ -420,23 +424,20 @@ impl Editor {
             }
             self.document.insert(Position::new(row, at), &text);
         }
-        let line = self.document.buffer().line(cursor.row);
-        let col = char_col_at(&line, col, tab);
+        let col = self.line_cells(cursor.row).char_at(col);
         self.document.set_cursor(Position::new(cursor.row, col));
     }
 
     /// Replaces each row of a block with `text` (`p` in block mode with a
     /// one-line register), on rows that reach the block.
     pub fn fill_block(&mut self, block: Block, text: &str) {
-        let tab = self.options.tab_width;
         let reached: Vec<usize> = block
             .rows()
-            .filter(|&row| block.reaches(&self.document.buffer().line(row), tab))
+            .filter(|&row| block.reaches(&self.line_cells(row)))
             .collect();
         self.delete_block(block);
         for row in reached.into_iter().rev() {
-            let line = self.document.buffer().line(row);
-            let at = char_col_at(&line, block.left, tab);
+            let at = self.line_cells(row).char_at(block.left);
             self.document.insert(Position::new(row, at), text);
         }
         self.set_cursor_to_block_start(block);
@@ -589,5 +590,55 @@ mod tests {
         e.swap_block_sides();
         assert_eq!(e.document.cursor(), pos(1, 0));
         assert_eq!(e.selection().unwrap().anchor, pos(0, 2));
+    }
+
+    /// `selecting`, with the inlay hint `x: ` drawn before the `1` on the
+    /// second row: `f(1, 2)` above `f(x: 1, 2)`.
+    fn selecting_over_a_hint(anchor: Position, cursor: Position) -> Editor {
+        let mut e = selecting("f(1, 2)\nf(1, 2)", anchor, cursor);
+        e.document.set_virtual_text(
+            "inlay",
+            vec![crate::editor::VirtualText {
+                at: pos(1, 2),
+                text: "x: ".into(),
+                style: "ui.virtual.inlay-hint".into(),
+                source: "inlay".into(),
+                end_of_line: false,
+            }],
+        );
+        e
+    }
+
+    #[test]
+    fn a_block_is_counted_in_columns_as_drawn_with_inlay_hints() {
+        // The `2` above is in the same screen column as the `1` below.
+        let mut e = selecting_over_a_hint(pos(0, 5), pos(1, 2));
+        let block = e.selection_block().unwrap();
+        assert_eq!((block.left, block.right), (5, 5));
+        assert_eq!(e.block_text(block), vec!["2", "1"], "the hint isn't text");
+        e.apply_block_operator(Operator::Delete, block, None)
+            .unwrap();
+        assert_eq!(text(&e), "f(1, )\nf(, 2)");
+    }
+
+    #[test]
+    fn insert_and_append_go_in_at_the_blocks_columns_on_screen() {
+        // Cells 2-5: `1, 2` above, `x: 1` below.
+        let mut e = selecting_over_a_hint(pos(0, 2), pos(1, 2));
+        let block = e.selection_block().unwrap();
+        assert_eq!((block.left, block.right), (2, 5));
+        e.block_insert(block, false);
+        type_text(&mut e, "Z");
+        e.set_mode(Mode::Normal);
+        // Below, typed before the hint, which is where cell 2 is.
+        assert_eq!(text(&e), "f(Z1, 2)\nf(Z1, 2)");
+
+        let mut e = selecting_over_a_hint(pos(0, 2), pos(1, 2));
+        let block = e.selection_block().unwrap();
+        e.block_insert(block, true);
+        type_text(&mut e, "Z");
+        e.set_mode(Mode::Normal);
+        // Cell 6: the `)` above, the `,` below (after `x: 1`).
+        assert_eq!(text(&e), "f(1, 2Z)\nf(1Z, 2)");
     }
 }
