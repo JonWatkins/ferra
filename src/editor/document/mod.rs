@@ -54,14 +54,14 @@ pub struct Document {
     /// The language chosen for it (`:language`), over the one its name
     /// and first line give.
     language: Option<String>,
-    /// The file's modified time when last read or written, to detect
-    /// changes made by other programs.
+    /// The file's stamp when last read or written, to detect changes made
+    /// by other programs.
     disk_stamp: Option<crate::files::FileStamp>,
     /// How many times it has been saved to its own file (language servers
     /// are told of each).
     saves: u64,
-    /// The file's modified time (or `None`: deleted) when a change on disk
-    /// was last reported, so it's reported once.
+    /// The file's stamp (or `None`: deleted) when a change on disk was
+    /// last reported, so it's reported once.
     disk_acknowledged: Option<Option<crate::files::FileStamp>>,
     /// Counts edits made through `insert`/`delete` (not undo/redo), so the
     /// app can tell whether a command sequence changed the text.
