@@ -3,7 +3,7 @@
 //! a symbol, and showing the user a file. Kept few and short, as each
 //! one's description goes in the agent's prompt.
 //!
-//! Each tool is one entry in [`TOOLS`]: its name, description, argument
+//! Each tool is one entry in `TOOLS`: its name, description, argument
 //! schema and handler together, so what's listed and what runs can't
 //! drift apart. Handlers read their arguments through [`Args`], whose
 //! checks give the agent the same words for the same mistake.

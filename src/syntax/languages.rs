@@ -306,7 +306,7 @@ pub fn position(name: &str) -> Option<usize> {
         .map(|i| LANGUAGES.len() + i)
 }
 
-/// The language called `name` (see [`position`]).
+/// The language called `name` (see `position`).
 pub fn language(name: &str) -> Option<&'static LanguageDef> {
     get(position(name)?)
 }

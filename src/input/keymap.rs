@@ -111,7 +111,7 @@ impl Keymap {
 
     /// The keys to show for `command` in `mode` in the interface's hints:
     /// one without Alt (which macOS terminals don't send by default), then
-    /// one that doesn't need the kitty keyboard protocol (`<C-`>`), then
+    /// one that doesn't need the kitty keyboard protocol (``<C-`>``), then
     /// the shortest, then with the fewest modifiers (`<Up>` over `<C-p>`).
     pub fn hint_keys(&self, mode: Mode, command: &str) -> Option<Vec<KeyPress>> {
         fn walk(
