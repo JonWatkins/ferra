@@ -112,7 +112,7 @@ impl Editor {
             return None;
         }
         match self.panel.tab {
-            PanelTab::Terminal if self.terminal.is_none() => None,
+            PanelTab::Terminal if self.terminals.is_empty() => None,
             tab => Some(tab),
         }
     }

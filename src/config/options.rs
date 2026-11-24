@@ -82,8 +82,13 @@ pub struct EditorOptions {
     pub keymap: KeymapPreset,
     /// Rows the terminal panel takes (at most most of the screen).
     pub terminal_height: u16,
+    /// Columns the terminal panel's list of shells takes, with two or more
+    /// (at most half the panel).
+    pub terminal_list_width: u16,
     /// The terminal panel's shell ("": `$SHELL`, else `/bin/sh`).
     pub shell: String,
+    /// What ending a terminal (or quitting) does to what its shell started.
+    pub terminal_close: TerminalClose,
     /// The coding agent `:agent` talks to (a name in `[agents]`).
     pub agent: String,
     /// Columns the agent sidebar takes, right of the windows.
@@ -367,6 +372,18 @@ pub enum KeymapPreset {
     /// Always typing, as in VS Code: Ctrl+S, Ctrl+F, Shift and the arrows
     /// to select (`config/keymaps/vscode.toml`).
     Vscode,
+}
+
+/// What ending a terminal panel's shell (closing it, or quitting) does to
+/// the programs it started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TerminalClose {
+    /// Ends them all, even those that ignore the hangup (`nohup`).
+    Kill,
+    /// Hangs up, as closing a terminal app's window does: what ignores it
+    /// keeps running.
+    Hangup,
 }
 
 /// What icons are drawn with.

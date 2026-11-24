@@ -598,6 +598,7 @@ dependencies = [
  "encoding_rs",
  "ferra",
  "ignore",
+ "libc",
  "libloading",
  "mlua",
  "png",

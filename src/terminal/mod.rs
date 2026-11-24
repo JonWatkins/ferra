@@ -16,6 +16,14 @@
 //! take the window title. Keys go back as the bytes a terminal sends
 //! (`terminal::key_bytes`: control characters, xterm's modifier parameters,
 //! application cursor mode); pastes are bracketed when the program asked.
+//!
+//! Dropping a `Terminal` ends its shell: a hangup, then, if it hasn't gone
+//! within a second, a kill, so quitting never waits on a shell that ignores
+//! the hangup. With `end_session` (`terminal-close = "kill"`, the default)
+//! it then ends whatever the shell started that's still running
+//! (`session.rs`), `nohup`'d programs included.
+
+mod session;
 
 use std::cell::Cell;
 use std::io::{self, Read, Write};
@@ -23,6 +31,7 @@ use std::num::NonZeroU16;
 use std::path::Path;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
@@ -86,7 +95,14 @@ pub struct Terminal {
     exited: Option<String>,
     /// The size the panel was last drawn at, to resize to.
     wanted: Cell<Option<(u16, u16)>>,
+    /// The shell's pid, and so its session's ID.
+    pid: Option<u32>,
+    /// Whether ending it ends what it started too (`terminal-close`).
+    end_session: bool,
 }
+
+/// How long a hung-up shell gets to go before it's killed.
+const HANGUP_WAIT: Duration = Duration::from_secs(1);
 
 fn nonzero(n: u16) -> NonZeroU16 {
     NonZeroU16::new(n.max(1)).expect("at least 1")
@@ -172,11 +188,13 @@ impl Terminal {
             ),
             writer,
             master: pair.master,
-            child,
             output,
             name,
             exited: None,
             wanted: Cell::new(None),
+            pid: child.process_id(),
+            end_session: true,
+            child,
         })
     }
 
@@ -192,6 +210,17 @@ impl Terminal {
             .as_deref()
             .filter(|t| !t.is_empty())
             .unwrap_or(&self.name)
+    }
+
+    /// Whether ending it ends everything its shell started too, or only
+    /// hangs up (`terminal-close`).
+    pub fn set_end_session(&mut self, end: bool) {
+        self.end_session = end;
+    }
+
+    /// The shell's pid.
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
     }
 
     /// Why the shell's gone, once it has.
@@ -379,8 +408,27 @@ impl std::fmt::Debug for Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         if self.exited.is_none() {
+            // A hangup (portable-pty's kill), then a kill if it lingers.
             let _ = self.child.kill();
-            let _ = self.child.wait();
+            let start = Instant::now();
+            while matches!(self.child.try_wait(), Ok(None)) {
+                if start.elapsed() >= HANGUP_WAIT {
+                    #[cfg(unix)]
+                    if let Some(pid) = self.pid.and_then(|p| libc::pid_t::try_from(p).ok()) {
+                        // SAFETY: a signal to the shell we started.
+                        unsafe { libc::kill(pid, libc::SIGKILL) };
+                    }
+                    let _ = self.child.wait();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        // Even once the shell's gone by itself, what it started may not have.
+        if self.end_session
+            && let Some(pid) = self.pid
+        {
+            session::end_session(pid);
         }
     }
 }
@@ -587,5 +635,76 @@ mod tests {
         let (rows, cols) = terminal.screen().size();
         assert_eq!((rows.get(), cols.get()), (8, 40));
         drop(terminal);
+    }
+
+    /// A shell that ignores the hangup, running a program that does too
+    /// (as `nohup` makes it), and that program's pid.
+    #[cfg(unix)]
+    fn shell_with_a_stubborn_program() -> (Terminal, libc::pid_t) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut terminal = Terminal::spawn(
+            "/bin/sh",
+            &["-c", "trap '' HUP; sleep 60 & echo CHILD=$!; sleep 60"],
+            dir.path(),
+            5,
+            40,
+        )
+        .unwrap();
+        wait_for(&mut terminal, |t| t.screen().contents().contains("CHILD="));
+        let text = terminal.screen().contents();
+        let pid = text
+            .split("CHILD=")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|pid| pid.parse().ok())
+            .unwrap_or_else(|| panic!("{text:?}"));
+        (terminal, pid)
+    }
+
+    /// Whether `pid` is still running (a zombie isn't), given a moment to go.
+    #[cfg(unix)]
+    fn running_after_a_moment(pid: libc::pid_t) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            // SAFETY: signal 0 only checks it's there.
+            let there = unsafe { libc::kill(pid, 0) } == 0;
+            let zombie = std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim().starts_with('Z'));
+            if !there || zombie {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        true
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ending_it_ends_what_its_shell_started_even_what_ignores_the_hangup() {
+        let (terminal, child) = shell_with_a_stubborn_program();
+        let shell = terminal.pid().unwrap() as libc::pid_t;
+        let start = Instant::now();
+        drop(terminal);
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "a shell ignoring the hangup is killed, not waited on: {:?}",
+            start.elapsed()
+        );
+        assert!(!running_after_a_moment(shell), "the shell's gone");
+        assert!(!running_after_a_moment(child), "and what it started");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hanging_up_leaves_what_ignores_it() {
+        let (mut terminal, child) = shell_with_a_stubborn_program();
+        terminal.set_end_session(false);
+        drop(terminal);
+        let survived = running_after_a_moment(child);
+        // SAFETY: the test's own leftover.
+        unsafe { libc::kill(child, libc::SIGKILL) };
+        assert!(survived, "a hangup leaves it, as closing a window does");
     }
 }

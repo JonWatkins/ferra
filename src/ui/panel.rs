@@ -142,7 +142,16 @@ impl<'a> PanelView<'a> {
         let list = Self::list(area);
         screen.add(area, panel(PanelPart::Rest));
         match editor.panel_shown() {
-            Some(PanelTab::Terminal) => screen.add(list, panel(PanelPart::Terminal)),
+            Some(PanelTab::Terminal) => {
+                screen.add(list, panel(PanelPart::Terminal));
+                let shells = editor.terminals();
+                if let Some(rows) = super::terminal::shell_list(editor, area) {
+                    let first = super::terminal::list_first(shells.shown_index(), rows);
+                    screen.rows(rows, first, shells.len(), |i| panel(PanelPart::Shell(i)));
+                    let edge = super::terminal::list_edge(rows);
+                    screen.add(edge, panel(PanelPart::ListEdge));
+                }
+            }
             Some(tab @ (PanelTab::Problems | PanelTab::Locations)) => {
                 let len = if tab == PanelTab::Problems {
                     editor.problem_rows().len()
@@ -158,6 +167,11 @@ impl<'a> PanelView<'a> {
         for (from, to, tab, _) in tab_spans(editor, row) {
             let span = Rect::new(from, row.y, to - from, 1);
             screen.add(span.intersection(row), panel(PanelPart::Tab(tab)));
+        }
+        if editor.panel_shown() == Some(PanelTab::Terminal) {
+            for (rect, part) in super::terminal::buttons(area) {
+                screen.add(rect, panel(part));
+            }
         }
     }
 }

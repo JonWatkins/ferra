@@ -24,8 +24,26 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "terminal_new",
+        "Start another shell in the terminal panel and go to it",
+        |cx| cx.editor.new_terminal(),
+    );
+    r.alias("terminal-new", "terminal_new");
+    r.register(
+        "terminal_next",
+        "Show the terminal panel's next shell",
+        |cx| cx.editor.cycle_terminal(cx.count() as isize),
+    );
+    r.alias("terminal-next", "terminal_next");
+    r.register(
+        "terminal_prev",
+        "Show the terminal panel's previous shell",
+        |cx| cx.editor.cycle_terminal(-(cx.count() as isize)),
+    );
+    r.alias("terminal-prev", "terminal_prev");
+    r.register(
         "terminal_close",
-        "End the terminal panel's shell and close the panel",
+        "End the terminal panel's shell shown (the panel closes with the last)",
         |cx| {
             cx.editor.close_terminal();
             Ok(())

@@ -164,7 +164,7 @@ static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "read_terminal",
-        description: "The text in the editor's terminal panel (the user's shell, scrollback included) and whether a command is still running there. Use it when the user mentions output they just saw (a failing build or test, an error, a server's log) instead of running the command again.",
+        description: "The text in the editor's terminal panel (the user's shell, the one shown if they have more than one; scrollback included) and whether a command is still running there. Use it when the user mentions output they just saw (a failing build or test, an error, a server's log) instead of running the command again.",
         schema: || {
             json!({
                 "type": "object",

@@ -132,6 +132,14 @@ pub enum PanelPart {
     Tab(PanelTab),
     /// The terminal's rows, while it's the tab shown.
     Terminal,
+    /// A shell's row in the terminal's list (which, from 0).
+    Shell(usize),
+    /// The line left of the terminal's list (dragged to resize it).
+    ListEdge,
+    /// The terminal's title row buttons: a new shell, and ending the one
+    /// shown.
+    NewShell,
+    EndShell,
     /// A row of the Problems' or Locations' list with an item: its index.
     Row(usize),
 }
@@ -204,13 +212,22 @@ impl Target {
             Self::MenuBar(Some(_)) | Self::Activity(Some(_)) | Self::Tab { .. } => HAND,
             Self::Crumb { .. } => HAND,
             Self::MenuBar(None) | Self::Activity(None) | Self::TabBar(_) | Self::Hover => DEFAULT,
-            Self::SidebarEdge | Self::AgentEdge | Self::Split { vertical: true, .. } => "ew-resize",
+            Self::SidebarEdge
+            | Self::AgentEdge
+            | Self::Panel(PanelPart::ListEdge)
+            | Self::Split { vertical: true, .. } => "ew-resize",
             Self::Split {
                 vertical: false, ..
             }
             | Self::Panel(PanelPart::Title) => "ns-resize",
             Self::Window(_) | Self::Panel(PanelPart::Terminal) => TEXT,
-            Self::Panel(PanelPart::Tab(_) | PanelPart::Row(_)) => HAND,
+            Self::Panel(
+                PanelPart::Tab(_)
+                | PanelPart::Row(_)
+                | PanelPart::Shell(_)
+                | PanelPart::NewShell
+                | PanelPart::EndShell,
+            ) => HAND,
             Self::Panel(PanelPart::Rest) => DEFAULT,
             Self::Status(element) => match element {
                 E::Mode

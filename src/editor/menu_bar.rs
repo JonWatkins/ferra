@@ -145,6 +145,9 @@ pub const MENUS: &[Menu] = &[
         items: &[
             Some(("Toggle Terminal", "terminal_toggle")),
             Some(("Focus Terminal", "terminal_focus")),
+            Some(("New Terminal", "terminal_new")),
+            Some(("Next Terminal", "terminal_next")),
+            Some(("Previous Terminal", "terminal_prev")),
             Some(("Close Terminal", "terminal_close")),
         ],
     },

@@ -331,13 +331,24 @@ pub fn draw(
                 match (tab, editor.terminal_panel()) {
                     (crate::editor::panel::PanelTab::Terminal, Some(terminal)) => {
                         let focused = editor.mode() == Mode::Terminal;
-                        let view =
-                            TerminalView::new(terminal, focused, &keys.terminal, theme).tabbed();
+                        let shells = editor.terminals();
+                        let nerd = editor.options.icons == crate::config::Icons::Nerd;
+                        let view = TerminalView::new(
+                            shells.all(),
+                            shells.shown_index(),
+                            focused,
+                            &keys.terminal,
+                            theme,
+                        )
+                        .tabbed()
+                        .nerd(nerd)
+                        .list_width(editor.options.terminal_list_width);
                         frame.render_widget(view, panel);
                         let row = Rect::new(panel.x, panel.y, panel.width, 1);
                         panel::draw_tabs(editor, theme, row, frame.buffer_mut());
                         if focused {
-                            terminal_cursor = TerminalView::cursor_position(terminal, panel);
+                            let list = terminal::shell_list(editor, panel);
+                            terminal_cursor = TerminalView::cursor_position(terminal, panel, list);
                         }
                     }
                     _ => frame.render_widget(panel::PanelView::new(editor, theme), panel),
