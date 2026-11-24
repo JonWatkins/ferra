@@ -232,7 +232,7 @@ impl Editor {
                 &self.options,
             );
             let bottom = layout.bottom(&self.document, top, height);
-            notes.push(format!("Showing lines {}-{}", top + 1, bottom + 1));
+            notes.push(format!("Showing lines {}-{}", top.line + 1, bottom + 1));
         }
         let changes: Vec<String> = self
             .document

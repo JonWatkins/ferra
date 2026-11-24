@@ -144,7 +144,7 @@ impl ViewState {
         let top = layout.follow_cursor(self.viewport.top, document, cursor, height, margins);
         // Every line up to the last shown (closed folds and wrapped lines
         // change how many that is).
-        top..layout.bottom(document, top, height) + 1
+        top.line..layout.bottom(document, top, height) + 1
     }
 }
 
@@ -524,7 +524,10 @@ impl StatefulWidget for EditorView<'_> {
         };
 
         let mut y = 0;
-        let mut row = top;
+        let mut row = top.line;
+        // Rows of the first line scrolled off the top (it's taller than
+        // the view).
+        let mut skip = top.skip;
         while y < height && row < text.line_count() {
             let real_line = text.line(row);
             // With virtual text, the line as it's drawn (its columns mapped).
@@ -547,7 +550,8 @@ impl StatefulWidget for EditorView<'_> {
                 layout.row_starts(line_text)
             };
             let wrap = layout.wrap && fold.is_none();
-            for (part, &start) in starts.iter().enumerate() {
+            let skipped = std::mem::take(&mut skip);
+            for (part, &start) in starts.iter().enumerate().skip(skipped) {
                 if y >= height {
                     break;
                 }
@@ -679,6 +683,17 @@ impl StatefulWidget for EditorView<'_> {
                 y += 1;
             }
             row = fold.map_or(row, |(_, last)| last) + 1;
+        }
+        // Part of the first line is scrolled off: say so, as Vim does.
+        if top.skip > 0 && height > 0 {
+            let marker = "<<<";
+            buf.set_stringn(
+                text_area.x,
+                text_area.y,
+                marker,
+                width.min(marker.len()),
+                self.theme.get("ui.wrap-marker"),
+            );
         }
     }
 }
@@ -1102,6 +1117,7 @@ mod tests {
     use super::*;
     use crate::config::LineNumbers;
     use crate::core::Position as TextPos;
+    use crate::editor::windows::ViewStart;
 
     fn render(doc: &Document, options: &EditorOptions, w: u16, h: u16) -> (Buffer, ViewState) {
         let area = Rect::new(0, 0, w, h);
@@ -1528,8 +1544,35 @@ mod tests {
         doc.set_cursor(TextPos::new(9, 0));
         let (buf, state) = render(&doc, &options(LineNumbers::None), 4, 3);
         assert_eq!(row_text(&buf, 2), "10  ");
-        assert_eq!(state.viewport.top, 7);
+        assert_eq!(state.viewport.top.line, 7);
         assert_eq!(state.cursor, Some(Position::new(0, 2)));
+    }
+
+    #[test]
+    fn a_line_taller_than_the_view_is_drawn_from_partway_with_a_marker() {
+        let mut doc = Document::with_text(&format!(
+            "x\n{}{}{}{}",
+            "a".repeat(10),
+            "b".repeat(10),
+            "c".repeat(10),
+            "d".repeat(10)
+        ));
+        doc.set_cursor(TextPos::new(1, 35));
+        let options = EditorOptions {
+            wrap: true,
+            wrap_marker: String::new(),
+            ..options(LineNumbers::None)
+        };
+        let (buf, state) = render(&doc, &options, 10, 3);
+        assert_eq!(state.viewport.top, ViewStart { line: 1, skip: 1 });
+        assert_eq!(row_text(&buf, 0), "<<<bbbbbbb");
+        assert_eq!(row_text(&buf, 1), "cccccccccc");
+        assert_eq!(row_text(&buf, 2), "dddddddddd");
+        assert_eq!(state.cursor, Some(Position::new(5, 2)));
+        // Clicks map to what's drawn, not the line's first rows.
+        assert_eq!(state.rows[0].start, 10);
+        let clicked = state.position_at(&doc, 4, 0, 4);
+        assert_eq!(clicked, Some(TextPos::new(1, 14)));
     }
 
     #[test]
