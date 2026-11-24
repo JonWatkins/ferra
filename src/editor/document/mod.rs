@@ -80,6 +80,9 @@ pub struct Document {
     /// A language server's diagnostics, moved along as the text is edited
     /// until it sends new ones.
     diagnostics: Vec<crate::editor::diagnostics::Diagnostic>,
+    /// For each diagnostic, where text was deleted from inside it in this
+    /// undo step: text put in there replaces it, so is inside it too.
+    diagnostic_holes: Vec<Option<Position>>,
     /// Text drawn in lines that isn't in the file (inlay hints), moved
     /// along as the text is edited.
     virtual_text: Vec<VirtualText>,
@@ -415,13 +418,16 @@ impl Document {
         mut diagnostics: Vec<crate::editor::diagnostics::Diagnostic>,
     ) {
         diagnostics.sort_by_key(|d| (d.start, d.severity));
+        self.diagnostic_holes = vec![None; diagnostics.len()];
         self.diagnostics = diagnostics;
     }
 
     /// Text went in at `at`, ending at `end`: what's after it moves along.
     /// A diagnostic's start moves with text put in right at it (it's still
     /// on the same word), its end doesn't (typing after a word doesn't
-    /// stretch its underline).
+    /// stretch its underline), unless the text goes where some of the
+    /// diagnostic's was deleted this undo step: then it's a replacement
+    /// (`ciw`, a rename, a paste over a selection) and is inside it.
     fn diagnostics_after_insert(&mut self, at: Position, end: Position) {
         self.virtual_text_after_insert(at, end);
         let shift = |p: Position| {
@@ -431,14 +437,18 @@ impl Document {
                 Position::new(p.row + (end.row - at.row), p.col)
             }
         };
-        for d in &mut self.diagnostics {
-            if d.start >= at {
+        self.diagnostic_holes.resize(self.diagnostics.len(), None);
+        for (d, hole) in self.diagnostics.iter_mut().zip(&mut self.diagnostic_holes) {
+            let replacing = *hole == Some(at);
+            if d.start > at || (d.start == at && !replacing) {
                 d.start = shift(d.start);
             }
-            if d.end > at {
+            if d.end > at || (d.end == at && replacing) {
                 d.end = shift(d.end);
             }
             d.end = d.end.max(d.start);
+            // Typing on in the replacement stays in it.
+            *hole = hole.map(|h| if h >= at { shift(h) } else { h });
         }
     }
 
@@ -457,9 +467,13 @@ impl Document {
                 Position::new(p.row - (end.row - start.row), p.col)
             }
         };
-        for d in &mut self.diagnostics {
+        self.diagnostic_holes.resize(self.diagnostics.len(), None);
+        for (d, hole) in self.diagnostics.iter_mut().zip(&mut self.diagnostic_holes) {
+            // Some of its own text went, not just text beside it.
+            let inside = d.start < end && d.end > start;
             d.start = shift(d.start);
             d.end = shift(d.end);
+            *hole = if inside { Some(start) } else { hole.map(shift) };
         }
     }
 
@@ -539,6 +553,8 @@ impl Document {
     pub fn commit(&mut self) {
         if !self.commits_held {
             self.history.commit();
+            // Text put in later isn't replacing what this step deleted.
+            self.diagnostic_holes.fill(None);
         }
     }
 
@@ -553,6 +569,7 @@ impl Document {
         let mut made = Vec::new();
         let undone = self.history.undo_noting(&mut self.buffer, &mut made);
         self.diagnostics_after_changes(&made);
+        self.diagnostic_holes.fill(None);
         if let Some(pos) = undone {
             self.set_cursor(pos);
         }
@@ -564,6 +581,7 @@ impl Document {
         let mut made = Vec::new();
         let redone = self.history.redo_noting(&mut self.buffer, &mut made);
         self.diagnostics_after_changes(&made);
+        self.diagnostic_holes.fill(None);
         if let Some(pos) = redone {
             self.set_cursor(pos);
         }
@@ -630,6 +648,54 @@ mod tests {
         );
         doc.delete(pos(0, 0), pos(0, 12));
         assert_eq!(spans(&doc), [((0, 0), (0, 0))], "all deleted: where it was");
+    }
+
+    #[test]
+    fn text_that_replaces_a_diagnostics_text_is_inside_it() {
+        // `bad` on the second line, as `ciw` changes it.
+        let mut doc = Document::with_text("one\nlet bad = 1;");
+        doc.set_diagnostics(vec![diagnostic((1, 4), (1, 7))]);
+        doc.delete(pos(1, 4), pos(1, 7));
+        for (i, c) in "good".chars().enumerate() {
+            doc.insert(pos(1, 4 + i), &c.to_string());
+        }
+        assert_eq!(spans(&doc), [((1, 4), (1, 8))], "typed in a char at a time");
+        doc.commit();
+        doc.insert(pos(1, 8), "s");
+        assert_eq!(
+            spans(&doc),
+            [((1, 4), (1, 8))],
+            "a later step doesn't stretch it"
+        );
+
+        // Its start replaced (a rename of `bad` in `bad_name`), then its end.
+        let mut doc = Document::with_text("let bad_name = 1;");
+        doc.set_diagnostics(vec![diagnostic((0, 4), (0, 12))]);
+        doc.delete(pos(0, 4), pos(0, 7));
+        doc.insert(pos(0, 4), "good");
+        assert_eq!(spans(&doc), [((0, 4), (0, 13))], "start replaced");
+        doc.commit();
+        doc.delete(pos(0, 9), pos(0, 13));
+        doc.insert(pos(0, 9), "id");
+        assert_eq!(spans(&doc), [((0, 4), (0, 11))], "end replaced");
+
+        // Text beside it deleted and put back isn't its own.
+        let mut doc = Document::with_text("a bad b");
+        doc.set_diagnostics(vec![diagnostic((0, 2), (0, 5))]);
+        doc.delete(pos(0, 5), pos(0, 6));
+        doc.insert(pos(0, 5), "-");
+        doc.delete(pos(0, 1), pos(0, 2));
+        doc.insert(pos(0, 1), "-");
+        assert_eq!(spans(&doc), [((0, 2), (0, 5))]);
+
+        // Undo puts the text back where it was.
+        let mut doc = Document::with_text("let bad = 1;");
+        doc.set_diagnostics(vec![diagnostic((0, 4), (0, 7))]);
+        doc.delete(pos(0, 4), pos(0, 7));
+        doc.insert(pos(0, 4), "good");
+        doc.commit();
+        doc.undo();
+        assert_eq!(spans(&doc), [((0, 4), (0, 7))], "undone");
     }
 
     #[test]
