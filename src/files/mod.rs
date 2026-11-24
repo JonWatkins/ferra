@@ -2,8 +2,8 @@
 //!
 //! Every change to the user's files goes through here (see
 //! docs/adr/0004-saving-goes-through-files.md): saving a buffer's file
-//! ([`write`]), making a file or folder ([`create_file`], [`create_dir`]),
-//! moving one ([`rename`]) and moving it to the bin ([`trash`]). None of
+//! ([`write()`]), making a file or folder ([`create_file`], [`create_dir`]),
+//! moving one ([`rename`]) and moving it to the bin ([`trash()`]). None of
 //! them replaces what's already there unless that's the point (saving). It deals in raw bytes;
 //! converting them to buffer text (encoding, line endings, final newline)
 //! is [`core::TextFormat`](crate::core::TextFormat)'s job.
@@ -65,7 +65,7 @@ pub fn read(path: &Path) -> Result<Option<FileContents>, FileError> {
 /// `backupcopy=auto`) the file is written in place instead when that would
 /// lose something: when it has other hard-linked names, when its owner or
 /// group can't be kept, or when no temporary file can be made next to it
-/// (a read-only directory). See [`write_in_place`].
+/// (a read-only directory). See `write_in_place`.
 pub fn write(path: &Path, contents: &[u8]) -> Result<Option<FileStamp>, FileError> {
     let target = resolve_symlink(path);
     let dir = match target.parent() {

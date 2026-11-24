@@ -251,7 +251,7 @@ pub fn register(r: &mut CommandRegistry) {
     );
 }
 
-/// `J` (`tidy`) / `gJ`: joins [count] lines, or the selected lines.
+/// `J` (`tidy`) / `gJ`: joins `[count]` lines, or the selected lines.
 fn join_lines(cx: &mut Context, tidy: bool) -> CommandResult {
     let (row, joins) = match cx.editor.take_selection() {
         Some(range) => {
