@@ -233,12 +233,18 @@ impl Document {
         self.marks.set(name, self.cursor);
     }
 
-    /// Where mark `name` is, clamped into the buffer (undo can move text
-    /// without moving marks).
+    /// Where mark `name` is, clamped into the buffer.
     pub fn mark(&self, name: char) -> Option<Position> {
-        let mark = self.marks.get(name)?;
-        let row = mark.row.min(self.buffer.line_count() - 1);
-        Some(Position::new(row, mark.col.min(self.buffer.line_len(row))))
+        Some(self.clamp(self.marks.get(name)?))
+    }
+
+    /// Before an edit: if it starts a new undo step, the marks keep where
+    /// they are now, for undo to put them back.
+    fn begin_step_if_new(&mut self) {
+        if !self.history.has_pending() {
+            self.marks
+                .begin_step(self.history.next_revision(), self.history.revision());
+        }
     }
 
     /// Increases with every edit; undo and redo don't count as edits.
@@ -307,6 +313,7 @@ impl Document {
         if text.is_empty() {
             return at;
         }
+        self.begin_step_if_new();
         let end = self.buffer.insert_text(at, text);
         self.marks.after_insert(at, end);
         self.track_insert(at, end);
@@ -326,6 +333,7 @@ impl Document {
         if start == end {
             return String::new();
         }
+        self.begin_step_if_new();
         let text = self.buffer.delete_range(start, end);
         self.marks.after_delete(start, end);
         self.track_delete(start, end);
@@ -566,8 +574,13 @@ impl Document {
 
     /// Undoes one step. Returns `false` if there was nothing to undo.
     pub fn undo(&mut self) -> bool {
+        self.history.commit();
+        let step = self.history.revision();
         let mut made = Vec::new();
         let undone = self.history.undo_noting(&mut self.buffer, &mut made);
+        if undone.is_some() {
+            self.marks.undone_or_redone(step, &made);
+        }
         self.diagnostics_after_changes(&made);
         self.diagnostic_holes.fill(None);
         if let Some(pos) = undone {
@@ -580,6 +593,9 @@ impl Document {
     pub fn redo(&mut self) -> bool {
         let mut made = Vec::new();
         let redone = self.history.redo_noting(&mut self.buffer, &mut made);
+        if redone.is_some() {
+            self.marks.undone_or_redone(self.history.revision(), &made);
+        }
         self.diagnostics_after_changes(&made);
         self.diagnostic_holes.fill(None);
         if let Some(pos) = redone {
@@ -919,6 +935,34 @@ mod tests {
         doc.delete_lines(0, 1);
         assert_eq!(doc.mark('m'), Some(Position::new(1, 0)));
         assert_eq!(doc.mark('x'), None);
+    }
+
+    #[test]
+    fn marks_follow_undo_and_redo() {
+        let mut doc = Document::with_text("a\nbee\nc\nd");
+        doc.set_cursor(pos(1, 2));
+        doc.set_mark('b');
+        doc.set_cursor(pos(3, 0));
+        doc.set_mark('d');
+        doc.delete_lines(1, 1);
+        doc.commit();
+        assert_eq!(
+            (doc.mark('b'), doc.mark('d')),
+            (Some(pos(1, 0)), Some(pos(2, 0)))
+        );
+
+        doc.undo();
+        assert_eq!(doc.mark('b'), Some(pos(1, 2)), "back on its line");
+        assert_eq!(doc.mark('d'), Some(pos(3, 0)), "moved down again");
+
+        doc.set_cursor(pos(0, 0));
+        doc.insert_str("x\n");
+        doc.commit();
+        doc.undo();
+        assert_eq!(doc.mark('d'), Some(pos(3, 0)), "an undone insert");
+
+        doc.redo();
+        assert_eq!(doc.mark('d'), Some(pos(4, 0)), "redone");
     }
 
     #[test]
