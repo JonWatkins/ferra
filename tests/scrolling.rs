@@ -155,6 +155,47 @@ fn line_scrolling_moves_the_cursor_only_to_keep_it_in_sight() {
 }
 
 #[test]
+fn line_scrolling_of_wrapped_lines_goes_a_row_at_a_time() {
+    // Each line takes two rows; the margin is 4 rows.
+    let mut app = app();
+    let text: Vec<String> = (0..100)
+        .map(|i| format!("line {i} {}", "x".repeat(30)))
+        .collect();
+    keys(&mut app, &format!("i{}<Esc>gg", text.join("<CR>")));
+    render(&mut app, 40, 12);
+    let top = |app: &mut App| -> String { render(app, 40, 12).rows[0].clone() };
+    let first = |app: &mut App| -> usize {
+        let rows = render(app, 40, 12).rows;
+        let text = rows[0].split("line ").nth(1).unwrap();
+        text.split_whitespace().next().unwrap().parse().unwrap()
+    };
+    keys(&mut app, "<C-e>");
+    let shown = top(&mut app);
+    assert!(shown.contains("<<<"), "line 0's second row on top: {shown}");
+    assert!(!shown.contains("line 0"));
+    assert_eq!(cursor(&app).0, 2, "off line 0, and out of the margin");
+    assert_eq!(render(&mut app, 40, 12).cursor.1, 4, "line 2's second row");
+    keys(&mut app, "<C-e>");
+    assert_eq!(first(&mut app), 1);
+    assert_eq!(cursor(&app).0, 3);
+    keys(&mut app, "<C-y>");
+    assert!(top(&mut app).contains("<<<"));
+    assert_eq!(cursor(&app).0, 3, "still in sight");
+    keys(&mut app, "3<C-e>");
+    assert_eq!(first(&mut app), 2, "a count is the number of rows");
+    keys(&mut app, "3<C-y>");
+    assert!(top(&mut app).contains("<<<"));
+    keys(&mut app, "<C-y>");
+    assert_eq!(first(&mut app), 0);
+    keys(&mut app, "<C-y>");
+    assert_eq!(first(&mut app), 0, "nothing above the buffer's start");
+    keys(&mut app, "99999999999999999999<C-e>");
+    assert_eq!(cursor(&app).0, 99, "as far as there is");
+    let rows = render(&mut app, 40, 12).rows;
+    assert!(rows.iter().any(|row| row.contains("line 99")));
+}
+
+#[test]
 fn z_commands_put_the_cursor_line_at_the_top_middle_or_bottom() {
     let mut app = hundred_lines();
     keys(&mut app, "50Gzt");
