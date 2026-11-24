@@ -590,6 +590,15 @@ impl Editor {
         self.mode
     }
 
+    /// Moves the cursor `delta` lines, keeping its column on screen
+    /// ([`Document::move_vertical`]): as drawn in this mode, with this
+    /// tab width and the line's inlay hints.
+    pub fn move_vertical(&mut self, delta: isize) {
+        let caret = self.mode == Mode::Insert;
+        self.document
+            .move_vertical(delta, self.options.tab_width, caret);
+    }
+
     /// Switches mode, applying Vim's transition rules.
     pub fn set_mode(&mut self, mode: Mode) {
         // The file to mention to the agent not picked: back to its box.

@@ -440,11 +440,13 @@ fn move_cursor(editor: &mut Editor, motion: &Motion, args: MotionArgs) {
     if motion.jump {
         editor.push_jump();
     }
-    let doc = &mut editor.document;
     if motion.vertical {
-        doc.move_vertical(target.row as isize - cursor.row as isize);
+        editor.move_vertical(target.row as isize - cursor.row as isize);
     } else {
-        doc.set_cursor(target);
+        editor.document.set_cursor(target);
+    }
+    if motion.name == LINE_END.name {
+        editor.document.stick_to_line_end();
     }
     editor.note_block_motion(motion.name == LINE_END.name, motion.vertical);
     // Like Vim's default `foldopen`: searches, marks, `%` and paragraph
@@ -521,6 +523,24 @@ mod tests {
         assert_eq!(e.document.cursor(), pos(2, 4));
         run_cmd(&mut e, "move_up", Some(2));
         assert_eq!(e.document.cursor(), pos(0, 4));
+    }
+
+    #[test]
+    fn vertical_moves_keep_the_screen_column() {
+        let mut e = editor("\tx\nabcdx", pos(0, 1), Mode::Normal);
+        e.options.tab_width = 4;
+        run_cmd(&mut e, "move_down", None);
+        assert_eq!(e.document.cursor(), pos(1, 4), "the x under the x");
+    }
+
+    #[test]
+    fn after_line_end_vertical_moves_stay_at_the_end() {
+        let mut e = editor("abcdef\nab\nabcdefgh", pos(0, 1), Mode::Normal);
+        run_cmd(&mut e, "goto_line_end", None);
+        run_cmd(&mut e, "move_down", None);
+        assert_eq!(e.document.cursor(), pos(1, 1));
+        run_cmd(&mut e, "move_down", None);
+        assert_eq!(e.document.cursor(), pos(2, 7));
     }
 
     #[test]

@@ -35,7 +35,10 @@ pub struct Document {
     id: DocumentId,
     buffer: Buffer,
     cursor: Position,
-    /// Column to aim for when moving vertically through shorter lines.
+    /// The screen column vertical moves keep (Vim's `curswant`): where the
+    /// cursor was drawn when they started, taken then (`None` until a
+    /// vertical move after the cursor moved sideways). `usize::MAX` after
+    /// `$`: the end of every line.
     sticky_col: Option<usize>,
     history: History,
     path: Option<PathBuf>,
@@ -250,12 +253,41 @@ impl Document {
         self.sticky_col = None;
     }
 
-    /// Moves the cursor `delta` lines, keeping the column where possible.
-    pub fn move_vertical(&mut self, delta: isize) {
+    /// Moves the cursor `delta` lines, keeping its column on screen as
+    /// Vim does: lines with tabs, wide chars or inlay hints in front of it
+    /// don't move it sideways. On each line it goes to the char covering
+    /// that column (the char after it, in a hint), or the line's end.
+    ///
+    /// The column is where the cursor is drawn as the moves start: on its
+    /// char, after any hint in front of it, or with `caret` (insert mode)
+    /// before the hint, where typing goes. Moving sideways forgets it.
+    pub fn move_vertical(&mut self, delta: isize, tab_width: usize, caret: bool) {
         let max_row = self.buffer.line_count() - 1;
         let row = self.cursor.row.saturating_add_signed(delta).min(max_row);
-        let target = *self.sticky_col.get_or_insert(self.cursor.col);
-        self.cursor = Position::new(row, target.min(self.buffer.line_len(row)));
+        let target = match self.sticky_col {
+            Some(target) => target,
+            None => {
+                let cells = self.line_cells(self.cursor.row, tab_width);
+                let drawn_at = if caret {
+                    cells.gap(self.cursor.col)
+                } else {
+                    cells.start(self.cursor.col)
+                };
+                *self.sticky_col.insert(drawn_at)
+            }
+        };
+        let col = if target == usize::MAX {
+            self.buffer.line_len(row)
+        } else {
+            self.line_cells(row, tab_width).char_at(target)
+        };
+        self.cursor = Position::new(row, col);
+    }
+
+    /// After `$`: vertical moves go to the end of each line until the
+    /// cursor moves sideways.
+    pub fn stick_to_line_end(&mut self) {
+        self.sticky_col = Some(usize::MAX);
     }
 
     /// Keeps the cursor on a character, as required in normal mode.
@@ -624,19 +656,88 @@ mod tests {
     fn vertical_movement_remembers_column() {
         let mut doc = Document::with_text("long line\nab\nlong line");
         doc.set_cursor(pos(0, 6));
-        doc.move_vertical(1);
+        doc.move_vertical(1, 4, false);
         assert_eq!(doc.cursor(), pos(1, 2));
-        doc.move_vertical(1);
+        doc.move_vertical(1, 4, false);
         assert_eq!(doc.cursor(), pos(2, 6));
     }
 
     #[test]
     fn vertical_movement_clamps_rows() {
         let mut doc = Document::with_text("a\nb");
-        doc.move_vertical(-5);
+        doc.move_vertical(-5, 4, false);
         assert_eq!(doc.cursor().row, 0);
-        doc.move_vertical(5);
+        doc.move_vertical(5, 4, false);
         assert_eq!(doc.cursor().row, 1);
+    }
+
+    // What Vim 9.0.1894 and Neovim 0.11 do, checked in each (#107).
+
+    #[test]
+    fn vertical_movement_keeps_the_screen_column_over_tabs_and_wide_chars() {
+        let mut doc = Document::with_text("\tx\nabcdx\n日本x");
+        doc.set_cursor(pos(0, 1));
+        doc.move_vertical(1, 4, false);
+        assert_eq!(doc.cursor(), pos(1, 4), "the x under the x");
+        doc.move_vertical(1, 4, false);
+        assert_eq!(doc.cursor(), pos(2, 2), "and the x after two wide chars");
+        doc.set_cursor(pos(1, 3));
+        doc.move_vertical(1, 4, false);
+        assert_eq!(doc.cursor(), pos(2, 1), "a wide char partly under it");
+        doc.move_vertical(-2, 4, false);
+        assert_eq!(doc.cursor(), pos(0, 0), "a tab partly under it");
+        doc.move_vertical(1, 4, false);
+        assert_eq!(doc.cursor(), pos(1, 3), "the column's kept, not the tab's");
+    }
+
+    fn hint(doc: &mut Document, at: Position, text: &str) {
+        doc.set_virtual_text(
+            "test",
+            vec![VirtualText {
+                source: "test".into(),
+                at,
+                text: text.into(),
+                style: String::new(),
+                end_of_line: false,
+            }],
+        );
+    }
+
+    #[test]
+    fn vertical_movement_keeps_the_screen_column_over_inlay_hints() {
+        // The second line is drawn `f(x: 1, 2)`.
+        let mut doc = Document::with_text("abcdefgh\nf(1, 2)");
+        hint(&mut doc, pos(1, 2), "x: ");
+        doc.set_cursor(pos(0, 6));
+        doc.move_vertical(1, 4, false);
+        assert_eq!(doc.cursor(), pos(1, 3), "the `,` drawn under it");
+        doc.set_cursor(pos(0, 3));
+        doc.move_vertical(1, 4, false);
+        assert_eq!(doc.cursor(), pos(1, 2), "in the hint: the char after it");
+        doc.move_vertical(-1, 4, false);
+        assert_eq!(doc.cursor(), pos(0, 3), "and back where it was");
+        // From the `1`: where it's drawn, after the hint.
+        doc.set_cursor(pos(1, 2));
+        doc.move_vertical(-1, 4, false);
+        assert_eq!(doc.cursor(), pos(0, 5));
+        // A caret (insert mode) is drawn before the hint.
+        doc.set_cursor(pos(1, 2));
+        doc.move_vertical(-1, 4, true);
+        assert_eq!(doc.cursor(), pos(0, 2));
+    }
+
+    #[test]
+    fn after_line_end_vertical_movement_goes_to_each_end() {
+        let mut doc = Document::with_text("abcdefgh\nab\nabcdefgh");
+        doc.set_cursor(pos(0, 8));
+        doc.stick_to_line_end();
+        doc.move_vertical(1, 4, false);
+        assert_eq!(doc.cursor(), pos(1, 2));
+        doc.move_vertical(1, 4, false);
+        assert_eq!(doc.cursor(), pos(2, 8));
+        doc.set_cursor(pos(2, 1));
+        doc.move_vertical(-1, 4, false);
+        assert_eq!(doc.cursor(), pos(1, 1), "moving sideways forgets it");
     }
 
     #[test]
