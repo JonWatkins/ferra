@@ -328,3 +328,16 @@ fn ctrl_shift_or_option_click_goes_to_the_definition() {
         assert!(!message.is_empty(), "goto_definition ran");
     }
 }
+
+#[test]
+fn page_keys_move_the_cursor_with_the_view() {
+    let lines: Vec<String> = (0..100).map(|i| format!("line {i}")).collect();
+    let (mut app, _) = vscode(&lines.join("\n"));
+    render(&mut app, 40, 12);
+    keys(&mut app, "<PageDown><PageDown>");
+    let row = cursor(&app).0;
+    keys(&mut app, "<PageDown>");
+    assert!(cursor(&app).0 > row + 4, "a page down");
+    keys(&mut app, "<PageUp>");
+    assert_eq!(cursor(&app).0, row, "back where it was, not the bottom");
+}

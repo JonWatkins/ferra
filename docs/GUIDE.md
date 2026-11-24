@@ -89,7 +89,8 @@ iTerm2, set Profiles → Keys → Left Option key to "Esc+" for the `Alt` keys.
 | Normal  | `;` `,` | Repeat the last `f`/`t`/`F`/`T` / in the other direction |
 | Normal  | `%`, `50%` | Matching bracket; with a count, that percent of the way through the file |
 | Normal  | `{` `}` | Previous / next empty line (paragraph) |
-| Normal  | `<C-d>` `<C-u>`, `<C-f>` `<C-b>` (`<PageDown>` `<PageUp>`) | Scroll half a screen / a screen down or up, the cursor with it (`3<C-d>`: 3 lines) |
+| Normal  | `<C-d>` `<C-u>` | Scroll half a screen down or up, the cursor with it (`3<C-d>`: 3 lines) |
+| Normal  | `<C-f>` `<C-b>` (`<PageDown>` `<PageUp>`) | Scroll a screen down or up, the cursor to the top (or bottom) of the new screen, just past the `scroll-off` margin; at the start (or end) of the file, nothing moves (`3<C-f>`: 3 screens) |
 | Normal  | `<C-e>` `<C-y>` | Scroll a line down / up, the cursor staying put while it's in sight |
 | Normal  | `zz` `zt` `zb` (`z.` `z<CR>` `z-`) | Scroll the cursor line to the middle / top / bottom (and go to its first non-blank) |
 | Normal  | `H` `M` `L` (`3H`) | Top / middle / bottom line on screen; motions too (`dL`) |

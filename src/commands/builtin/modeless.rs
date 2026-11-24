@@ -60,8 +60,8 @@ pub fn register(r: &mut CommandRegistry) {
     const VERTICAL: [(&str, &str, &str); 4] = [
         ("up", "a line up", "move_up"),
         ("down", "a line down", "move_down"),
-        ("page_up", "a page up", "scroll_page_up"),
-        ("page_down", "a page down", "scroll_page_down"),
+        ("page_up", "a page up", "scroll_page_up_with_cursor"),
+        ("page_down", "a page down", "scroll_page_down_with_cursor"),
     ];
     for (name, what, command) in VERTICAL {
         r.register(
