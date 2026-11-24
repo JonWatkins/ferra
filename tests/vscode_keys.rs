@@ -341,3 +341,23 @@ fn page_keys_move_the_cursor_with_the_view() {
     keys(&mut app, "<PageUp>");
     assert_eq!(cursor(&app).0, row, "back where it was, not the bottom");
 }
+
+/// PageDown works from the rows the draw gives the text (a 40x12 terminal
+/// shows 10, `scroll-off` 5 is 4 of them), so the next draw leaves the view
+/// and the cursor where the key put them.
+#[test]
+fn page_down_agrees_with_the_draw() {
+    let lines: Vec<String> = (0..100).map(|i| format!("line {i}")).collect();
+    let (mut app, _) = vscode(&lines.join("\n"));
+    render(&mut app, 40, 12);
+    keys(&mut app, "<PageDown><PageDown><PageDown>");
+    let id = app.editor().windows().active();
+    assert_eq!(app.editor().windows().height(id), 10);
+    assert_eq!(cursor(&app).0, 28, "8 lines a page, three times");
+    let first = render(&mut app, 40, 12).rows[0].clone();
+    assert!(
+        first.contains("line 24 "),
+        "the view the key asked for: {first}"
+    );
+    assert_eq!(cursor(&app).0, 28, "the draw didn't move it");
+}
