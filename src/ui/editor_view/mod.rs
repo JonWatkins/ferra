@@ -20,7 +20,7 @@ use ratatui::{
     widgets::StatefulWidget,
 };
 
-use crate::config::{EditorOptions, Theme};
+use crate::config::{EditorOptions, LineNumbers, Theme};
 use crate::core::search::{Match, SearchPattern};
 use crate::core::{Position as TextPosition, Range};
 use crate::editor::Document;
@@ -831,7 +831,11 @@ impl EditorView<'_> {
             "ui.linenr"
         };
         let label = if first {
-            gutter::label(row, cursor.row, self.options.line_numbers)
+            let distance = match self.options.line_numbers {
+                LineNumbers::Relative => self.document.visible_lines_between(row, cursor.row),
+                _ => 0,
+            };
+            gutter::label(row, distance, self.options.line_numbers)
         } else {
             String::new()
         };

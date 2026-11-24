@@ -12,13 +12,15 @@ pub fn width(line_count: usize, mode: LineNumbers) -> u16 {
     crate::editor::windows::gutter_width(line_count, mode)
 }
 
-/// The number displayed next to `row` (0-based).
-pub fn label(row: usize, cursor_row: usize, mode: LineNumbers) -> String {
+/// The number displayed next to `row` (0-based), `distance` visible lines
+/// from the cursor's (a closed fold counts as one, so it's the count `j`/`k`
+/// take there; 0 on the cursor's line).
+pub fn label(row: usize, distance: usize, mode: LineNumbers) -> String {
     match mode {
         LineNumbers::None => String::new(),
         LineNumbers::Absolute => (row + 1).to_string(),
-        LineNumbers::Relative if row == cursor_row => (row + 1).to_string(),
-        LineNumbers::Relative => row.abs_diff(cursor_row).to_string(),
+        LineNumbers::Relative if distance == 0 => (row + 1).to_string(),
+        LineNumbers::Relative => distance.to_string(),
     }
 }
 
@@ -46,14 +48,14 @@ mod tests {
     #[test]
     fn absolute_labels() {
         assert_eq!(label(0, 5, LineNumbers::Absolute), "1");
-        assert_eq!(label(9, 5, LineNumbers::Absolute), "10");
+        assert_eq!(label(9, 4, LineNumbers::Absolute), "10");
     }
 
     #[test]
     fn relative_labels_are_hybrid() {
-        assert_eq!(label(5, 5, LineNumbers::Relative), "6");
-        assert_eq!(label(2, 5, LineNumbers::Relative), "3");
-        assert_eq!(label(8, 5, LineNumbers::Relative), "3");
+        assert_eq!(label(5, 0, LineNumbers::Relative), "6");
+        assert_eq!(label(2, 3, LineNumbers::Relative), "3");
+        assert_eq!(label(8, 3, LineNumbers::Relative), "3");
     }
 
     #[test]

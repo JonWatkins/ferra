@@ -17,6 +17,8 @@
 //! Everything that walks lines treats a closed fold as one: `j`/`k` turn their
 //! count of visible lines into buffer lines (`over_folds`, via
 //! `Document::step_visible_lines`), `gj`/`gk` step with `next_visible_line`,
+//! relative line numbers count the same way (`visible_lines_between`, so the
+//! number beside a line is the count `j`/`k` take to it),
 //! `enforce_cursor_rules` keeps the cursor on a fold's first line,
 //! `apply_operator_over` widens line ranges to whole folds,
 //! `TextLayout::rows_in` gives a closed fold one screen row (for keeping the
@@ -159,6 +161,22 @@ impl Document {
         }
         row
     }
+
+    /// How many visible lines apart `a` and `b` are, a closed fold counting
+    /// as one: the count `j`/`k` take from one to the other (relative line
+    /// numbers show it). Both are lines that are shown (a fold's first line
+    /// or one outside folds).
+    pub fn visible_lines_between(&self, a: usize, b: usize) -> usize {
+        let (lo, hi) = (a.min(b), a.max(b));
+        let hidden: usize = self
+            .folds()
+            .closed
+            .iter()
+            .filter(|&&(first, last)| lo <= first && last < hi)
+            .map(|&(first, last)| last - first)
+            .sum();
+        (hi - lo) - hidden
+    }
 }
 
 #[cfg(test)]
@@ -197,6 +215,23 @@ mod tests {
         assert_eq!(d.closed_folds(), [(2, 4)], "undo moves it back");
         d.insert(Position::new(3, 0), "x");
         assert_eq!(d.closed_folds(), [], "an edit inside opens it");
+    }
+
+    #[test]
+    fn visible_lines_between_counts_a_fold_as_one() {
+        let mut d = doc();
+        d.close_fold(2, 4);
+        assert_eq!(d.visible_lines_between(0, 6), 4, "0 1 [2-4] 5 6");
+        assert_eq!(d.visible_lines_between(6, 0), 4, "either way round");
+        assert_eq!(d.visible_lines_between(2, 5), 1, "from the fold");
+        assert_eq!(d.visible_lines_between(1, 2), 1, "onto the fold");
+        assert_eq!(d.visible_lines_between(5, 6), 1);
+        assert_eq!(d.visible_lines_between(3, 3), 0);
+        // What `j` with that count reaches.
+        assert_eq!(
+            d.step_visible_lines(0, d.visible_lines_between(0, 6), true),
+            6
+        );
     }
 
     #[test]

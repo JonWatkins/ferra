@@ -137,3 +137,24 @@ fn a_big_fold_lets_the_lines_after_it_on_screen() {
     assert_eq!(cursor(&app).0, 51);
     assert_eq!(screen(&mut app)[1], "after", "still all on screen");
 }
+
+#[test]
+fn relative_numbers_count_a_closed_fold_as_one_line() {
+    let mut app = code();
+    keys(&mut app, ":set rnu<CR>za");
+    let gutter: Vec<String> = render(&mut app, 40, 10)
+        .rows
+        .iter()
+        .take(4)
+        .map(|r| r.chars().take(5).collect::<String>().trim().to_string())
+        .collect();
+    assert_eq!(gutter, ["1", "1", "2", "3"], "fn b() is 1j away");
+    keys(&mut app, "G");
+    let gutter: Vec<String> = render(&mut app, 40, 10)
+        .rows
+        .iter()
+        .take(1)
+        .map(|r| r.chars().take(5).collect::<String>().trim().to_string())
+        .collect();
+    assert_eq!(gutter, ["3"], "fn a()'s fold is 3k up from the last line");
+}
