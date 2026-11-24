@@ -50,7 +50,63 @@ fn pages_keep_two_lines_of_overlap() {
     assert_eq!(first_shown(&mut app), 8);
     keys(&mut app, "<C-b><C-b>");
     assert_eq!(first_shown(&mut app), 0);
-    assert_eq!(cursor(&app).0, 0);
+    assert_eq!(cursor(&app).0, 5, "the bottom (9), out of the margin");
+}
+
+#[test]
+fn pages_put_the_cursor_at_the_new_screens_edge() {
+    let mut app = hundred_lines();
+    keys(&mut app, "<C-f>");
+    assert_eq!(first_shown(&mut app), 8);
+    assert_eq!(cursor(&app).0, 12, "the top, out of the margin");
+    keys(&mut app, "G<C-b>");
+    let top = first_shown(&mut app);
+    assert_eq!(cursor(&app).0, top + 9 - 4, "the bottom, out of the margin");
+    keys(&mut app, "gg<C-b>");
+    assert_eq!(cursor(&app).0, 0, "no view to move, so the cursor stays");
+    keys(&mut app, "3<C-f>");
+    assert_eq!(first_shown(&mut app), 24, "a count is the number of pages");
+    assert_eq!(cursor(&app).0, 28);
+    keys(&mut app, "G<C-f>");
+    assert_eq!(cursor(&app).0, 99, "nowhere further to go");
+    keys(&mut app, "<C-f>");
+    assert_eq!(cursor(&app).0, 99);
+}
+
+#[test]
+fn a_huge_count_pages_as_far_as_there_is() {
+    let mut app = hundred_lines();
+    keys(&mut app, "99999999999999999999<C-f>");
+    assert_eq!(cursor(&app).0, 99, "down, not wrapped round to up");
+    keys(&mut app, "99999999999999999999<C-b>");
+    assert_eq!(first_shown(&mut app), 0);
+    keys(&mut app, "99999999999999999999<C-d>");
+    assert_eq!(cursor(&app).0, 99);
+}
+
+#[test]
+fn pages_of_wrapped_lines_land_where_they_said() {
+    // Each line takes two rows, so 10 rows show 5 lines, and the margin
+    // of 4 rows is 2 lines.
+    let mut app = app();
+    let text: Vec<String> = (0..100)
+        .map(|i| format!("line {i} {}", "x".repeat(30)))
+        .collect();
+    keys(&mut app, &format!("i{}<Esc>gg", text.join("<CR>")));
+    render(&mut app, 40, 12);
+    let first = |app: &mut App| -> usize {
+        let rows = render(app, 40, 12).rows;
+        let text = rows[0].split("line ").nth(1).unwrap();
+        text.split_whitespace().next().unwrap().parse().unwrap()
+    };
+    keys(&mut app, "<C-f>");
+    assert_eq!(first(&mut app), 8, "not pulled back to the cursor");
+    assert_eq!(cursor(&app).0, 10, "two lines (four rows) down");
+    keys(&mut app, "<C-f>");
+    assert_eq!(first(&mut app), 16);
+    keys(&mut app, "<C-b>");
+    assert_eq!(first(&mut app), 8, "not pushed on by the cursor");
+    assert_eq!(cursor(&app).0, 10, "two lines up from the bottom");
 }
 
 #[test]

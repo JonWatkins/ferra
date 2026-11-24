@@ -1,6 +1,10 @@
 //! Scrolling the view: `<C-d>`/`<C-u>`, `<C-f>`/`<C-b>`, `<C-e>`/`<C-y>`,
 //! `zz`/`zt`/`zb`, and the screen-line motions `H`, `M`, `L`.
 //!
+//! `<C-d>`/`<C-u>` move the cursor with the view; `<C-f>`/`<C-b>` put it at
+//! the new screen's top (or bottom), as in Vim. VS Code's PageDown/PageUp
+//! move it with the view, a page at a time.
+//!
 //! The view's first row lives in the UI; [`Windows::view_top`] reports it
 //! (as the next draw will have it) and [`Windows::request_top`] asks the UI
 //! to move it at the next draw, where it's still scrolled to keep the
@@ -23,7 +27,7 @@ pub fn register(r: &mut CommandRegistry) {
         "Scroll down half a screen, and the cursor with it ([count] lines)",
         |cx| {
             let n = cx.count.unwrap_or_else(|| half(cx.editor));
-            scroll_with_cursor(cx.editor, n as isize);
+            scroll_with_cursor(cx.editor, signed(n));
             Ok(())
         },
     );
@@ -32,25 +36,43 @@ pub fn register(r: &mut CommandRegistry) {
         "Scroll up half a screen, and the cursor with it ([count] lines)",
         |cx| {
             let n = cx.count.unwrap_or_else(|| half(cx.editor));
-            scroll_with_cursor(cx.editor, -(n as isize));
+            scroll_with_cursor(cx.editor, -signed(n));
             Ok(())
         },
     );
     r.register(
         "scroll_page_down",
-        "Scroll down a screen (less two lines), and the cursor with it",
+        "Scroll down a screen (less two lines), the cursor to its top (<C-f>)",
         |cx| {
-            let n = page(cx.editor) * cx.count();
-            scroll_with_cursor(cx.editor, n as isize);
+            let n = page(cx.editor).saturating_mul(cx.count());
+            scroll_page(cx.editor, signed(n));
             Ok(())
         },
     );
     r.register(
         "scroll_page_up",
+        "Scroll up a screen (less two lines), the cursor to its bottom (<C-b>)",
+        |cx| {
+            let n = page(cx.editor).saturating_mul(cx.count());
+            scroll_page(cx.editor, -signed(n));
+            Ok(())
+        },
+    );
+    r.register(
+        "scroll_page_down_with_cursor",
+        "Scroll down a screen (less two lines), and the cursor with it",
+        |cx| {
+            let n = page(cx.editor).saturating_mul(cx.count());
+            scroll_with_cursor(cx.editor, signed(n));
+            Ok(())
+        },
+    );
+    r.register(
+        "scroll_page_up_with_cursor",
         "Scroll up a screen (less two lines), and the cursor with it",
         |cx| {
-            let n = page(cx.editor) * cx.count();
-            scroll_with_cursor(cx.editor, -(n as isize));
+            let n = page(cx.editor).saturating_mul(cx.count());
+            scroll_with_cursor(cx.editor, -signed(n));
             Ok(())
         },
     );
@@ -277,12 +299,19 @@ fn page(editor: &Editor) -> usize {
     view(editor).1.saturating_sub(2).max(1)
 }
 
+/// A count of lines as a signed distance, a huge one (a count can
+/// saturate at `usize::MAX`) capped rather than wrapped negative.
+fn signed(lines: usize) -> isize {
+    isize::try_from(lines).unwrap_or(isize::MAX)
+}
+
 fn last_row(editor: &Editor) -> usize {
     editor.document.buffer().line_count() - 1
 }
 
-/// `<C-d>`, `<C-f>`...: moves the view and the cursor `lines` (down if
-/// positive), as far as the buffer allows, keeping the cursor's column.
+/// `<C-d>`, `<C-u>` (and VS Code's PageDown, PageUp): moves the view and
+/// the cursor `lines` (down if positive), as far as the buffer allows,
+/// keeping the cursor's column.
 fn scroll_with_cursor(editor: &mut Editor, lines: isize) {
     scroll(editor, lines, lines);
 }
@@ -293,30 +322,115 @@ fn scroll_view(editor: &mut Editor, lines: isize) {
     scroll(editor, lines, 0);
 }
 
+/// `<C-f>`, `<C-b>`: moves the view `lines` (down if positive), and the
+/// cursor to the new screen's top (or, up, its bottom), out of the
+/// `scroll-off` margin, keeping its column. As in Vim, when the view
+/// can't move the cursor stays.
+fn scroll_page(editor: &mut Editor, lines: isize) {
+    let top = view(editor).0;
+    let (new_top, bounds) = move_view(editor, lines);
+    if new_top == top {
+        return;
+    }
+    let row = editor.document.cursor().row;
+    let wanted = match bounds {
+        Bounds::Fit { lowest, highest } => {
+            if lines > 0 {
+                lowest
+            } else {
+                highest
+            }
+        }
+        Bounds::Cramped { top, bottom } => row.clamp(top, bottom),
+    };
+    if wanted != row {
+        editor.move_vertical(wanted as isize - row as isize);
+    }
+}
+
 /// Moves the view `view_lines` and the cursor `cursor_lines`, then the
 /// cursor further if that left it in the `scroll-off` margin, as Vim does
 /// (moving the view back instead would undo the scroll).
 fn scroll(editor: &mut Editor, view_lines: isize, cursor_lines: isize) {
-    let (top, height) = view(editor);
+    let (_, bounds) = move_view(editor, view_lines);
     let last = last_row(editor);
-    let new_top = top.saturating_add_signed(view_lines).min(last);
-    editor
-        .windows()
-        .request_top(editor.windows().active(), new_top);
-    let margin = editor.options.scroll_off.min(height.saturating_sub(1) / 2);
-    let bottom = bottom(editor, new_top, height);
-    let lowest = if new_top == 0 { 0 } else { new_top + margin };
-    let highest = if bottom == last {
-        last
-    } else {
-        bottom.saturating_sub(margin)
-    };
     let row = editor.document.cursor().row;
     let moved = row.saturating_add_signed(cursor_lines).min(last);
-    let wanted = moved.clamp(lowest.min(highest), highest);
+    let wanted = match bounds {
+        Bounds::Fit { lowest, highest } => moved.clamp(lowest, highest),
+        Bounds::Cramped { top, bottom } => moved.clamp(top, bottom),
+    };
     if wanted != row {
         editor.move_vertical(wanted as isize - row as isize);
     }
+}
+
+/// Asks for the view to move `lines` (down if positive), as far as the
+/// buffer allows, and returns its new top with where the cursor can be
+/// there (see [`cursor_bounds`]).
+fn move_view(editor: &mut Editor, lines: isize) -> (usize, Bounds) {
+    let top = view(editor).0;
+    let new_top = top.saturating_add_signed(lines).min(last_row(editor));
+    editor
+        .windows()
+        .request_top(editor.windows().active(), new_top);
+    (new_top, cursor_bounds(editor, new_top))
+}
+
+/// Where the cursor can be in a view, from [`cursor_bounds`].
+enum Bounds {
+    /// Lines `lowest` to `highest` keep the view where it is.
+    Fit { lowest: usize, highest: usize },
+    /// No line does (near the end of the buffer, the margin wants rows
+    /// past it; or a line is taller than the window): the next draw
+    /// scrolls whatever happens, so the cursor just stays on screen,
+    /// lines `top` to `bottom`.
+    Cramped { top: usize, bottom: usize },
+}
+
+/// The lines the cursor can be on in a view starting at `top` without the
+/// next draw scrolling it: out of the `scroll-off` margin, which is screen
+/// rows (a wrapped line takes several, a closed fold one), except at the
+/// start and end of the buffer. Each line is checked with the draw's own
+/// [`follow_cursor`], so the two agree.
+///
+/// [`follow_cursor`]: crate::editor::windows::follow_cursor
+fn cursor_bounds(editor: &Editor, top: usize) -> Bounds {
+    let windows = editor.windows();
+    let id = windows.active();
+    let height = windows.height(id);
+    let doc = &editor.document;
+    let layout = TextLayout::new(windows.width(id), doc, &editor.options);
+    let line_count = doc.buffer().line_count();
+    // Whether the view stays at `top` with the cursor at the start of `row`.
+    let stays = |row: usize| {
+        crate::editor::windows::follow_cursor(
+            top,
+            (row, 0),
+            height,
+            line_count,
+            editor.options.scroll_off,
+            |line| layout.rows_in(doc, line),
+        ) == top
+    };
+    let bottom = layout.bottom(doc, top, height);
+    let mut lowest = top;
+    while !stays(lowest) {
+        match doc.next_visible_line(lowest) {
+            Some(next) if next <= bottom => lowest = next,
+            _ => return Bounds::Cramped { top, bottom },
+        }
+    }
+    let mut highest = doc
+        .closed_fold_at(bottom)
+        .map_or(bottom, |(first, _)| first);
+    while highest > lowest && !stays(highest) {
+        match doc.previous_visible_line(highest) {
+            Some(previous) if previous >= lowest => highest = previous,
+            _ => highest = lowest,
+        }
+    }
+    Bounds::Fit { lowest, highest }
 }
 
 #[derive(Clone, Copy)]
