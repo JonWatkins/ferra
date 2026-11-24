@@ -1,7 +1,8 @@
 //! Scrolling the view: `<C-d>`/`<C-u>`, `<C-f>`/`<C-b>`, `<C-e>`/`<C-y>`,
 //! `zz`/`zt`/`zb`, and the screen-line motions `H`, `M`, `L`.
 //!
-//! `<C-d>`/`<C-u>` move the cursor with the view; `<C-f>`/`<C-b>` put it at
+//! `<C-d>`/`<C-u>` move the cursor with the view, by screen rows (whole
+//! lines that fit in half the screen's rows, when lines wrap); `<C-f>`/`<C-b>` put it at
 //! the new screen's top (or bottom), as in Vim. VS Code's PageDown/PageUp
 //! move it with the view, a page at a time.
 //!
@@ -24,19 +25,19 @@ use crate::editor::windows::TextLayout;
 pub fn register(r: &mut CommandRegistry) {
     r.register(
         "scroll_half_page_down",
-        "Scroll down half a screen, and the cursor with it ([count] lines)",
+        "Scroll down half a screen, and the cursor with it ([count] rows)",
         |cx| {
             let n = cx.count.unwrap_or_else(|| half(cx.editor));
-            scroll_with_cursor(cx.editor, signed(n));
+            scroll_rows_with_cursor(cx.editor, n, true);
             Ok(())
         },
     );
     r.register(
         "scroll_half_page_up",
-        "Scroll up half a screen, and the cursor with it ([count] lines)",
+        "Scroll up half a screen, and the cursor with it ([count] rows)",
         |cx| {
             let n = cx.count.unwrap_or_else(|| half(cx.editor));
-            scroll_with_cursor(cx.editor, -signed(n));
+            scroll_rows_with_cursor(cx.editor, n, false);
             Ok(())
         },
     );
@@ -309,9 +310,49 @@ fn last_row(editor: &Editor) -> usize {
     editor.document.buffer().line_count() - 1
 }
 
-/// `<C-d>`, `<C-u>` (and VS Code's PageDown, PageUp): moves the view and
-/// the cursor `lines` (down if positive), as far as the buffer allows,
-/// keeping the cursor's column.
+/// `<C-d>`, `<C-u>`: moves the view and the cursor `rows` screen rows
+/// down (or up), as far as the buffer allows, keeping the cursor's
+/// column. The view starts at a line's start, so each moves whole lines,
+/// as many as fit in `rows` (see [`step_rows`]); without wrapping or
+/// folds that's `rows` lines.
+fn scroll_rows_with_cursor(editor: &mut Editor, rows: usize, down: bool) {
+    let top = view(editor).0;
+    let row = editor.document.cursor().row;
+    let new_top = step_rows(editor, top, rows, down);
+    let moved = step_rows(editor, row, rows, down);
+    let bounds = move_view_to(editor, new_top);
+    settle_cursor(editor, moved, bounds);
+}
+
+/// The line `rows` screen rows down (or up) from line `from`, in whole
+/// lines: as many as fit in `rows`, but at least one, and no further than
+/// the buffer goes. A wrapped line counts all its rows, a closed fold one.
+fn step_rows(editor: &Editor, from: usize, rows: usize, down: bool) -> usize {
+    let windows = editor.windows();
+    let doc = &editor.document;
+    let layout = TextLayout::new(windows.width(windows.active()), doc, &editor.options);
+    let (mut line, mut used) = (from, 0usize);
+    while used < rows {
+        let next = if down {
+            doc.next_visible_line(line)
+        } else {
+            doc.previous_visible_line(line)
+        };
+        let Some(next) = next else { break };
+        // Down, the rows passed are this line's; up, the next one's.
+        let passed = layout.rows_in(doc, if down { line } else { next });
+        if used > 0 && used.saturating_add(passed) > rows {
+            break;
+        }
+        used = used.saturating_add(passed);
+        line = next;
+    }
+    line
+}
+
+/// VS Code's PageDown, PageUp: moves the view and the cursor `lines`
+/// (down if positive), as far as the buffer allows, keeping the cursor's
+/// column.
 fn scroll_with_cursor(editor: &mut Editor, lines: isize) {
     scroll(editor, lines, lines);
 }
@@ -356,6 +397,12 @@ fn scroll(editor: &mut Editor, view_lines: isize, cursor_lines: isize) {
     let last = last_row(editor);
     let row = editor.document.cursor().row;
     let moved = row.saturating_add_signed(cursor_lines).min(last);
+    settle_cursor(editor, moved, bounds);
+}
+
+/// Moves the cursor to line `moved`, or as near as `bounds` allow.
+fn settle_cursor(editor: &mut Editor, moved: usize, bounds: Bounds) {
+    let row = editor.document.cursor().row;
     let wanted = match bounds {
         Bounds::Fit { lowest, highest } => moved.clamp(lowest, highest),
         Bounds::Cramped { top, bottom } => moved.clamp(top, bottom),
@@ -371,10 +418,14 @@ fn scroll(editor: &mut Editor, view_lines: isize, cursor_lines: isize) {
 fn move_view(editor: &mut Editor, lines: isize) -> (usize, Bounds) {
     let top = view(editor).0;
     let new_top = top.saturating_add_signed(lines).min(last_row(editor));
-    editor
-        .windows()
-        .request_top(editor.windows().active(), new_top);
-    (new_top, cursor_bounds(editor, new_top))
+    (new_top, move_view_to(editor, new_top))
+}
+
+/// Asks for the view to start at line `top`, and returns where the cursor
+/// can be there (see [`cursor_bounds`]).
+fn move_view_to(editor: &mut Editor, top: usize) -> Bounds {
+    editor.windows().request_top(editor.windows().active(), top);
+    cursor_bounds(editor, top)
 }
 
 /// Where the cursor can be in a view, from [`cursor_bounds`].
