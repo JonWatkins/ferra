@@ -36,6 +36,10 @@
 //! - Completion items carry their server form too, to be resolved when
 //!   one's taken (`completionItem/resolve`): nothing is kept here between
 //!   queries.
+//! - Renaming from `<F2>` asks `textDocument/prepareRename` first, for
+//!   the name to start from ([`rename_from`]: its placeholder, its range's
+//!   text, or the word under the cursor); a server that renames but has no
+//!   `prepareProvider` is answered here at once with the word.
 //! - Callers and callees take two requests (`prepareCallHierarchy`, then
 //!   the calls to or from what it found), as one query.
 //! - Moving a file asks `workspace/willRenameFiles` for the edits it needs
@@ -302,6 +306,11 @@ impl Lsp {
                 editor.lsp_answered(&request, Err(NoAnswer::Unsupported(client.name.clone())));
                 continue;
             }
+            // It renames but can't say first: the asker takes the word.
+            if request.feature() == LspFeature::PrepareRename && !client.prepares_rename() {
+                editor.lsp_answered(&request, Ok(Answer::RenameFrom(None)));
+                continue;
+            }
             if let LspQuery::ApplyCodeAction { action } = &request.query {
                 let server = action.server.clone();
                 make_action(editor, client, request, &server);
@@ -564,9 +573,51 @@ pub(super) fn answer(
             busy: busy(),
         },
         LspFeature::SignatureHelp => Answer::Signature(signature_help(&result)),
+        LspFeature::PrepareRename => {
+            let Some(document) = editor.document_by_id(request.document) else {
+                return;
+            };
+            match rename_from(document.buffer(), &result, client.encoding) {
+                Some(name) => Answer::RenameFrom(name),
+                None => {
+                    editor.lsp_answered(&request, Err(NoAnswer::NothingThere));
+                    return;
+                }
+            }
+        }
         _ => return,
     };
     editor.lsp_answered(&request, Ok(answer));
+}
+
+/// A `prepareRename` answer: `None` if there's nothing to rename there
+/// (null), else the name to start from: its placeholder, or its range's
+/// text, or the word under the cursor (`Some(None)`) when it says to
+/// (`defaultBehavior`) or its range isn't a name on one line.
+fn rename_from(
+    buffer: &crate::core::Buffer,
+    result: &Value,
+    encoding: Encoding,
+) -> Option<Option<String>> {
+    if result.is_null() {
+        return None;
+    }
+    if let Some(placeholder) = result["placeholder"].as_str() {
+        return Some(Some(placeholder.to_string()));
+    }
+    // A bare range, or `{range}` with no placeholder.
+    let range = if result.get("range").is_some() {
+        &result["range"]
+    } else {
+        result
+    };
+    if range.get("start").is_none() {
+        return Some(None);
+    }
+    let start = convert::from_lsp(buffer, &range["start"], encoding);
+    let end = convert::from_lsp(buffer, &range["end"], encoding);
+    let one_line = start.row == end.row && start.col < end.col;
+    Some(one_line.then(|| buffer.text_range(start, end)))
 }
 
 /// A server's error answer, as the reason there's no answer.
@@ -1691,6 +1742,22 @@ mod tests {
             "repeats dropped"
         );
         assert!(locations(&editor, &Value::Null, Encoding::Utf8).is_empty());
+    }
+
+    #[test]
+    fn rename_from_every_kind_of_prepare_answer() {
+        let buffer = crate::core::Buffer::from_text("fn f<'a>() {}\nnext");
+        let rename_from = |result| rename_from(&buffer, &result, Encoding::Utf16);
+        let at = |line: u64, character: u64| json!({"line": line, "character": character});
+        assert_eq!(rename_from(Value::Null), None, "nothing to rename");
+        let range = json!({"start": at(0, 5), "end": at(0, 7)});
+        assert_eq!(rename_from(range.clone()), Some(Some("'a".into())));
+        let named = json!({"range": range, "placeholder": "b"});
+        assert_eq!(rename_from(named), Some(Some("b".into())));
+        let default = json!({"defaultBehavior": true});
+        assert_eq!(rename_from(default), Some(None), "the word");
+        let lines = json!({"start": at(0, 5), "end": at(1, 2)});
+        assert_eq!(rename_from(lines), Some(None), "not a name");
     }
 }
 

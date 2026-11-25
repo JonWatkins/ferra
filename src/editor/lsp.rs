@@ -23,14 +23,18 @@
 //!   disk once per file). One is gone to as a jump (`goto_location`, which
 //!   opens the file by its path relative to the current folder when it's
 //!   under it); several open a picker whose items are `PickerAction::GoTo`.
-//! - Rename: `:rename name` asks `LspQuery::Rename`; `<F2>` opens the
-//!   command line with `rename <word>` in it. The answer's `Edits` are made
-//!   by `apply_lsp_edits`: each file's in its buffer, through
-//!   `edit_document`, which makes them one undo step of their own in any
-//!   buffer (`Document::apply_edits`, the same as formatting's); files that
-//!   weren't open were opened in the background (no jump, not shown, left
-//!   modified). The message counts changes and files, and the other files
-//!   left unsaved.
+//! - Rename: `:rename name` asks `LspQuery::Rename`. `<F2>` asks
+//!   `PrepareRename` first, and opens the command line with `rename
+//!   <name>` in it: the server's name for the symbol (its placeholder, or
+//!   the text of its range), or the word under the cursor when the server
+//!   says to or can't be asked (no `prepareProvider`); when the server
+//!   says there's nothing to rename there, it says so instead. The
+//!   answer's `Edits` are made by `apply_lsp_edits`: each file's in its
+//!   buffer, through `edit_document`, which makes them one undo step of
+//!   their own in any buffer (`Document::apply_edits`, the same as
+//!   formatting's); files that weren't open were opened in the background
+//!   (no jump, not shown, left modified). The message counts changes and
+//!   files, and the other files left unsaved.
 //! - Code actions: `<Space>a` asks for the cursor, or a visual selection's
 //!   range. The answer's actions are kept as the screen's `ActionList`
 //!   (numbered, with the document and edit count they're for) and listed in
@@ -74,6 +78,9 @@ pub enum LspFeature {
     /// The rest of a completion item that was taken (its import).
     ResolveCompletion,
     Format,
+    /// Whether the symbol at the place can be renamed, and its name to
+    /// start from (`textDocument/prepareRename`).
+    PrepareRename,
     Rename,
     /// The fixes and changes the server offers for a range.
     CodeAction,
@@ -115,7 +122,7 @@ impl LspFeature {
             LspFeature::References => "references",
             LspFeature::Completion | LspFeature::ResolveCompletion => "completion",
             LspFeature::Format => "formatting",
-            LspFeature::Rename => "renaming",
+            LspFeature::PrepareRename | LspFeature::Rename => "renaming",
             LspFeature::CodeAction
             | LspFeature::ApplyCodeAction
             | LspFeature::ResolveCodeAction => "code actions",
@@ -142,7 +149,7 @@ impl LspFeature {
             LspFeature::References => "References",
             LspFeature::Completion | LspFeature::ResolveCompletion => "Completions",
             LspFeature::Format => "Formatting",
-            LspFeature::Rename => "Rename",
+            LspFeature::PrepareRename | LspFeature::Rename => "Rename",
             LspFeature::CodeAction
             | LspFeature::ApplyCodeAction
             | LspFeature::ResolveCodeAction => "Code actions",
@@ -207,6 +214,7 @@ pub enum LspQuery {
         item: serde_json::Value,
     },
     Format,
+    PrepareRename,
     Rename {
         name: String,
     },
@@ -269,6 +277,7 @@ impl LspQuery {
             LspQuery::Completion { .. } => LspFeature::Completion,
             LspQuery::ResolveCompletion { .. } => LspFeature::ResolveCompletion,
             LspQuery::Format => LspFeature::Format,
+            LspQuery::PrepareRename => LspFeature::PrepareRename,
             LspQuery::Rename { .. } => LspFeature::Rename,
             LspQuery::CodeActions { .. } => LspFeature::CodeAction,
             LspQuery::ApplyCodeAction { .. } => LspFeature::ApplyCodeAction,
@@ -296,6 +305,7 @@ impl LspQuery {
             LspFeature::Implementation => LspQuery::Implementation,
             LspFeature::References => LspQuery::References,
             LspFeature::Format => LspQuery::Format,
+            LspFeature::PrepareRename => LspQuery::PrepareRename,
             LspFeature::DocumentSymbols => LspQuery::DocumentSymbols,
             LspFeature::Outline => LspQuery::Outline,
             LspFeature::DocumentHighlight => LspQuery::DocumentHighlight,
@@ -358,6 +368,10 @@ pub enum Answer {
     Hover(String),
     /// Changes the server proposes: a rename's.
     Edits(Edits),
+    /// The symbol at the place can be renamed: the name to start from,
+    /// as the server gave it, or `None` to take the word under the cursor
+    /// (the server said to, or doesn't say).
+    RenameFrom(Option<String>),
     /// The code actions there are (those that can be done there).
     Actions(Vec<CodeAction>),
     /// Completions for the word being typed; `incomplete` if the server
@@ -1013,6 +1027,25 @@ impl Editor {
         self.code_actions = kept;
     }
 
+    /// `rename_prompt` (`<F2>`): asks the server whether the symbol under
+    /// the cursor can be renamed, and opens the command line with `rename
+    /// <name>` in it when it can (`open_rename`).
+    pub fn prompt_rename(&mut self) -> Result<(), String> {
+        self.request_lsp(LspFeature::PrepareRename)
+    }
+
+    /// The command line, with `rename <name>` in it to edit: the server's
+    /// name, or the word under the cursor.
+    fn open_rename(&mut self, name: Option<String>) {
+        let name = name
+            .or_else(|| self.word_under_cursor(false))
+            .unwrap_or_default();
+        self.open_command_line();
+        for c in format!("rename {name}").chars() {
+            self.command_line.push(c);
+        }
+    }
+
     /// `:rename name`: has the language server rename the symbol under
     /// the cursor to `name`, everywhere it's used.
     pub fn request_rename(&mut self, name: &str) -> Result<(), String> {
@@ -1299,6 +1332,7 @@ impl Editor {
                 };
                 self.set_message(Message::info(text));
             }
+            Answer::RenameFrom(name) => self.open_rename(name),
             // Only the agent moves files, or formats this way (`:format`
             // waits for its answer).
             Answer::Edits(_) => {}
@@ -1334,6 +1368,9 @@ impl Editor {
             } => {
                 self.lsp_failed(format!("{server}: {message}"));
                 return;
+            }
+            NoAnswer::NothingThere if request.feature() == LspFeature::PrepareRename => {
+                "Nothing to rename here".to_string()
             }
             NoAnswer::NothingThere => format!("No {} here", request.feature().noun()),
             NoAnswer::Unusable(why) => {

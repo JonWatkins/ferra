@@ -103,6 +103,13 @@ fn serve(
                 let encoding = if utf8 { "utf-8" } else { "utf-16" };
                 // The UTF-16 server only syncs: it can't answer hovers.
                 let features = utf8;
+                // Asked first before renaming, unless the project says not
+                // to (a `no-prepare` file).
+                let rename = if features && !root.join("no-prepare").exists() {
+                    json!({"prepareProvider": true})
+                } else {
+                    json!(features)
+                };
                 reply(
                     &mut output,
                     json!({"capabilities": {
@@ -111,7 +118,7 @@ fn serve(
                         "referencesProvider": features,
                         "completionProvider": {"triggerCharacters": ["."]},
                         "documentFormattingProvider": features,
-                        "renameProvider": features,
+                        "renameProvider": rename,
                         "documentSymbolProvider": features,
                         "documentHighlightProvider": features,
                         "inlayHintProvider": features,
@@ -539,6 +546,32 @@ fn serve(
                 }
                 reply(&mut output, Value::Array(found));
             }
+            // `let`: nothing to rename; `named`: a name of its own; after
+            // a `'` (a lifetime), the range takes it in; else the word's.
+            "textDocument/prepareRename" => {
+                let text = seen.lock().unwrap().text.clone();
+                let position = &params["position"];
+                let word = word_at(&text, position);
+                let row = position["line"].as_u64().unwrap() as usize;
+                let line = text.split('\n').nth(row).unwrap_or("");
+                let at = position["character"].as_u64().unwrap() as usize;
+                let is_word = |c: char| c.is_alphanumeric() || c == '_';
+                let mut start = line[..at].rfind(|c| !is_word(c)).map_or(0, |i| i + 1);
+                if line[..start].ends_with('\'') {
+                    start -= 1;
+                }
+                let end = line[at..]
+                    .find(|c| !is_word(c))
+                    .map_or(line.len(), |i| at + i);
+                let range = json!({"start": {"line": row, "character": start},
+                                   "end": {"line": row, "character": end}});
+                let result = match word.as_str() {
+                    "let" => Value::Null,
+                    "named" => json!({"range": range, "placeholder": "the_name"}),
+                    _ => range,
+                };
+                reply(&mut output, result);
+            }
             "textDocument/rename" => {
                 let text = seen.lock().unwrap().text.clone();
                 let word = word_at(&text, &params["position"]);
@@ -766,11 +799,20 @@ fn with_server(content: &str, utf8: bool) -> (tempfile::TempDir, App, Arc<Mutex<
 }
 
 fn with_server_in(
+    app: App,
+    content: &str,
+    utf8: bool,
+) -> (tempfile::TempDir, App, Arc<Mutex<Seen>>) {
+    with_server_at(tempfile::tempdir().unwrap(), app, content, utf8)
+}
+
+/// The same, in `dir` (with files of its own made first).
+fn with_server_at(
+    dir: tempfile::TempDir,
     mut app: App,
     content: &str,
     utf8: bool,
 ) -> (tempfile::TempDir, App, Arc<Mutex<Seen>>) {
-    let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("main.rs");
     fs::write(&path, content).unwrap();
     let seen = Arc::new(Mutex::new(Seen::default()));
@@ -1477,11 +1519,65 @@ fn rename_changes_other_files_and_leaves_them_to_save() {
 }
 
 #[test]
-fn f2_starts_a_rename_of_the_word_under_the_cursor() {
-    let (_dir, mut app, _) = with_server("let bad = 1;\n", true);
+fn f2_starts_a_rename_of_the_name_the_server_gives() {
+    let (_dir, mut app, seen) = with_server("let bad = 1;\nfn f<'a>() {}\nnamed;\n", true);
     ready(&mut app);
     keys(&mut app, "w<F2>");
-    assert_eq!(app.editor().command_line.input(), "rename bad");
+    until(&mut app, |a| {
+        a.editor().command_line.input() == "rename bad"
+    });
+    assert!(
+        seen.lock()
+            .unwrap()
+            .methods
+            .contains(&"textDocument/prepareRename".into())
+    );
+    keys(&mut app, "<C-w>better<CR>");
+    until(&mut app, |a| text(a).starts_with("let better = 1;"));
+    // The range's text, not the word: a lifetime's `'`.
+    keys(&mut app, "j0f'l<F2>");
+    until(&mut app, |a| a.editor().command_line.input() == "rename 'a");
+    // Its placeholder.
+    keys(&mut app, "<Esc>j0<F2>");
+    until(&mut app, |a| {
+        a.editor().command_line.input() == "rename the_name"
+    });
+}
+
+#[test]
+fn f2_says_when_theres_nothing_to_rename() {
+    let (_dir, mut app, _) = with_server("let bad = 1;\n", true);
+    ready(&mut app);
+    keys(&mut app, "<F2>");
+    until(&mut app, |a| {
+        a.editor()
+            .message()
+            .is_some_and(|m| m.text == "Nothing to rename here")
+    });
+    assert_ne!(
+        app.editor().mode(),
+        ferra::editor::Mode::Command,
+        "no prompt"
+    );
+}
+
+#[test]
+fn f2_takes_the_word_when_the_server_cant_say_first() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("no-prepare"), "").unwrap();
+    let (_dir, mut app, seen) = with_server_at(dir, app(), "let bad = 1;\n", true);
+    ready(&mut app);
+    keys(&mut app, "w<F2>");
+    until(&mut app, |a| {
+        a.editor().command_line.input() == "rename bad"
+    });
+    assert!(
+        !seen
+            .lock()
+            .unwrap()
+            .methods
+            .contains(&"textDocument/prepareRename".into())
+    );
     keys(&mut app, "<C-w>better<CR>");
     until(&mut app, |a| text(a) == "let better = 1;");
 }

@@ -214,6 +214,7 @@ fn feature_method(feature: LspFeature) -> (&'static str, &'static str) {
         LspFeature::Completion => ("textDocument/completion", "completionProvider"),
         LspFeature::ResolveCompletion => ("completionItem/resolve", "completionProvider"),
         LspFeature::Format => ("textDocument/formatting", "documentFormattingProvider"),
+        LspFeature::PrepareRename => ("textDocument/prepareRename", "renameProvider"),
         LspFeature::Rename => ("textDocument/rename", "renameProvider"),
         LspFeature::CodeAction | LspFeature::ApplyCodeAction => {
             ("textDocument/codeAction", "codeActionProvider")
@@ -336,7 +337,7 @@ impl Client {
                         "implementation": { "linkSupport": true },
                         "references": {},
                         "callHierarchy": { "dynamicRegistration": false },
-                        "rename": { "prepareSupport": false },
+                        "rename": { "prepareSupport": true },
                         "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
                         "documentHighlight": {},
                         "inlayHint": { "dynamicRegistration": false },
@@ -472,6 +473,12 @@ impl Client {
             self.capabilities.get(capability),
             None | Some(Value::Null | Value::Bool(false))
         )
+    }
+
+    /// Whether it can say first if a rename can be made, and from what
+    /// name (`prepareRename`): only if it said so in `renameProvider`.
+    pub fn prepares_rename(&self) -> bool {
+        self.capabilities["renameProvider"]["prepareProvider"].as_bool() == Some(true)
     }
 
     /// Whether the server fills in completion items' details on asking.
