@@ -39,7 +39,8 @@ impl Editor {
                 | Answer::Signature(_)
                 | Answer::InlayHints(_)
                 | Answer::Highlights(_)
-                | Answer::Outline(_),
+                | Answer::Outline(_)
+                | Answer::RenameFrom(_),
             ) => return,
             Ok(Answer::Action { title, edits }) => {
                 self.agent_made_action(call, &title, edits);
