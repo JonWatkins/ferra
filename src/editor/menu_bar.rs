@@ -114,6 +114,7 @@ pub const MENUS: &[Menu] = &[
             Some(("Go to Symbol in Project…", "project_symbol_picker")),
             None,
             Some(("Go to Definition", "goto_definition")),
+            Some(("Open Link", "open_url")),
             Some(("Back", "jump_back")),
             Some(("Forward", "jump_forward")),
             None,

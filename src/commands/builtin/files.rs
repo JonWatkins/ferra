@@ -104,6 +104,18 @@ pub fn register(r: &mut CommandRegistry) {
     );
 
     r.register(
+        "open_url",
+        "Open the URL (or file) under the cursor with the system's opener (gx)",
+        |cx| {
+            let target = cx.editor.url_under_cursor()?;
+            crate::files::open_externally(&target)?;
+            cx.editor
+                .set_message(Message::info(format!("Opening {target}")));
+            Ok(())
+        },
+    );
+
+    r.register(
         "force_quit",
         "Quit, discarding unsaved changes (ZQ)",
         |cx| {

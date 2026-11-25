@@ -130,6 +130,7 @@ iTerm2, set Profiles → Keys → Left Option key to "Esc+" for the `Alt` keys.
 | Normal  | `g;`, `g,` | Older / newer place in the change list; `'.` is the last change |
 | Normal  | `gi` | Insert where insert mode was last left in this buffer (`` `^ `` goes there) |
 | Normal  | `gf` | Open the file named under the cursor (beside this file, or in the working directory); `name:12` or `name:12:5` goes to that line and column |
+| Normal  | `gx` | Open the URL under the cursor in the browser (or, if there isn't one, the file `gf` would open, in its default app) |
 | Normal  | `<C-^>` (Ctrl-6) | Switch to the alternate buffer (`:b#`) |
 | Normal  | `/` `?` | Search forward / backward (regex; matches preview as you type) |
 | Normal  | `n` `N` | Next / previous match |
@@ -443,7 +444,8 @@ With `mouse = true` (the default):
   them.
 - **Ctrl+click** on a word goes to its definition (with VS Code's keys,
   **Ctrl+Shift+click**: Ctrl+click adds a cursor). **⌥+click** does too, in
-  terminals that pass it on.
+  terminals that pass it on. On a URL, the same click opens it in the
+  browser, as `gx` (or Go → Open Link) does.
 - **Rest the pointer** on a word to see what the language server says about
   it, under any problem there (`mouse-hover`, `mouse-hover-delay`); with
   **Ctrl** held, the definition's own lines instead. Moving off it, a key or
