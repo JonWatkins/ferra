@@ -312,7 +312,7 @@ fn indent_style(cx: &mut Context) -> CommandResult {
             cx.editor.document.detect_indent();
             None
         }
-        ["tabs" | "tab"] => Some(IndentUnit::Tabs),
+        ["tabs" | "tab"] => Some(IndentUnit::TABS),
         ["spaces" | "space"] => Some(IndentUnit::Spaces(cx.editor.options.level_width())),
         ["spaces" | "space", n] => spaces(n)?,
         [n] if n.starts_with(|c: char| c.is_ascii_digit()) => spaces(n)?,

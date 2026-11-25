@@ -223,7 +223,9 @@ A level is `tab-width` columns wide unless `shift-width` (Vim's
 indenting with tabs, levels are made of tabs then spaces, as in many C
 projects: with `tab-width = 8` and `shift-width = 4`, `>>` and Tab go
 4 spaces, a tab, a tab and 4 spaces... (Tab after text goes on to the next
-level's column).
+level's column). A tab-indented file whose levels already step that way
+is detected as such (`:indent` shows "tabs, levels of 4"), and keeps its
+width per level whatever `shift-width` says.
 
 Macros are stored in their register as key notation (`A;<Esc>j`), so
 `"ap` pastes one to edit and `"ay$` yanks it back. Playback stops at the
