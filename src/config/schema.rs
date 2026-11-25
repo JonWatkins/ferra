@@ -60,6 +60,7 @@ fn category_of(path: &str) -> &'static str {
         "tab-width" | "expand-tab" | "detect-indent" | "auto-indent" | "auto-pairs"
         | "text-width" | "auto-wrap" | "format-on-save" => "Editing",
         "line-numbers"
+        | "fold-column"
         | "wrap"
         | "wrap-indent"
         | "wrap-marker"

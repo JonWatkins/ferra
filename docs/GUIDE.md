@@ -345,7 +345,9 @@ with the lines indented under it, and a closing `}`, `)` or `]` after them.
 A closed fold shows as its first line and `⋯ N more lines`; `j` and `k`
 step over it, and `dd`, `yy`, `>>` and other line operators take all of it.
 Searches, mark jumps and undo open a fold they land in; changing text
-inside one opens it too.
+inside one opens it too. With `fold-column = true` (or `:set fold-column`),
+a column left of the line numbers shows where folds are: `▸` on a closed
+one, `▾` on a line that starts one, `│` beside the lines inside.
 
 ### Sorting
 

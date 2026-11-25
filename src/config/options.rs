@@ -20,6 +20,9 @@ pub struct EditorOptions {
     /// Typing an opening bracket or quote puts in its closer.
     pub auto_pairs: bool,
     pub line_numbers: LineNumbers,
+    /// A column left of the line numbers marking folds: `▸` a closed one,
+    /// `▾` where one starts, `│` the lines inside it.
+    pub fold_column: bool,
     /// The width `gq` reflows text to (0: 79, as in Vim).
     pub text_width: usize,
     /// Whether typing past `text-width` breaks the line: never, in

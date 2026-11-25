@@ -383,9 +383,19 @@ pub fn follow_cursor(
     ViewStart { line: top, skip }
 }
 
-/// The line-number gutter's width in cells, for a buffer of `line_count`
-/// lines.
-pub fn gutter_width(line_count: usize, mode: crate::config::LineNumbers) -> u16 {
+/// The gutter's width in cells, for a buffer of `line_count` lines: the
+/// fold column's cell (`fold-column`) and the line numbers.
+pub fn gutter_width(line_count: usize, options: &crate::config::EditorOptions) -> u16 {
+    fold_column_width(options) + numbers_width(line_count, options.line_numbers)
+}
+
+/// The fold column's width: one cell, or none.
+pub fn fold_column_width(options: &crate::config::EditorOptions) -> u16 {
+    u16::from(options.fold_column)
+}
+
+/// The line numbers' width in cells, for a buffer of `line_count` lines.
+pub fn numbers_width(line_count: usize, mode: crate::config::LineNumbers) -> u16 {
     if mode == crate::config::LineNumbers::None {
         return 0;
     }
@@ -414,7 +424,7 @@ impl TextLayout {
         document: &Document,
         options: &crate::config::EditorOptions,
     ) -> Self {
-        let gutter = gutter_width(document.buffer().line_count(), options.line_numbers);
+        let gutter = gutter_width(document.buffer().line_count(), options);
         Self::for_text(window_width.saturating_sub(gutter as usize), options)
     }
 

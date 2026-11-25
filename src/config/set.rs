@@ -33,7 +33,7 @@
 //! - Local options, as in Vim: the editor keeps the global options and, per
 //!   window and per buffer, a sparse TOML table of `:setlocal` values
 //!   (`config::set::scope` says which options may: `wrap`, `wrap-indent`,
-//!   `wrap-marker`, `line-numbers`, `cursorline`, `scroll-off` per window;
+//!   `wrap-marker`, `line-numbers`, `fold-column`, `cursorline`, `scroll-off` per window;
 //!   `tab-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap` per
 //!   buffer). `Editor::options` is always what's in force for the active window
 //!   and buffer (global, then the buffer's language's `options` from
@@ -109,9 +109,8 @@ pub enum Scope {
 /// The options `:setlocal` can set, and for what.
 pub fn scope(name: &str) -> Option<Scope> {
     match name {
-        "wrap" | "wrap-indent" | "wrap-marker" | "line-numbers" | "cursorline" | "scroll-off" => {
-            Some(Scope::Window)
-        }
+        "wrap" | "wrap-indent" | "wrap-marker" | "line-numbers" | "fold-column" | "cursorline"
+        | "scroll-off" => Some(Scope::Window),
         "tab-width" | "expand-tab" | "auto-indent" | "text-width" | "auto-wrap"
         | "format-on-save" => Some(Scope::Buffer),
         _ => None,
