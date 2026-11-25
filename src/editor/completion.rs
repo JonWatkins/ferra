@@ -3,7 +3,8 @@
 //!
 //! The word before the cursor is completed from words in the buffer
 //! (nearest first, looking forward for `<C-n>` and backward for `<C-p>`,
-//! wrapping), then in the other open buffers. The first match goes in at
+//! wrapping), then in the other open buffers, those starting with it ahead
+//! of fuzzy matches. The first match goes in at
 //! once; more presses go through the rest and back round to what was
 //! typed. `<C-y>` keeps the choice and `<C-e>` puts back what was typed;
 //! any other key keeps the choice and carries on (the app ends completion
@@ -11,7 +12,10 @@
 //!
 //! `<C-n>`/`<C-p>` in insert mode complete the word before the cursor
 //! (`editor/completion.rs`). The first press gathers matches: words starting
-//! with what's typed, from the cursor outward through the buffer (forward for
+//! with what's typed, then starting with it in another case, then fuzzy matches
+//! whose first letter starts a word in them (`fm` for `flat_map`, not `0` for
+//! `log10`), the tiers a server's completion is narrowed by (`match_tier`).
+//! Within each, from the cursor outward through the buffer (forward for
 //! `<C-n>`, backward for `<C-p>`, wrapping, the cursor's own line split at the
 //! cursor), then the other open buffers, without repeats, up to 500. The
 //! nearest goes in at once; later presses step through the matches and what was
@@ -42,6 +46,7 @@
 use std::collections::HashSet;
 
 use super::Editor;
+use super::server_completion::match_tier;
 use crate::core::{Buffer, Position};
 
 /// The most matches gathered, so a huge file stays quick.
@@ -312,19 +317,25 @@ impl Editor {
         self.note_typed_replacing(cursor.col - start.col, &text);
     }
 
-    /// Words starting with `prefix` (and longer than it): the current
-    /// buffer's, nearest the cursor first in the direction asked, then the
-    /// other buffers'.
-    fn gather_words(&self, prefix: &str, cursor: Position, forward: bool) -> Vec<String> {
+    /// Words matching `typed` (and not it): those starting with it, then
+    /// starting with it in another case, then fuzzy matches whose first
+    /// letter starts a word in them (`fm` for `flat_map`), as a server's
+    /// completion is narrowed. Within each, the current buffer's, nearest
+    /// the cursor first in the direction asked, then the other buffers'.
+    fn gather_words(&self, typed: &str, cursor: Position, forward: bool) -> Vec<String> {
         let mut seen = HashSet::new();
-        let mut items = Vec::new();
+        let mut tiers: [Vec<String>; 3] = Default::default();
         let mut take = |word: &str| {
-            if word.len() > prefix.len()
-                && word.starts_with(prefix)
-                && items.len() < MAX_ITEMS
-                && seen.insert(word.to_string())
-            {
-                items.push(word.to_string());
+            // Each word is matched once, however often it comes.
+            if word == typed || tiers[0].len() >= MAX_ITEMS || !seen.insert(word.to_string()) {
+                return;
+            }
+            let Some(tier) = match_tier(typed, word) else {
+                return;
+            };
+            let tier = &mut tiers[usize::from(tier)];
+            if tier.len() < MAX_ITEMS {
+                tier.push(word.to_string());
             }
         };
 
@@ -373,6 +384,8 @@ impl Editor {
                 }
             }
         }
+        let mut items: Vec<String> = tiers.into_iter().flatten().collect();
+        items.truncate(MAX_ITEMS);
         items
     }
 }
