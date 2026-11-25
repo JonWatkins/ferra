@@ -1175,7 +1175,7 @@ mod tests {
         let mut doc = Document::with_text("fn a() {\n    x\n}\n{\n    y\n}\nz");
         doc.close_fold(3, 5);
         let folds = EditorOptions {
-            fold_column: true,
+            fold_column: crate::config::FoldColumn::On,
             ..options(LineNumbers::Absolute)
         };
         let column = |buf: &Buffer| -> Vec<String> {

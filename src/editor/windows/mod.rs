@@ -391,7 +391,7 @@ pub fn gutter_width(line_count: usize, options: &crate::config::EditorOptions) -
 
 /// The fold column's width: one cell, or none.
 pub fn fold_column_width(options: &crate::config::EditorOptions) -> u16 {
-    u16::from(options.fold_column)
+    u16::from(options.shows_fold_column())
 }
 
 /// The line numbers' width in cells, for a buffer of `line_count` lines.

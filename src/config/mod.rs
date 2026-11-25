@@ -24,9 +24,9 @@ mod theme;
 
 pub use languages::{CommentTokens, FileType, Languages, ServerConfig};
 pub use options::{
-    AutoWrap, CursorShape, CursorShapes, EditorOptions, FallbackEncoding, FilePickerOptions, Icons,
-    KeymapPreset, LineNumbers, SearchCase, SearchOptions, StatusElement, StatuslineLayout,
-    StatuslineMode, StatuslineStyle, TerminalClose,
+    AutoWrap, CursorShape, CursorShapes, EditorOptions, FallbackEncoding, FilePickerOptions,
+    FoldColumn, Icons, KeymapPreset, LineNumbers, SearchCase, SearchOptions, StatusElement,
+    StatuslineLayout, StatuslineMode, StatuslineStyle, TerminalClose,
 };
 pub use theme::{StyleSpec, Theme};
 

@@ -30,9 +30,11 @@ auto-indent = true
 auto-pairs = true
 # "absolute", "relative" (hybrid: current line shows its absolute number) or "none".
 line-numbers = "relative"
-# A column left of the line numbers marking folds: ▸ a closed one, ▾ where
-# one starts (ui.fold.column), │ the lines inside it.
-fold-column = false
+# A column left of the line numbers marking folds (ui.fold.column): ▸ a
+# closed one, ▾ where one starts, │ the lines inside it; with the mouse,
+# clicking ▸ or ▾ opens or closes it. "auto" (shown with VS Code's keys,
+# not Vim's), "on" or "off".
+fold-column = "auto"
 # The width gq and gw reflow text to (per buffer with :setlocal tw=72).
 text-width = 79
 # Typing past text-width breaks the line, keeping its indentation and

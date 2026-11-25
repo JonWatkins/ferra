@@ -442,11 +442,17 @@ fn what_is_drawn_on_top_is_what_is_under_the_pointer() {
     assert_eq!(app.pointer_for(field), "default");
 }
 
-/// `content` typed as it is (no auto-indent or pairs), with the fold
-/// column, in `keymap`; the cursor at the start.
+/// `content` typed as it is (no auto-indent or pairs), in `keymap` (the
+/// fold column on with Vim's keys, by default with VS Code's); the cursor
+/// at the start.
 fn with_fold_column(keymap: &str, content: &str) -> App {
     let mut app = common::app_with_config(&format!(
-        "[editor]\nkeymap = \"{keymap}\"\nfold-column = true\nauto-indent = false\nauto-pairs = false\n"
+        "[editor]\nkeymap = \"{keymap}\"\nauto-indent = false\nauto-pairs = false\n{}",
+        if keymap == "vim" {
+            "fold-column = \"on\"\n"
+        } else {
+            ""
+        }
     ));
     if keymap == "vim" {
         keys(&mut app, "i");
@@ -496,4 +502,17 @@ fn clicks_on_the_fold_column_close_and_open_folds() {
         assert!(app.editor().document.closed_folds().is_empty(), "{keymap}");
         assert_eq!(cursor(&app).0, 4, "{keymap}");
     }
+}
+
+#[test]
+fn the_fold_column_is_shown_with_vscodes_keys_and_follows_a_switch() {
+    let mut app = with_fold_column("vscode", FOLDABLE);
+    assert_eq!(find(&mut app, "▾").0, 0, "on by default with VS Code's keys");
+    keys(&mut app, "<C-g>set keymap=vim<CR>");
+    let screen = render(&mut app, W, H);
+    assert!(
+        !screen.rows.iter().any(|row| row.contains('▾')),
+        "off with Vim's:\n{}",
+        screen.rows.join("\n")
+    );
 }

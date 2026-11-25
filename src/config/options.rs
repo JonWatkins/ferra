@@ -21,8 +21,8 @@ pub struct EditorOptions {
     pub auto_pairs: bool,
     pub line_numbers: LineNumbers,
     /// A column left of the line numbers marking folds: `▸` a closed one,
-    /// `▾` where one starts, `│` the lines inside it.
-    pub fold_column: bool,
+    /// `▾` where one starts, `│` the lines inside it (see `shows_fold_column`).
+    pub fold_column: FoldColumn,
     /// The width `gq` reflows text to (0: 79, as in Vim).
     pub text_width: usize,
     /// Whether typing past `text-width` breaks the line: never, in
@@ -344,6 +344,29 @@ pub enum AutoWrap {
     All,
 }
 
+/// Whether the fold column is shown (`fold-column`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FoldColumn {
+    /// With VS Code's keys, as VS Code shows its folding arrows; not with
+    /// Vim's, as Vim's `foldcolumn` is 0.
+    Auto,
+    On,
+    Off,
+}
+
+impl EditorOptions {
+    /// Whether the fold column is shown: `fold-column`, with `auto`
+    /// following the keymap.
+    pub fn shows_fold_column(&self) -> bool {
+        match self.fold_column {
+            FoldColumn::On => true,
+            FoldColumn::Off => false,
+            FoldColumn::Auto => self.keymap == KeymapPreset::Vscode,
+        }
+    }
+}
+
 /// Where status lines go (Neovim's `laststatus`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -460,6 +483,20 @@ impl CursorShapes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_fold_column_follows_the_keymap_unless_set() {
+        let mut options = EditorOptions::default();
+        assert_eq!(options.fold_column, FoldColumn::Auto);
+        assert!(!options.shows_fold_column(), "Vim's keys");
+        options.keymap = KeymapPreset::Vscode;
+        assert!(options.shows_fold_column(), "VS Code's keys");
+        options.fold_column = FoldColumn::Off;
+        assert!(!options.shows_fold_column());
+        options.keymap = KeymapPreset::Vim;
+        options.fold_column = FoldColumn::On;
+        assert!(options.shows_fold_column());
+    }
 
     #[test]
     fn cursor_shape_per_mode() {
