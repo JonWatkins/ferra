@@ -344,9 +344,8 @@ pub enum AutoWrap {
     All,
 }
 
-/// Whether the fold column is shown (`fold-column`). It was on or off
-/// before it took `auto`, so `true` and `false` still mean `on` and `off`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Whether the fold column is shown (`fold-column`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FoldColumn {
     /// With VS Code's keys, as VS Code shows its folding arrows; not with
@@ -354,32 +353,6 @@ pub enum FoldColumn {
     Auto,
     On,
     Off,
-}
-
-impl<'de> Deserialize<'de> for FoldColumn {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Visitor;
-        const NAMES: &[&str] = &["auto", "on", "off"];
-        impl serde::de::Visitor<'_> for Visitor {
-            type Value = FoldColumn;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("one of `auto`, `on`, `off`")
-            }
-            fn visit_bool<E>(self, on: bool) -> Result<FoldColumn, E> {
-                Ok(if on { FoldColumn::On } else { FoldColumn::Off })
-            }
-            fn visit_str<E: serde::de::Error>(self, name: &str) -> Result<FoldColumn, E> {
-                match name {
-                    "auto" => Ok(FoldColumn::Auto),
-                    "on" => Ok(FoldColumn::On),
-                    "off" => Ok(FoldColumn::Off),
-                    // The settings editor reads the choices from this error.
-                    _ => Err(E::unknown_variant(name, NAMES)),
-                }
-            }
-        }
-        deserializer.deserialize_any(Visitor)
-    }
 }
 
 impl EditorOptions {
@@ -510,29 +483,6 @@ impl CursorShapes {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fold_column_still_takes_true_and_false() {
-        // Configs from before it took "auto" said `fold-column = true`.
-        for (text, expected) in [
-            ("true", FoldColumn::On),
-            ("false", FoldColumn::Off),
-            ("\"on\"", FoldColumn::On),
-            ("\"auto\"", FoldColumn::Auto),
-        ] {
-            let config =
-                crate::config::Config::from_toml(&format!("[editor]\nfold-column = {text}"))
-                    .unwrap();
-            assert_eq!(config.editor.fold_column, expected, "{text}");
-        }
-        let error = crate::config::Config::from_toml("[editor]\nfold-column = \"sometimes\"")
-            .unwrap_err()
-            .to_string();
-        assert!(
-            error.contains("expected one of `auto`, `on`, `off`"),
-            "{error}"
-        );
-    }
 
     #[test]
     fn the_fold_column_follows_the_keymap_unless_set() {
