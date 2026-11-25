@@ -303,6 +303,11 @@ impl CommandLine {
         self.history_mut().reset();
     }
 
+    /// The searches' history, which the find box shares.
+    pub(in crate::editor) fn search_history_mut(&mut self) -> &mut History {
+        &mut self.search_history
+    }
+
     fn history_mut(&mut self) -> &mut History {
         if self.prompt.is_search() {
             &mut self.search_history

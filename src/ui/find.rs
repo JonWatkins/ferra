@@ -639,13 +639,14 @@ mod tests {
             &parse_keys("<C-t>").unwrap(),
             "find_toggle_case",
         );
+        keymap.bind(Mode::Find, &parse_keys("<PageUp>").unwrap(), "find_prev");
         let keys = FindKeys::from_keymap(&keymap);
         assert_eq!(
             keys.case,
             Some(label("<C-a>")),
             "the shorter text wins a tie"
         );
-        assert_eq!(keys.prev, Some(label("<Up>")), "fewest modifiers");
+        assert_eq!(keys.prev, Some(label("<PageUp>")), "fewest modifiers");
         assert_eq!(keys.replace_all, Some(label("<C-CR>")), "not an Alt key");
         assert_eq!(keys.close, Some("Esc".into()));
     }

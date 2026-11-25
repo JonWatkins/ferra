@@ -9,9 +9,12 @@ pub struct History {
     entries: Vec<String>,
     /// The entry being shown while browsing, if any.
     position: Option<usize>,
-    /// What was typed before browsing started: both the prefix entries must
-    /// match and what `<Down>` returns to at the end.
+    /// What was typed before browsing started, which `<Down>` returns to
+    /// at the end.
     draft: String,
+    /// What the entries browsed start with: the draft, or nothing (every
+    /// entry).
+    prefix: String,
 }
 
 impl History {
@@ -47,16 +50,31 @@ impl History {
     /// The next older entry starting with what was typed when browsing
     /// began (`current`, on the first call), or `None` if there's none.
     pub fn older(&mut self, current: &str) -> Option<String> {
+        self.step_older(current, true)
+    }
+
+    /// As `older`, but every entry, whatever was typed (the find box, as in
+    /// VS Code).
+    pub fn older_any(&mut self, current: &str) -> Option<String> {
+        self.step_older(current, false)
+    }
+
+    fn step_older(&mut self, current: &str, by_prefix: bool) -> Option<String> {
         let start = match self.position {
             Some(p) => p,
             None => {
                 self.draft = current.to_string();
+                self.prefix = if by_prefix {
+                    current.to_string()
+                } else {
+                    String::new()
+                };
                 self.entries.len()
             }
         };
         let found = (0..start)
             .rev()
-            .find(|&i| self.entries[i].starts_with(&self.draft))?;
+            .find(|&i| self.entries[i].starts_with(&self.prefix))?;
         self.position = Some(found);
         Some(self.entries[found].clone())
     }
@@ -66,7 +84,7 @@ impl History {
     pub fn newer(&mut self) -> Option<String> {
         let current = self.position?;
         let found =
-            (current + 1..self.entries.len()).find(|&i| self.entries[i].starts_with(&self.draft));
+            (current + 1..self.entries.len()).find(|&i| self.entries[i].starts_with(&self.prefix));
         self.position = found;
         Some(match found {
             Some(i) => self.entries[i].clone(),
@@ -105,6 +123,15 @@ mod tests {
         assert_eq!(h.older("ignored once browsing").as_deref(), Some("e one"));
         assert_eq!(h.newer().as_deref(), Some("e two"));
         assert_eq!(h.newer().as_deref(), Some("e "));
+    }
+
+    #[test]
+    fn older_any_ignores_what_was_typed_but_comes_back_to_it() {
+        let mut h = history(&["one", "two"]);
+        assert_eq!(h.older_any("t").as_deref(), Some("two"));
+        assert_eq!(h.older_any("ignored").as_deref(), Some("one"));
+        assert_eq!(h.newer().as_deref(), Some("two"));
+        assert_eq!(h.newer().as_deref(), Some("t"));
     }
 
     #[test]

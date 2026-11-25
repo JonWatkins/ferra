@@ -44,6 +44,22 @@ pub fn register(r: &mut CommandRegistry) {
         cx.editor.find_step(false)
     });
     r.register(
+        "find_history_older",
+        "Find box: what was searched for (or replaced with) before",
+        |cx| {
+            cx.editor.find_history(true);
+            Ok(())
+        },
+    );
+    r.register(
+        "find_history_newer",
+        "Find box: a newer search (or replacement), then back to what was typed",
+        |cx| {
+            cx.editor.find_history(false);
+            Ok(())
+        },
+    );
+    r.register(
         "find_replace_one",
         "Replace the match at the cursor and go to the next",
         |cx| cx.editor.find_replace_one(),

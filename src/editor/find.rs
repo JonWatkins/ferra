@@ -38,6 +38,13 @@
 //! app treats keys in find mode like the `:` line: replacements aren't repeated
 //! by `.`.
 //!
+//! `<Up>`/`<Down>` browse what was searched for, newest first, whatever was
+//! typed (VS Code's way, not Vim's by prefix), and in the replace field what
+//! was replaced with. What was found is the command line's search history,
+//! shared with `/` and `?`: closing the box adds what's in the find field,
+//! and replacing adds both fields. `<Down>` past the newest comes back to
+//! what was typed; typing stops browsing.
+//!
 //! The keys the box shows come from the keymap (`Keymap::hint_keys`: the
 //! binding without Alt if there is one, since macOS terminals don't send Option
 //! as Alt by default, then the shortest, then the fewest modifiers), labelled
@@ -46,6 +53,7 @@
 
 use std::cell::RefCell;
 
+use super::command_line::History;
 use super::text_field::TextField;
 use super::{DocumentId, Editor, Message, Mode};
 use crate::core::search::{Match, SearchPattern, preserve_case};
@@ -74,6 +82,9 @@ pub struct FindState {
     pub regex: bool,
     /// Whether a replacement takes each match's case (`AB`).
     pub preserve_case: bool,
+    /// What was replaced with (what was found is in the command line's
+    /// search history, shared with `/`).
+    replace_history: History,
     /// Where finding as you type starts from.
     origin: Position,
     /// The pattern typed (or why it isn't one).
@@ -336,6 +347,7 @@ impl Editor {
             _ if seeded_word => self.word_start(),
             _ => self.document.cursor(),
         };
+        self.find_history_reset();
         self.set_mode(Mode::Find);
         self.find.replacing |= replace;
         self.find.focus = FindField::Find;
@@ -371,6 +383,8 @@ impl Editor {
         if let Some(pattern) = self.find.pattern().cloned() {
             self.set_last_search(pattern);
         }
+        let found = self.find.find.text().to_string();
+        self.command_line.search_history_mut().push(&found);
         self.clear_search_highlight();
         self.find.replacing = false;
         self.set_mode(Mode::Normal);
@@ -424,10 +438,52 @@ impl Editor {
             }
             return;
         }
+        self.find_history_reset();
         edit(self.find.field());
         if self.find.focus == FindField::Find {
             self.find_as_typed();
         }
+    }
+
+    /// `<Up>` (`older`) / `<Down>`: the field with focus shows an older or
+    /// newer entry of its history, the find field finding it. In the
+    /// Search view's field, they go to the results.
+    pub fn find_history(&mut self, older: bool) {
+        if self.project_search.typing {
+            self.search_focus_results();
+            return;
+        }
+        let current = self.find.field().text().to_string();
+        let history = match self.find.focus {
+            FindField::Find => self.command_line.search_history_mut(),
+            FindField::Replace => &mut self.find.replace_history,
+        };
+        let entry = if older {
+            history.older_any(&current)
+        } else {
+            history.newer()
+        };
+        let Some(entry) = entry else { return };
+        self.find.field().set_text(&entry);
+        if self.find.focus == FindField::Find {
+            self.find_as_typed();
+        }
+    }
+
+    /// Stops browsing either field's history.
+    fn find_history_reset(&mut self) {
+        self.command_line.search_history_mut().reset();
+        self.find.replace_history.reset();
+    }
+
+    /// Replacing: both fields' text into their histories.
+    fn find_remember_replace(&mut self) {
+        let (found, replaced) = (
+            self.find.find.text().to_string(),
+            self.find.replace.text().to_string(),
+        );
+        self.command_line.search_history_mut().push(&found);
+        self.find.replace_history.push(&replaced);
     }
 
     /// A click in a field: focus there, with the cursor at char `col`.
@@ -435,6 +491,7 @@ impl Editor {
         if field == FindField::Replace {
             self.find.replacing = true;
         }
+        self.find_history_reset();
         self.find.focus = field;
         self.find.field().set_cursor(col);
     }
@@ -454,6 +511,7 @@ impl Editor {
             return;
         }
         self.find.replacing = true;
+        self.find_history_reset();
         self.find.focus = match self.find.focus {
             FindField::Find => FindField::Replace,
             FindField::Replace => FindField::Find,
@@ -518,6 +576,7 @@ impl Editor {
         let Some(current) = self.find_current_match() else {
             return self.find_step(true);
         };
+        self.find_remember_replace();
         let line = self.document.buffer().line(current.row).into_owned();
         let (start, end, text) = self
             .find
@@ -543,6 +602,7 @@ impl Editor {
             return self.search_ask_replace_all();
         }
         let pattern = self.find_pattern()?;
+        self.find_remember_replace();
         let replacement = self.find.replacement();
         let mut replaced = 0;
         let mut lines = 0;
@@ -626,6 +686,62 @@ mod tests {
         assert_eq!(cursor(&e), (0, 4), "wraps round");
         e.find_step(false).unwrap();
         assert_eq!(cursor(&e), (2, 0), "and back");
+    }
+
+    #[test]
+    fn up_and_down_browse_what_was_searched_for_shared_with_slash() {
+        let mut e = editor("alpha beta gamma");
+        e.command_line.search_history_mut().push("gam");
+        e.open_find(false);
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, "alp");
+        e.close_find();
+        e.open_find(false);
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, "b");
+        assert_eq!(cursor(&e), (0, 6));
+        e.find_history(true);
+        assert_eq!(
+            e.find_state().find.text(),
+            "alp",
+            "newest first, any prefix"
+        );
+        assert_eq!(cursor(&e), (0, 0), "and found");
+        e.find_history(true);
+        assert_eq!(e.find_state().find.text(), "gam", "a / search too");
+        assert_eq!(cursor(&e), (0, 11));
+        e.find_history(true);
+        assert_eq!(e.find_state().find.text(), "gam", "nothing older");
+        e.find_history(false);
+        e.find_history(false);
+        assert_eq!(e.find_state().find.text(), "b", "back to what was typed");
+        assert_eq!(cursor(&e), (0, 6));
+        e.close_find();
+        e.command_line.open(crate::editor::Prompt::SearchForward);
+        assert!(e.command_line.history_older());
+        assert_eq!(
+            e.command_line.input(),
+            "b",
+            "the box's searches are /'s too"
+        );
+    }
+
+    #[test]
+    fn the_replace_field_browses_what_was_replaced_with() {
+        let mut e = editor("a a a");
+        e.open_find(true);
+        e.find_switch_field();
+        e.find_edit(|f| f.push('x'));
+        e.find_replace_one().unwrap();
+        e.find_edit(|f| f.delete_to_start());
+        e.find_edit(|f| f.push('y'));
+        e.find_replace_one().unwrap();
+        e.find_edit(|f| f.delete_to_start());
+        e.find_history(true);
+        assert_eq!(e.find_state().replace.text(), "y");
+        e.find_history(true);
+        assert_eq!(e.find_state().replace.text(), "x");
+        assert_eq!(e.find_state().find.text(), "a", "the find field untouched");
     }
 
     #[test]
