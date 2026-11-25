@@ -217,12 +217,9 @@ pub fn shown(editor: &Editor) -> bool {
 /// `at` (cut at the line's end, as far as the box is concerned).
 pub fn current_match_cells(editor: &Editor, at: Position) -> Option<Rect> {
     let found = editor.find_current_match()?;
-    let line = editor.document.buffer().line(found.row);
-    let text: String = line
-        .chars()
-        .skip(found.start)
-        .take(found.end - found.start)
-        .collect();
+    let line = editor.document.buffer().line(found.start.row);
+    let (from, to) = found.cols_on(found.start.row, line.chars().count())?;
+    let text: String = line.chars().skip(from).take(to - from).collect();
     Some(Rect::new(at.x, at.y, (text.width() as u16).max(1), 1))
 }
 
@@ -351,6 +348,7 @@ impl<'a> FindView<'a> {
             .chars()
             .skip(field_scroll(field, width))
             .take(width as usize)
+            .map(|c| if c == '\n' { '↵' } else { c })
             .collect();
         let text_style = if field.is_selected() {
             style.patch(theme.get("ui.find.field.selected"))

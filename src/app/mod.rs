@@ -1225,7 +1225,8 @@ impl App {
     /// In insert mode it's typed at the cursor (and joins the insert
     /// session); on a line that's only indentation so far, a paste with its
     /// own indentation replaces it. In normal and visual mode it's put in
-    /// before the cursor, like `P`. Prompts and pickers take the first line.
+    /// before the cursor, like `P`. Prompts and pickers take the first line;
+    /// the find box all of it.
     fn paste(&mut self, text: &str) {
         self.input.reset();
         self.editor.note_key_for_completion();
@@ -1276,6 +1277,12 @@ impl App {
                 }
                 doc.insert_str(text);
                 self.editor.note_typed(text);
+            }
+            // The find box takes it all: a line break in it finds across
+            // lines.
+            Mode::Find if !self.editor.search_typing() => {
+                self.editor
+                    .find_edit(|field| text.chars().for_each(|c| field.push(c)));
             }
             Mode::Command | Mode::Picker | Mode::Find | Mode::Input => {
                 let first_line = text.lines().next().unwrap_or_default();

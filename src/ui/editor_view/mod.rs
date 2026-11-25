@@ -162,6 +162,10 @@ impl ViewState {
     }
 }
 
+/// How far above the top a search that spans lines looks for matches
+/// running into view.
+const SPANNING_LOOKBACK: usize = 200;
+
 pub struct EditorView<'a> {
     document: &'a Document,
     options: &'a EditorOptions,
@@ -171,6 +175,9 @@ pub struct EditorView<'a> {
     extra_cursors: &'a [crate::editor::multi_cursor::ExtraCursor],
     block: Option<crate::core::Block>,
     search: Option<&'a SearchPattern>,
+    /// With a `search` that spans lines, its matches around the rows
+    /// drawn (found once per draw, not per row).
+    search_matches: Option<Vec<Match>>,
     /// The find box's "in selection": tinted, and the only matches shown.
     find_scope: Option<&'a crate::editor::find::FindScope>,
     current_match: Option<Match>,
@@ -217,6 +224,7 @@ impl<'a> EditorView<'a> {
             extra_cursors: &[],
             block: None,
             search: None,
+            search_matches: None,
             find_scope: None,
             current_match: None,
             git: &[],
@@ -543,6 +551,15 @@ impl StatefulWidget for EditorView<'_> {
                 .scroll_to(target, width, height, self.margins());
         }
         let Viewport { top, left } = state.viewport;
+        if let Some(pattern) = self.search.filter(|p| p.spans_lines()) {
+            // From a little above the top, for matches that start above it
+            // and run into view (longer ones aren't shown).
+            let first = top.line.saturating_sub(SPANNING_LOOKBACK);
+            let last = layout.bottom(self.document, top, height);
+            let mut matches = pattern.matches_between(text, first..last + 1);
+            matches.retain(|m| !m.is_empty() && m.end.row >= top.line);
+            self.search_matches = Some(matches);
+        }
         let mut fold_column =
             (fold_width > 0).then(|| crate::core::fold::Column::new(text, top.line, tab_width));
         state.fold_x = fold_column.as_ref().map(|_| fold_area.x);
@@ -1066,8 +1083,16 @@ impl EditorView<'_> {
                 highlight(from, to, self.theme.get("ui.find.scope"));
             }
         }
-        if let Some(pattern) = self.search {
-            let style = self.theme.get("ui.search.match");
+        let style = self.theme.get("ui.search.match");
+        let real_len = real_line.chars().count();
+        if let Some(matches) = &self.search_matches {
+            for found in matches {
+                let inside = self.find_scope.is_none_or(|scope| scope.contains(found));
+                if let Some((from, to)) = found.cols_on(row, real_len).filter(|_| inside) {
+                    highlight(from, to, style);
+                }
+            }
+        } else if let Some(pattern) = self.search {
             for (from, to) in pattern.matches_in_line(real_line) {
                 let inside = span.is_some_and(|(s, e)| s <= from && to <= e);
                 if self.find_scope.is_none() || inside {
@@ -1075,8 +1100,8 @@ impl EditorView<'_> {
                 }
             }
         }
-        if let Some(found) = self.current_match.filter(|m| m.row == row) {
-            highlight(found.start, found.end, self.theme.get("ui.search.current"));
+        if let Some((from, to)) = self.current_match.and_then(|m| m.cols_on(row, real_len)) {
+            highlight(from, to, self.theme.get("ui.search.current"));
         }
         for d in self
             .diagnostics
@@ -1847,6 +1872,31 @@ mod tests {
             .filter(|&x| buf[(x, 0)].bg == ratatui::style::Color::Yellow)
             .collect();
         assert_eq!(highlighted, vec![0, 1, 3, 4]);
+    }
+
+    #[test]
+    fn highlights_matches_running_across_rows() {
+        let doc = Document::with_text("ab\ncd\nef");
+        let mut theme = Theme::default();
+        theme.set(
+            "ui.search.match",
+            Style::new().bg(ratatui::style::Color::Yellow),
+        );
+        let pattern =
+            SearchPattern::new(r"b\ncd\ne", crate::core::search::CaseMode::Smart).unwrap();
+        let area = Rect::new(0, 0, 4, 3);
+        let mut buf = Buffer::empty(area);
+        EditorView::new(&doc, &options(LineNumbers::None), &theme)
+            .search(Some(&pattern))
+            .render(area, &mut buf, &mut ViewState::default());
+        let highlighted = |y: u16| -> Vec<u16> {
+            (0..4)
+                .filter(|&x| buf[(x, y)].bg == ratatui::style::Color::Yellow)
+                .collect()
+        };
+        assert_eq!(highlighted(0), vec![1, 2], "the b and its line break");
+        assert_eq!(highlighted(1), vec![0, 1, 2]);
+        assert_eq!(highlighted(2), vec![0]);
     }
 
     #[test]
