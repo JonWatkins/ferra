@@ -143,3 +143,25 @@ fn visual_block_shifts_by_the_files_width() {
     keys(&mut app, "jj<C-v>j>");
     assert_eq!(text(&app), "fn f() {\n  if x {\n      y();\n    }\n}");
 }
+
+/// Levels of 4 made of tabs and spaces, for tabs of 8.
+const NARROW_LEVELS: &str = "int f(void)\n{\n    if (a) {\n\tif (b) {\n\t    c();\n\t}\n    }\n}";
+
+#[test]
+fn a_file_stepping_by_less_than_a_tab_keeps_its_levels() {
+    let (_dir, mut app) = open_with("a.c", NARROW_LEVELS, "[editor]\ntab-width = 8");
+    keys(&mut app, ":indent<CR>");
+    assert_eq!(message(&app), "Indenting with tabs, levels of 4 (detected)");
+
+    keys(&mut app, "jj>>");
+    assert_eq!(text(&app).lines().nth(2), Some("\tif (a) {"));
+    keys(&mut app, "j>>");
+    assert_eq!(text(&app).lines().nth(3), Some("\t    if (b) {"));
+
+    keys(&mut app, ":indent tabs<CR>u>>");
+    assert_eq!(
+        text(&app).lines().nth(3),
+        Some("\t\tif (b) {"),
+        ":indent tabs goes back to shift-width's levels"
+    );
+}

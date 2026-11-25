@@ -1155,7 +1155,7 @@ impl Editor {
             .or_else(|| document.detected_indent().filter(|_| options.detect_indent));
         match unit {
             Some(crate::core::indent::IndentUnit::Spaces(n)) => (n.max(1), true),
-            Some(crate::core::indent::IndentUnit::Tabs) => (options.tab_width, false),
+            Some(crate::core::indent::IndentUnit::Tabs { .. }) => (options.tab_width, false),
             None => (
                 format_tab_size(&options, options.expand_tab),
                 options.expand_tab,

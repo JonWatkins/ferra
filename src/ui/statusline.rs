@@ -439,7 +439,7 @@ impl Active<'_> {
             }
             StatusElement::Indent => match editor.indent_style() {
                 crate::core::IndentUnit::Spaces(n) => format!(" Spaces: {n} "),
-                crate::core::IndentUnit::Tabs => {
+                crate::core::IndentUnit::Tabs { .. } => {
                     format!(" Tab Size: {} ", editor.options.tab_width)
                 }
             },
@@ -661,7 +661,7 @@ mod tests {
         assert!(render(&editor, "").starts_with(" 4 spaces "));
         editor
             .document
-            .choose_indent(Some(crate::core::IndentUnit::Tabs));
+            .choose_indent(Some(crate::core::IndentUnit::TABS));
         assert!(render(&editor, "").starts_with(" tabs "));
     }
 

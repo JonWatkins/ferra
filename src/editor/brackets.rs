@@ -69,9 +69,7 @@ impl Editor {
         let unit = document
             .chosen_indent()
             .or_else(|| document.detected_indent().filter(|_| options.detect_indent));
-        match unit {
-            Some(IndentUnit::Spaces(n)) => n.max(1),
-            Some(IndentUnit::Tabs) | None => options.level_width(),
-        }
+        unit.unwrap_or(IndentUnit::TABS)
+            .level_width(options.level_width())
     }
 }

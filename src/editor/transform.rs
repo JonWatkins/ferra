@@ -91,23 +91,20 @@ impl Editor {
             .unwrap_or(if self.options.expand_tab {
                 IndentUnit::Spaces(self.options.level_width())
             } else {
-                IndentUnit::Tabs
+                IndentUnit::TABS
             })
     }
 
     /// How many display columns one level of indentation takes: with
-    /// tabs, `shift-width` (which may be less than a tab, the level then
-    /// made of tabs and spaces).
+    /// tabs, `shift-width` unless the file was found to step by less (either
+    /// may be less than a tab, the level then made of tabs and spaces).
     pub fn indent_width(&self) -> usize {
-        match self.indent_style() {
-            IndentUnit::Tabs => self.options.level_width(),
-            IndentUnit::Spaces(n) => n.max(1),
-        }
+        self.indent_style().level_width(self.options.level_width())
     }
 
     /// Whether indentation is made of tabs (then spaces for any remainder).
     pub(super) fn indent_with_tabs(&self) -> bool {
-        self.indent_style() == IndentUnit::Tabs
+        self.indent_style().is_tabs()
     }
 
     /// Tab in insert mode: one level of indentation. With spaces, a level's
@@ -121,7 +118,7 @@ impl Editor {
                 self.document.insert_str(&" ".repeat(n.max(1)));
                 return;
             }
-            IndentUnit::Tabs => self.options.level_width(),
+            unit @ IndentUnit::Tabs { .. } => unit.level_width(self.options.level_width()),
         };
         let tab = self.options.tab_width.max(1);
         let cursor = self.document.cursor();
