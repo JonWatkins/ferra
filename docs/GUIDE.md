@@ -264,8 +264,9 @@ you've searched, what you looked for last), selected so typing replaces it.
 
 | Keys (in the box) | Action |
 |-------------------|--------|
-| `<CR>`, `<Down>` (`<C-n>`) | Next match; in the replace field, replace this match and go to the next |
-| `<Up>` (`<C-p>`), `<S-CR>` | Previous match (`<S-CR>` needs the kitty keyboard protocol) |
+| `<CR>` (`<C-n>`) | Next match; in the replace field, replace this match and go to the next |
+| `<C-p>`, `<S-CR>` | Previous match (`<S-CR>` needs the kitty keyboard protocol) |
+| `<Up>` / `<Down>` | What you searched for before, newest first, and back to what you typed; in the replace field, what you replaced with. The searches are shared with `/` and `?` |
 | `<Tab>` | Between the find and replace fields (showing the replace field) |
 | `<C-a>`, `<C-w>`, `<C-r>` | Toggle match case (`Aa`), whole words (`W`), regex (`.*`). VS Code's `<A-c>` `<A-w>` `<A-r>` work too where the terminal sends Alt (on macOS, with Option set to act as Alt) |
 | `<C-t>` (`<A-p>`) | Toggle preserve case (`AB`, after the replace field): each replacement takes the case of what it replaces, so replacing `foo` with `bar` makes `Foo` `Bar` and `FOO` `BAR` (and `foo_BAR` with `baz_qux`, `baz_QUX`) |
