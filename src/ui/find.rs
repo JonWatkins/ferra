@@ -104,7 +104,9 @@ pub fn key_label(keys: &[KeyPress], mac: bool) -> String {
                 KeyCode::PageUp => "PgUp".into(),
                 KeyCode::PageDown => "PgDn".into(),
                 KeyCode::F(n) => format!("F{n}"),
-                KeyCode::PasteStart | KeyCode::PasteEnd | KeyCode::Completed => String::new(),
+                KeyCode::PasteStart | KeyCode::PasteEnd | KeyCode::Completed | KeyCode::Timeout => {
+                    String::new()
+                }
             };
             let mut label = String::new();
             for (on, symbol, prefix) in [

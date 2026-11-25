@@ -15,7 +15,8 @@
 //! ordinary register text. Playing parses it and feeds the keys through
 //! `handle_key`. Keys a macro plays aren't recorded into a macro being
 //! recorded, a failing command stops playback, and nesting deeper than 100
-//! stops with an error.
+//! stops with an error. A key timeout that ended a half-typed sequence is
+//! kept as `<Timeout>` (see `app/repeat.rs`).
 
 use super::App;
 use crate::editor::{MacroRequest, Message, Register};

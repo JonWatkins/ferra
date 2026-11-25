@@ -234,6 +234,8 @@ impl InputHandler {
     /// are looked up again, so with `jk` bound, `j` then a pause types "j".
     /// Otherwise (`g` in normal mode) it keeps waiting, like Vim.
     pub fn timeout(&mut self, mode: Mode, keymap: &Keymap) -> Vec<Outcome> {
+        // The pause, not a count digit, is now the last thing handled.
+        self.took_count = false;
         if self.pending.is_empty() {
             return Vec::new();
         }
