@@ -1596,17 +1596,24 @@ impl App {
 
     /// The key timeout passed with a key sequence half typed (see
     /// [`InputHandler::timeout`]). Public so tests can trigger it.
+    /// It's recorded as a `<Timeout>` key, so `.` and macros end the
+    /// sequence at the same point.
     pub fn handle_key_timeout(&mut self) {
-        self.tracked(&[], |app| {
-            let mode = app.editor.mode();
-            let keymap = match (&app.popup_keymap, mode) {
-                (Some(overlay), Mode::Popup | Mode::Sidebar) => overlay,
-                _ => &app.keymap,
-            };
-            let outcomes = app.input.timeout(mode, keymap);
-            app.apply_outcomes(outcomes);
-            app.after_popup_key();
-        });
+        if self.input.has_pending_keys() {
+            self.handle_key(KeyPress::plain(KeyCode::Timeout));
+        }
+    }
+
+    /// Ends the half-typed sequence, for a `<Timeout>` key.
+    fn end_pending_keys(&mut self) {
+        let mode = self.editor.mode();
+        let keymap = match (&self.popup_keymap, mode) {
+            (Some(overlay), Mode::Popup | Mode::Sidebar) => overlay,
+            _ => &self.keymap,
+        };
+        let outcomes = self.input.timeout(mode, keymap);
+        self.apply_outcomes(outcomes);
+        self.after_popup_key();
     }
 
     /// With the kitty keyboard protocol, `<C-[>`, `<C-i>` and `<C-m>` arrive
@@ -1767,6 +1774,10 @@ impl App {
                 return;
             }
             KeyCode::PasteEnd => return,
+            KeyCode::Timeout => {
+                self.end_pending_keys();
+                return;
+            }
             _ => {}
         }
         // Typing in the settings editor's search box or a value's field.

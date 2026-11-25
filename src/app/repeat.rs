@@ -63,6 +63,13 @@
 //! out. On replay the app collects the block like a paste and hands it to
 //! `Editor::put_completed` (`completed_from_keys`), so key bindings,
 //! auto-pairs and auto-indent don't touch it.
+//!
+//! The key timeout is recorded too, as a `<Timeout>` key wherever it ended a
+//! half-typed sequence (`App::handle_key_timeout`). Replaying it ends the
+//! sequence at the same point, so with `xx` bound, a change made by `x` alone
+//! after the pause repeats as `x` alone rather than waiting for a second `x`,
+//! and with `jk` bound in insert mode, `j`, a pause, then `k` types "jk"
+//! again. Macros keep it the same way, as `<Timeout>` in the register.
 
 use crate::editor::{Completed, DocumentId, VisualShape};
 use crate::input::{KeyCode, KeyPress, paste_keys};

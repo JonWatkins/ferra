@@ -83,3 +83,46 @@ fn dot_repeats_text_typed_by_a_timeout() {
     keys(&mut app, "x<Esc>.");
     assert_eq!(text(&app), "jjxx");
 }
+
+#[test]
+fn dot_repeats_a_binding_the_timeout_ran() {
+    let mut app = app_with_config("[keys.normal]\nxx = \"delete_line\"");
+    keys(&mut app, "iabc<Esc>0x");
+    app.handle_key_timeout();
+    assert_eq!(text(&app), "bc", "x alone, after the timeout");
+    keys(&mut app, ".");
+    assert_eq!(text(&app), "c", "`.` ran x alone too, not waiting for xx");
+}
+
+#[test]
+fn dot_keeps_insert_text_typed_by_a_timeout_apart_from_a_binding() {
+    let mut app = app_with_config("[keys.insert]\njk = \"normal_mode\"");
+    keys(&mut app, "ij");
+    app.handle_key_timeout();
+    keys(&mut app, "k<Esc>");
+    assert_eq!(text(&app), "jk");
+    keys(&mut app, ".");
+    assert_eq!(
+        text(&app),
+        "jjkk",
+        "typed jk again rather than leaving insert mode"
+    );
+    assert_eq!(app.editor().mode(), Mode::Normal);
+}
+
+#[test]
+fn macros_replay_a_binding_the_timeout_ran() {
+    let mut app = app_with_config("[keys.normal]\nxx = \"delete_line\"");
+    keys(&mut app, "iabc<Esc>0qax");
+    app.handle_key_timeout();
+    keys(&mut app, "q");
+    assert_eq!(text(&app), "bc");
+    keys(&mut app, "@a");
+    assert_eq!(text(&app), "c", "the macro ran x alone too");
+    keys(&mut app, "\"ap");
+    assert_eq!(
+        text(&app),
+        "cx<Timeout>",
+        "kept in the register as key notation"
+    );
+}

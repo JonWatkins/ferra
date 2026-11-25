@@ -498,7 +498,9 @@ pub fn key_bytes(key: KeyPress, app_cursor: bool) -> Vec<u8> {
             };
             return tilde(code);
         }
-        KeyCode::PasteStart | KeyCode::PasteEnd | KeyCode::Completed => return Vec::new(),
+        KeyCode::PasteStart | KeyCode::PasteEnd | KeyCode::Completed | KeyCode::Timeout => {
+            return Vec::new();
+        }
     };
     // Alt (Meta) sends ESC first.
     if m.alt {

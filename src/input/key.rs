@@ -36,6 +36,10 @@ pub enum KeyCode {
     /// character the cursor ends before the text's end, then `<PasteEnd>`.
     /// Never typed or recorded in a macro (see `app/repeat.rs`).
     Completed,
+    /// Where the key timeout ended a half-typed sequence, recorded for `.`
+    /// and macros so a replay ends it at the same point instead of waiting
+    /// for a longer binding (`g` alongside `gg`). Never typed.
+    Timeout,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -261,6 +265,7 @@ fn parse_bracketed(inner: &str) -> Result<KeyPress, String> {
         "pastestart" => KeyCode::PasteStart,
         "pasteend" => KeyCode::PasteEnd,
         "completed" => KeyCode::Completed,
+        "timeout" => KeyCode::Timeout,
         lower => {
             let mut chars = name.chars();
             match (chars.next(), chars.next()) {
@@ -317,6 +322,7 @@ impl fmt::Display for KeyPress {
             KeyCode::PasteStart => "PasteStart".into(),
             KeyCode::PasteEnd => "PasteEnd".into(),
             KeyCode::Completed => "Completed".into(),
+            KeyCode::Timeout => "Timeout".into(),
         };
 
         let Modifiers { ctrl, alt, shift } = self.modifiers;
