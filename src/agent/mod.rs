@@ -117,8 +117,10 @@ impl Agents {
 
     /// The tools, as the session's MCP servers: the bridge to start.
     fn mcp_servers(&mut self) -> Value {
+        // Bound per platform rather than a cfg'd block as the tail, which
+        // rust-analyzer takes for a statement ("expected (), found Value").
         #[cfg(unix)]
-        {
+        let servers = {
             if self.mcp.is_none() {
                 self.mcp = mcp::McpServer::start().ok();
             }
@@ -131,9 +133,10 @@ impl Agents {
                 "args": ["--mcp-bridge", server.path().to_string_lossy()],
                 "env": [],
             }])
-        }
+        };
         #[cfg(not(unix))]
-        json!([])
+        let servers = json!([]);
+        servers
     }
 
     /// Answers what came over MCP, and the language servers' answers to
