@@ -3,9 +3,11 @@
 //! Lines are taken a paragraph at a time: blank lines (or a comment marker
 //! alone) separate paragraphs and are kept, and so does a change in whether
 //! lines are comments. A paragraph's words are joined with single spaces
-//! and broken into lines no wider than the width, each starting with the
-//! first line's *leader*: its indentation, and its line-comment marker
-//! (`//`, `#`...) with the space after it. A list item (`- `, `* `, `+ `,
+//! (two after a sentence's `.`, `!` or `?` where its line had two or more;
+//! joining lines puts one, as Vim's `nojoinspaces`) and broken into lines
+//! no wider than the width, each starting with the first line's *leader*:
+//! its indentation, and its line-comment marker (`//`, `#`...) with the
+//! space after it. A list item (`- `, `* `, `+ `,
 //! `1. `, `1) `) starts a paragraph of its own, and its later lines line up
 //! under its text. A word wider than the width gets a line to itself.
 //!
@@ -13,12 +15,13 @@
 //! range touches. `core/format.rs` does the work, a paragraph at a time: blank
 //! lines (or a comment marker alone) separate paragraphs and are kept, as does
 //! a change between comment and code. Each paragraph's words are joined with
-//! single spaces and broken greedily at `text-width` (0 means 79, Vim's
-//! fallback; it's buffer-local), every line starting with the first line's
-//! leader: its indentation and the language's line-comment marker with its
-//! space (block comments aren't leaders, so Markdown's `#` headings stay put).
-//! A list item (`- `, `* `, `+ `, `1. `, `1) `) starts its own paragraph, its
-//! later lines indented to its text. The lines are replaced as one change; the
+//! single spaces (two kept after a sentence, as above) and broken greedily
+//! at `text-width` (0 means 79, Vim's fallback; it's buffer-local), every
+//! line starting with the first line's leader: its indentation and the
+//! language's line-comment marker with its space (block comments aren't
+//! leaders, so Markdown's `#` headings stay put). A list item (`- `, `* `,
+//! `+ `, `1. `, `1) `) starts its own paragraph, its later lines indented to
+//! its text. The lines are replaced as one change; the
 //! cursor goes to the last one's first non-blank, or with `gw` stays where it
 //! was. `gqq`, `gqgq` and `gwgw` come from operator-pending `q`, `gq` and `gw`
 //! bound to `current_line`.
@@ -49,8 +52,7 @@ pub fn format_lines(
             .is_some_and(|p| p.commented == parsed.commented && parsed.bullet.is_none());
         if continues {
             let p = paragraph.as_mut().expect("checked");
-            p.words
-                .extend(parsed.text.split_whitespace().map(String::from));
+            p.words.extend(words(&parsed.text));
         } else {
             if let Some(p) = paragraph.take() {
                 p.fill(width, tab_width, &mut out);
@@ -63,7 +65,7 @@ pub fn format_lines(
                 first_leader: parsed.leader,
                 rest_leader,
                 commented: parsed.commented,
-                words: parsed.text.split_whitespace().map(String::from).collect(),
+                words: words(&parsed.text).collect(),
             });
         }
     }
@@ -139,11 +141,40 @@ fn bullet_width(text: &str) -> Option<usize> {
     (digits > 0 && (rest.starts_with(". ") || rest.starts_with(") "))).then_some(digits + 2)
 }
 
+/// A word, and whether two spaces go before it: it follows a sentence's end
+/// (`.`, `!`, `?`) and two or more spaces were there on its line.
+struct Word {
+    text: String,
+    wide: bool,
+}
+
+/// The words of one line's text.
+fn words(text: &str) -> impl Iterator<Item = Word> + '_ {
+    let mut rest = text;
+    let mut sentence_end = false;
+    std::iter::from_fn(move || {
+        let trimmed = rest.trim_start();
+        let gap = rest.len() - trimmed.len();
+        let end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
+        if end == 0 {
+            return None;
+        }
+        let (text, after) = trimmed.split_at(end);
+        let word = Word {
+            text: text.to_string(),
+            wide: sentence_end && gap >= 2,
+        };
+        sentence_end = text.ends_with(['.', '!', '?']);
+        rest = after;
+        Some(word)
+    })
+}
+
 struct Paragraph {
     first_leader: String,
     rest_leader: String,
     commented: bool,
-    words: Vec<String>,
+    words: Vec<Word>,
 }
 
 impl Paragraph {
@@ -151,14 +182,15 @@ impl Paragraph {
         let mut line = self.first_leader.clone();
         let mut has_words = false;
         for word in self.words {
-            let candidate = if has_words {
-                format!("{line} {word}")
-            } else {
-                format!("{line}{word}")
+            let gap = match (has_words, word.wide) {
+                (false, _) => "",
+                (true, false) => " ",
+                (true, true) => "  ",
             };
+            let candidate = format!("{line}{gap}{}", word.text);
             if has_words && display_width(&candidate, tab_width) > width {
                 out.push(std::mem::replace(&mut line, self.rest_leader.clone()));
-                line.push_str(&word);
+                line.push_str(&word.text);
             } else {
                 line = candidate;
             }
@@ -239,6 +271,34 @@ mod tests {
             (2, "    ".into(), false)
         );
         assert_eq!(continuation("plain", None), (0, String::new(), false));
+    }
+
+    #[test]
+    fn two_spaces_after_a_sentence_are_kept() {
+        assert_eq!(
+            format("One.  Two!  Three?  Four", 80, None),
+            "One.  Two!  Three?  Four"
+        );
+        assert_eq!(
+            format("a.   b", 80, None),
+            "a.  b",
+            "more than two become two"
+        );
+        assert_eq!(
+            format("a  b.c  d", 80, None),
+            "a b.c d",
+            "only after a sentence's end"
+        );
+        assert_eq!(
+            format("One.\nTwo.  Three", 80, None),
+            "One. Two.  Three",
+            "joined lines get one space, as Vim's nojoinspaces"
+        );
+        assert_eq!(
+            format("aaa.  bbb", 5, None),
+            "aaa.\nbbb",
+            "a break takes both spaces"
+        );
     }
 
     #[test]
