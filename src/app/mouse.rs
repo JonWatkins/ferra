@@ -639,6 +639,11 @@ impl App {
                 };
                 match part {
                     FindPart::Toggle(3) => self.editor.find_toggle_preserve_case(),
+                    FindPart::Toggle(4) => {
+                        if let Err(error) = self.editor.find_toggle_in_selection() {
+                            self.editor.set_message(Message::error(error));
+                        }
+                    }
                     FindPart::Toggle(toggle) => self.editor.find_toggle(|f| match toggle {
                         0 => f.match_case = !f.match_case,
                         1 => f.whole_word = !f.whole_word,

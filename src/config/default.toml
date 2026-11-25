@@ -559,6 +559,8 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.find.count" = "#a0a6b0"
 "ui.find.none" = "#f7768e"
 "ui.find.hint" = "#565f89"
+# The selection the find box finds in, with "in selection" (≡) on.
+"ui.find.scope" = { bg = "#262b36" }
 # A plugin's input box's placeholder (shown while it's empty).
 "ui.input.placeholder" = { fg = "#565f89", modifiers = ["italic"] }
 # The splash screen shown when starting without a file.
@@ -930,6 +932,8 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "<A-r>" = "find_toggle_regex"
 "<C-t>" = "find_toggle_preserve_case"
 "<A-p>" = "find_toggle_preserve_case"
+"<C-l>" = "find_toggle_in_selection"
+"<A-l>" = "find_toggle_in_selection"
 "<C-CR>" = "find_replace_all"
 "<A-a>" = "find_replace_all"
 "<C-A-CR>" = "find_replace_all"

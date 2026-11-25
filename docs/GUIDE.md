@@ -245,9 +245,9 @@ right of the window: `<Space>/` to find, `<Space>h` to find and replace
 
 ```text
 ╭────────────────────────────────────────────────────────────╮
-│ Find       total                                   2 of 3  │
+│ Find       total                       2 of 3        ≡  ⌃L │
 │                                                            │
-│ Replace    NUM                                     AB  ⌃T  │
+│ Replace    NUM                         AB  ⌃T              │
 │                                                            │
 │  Aa  Match case ⌃A    W  Whole word ⌃W    .*  Regex ⌃R     │
 ╰──────── ⏎ replace one  ⌃⏎ replace all  Tab find  Esc close ╯
@@ -261,6 +261,9 @@ type: the cursor goes to the first match, every match is
 highlighted (the current one in its own colour), and the box counts them.
 It starts with the selection, or the word under the cursor (or, once
 you've searched, what you looked for last), selected so typing replaces it.
+Opened from a selection of whole lines, a block, or text across lines, it
+finds only in that selection (in selection, `≡`, on): the selection is
+tinted (`ui.find.scope`), and replace all replaces only inside it.
 
 | Keys (in the box) | Action |
 |-------------------|--------|
@@ -270,6 +273,7 @@ you've searched, what you looked for last), selected so typing replaces it.
 | `<Tab>` | Between the find and replace fields (showing the replace field) |
 | `<C-a>`, `<C-w>`, `<C-r>` | Toggle match case (`Aa`), whole words (`W`), regex (`.*`). VS Code's `<A-c>` `<A-w>` `<A-r>` work too where the terminal sends Alt (on macOS, with Option set to act as Alt) |
 | `<C-t>` (`<A-p>`) | Toggle preserve case (`AB`, after the replace field): each replacement takes the case of what it replaces, so replacing `foo` with `bar` makes `Foo` `Bar` and `FOO` `BAR` (and `foo_BAR` with `baz_qux`, `baz_QUX`) |
+| `<C-l>` (`<A-l>`) | Toggle in selection (`≡`, after the count): find and replace only in the selection the box opened from, or else the last one (`gv`'s) |
 | `<C-CR>` (`<A-a>`) | Replace all (one undo step). `<C-CR>` needs the kitty keyboard protocol (Ghostty, kitty, WezTerm, iTerm2); elsewhere use `<A-a>` |
 | `<Left>` `<Right>`, `<Home>` `<End>` (`<C-e>`), `<BS>` `<Del>` `<A-BS>` `<C-u>` | Edit the field |
 | `<Esc>` | Close it, the cursor left at the match |
