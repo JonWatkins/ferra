@@ -347,8 +347,11 @@ step over it, and `dd`, `yy`, `>>` and other line operators take all of it.
 Searches, mark jumps and undo open a fold they land in; changing text
 inside one opens it too. With VS Code's keys (or `fold-column = "on"`), a
 column left of the line numbers shows where folds are: `▸` on a closed
-one, `▾` on a line that starts one, `│` beside the lines inside. With the
-mouse on, clicking a `▸` or `▾` opens or closes that fold, in either keymap.
+one, `▾` on a line that starts one, `│` beside the lines inside.
+`:set fold-column`, `:set nofold-column` and `:set fold-column!` show,
+hide or flip it, and `:set fold-column=auto` goes back to following the
+keymap. With the mouse on, clicking a `▸` or `▾` opens or closes that
+fold, in either keymap.
 
 ### Sorting
 
@@ -1438,7 +1441,7 @@ As in Vim, some options can also be set for one window or one buffer:
 `:setlocal nowrap` in a split leaves other windows wrapping, and
 `:setlocal ts=2` applies to this buffer wherever it's shown. Windows have
 their own `wrap`, `wrap-indent`, `wrap-marker`, `line-numbers`,
-`cursorline` and `scroll-off` (a split
+`fold-column`, `cursorline` and `scroll-off` (a split
 starts with those of the window it came from); buffers their own
 `tab-width`, `expand-tab`, `auto-indent` and `text-width`. `:set` changes an option
 everywhere (and drops this window's or buffer's own value), `:setglobal`
