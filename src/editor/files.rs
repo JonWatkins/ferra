@@ -57,9 +57,7 @@ impl Editor {
     /// (`www.` ones get `https://`), or else the file named there, found as
     /// `gf` finds it (a `:line` suffix is dropped).
     pub fn url_under_cursor(&self) -> Result<String, String> {
-        let cursor = self.document.cursor();
-        let line = self.document.buffer().line(cursor.row);
-        if let Some(url) = url_at(&line, cursor.col) {
+        if let Some(url) = self.link_under_cursor() {
             return Ok(url);
         }
         let word = self
@@ -71,6 +69,13 @@ impl Editor {
             .map_err(|name| format!("Can't find file \"{}\"", name.display()))?;
         let path = std::fs::canonicalize(&path).unwrap_or(path);
         Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// The URL under the cursor, if it's on one (no file names: a click
+    /// that opens links goes to definitions everywhere else).
+    pub fn link_under_cursor(&self) -> Option<String> {
+        let cursor = self.document.cursor();
+        url_at(&self.document.buffer().line(cursor.row), cursor.col)
     }
 
     /// The run of file-name characters under (or, past the end, before) the
@@ -432,6 +437,12 @@ mod tests {
             Err("Can't find file \"nowhere.txt\"".into())
         );
         assert_eq!(at(&mut editor, 2), Err("No URL under the cursor".into()));
+
+        // Ctrl+click opens links only: a file name goes to its definition.
+        editor.document.set_cursor(Position::new(0, 6));
+        assert_eq!(editor.link_under_cursor(), Some("https://a.b/c".into()));
+        editor.document.set_cursor(Position::new(0, 19));
+        assert_eq!(editor.link_under_cursor(), None);
     }
 }
 

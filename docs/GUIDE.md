@@ -444,7 +444,8 @@ With `mouse = true` (the default):
   them.
 - **Ctrl+click** on a word goes to its definition (with VS Code's keys,
   **Ctrl+Shift+click**: Ctrl+click adds a cursor). **⌥+click** does too, in
-  terminals that pass it on.
+  terminals that pass it on. On a URL, the same click opens it in the
+  browser, as `gx` (or Go → Open Link) does.
 - **Rest the pointer** on a word to see what the language server says about
   it, under any problem there (`mouse-hover`, `mouse-hover-delay`); with
   **Ctrl** held, the definition's own lines instead. Moving off it, a key or

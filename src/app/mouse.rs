@@ -5,7 +5,9 @@
 //!   staying in insert mode if that's where you were; a double click
 //!   selects the word, a triple click the line; dragging selects. A click
 //!   on a `▸` or `▾` in the fold column (`Target::Fold`) opens or closes
-//!   that fold, as `za` on its line.
+//!   that fold, as `za` on its line. Ctrl+click (Ctrl+Shift+click with VS
+//!   Code's keys, where Ctrl+click adds a cursor; or ⌥+click) goes to the
+//!   word's definition, or opens the URL there.
 //! - In the sidebar, a click gives it focus: on a tab it shows that view;
 //!   on a line it selects it, and in the file tree opens the file or folder.
 //! - A click in the terminal panel gives it focus.
@@ -149,7 +151,8 @@ impl App {
             }
             // Ctrl+click (Ctrl+Shift+click with VS Code's keys, or
             // ⌥+click: a Mac's terminal can take Ctrl+click for its
-            // right-click) on a word: its definition.
+            // right-click) on a word: its definition. On a URL: opens it,
+            // as `gx`.
             MouseEventKind::Down(MouseButton::Left)
                 if (event.modifiers.contains(KeyModifiers::CONTROL)
                     || event.modifiers.contains(KeyModifiers::ALT))
@@ -157,7 +160,12 @@ impl App {
             {
                 self.mouse_down(at);
                 self.dragging = None;
-                self.execute("goto_definition", Invocation::default());
+                let command = if self.editor.link_under_cursor().is_some() {
+                    "open_url"
+                } else {
+                    "goto_definition"
+                };
+                self.execute(command, Invocation::default());
             }
             MouseEventKind::Down(MouseButton::Left) => self.mouse_down(at),
             MouseEventKind::Down(MouseButton::Right) => self.right_click(at),
