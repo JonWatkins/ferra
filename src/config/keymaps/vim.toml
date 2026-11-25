@@ -121,6 +121,7 @@
 "R" = "replace_mode"
 "gi" = "insert_at_last_insert"
 "gf" = "goto_file"
+"gx" = "open_url"
 "<C-^>" = "buffer_alternate"
 "<C-6>" = "buffer_alternate"
 "X" = "delete_char_before"

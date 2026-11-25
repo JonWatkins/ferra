@@ -10,7 +10,7 @@ A map of ferra's modules: what each owns, the interface others use, and where it
 The pure text model: a buffer's text (a rope), positions and ranges, motions and text objects, undo history, wrapping, folding by indentation, `gq`, block columns, and converting a file's bytes to text and back. Pure functions over a `Buffer`; depends on nothing else in the crate.
 
 **files** (`src/files/`):
-The disk: reading files, and every change to the user's files ([ADR 0004](adr/0004-saving-goes-through-files.md)): saving them atomically (`write`), making files and folders (`create_file`, `create_dir`) and moving them (`rename`), none replacing what's there, and the trash; telling whether a file changed since it was read or written (`stamp`, `recheck`); listing a project (`walk_files`, honouring `.gitignore`), and path completion.
+The disk: reading files, and every change to the user's files ([ADR 0004](adr/0004-saving-goes-through-files.md)): saving them atomically (`write`), making files and folders (`create_file`, `create_dir`) and moving them (`rename`), none replacing what's there, and the trash (and showing a file in the file manager, or opening a URL or file with the system's opener: `reveal`, `open_externally`); telling whether a file changed since it was read or written (`stamp`, `recheck`); listing a project (`walk_files`, honouring `.gitignore`), and path completion.
 
 ## The editor
 

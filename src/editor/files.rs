@@ -8,9 +8,11 @@
 //! (`Editor::open_file_under_cursor`) takes the run of file-name characters
 //! under the cursor, splits off a `:line[:col]` suffix, and opens the first of
 //! "beside the current file" and "from the working directory" that exists,
-//! through `open`, so it's a jump and `<C-^>` comes back.
+//! through `open`, so it's a jump and `<C-^>` comes back. `gx`
+//! (`Editor::url_under_cursor`) finds the URL around the cursor (`url_at`),
+//! or failing that the file `gf` would, for the system's opener.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{DiskState, Document, Editor, Message, Mode, OpenInfo, SaveInfo};
 use crate::core::{LineEnding, Position};
@@ -29,40 +31,13 @@ impl Editor {
     /// goes there. The name is looked for next to the current file, then
     /// in the working directory; `~` is the home directory.
     pub fn open_file_under_cursor(&mut self) -> Result<(), String> {
-        let cursor = self.document.cursor();
-        let line: Vec<char> = self.document.buffer().line(cursor.row).chars().collect();
-        let in_name = |c: char| c.is_alphanumeric() || "/._-~+:@%#\\".contains(c);
-        let at = cursor.col.min(line.len().saturating_sub(1));
-        if line.is_empty() || !in_name(line[at]) {
-            return Err("No file name under the cursor".into());
-        }
-        let start = line[..at]
-            .iter()
-            .rposition(|&c| !in_name(c))
-            .map_or(0, |i| i + 1);
-        let end = line[at..]
-            .iter()
-            .position(|&c| !in_name(c))
-            .map_or(line.len(), |i| at + i);
-        let word: String = line[start..end].iter().collect();
+        let word = self
+            .file_name_under_cursor()
+            .ok_or("No file name under the cursor")?;
         let (name, row, col) = split_location(word.trim_end_matches([':', '.']));
-
-        let name = match name.strip_prefix("~/") {
-            Some(rest) => std::env::var_os("HOME")
-                .map(|home| Path::new(&home).join(rest))
-                .unwrap_or_else(|| Path::new(name).to_path_buf()),
-            None => Path::new(name).to_path_buf(),
-        };
-        let beside = self
-            .document
-            .path()
-            .and_then(Path::parent)
-            .map(|dir| dir.join(&name));
-        let path = [beside, Some(name.clone())]
-            .into_iter()
-            .flatten()
-            .find(|p| p.is_file())
-            .ok_or_else(|| format!("Can't find file \"{}\"", name.display()))?;
+        let path = self
+            .find_named_file(name)
+            .map_err(|name| format!("Can't find file \"{}\"", name.display()))?;
         self.open(&path).map_err(|e| e.to_string())?;
         if let Some(row) = row {
             let row = row
@@ -76,6 +51,68 @@ impl Editor {
             self.enforce_cursor_rules();
         }
         Ok(())
+    }
+
+    /// `gx`: what to hand the system's opener: the URL under the cursor
+    /// (`www.` ones get `https://`), or else the file named there, found as
+    /// `gf` finds it (a `:line` suffix is dropped).
+    pub fn url_under_cursor(&self) -> Result<String, String> {
+        let cursor = self.document.cursor();
+        let line = self.document.buffer().line(cursor.row);
+        if let Some(url) = url_at(&line, cursor.col) {
+            return Ok(url);
+        }
+        let word = self
+            .file_name_under_cursor()
+            .ok_or("No URL under the cursor")?;
+        let (name, _, _) = split_location(word.trim_end_matches([':', '.']));
+        let path = self
+            .find_named_file(name)
+            .map_err(|name| format!("Can't find file \"{}\"", name.display()))?;
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        Ok(path.to_string_lossy().into_owned())
+    }
+
+    /// The run of file-name characters under (or, past the end, before) the
+    /// cursor.
+    fn file_name_under_cursor(&self) -> Option<String> {
+        let cursor = self.document.cursor();
+        let line: Vec<char> = self.document.buffer().line(cursor.row).chars().collect();
+        let in_name = |c: char| c.is_alphanumeric() || "/._-~+:@%#\\".contains(c);
+        let at = cursor.col.min(line.len().saturating_sub(1));
+        if line.is_empty() || !in_name(line[at]) {
+            return None;
+        }
+        let start = line[..at]
+            .iter()
+            .rposition(|&c| !in_name(c))
+            .map_or(0, |i| i + 1);
+        let end = line[at..]
+            .iter()
+            .position(|&c| !in_name(c))
+            .map_or(line.len(), |i| at + i);
+        Some(line[start..end].iter().collect())
+    }
+
+    /// `name` beside the current file, else from the working directory;
+    /// `~/` is the home directory. The expanded name if neither exists.
+    fn find_named_file(&self, name: &str) -> Result<PathBuf, PathBuf> {
+        let name = match name.strip_prefix("~/") {
+            Some(rest) => std::env::var_os("HOME")
+                .map(|home| Path::new(&home).join(rest))
+                .unwrap_or_else(|| Path::new(name).to_path_buf()),
+            None => Path::new(name).to_path_buf(),
+        };
+        let beside = self
+            .document
+            .path()
+            .and_then(Path::parent)
+            .map(|dir| dir.join(&name));
+        [beside, Some(name.clone())]
+            .into_iter()
+            .flatten()
+            .find(|p| p.is_file())
+            .ok_or(name)
     }
 
     pub fn open(&mut self, path: &Path) -> Result<(), FileError> {
@@ -370,6 +407,32 @@ mod tests {
         assert!(events.contains(&Event::Opened { path: path.clone() }));
         assert!(events.contains(&Event::AfterSave { path }));
     }
+
+    #[test]
+    fn gx_target_is_a_url_or_a_file_gf_would_find() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.md");
+        std::fs::write(&path, "[x](https://a.b/c) b.txt:3 nowhere.txt\n").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "").unwrap();
+        let mut editor = Editor::default();
+        editor.open(&path).unwrap();
+        let at = |editor: &mut Editor, col| {
+            editor.document.set_cursor(Position::new(0, col));
+            editor.url_under_cursor()
+        };
+        assert_eq!(at(&mut editor, 6), Ok("https://a.b/c".into()));
+        let b = std::fs::canonicalize(dir.path().join("b.txt")).unwrap();
+        assert_eq!(
+            at(&mut editor, 19),
+            Ok(b.to_string_lossy().into_owned()),
+            "beside the file, without its :line"
+        );
+        assert_eq!(
+            at(&mut editor, 28),
+            Err("Can't find file \"nowhere.txt\"".into())
+        );
+        assert_eq!(at(&mut editor, 2), Err("No URL under the cursor".into()));
+    }
 }
 
 /// `src/main.rs:12:5` → the name, line 12 and column 5 (1-based); plain
@@ -412,5 +475,145 @@ mod location_tests {
             ("src/main.rs", Some(12), Some(5))
         );
         assert_eq!(split_location("a:b.rs:3"), ("a:b.rs", Some(3), None));
+    }
+}
+
+/// The URL on `line` that covers column `col`: one starting `scheme://`,
+/// `mailto:` or `www.` (given `https://`), running to whitespace or a quote
+/// or angle bracket, less trailing punctuation and a closing bracket it
+/// didn't open (so `(see https://a.b/c).` and Markdown links work).
+fn url_at(line: &str, col: usize) -> Option<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let starts_with = |i: usize, s: &str| {
+        let s: Vec<char> = s.chars().collect();
+        chars.len() >= i + s.len()
+            && chars[i..i + s.len()]
+                .iter()
+                .zip(&s)
+                .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    };
+    // A scheme is a letter then letters, digits, `+`, `-` or `.`.
+    let scheme_end = |i: usize| {
+        if !chars[i].is_ascii_alphabetic() {
+            return None;
+        }
+        let len = chars[i..]
+            .iter()
+            .take_while(|c| c.is_ascii_alphanumeric() || "+-.".contains(**c))
+            .count();
+        (len >= 2 && starts_with(i + len, "://")).then_some(i + len + 3)
+    };
+    let ends = |c: char| c.is_whitespace() || "<>\"'`".contains(c);
+    let mut i = 0;
+    while i < chars.len() {
+        // Not partway into a word or host name (`a.www.b`, `xhttps://`).
+        let boundary =
+            i == 0 || !(chars[i - 1].is_alphanumeric() || ".-+@/".contains(chars[i - 1]));
+        let body = if !boundary {
+            None
+        } else if let Some(end) = scheme_end(i) {
+            Some(end)
+        } else if starts_with(i, "mailto:") {
+            Some(i + 7)
+        } else if starts_with(i, "www.") {
+            Some(i + 4)
+        } else {
+            None
+        };
+        let Some(body) = body else {
+            i += 1;
+            continue;
+        };
+        let mut end = chars[body..]
+            .iter()
+            .position(|&c| ends(c))
+            .map_or(chars.len(), |n| body + n);
+        while end > body {
+            let last = chars[end - 1];
+            let unopened = |open: char| {
+                let count = |c: char| chars[i..end].iter().filter(|&&x| x == c).count();
+                count(last) > count(open)
+            };
+            let trim = match last {
+                '.' | ',' | ';' | ':' | '!' | '?' => true,
+                ')' => unopened('('),
+                ']' => unopened('['),
+                '}' => unopened('{'),
+                _ => false,
+            };
+            if !trim {
+                break;
+            }
+            end -= 1;
+        }
+        if end > body && (i..end).contains(&col) {
+            let url: String = chars[i..end].iter().collect();
+            return Some(if starts_with(i, "www.") {
+                format!("https://{url}")
+            } else {
+                url
+            });
+        }
+        i = end.max(i + 1);
+    }
+    None
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::url_at;
+
+    fn at(line: &str, needle: &str) -> Option<String> {
+        url_at(line, line.find(needle).unwrap())
+    }
+
+    #[test]
+    fn finds_the_url_around_the_cursor() {
+        let line = "see https://example.com/a?b=1#c for more";
+        let url = Some("https://example.com/a?b=1#c".to_string());
+        assert_eq!(at(line, "https"), url);
+        assert_eq!(at(line, "?b"), url);
+        assert_eq!(at(line, "#c"), url);
+        assert_eq!(at(line, "see"), None);
+        assert_eq!(at(line, "for"), None);
+    }
+
+    #[test]
+    fn leaves_off_trailing_punctuation_and_unopened_brackets() {
+        let url = Some("https://a.b/c".to_string());
+        assert_eq!(at("(see https://a.b/c).", "https"), url);
+        assert_eq!(at("[link](https://a.b/c)", "https"), url);
+        assert_eq!(at("<https://a.b/c>", "https"), url);
+        assert_eq!(at("\"https://a.b/c\",", "https"), url);
+        assert_eq!(
+            at("https://en.wikipedia.org/wiki/Rust_(language).", "https"),
+            Some("https://en.wikipedia.org/wiki/Rust_(language)".to_string())
+        );
+    }
+
+    #[test]
+    fn other_schemes_mailto_and_www() {
+        assert_eq!(
+            at("file:///tmp/x.txt", "tmp"),
+            Some("file:///tmp/x.txt".to_string())
+        );
+        assert_eq!(
+            at("mail mailto:a@b.c now", "a@"),
+            Some("mailto:a@b.c".to_string())
+        );
+        assert_eq!(
+            at("go to www.example.com.", "example"),
+            Some("https://www.example.com".to_string())
+        );
+        assert_eq!(at("a.www.example.com", "example"), None);
+        assert_eq!(at("x://", "x"), None, "a one-letter scheme, like C:\\");
+        assert_eq!(at("https://", "https"), None, "nothing after the scheme");
+    }
+
+    #[test]
+    fn picks_the_url_the_cursor_is_on() {
+        let line = "https://one.example https://two.example";
+        assert_eq!(at(line, "two"), Some("https://two.example".to_string()));
+        assert_eq!(at(line, "one"), Some("https://one.example".to_string()));
     }
 }
