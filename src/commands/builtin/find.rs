@@ -70,6 +70,14 @@ pub fn register(r: &mut CommandRegistry) {
         Ok(())
     });
     r.register(
+        "find_toggle_preserve_case",
+        "Replace: take each match's case (FOO, Foo, foo), or not",
+        |cx| {
+            cx.editor.find_toggle_preserve_case();
+            Ok(())
+        },
+    );
+    r.register(
         "find_toggle_regex",
         "Find: a regular expression, or the text as it is",
         |cx| {

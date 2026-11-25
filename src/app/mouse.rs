@@ -455,7 +455,12 @@ impl App {
             SidebarPart::SearchToggle(i) => {
                 // Toggled as the keys do, from the query field.
                 self.editor.search_focus_query();
-                let command = ["find_toggle_case", "find_toggle_word", "find_toggle_regex"][i];
+                let command = [
+                    "find_toggle_case",
+                    "find_toggle_word",
+                    "find_toggle_regex",
+                    "find_toggle_preserve_case",
+                ][i];
                 self.execute(command, Invocation::default());
             }
             SidebarPart::Tab(index) => {
@@ -633,6 +638,7 @@ impl App {
                     return false;
                 };
                 match part {
+                    FindPart::Toggle(3) => self.editor.find_toggle_preserve_case(),
                     FindPart::Toggle(toggle) => self.editor.find_toggle(|f| match toggle {
                         0 => f.match_case = !f.match_case,
                         1 => f.whole_word = !f.whole_word,

@@ -247,7 +247,7 @@ right of the window: `<Space>/` to find, `<Space>h` to find and replace
 ╭────────────────────────────────────────────────────────────╮
 │ Find       total                                   2 of 3  │
 │                                                            │
-│ Replace    NUM                                             │
+│ Replace    NUM                                     AB  ⌃T  │
 │                                                            │
 │  Aa  Match case ⌃A    W  Whole word ⌃W    .*  Regex ⌃R     │
 ╰──────── ⏎ replace one  ⌃⏎ replace all  Tab find  Esc close ╯
@@ -268,6 +268,7 @@ you've searched, what you looked for last), selected so typing replaces it.
 | `<Up>` (`<C-p>`), `<S-CR>` | Previous match (`<S-CR>` needs the kitty keyboard protocol) |
 | `<Tab>` | Between the find and replace fields (showing the replace field) |
 | `<C-a>`, `<C-w>`, `<C-r>` | Toggle match case (`Aa`), whole words (`W`), regex (`.*`). VS Code's `<A-c>` `<A-w>` `<A-r>` work too where the terminal sends Alt (on macOS, with Option set to act as Alt) |
+| `<C-t>` (`<A-p>`) | Toggle preserve case (`AB`, after the replace field): each replacement takes the case of what it replaces, so replacing `foo` with `bar` makes `Foo` `Bar` and `FOO` `BAR` (and `foo_BAR` with `baz_qux`, `baz_QUX`) |
 | `<C-CR>` (`<A-a>`) | Replace all (one undo step). `<C-CR>` needs the kitty keyboard protocol (Ghostty, kitty, WezTerm, iTerm2); elsewhere use `<A-a>` |
 | `<Left>` `<Right>`, `<Home>` `<End>` (`<C-e>`), `<BS>` `<Del>` `<A-BS>` `<C-u>` | Edit the field |
 | `<Esc>` | Close it, the cursor left at the match |
@@ -578,7 +579,7 @@ results come in as you type, grouped by file, with each file's count.
  SEARCH
   alpha               Aa  W  .*
 
-  Replace                    All
+  Replace                AB  All
  3 results in 2 files
  ▾ notes.txt                 1
     Alpha is first
@@ -602,7 +603,8 @@ saved.
 
 To replace, `<Tab>` from the query to the replace field (or click it):
 the results then show each match struck through with its replacement
-after it (with a regex, `$1` and `$2` are its groups). `<CR>` there (or
+after it (with a regex, `$1` and `$2` are its groups; with `AB`, `<C-t>`,
+in the case of the match, as in the find box). `<CR>` there (or
 `<C-CR>`, or the `All` chip) replaces every match, after saying how many
 in how many files; `r` in the results replaces the selected match's line,
 or all of the selected file's. A file's replacements are one edit in its

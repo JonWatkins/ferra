@@ -130,13 +130,32 @@ impl SearchPattern {
     /// with `replacement` in `regex` syntax (`$0`, `${1}`). Returns the new
     /// text and how many matches were replaced.
     pub fn replace(&self, line: &str, replacement: &str, all: bool) -> (String, usize) {
+        self.replace_mapped(line, replacement, all, |_, text| text)
+    }
+
+    /// As `replace`, with each match's expanded replacement passed through
+    /// `map` (given the text matched) first: the find box's preserve case.
+    pub fn replace_mapped(
+        &self,
+        line: &str,
+        replacement: &str,
+        all: bool,
+        mut map: impl FnMut(&str, String) -> String,
+    ) -> (String, usize) {
         let limit = if all { 0 } else { 1 };
         let count = self
             .regex
             .find_iter(line)
             .take(if all { usize::MAX } else { 1 })
             .count();
-        let replaced = self.regex.replacen(line, limit, replacement).into_owned();
+        let replaced = self
+            .regex
+            .replacen(line, limit, |captures: &regex::Captures| {
+                let mut text = String::new();
+                captures.expand(replacement, &mut text);
+                map(&captures[0], text)
+            })
+            .into_owned();
         (replaced, count)
     }
 
@@ -221,6 +240,45 @@ impl<'a> CharCols<'a> {
         self.col += self.line[self.byte..byte].chars().count();
         self.byte = byte;
         self.col
+    }
+}
+
+/// `replacement` cased like `matched`, as VS Code's preserve case does: all
+/// capitals, all small, or (mixed) its first letter's case; parts between
+/// `-` or `_` one by one when both have as many. A match with no cased
+/// letters leaves it as it is.
+pub fn preserve_case(matched: &str, replacement: &str) -> String {
+    for separator in ['-', '_'] {
+        if matched.contains(separator) && replacement.contains(separator) {
+            let matched: Vec<&str> = matched.split(separator).collect();
+            let replacement: Vec<&str> = replacement.split(separator).collect();
+            if matched.len() == replacement.len() {
+                let parts: Vec<String> = matched
+                    .iter()
+                    .zip(&replacement)
+                    .map(|(m, r)| preserve_case(m, r))
+                    .collect();
+                return parts.join(&separator.to_string());
+            }
+        }
+    }
+    let upper = matched.chars().any(char::is_uppercase);
+    let lower = matched.chars().any(char::is_lowercase);
+    match (upper, lower) {
+        (false, false) => replacement.to_string(),
+        (true, false) => replacement.to_uppercase(),
+        (false, true) => replacement.to_lowercase(),
+        (true, true) => {
+            let first = matched
+                .chars()
+                .find(|c| c.is_uppercase() || c.is_lowercase());
+            let mut rest = replacement.chars();
+            match (first, rest.next()) {
+                (Some(m), Some(r)) if m.is_uppercase() => r.to_uppercase().chain(rest).collect(),
+                (Some(_), Some(r)) => r.to_lowercase().chain(rest).collect(),
+                _ => replacement.to_string(),
+            }
+        }
     }
 }
 
@@ -340,6 +398,42 @@ mod tests {
             found_at(p.find(&b, pos(1, 0), false, true)),
             Some((0, 3, false))
         );
+    }
+
+    #[test]
+    fn preserve_case_follows_the_match() {
+        let cases = [
+            ("foo", "bar", "bar"),
+            ("FOO", "bar", "BAR"),
+            ("foo", "BAR", "bar"),
+            ("Foo", "bar", "Bar"),
+            ("fOO", "Bar", "bar"),
+            ("Foo", "barBaz", "BarBaz"),
+            ("fooBar", "BazQux", "bazQux"),
+            // Parts between separators, when both have as many.
+            ("Foo-BAR", "baz-qux", "Baz-QUX"),
+            ("foo_BAR", "baz_qux", "baz_QUX"),
+            ("FOO-bar", "baz", "Baz"),
+            // Nothing to follow.
+            ("123", "abc", "abc"),
+            ("Foo", "", ""),
+            ("Éclair", "über", "Über"),
+        ];
+        for (matched, replacement, expected) in cases {
+            assert_eq!(
+                preserve_case(matched, replacement),
+                expected,
+                "{matched} -> {replacement}"
+            );
+        }
+    }
+
+    #[test]
+    fn replace_mapped_maps_each_expanded_match() {
+        let p = SearchPattern::from_regex(r"(\w)oo", "", true).unwrap();
+        let (text, count) =
+            p.replace_mapped("Foo moo GOO", "${1}ar", true, |m, r| preserve_case(m, &r));
+        assert_eq!((text.as_str(), count), ("Far mar GAR", 3));
     }
 
     #[test]
