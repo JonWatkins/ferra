@@ -1456,6 +1456,34 @@ fn a_snippet_leaves_the_cursor_at_its_first_stop() {
 }
 
 #[test]
+fn dot_puts_a_snippet_back_with_the_cursor_inside_it() {
+    let (_dir, mut app, _) = with_server("// maybe\n\n", true);
+    ready(&mut app);
+    keys(&mut app, "jio.ca");
+    until(&mut app, |a| menu(a) == ["call(arg)"]);
+    keys(&mut app, "<C-y>42<Esc>");
+    keys(&mut app, ".");
+    assert_eq!(text(&app), "// maybe\no.call(4o.call(42)2)");
+}
+
+#[test]
+fn dot_after_taking_an_item_with_tab_puts_in_its_text_not_a_tab() {
+    let (_dir, mut app, _) = with_server("fn main() {\n    \n}\n", true);
+    ready(&mut app);
+    keys(&mut app, "jA");
+    keys(&mut app, "imp");
+    until(&mut app, |a| menu(a) == ["imported"]);
+    keys(&mut app, "<Tab><Esc>");
+    assert_eq!(text(&app), "use imported;\nfn main() {\n    imported\n}");
+    keys(&mut app, "j.");
+    assert_eq!(
+        text(&app),
+        "use imported;\nfn main() {\n    imported\n}imported",
+        "the text, not the import again"
+    );
+}
+
+#[test]
 fn rename_changes_the_name_everywhere_as_one_change() {
     let (_dir, mut app, _) = with_server("fn bad() {}\nbad();\nlet x = bad;\n", true);
     ready(&mut app);

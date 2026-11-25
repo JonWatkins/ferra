@@ -422,6 +422,8 @@ impl Editor {
             self.document.set_cursor(place);
         }
         let edits = item.other_edits.clone();
+        // Before the other edits, which can move the text.
+        self.note_completed_cursor();
         self.make_other_edits(edits);
     }
 

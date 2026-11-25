@@ -30,6 +30,12 @@ pub enum KeyCode {
     /// rather than typed. See [`paste_keys`].
     PasteStart,
     PasteEnd,
+    /// Marks the start of what a completion put in, recorded for `.` in
+    /// place of the keys that chose it: `<BS>` for each character it took
+    /// out before the cursor, the text (as in a paste), `<Left>` for each
+    /// character the cursor ends before the text's end, then `<PasteEnd>`.
+    /// Never typed or recorded in a macro (see `app/repeat.rs`).
+    Completed,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -254,6 +260,7 @@ fn parse_bracketed(inner: &str) -> Result<KeyPress, String> {
         "pagedown" => KeyCode::PageDown,
         "pastestart" => KeyCode::PasteStart,
         "pasteend" => KeyCode::PasteEnd,
+        "completed" => KeyCode::Completed,
         lower => {
             let mut chars = name.chars();
             match (chars.next(), chars.next()) {
@@ -309,6 +316,7 @@ impl fmt::Display for KeyPress {
             KeyCode::F(n) => format!("F{n}"),
             KeyCode::PasteStart => "PasteStart".into(),
             KeyCode::PasteEnd => "PasteEnd".into(),
+            KeyCode::Completed => "Completed".into(),
         };
 
         let Modifiers { ctrl, alt, shift } = self.modifiers;

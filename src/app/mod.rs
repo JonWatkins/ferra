@@ -53,6 +53,15 @@ const BACKGROUND_POLL: Duration = Duration::from_millis(30);
 /// with `watch-files`.
 const WATCH_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Keys collected while replaying, to act on as one when `<PasteEnd>`
+/// comes.
+enum ReplayedBlock {
+    /// A paste's text.
+    Paste(String),
+    /// A completion step's keys (see `repeat::completion_keys`).
+    Completion(Vec<KeyPress>),
+}
+
 pub struct App {
     editor: Editor,
     commands: CommandRegistry,
@@ -105,9 +114,9 @@ pub struct App {
     plugin_config_dir: Option<std::path::PathBuf>,
     /// True while `.` feeds the last change back in, so it isn't re-recorded.
     replaying: bool,
-    /// The text of a paste being replayed key by key (from a macro or
-    /// `.`), between `<PasteStart>` and `<PasteEnd>`.
-    paste: Option<String>,
+    /// A paste or completion being replayed key by key (from a macro or
+    /// `.`), between `<PasteStart>` or `<Completed>` and `<PasteEnd>`.
+    replayed_block: Option<ReplayedBlock>,
     /// Work running on other threads (the file picker's listing).
     background: background::Background,
     /// The last error from each plugin status function, so it's shown once.
@@ -161,7 +170,7 @@ impl App {
             macros: macros::MacroState::default(),
             plugins: None,
             replaying: false,
-            paste: None,
+            replayed_block: None,
             background: background::Background::default(),
             plugin_status_errors: HashMap::new(),
             lsp: Default::default(),
@@ -1165,7 +1174,7 @@ impl App {
         let resting = self.is_idle()
             || ((self.editor.resting() || elsewhere)
                 && self.input.is_idle()
-                && self.paste.is_none());
+                && self.replayed_block.is_none());
         if self.editor.options.watch_files && resting {
             self.editor.check_disk_changes();
             self.dispatch_events();
@@ -1312,11 +1321,17 @@ impl App {
         }
     }
 
-    /// Puts in a replayed paste whose `<PasteEnd>` never came (a macro
-    /// edited by hand), so it doesn't swallow the keys after it.
+    /// Puts in a replayed paste or completion: at its `<PasteEnd>`, or when
+    /// that never came (a macro edited by hand), at the end of the
+    /// playback, so it doesn't swallow the keys after it.
     fn finish_open_paste(&mut self) {
-        if let Some(text) = self.paste.take() {
-            self.paste(&text);
+        match self.replayed_block.take() {
+            Some(ReplayedBlock::Paste(text)) => self.paste(&text),
+            Some(ReplayedBlock::Completion(keys)) => {
+                self.editor
+                    .put_completed(&repeat::completed_from_keys(&keys));
+            }
+            None => {}
         }
     }
 
@@ -1644,7 +1659,7 @@ impl App {
         if self.is_idle() {
             self.changes.begin(before);
         }
-        if !keys.is_empty() && self.input.is_idle() && self.paste.is_none() {
+        if !keys.is_empty() && self.input.is_idle() && self.replayed_block.is_none() {
             self.changes.mark_binding_start();
         }
         for &key in keys {
@@ -1659,6 +1674,9 @@ impl App {
         }
         if let Some(shape) = self.editor.take_visual_shape() {
             self.changes.note_visual(shape);
+        }
+        if let Some(completed) = self.editor.take_completed() {
+            self.changes.note_completed(completed);
         }
         // `:` commands and picker choices aren't repeated by `.`; a search
         // is, as an operator's motion (`d/foo<CR>`).
@@ -1724,23 +1742,28 @@ impl App {
     /// Normal mode with nothing typed but not yet run: the boundary between
     /// one command sequence and the next.
     fn is_idle(&self) -> bool {
-        self.editor.mode() == Mode::Normal && self.input.is_idle() && self.paste.is_none()
+        self.editor.mode() == Mode::Normal && self.input.is_idle() && self.replayed_block.is_none()
     }
 
     fn process_key(&mut self, key: KeyPress) {
-        // A replayed paste: collect its text, then put it in.
-        if let Some(text) = &mut self.paste {
-            if key.code == KeyCode::PasteEnd {
-                self.finish_open_paste();
-            } else if let Some(c) = key.as_pasted() {
-                text.push(c);
+        // A replayed paste or completion: collect it, then put it in.
+        if let Some(block) = &mut self.replayed_block {
+            match block {
+                _ if key.code == KeyCode::PasteEnd => self.finish_open_paste(),
+                ReplayedBlock::Paste(text) => text.extend(key.as_pasted()),
+                ReplayedBlock::Completion(keys) => keys.push(key),
             }
             return;
         }
         match key.code {
             KeyCode::PasteStart => {
                 self.input.reset();
-                self.paste = Some(String::new());
+                self.replayed_block = Some(ReplayedBlock::Paste(String::new()));
+                return;
+            }
+            KeyCode::Completed => {
+                self.input.reset();
+                self.replayed_block = Some(ReplayedBlock::Completion(Vec::new()));
                 return;
             }
             KeyCode::PasteEnd => return,

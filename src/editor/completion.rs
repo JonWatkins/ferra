@@ -42,12 +42,48 @@
 //! showing up to 10 matches (each label with the letters typed in
 //! `ui.popup.match`, and its detail dimmed beside it) and scrolling to the
 //! selected one, with `n/total` in the border when they don't all fit.
+//!
+//! `.` puts back the text a completion put in, not the keys that chose it
+//! (which would complete again, perhaps to something else now). Each step
+//! (`show_completion_choice`, and taking a server's item, which can move the
+//! cursor into a snippet) leaves a [`Completed`]: how many characters it took
+//! out before the cursor, the text it put in, and where in it the cursor
+//! went. The app takes it after each key (`take_completed`) and the `.`
+//! recorder swaps the keys of that binding for it (`app/repeat.rs`); replaying
+//! it calls [`Editor::put_completed`]. A server item's other edits (an import)
+//! aren't repeated: they're made once.
 
 use std::collections::HashSet;
 
 use super::Editor;
 use super::server_completion::match_tier;
 use crate::core::{Buffer, Position};
+
+/// The position `n` characters before `at` (a line break counting as one),
+/// or the buffer's start.
+fn chars_before(buffer: &Buffer, mut at: Position, n: usize) -> Position {
+    for _ in 0..n {
+        if at.col > 0 {
+            at.col -= 1;
+        } else if at.row > 0 {
+            at = Position::new(at.row - 1, buffer.line_len(at.row - 1));
+        } else {
+            break;
+        }
+    }
+    at
+}
+
+/// Where `text` ends if it starts at `start`.
+fn position_after(start: Position, text: &str) -> Position {
+    text.chars().fold(start, |at, c| {
+        if c == '\n' {
+            Position::new(at.row + 1, 0)
+        } else {
+            at.with_col(at.col + 1)
+        }
+    })
+}
 
 /// The most matches gathered, so a huge file stays quick.
 const MAX_ITEMS: usize = 500;
@@ -72,6 +108,19 @@ pub struct WordCompletion {
     /// For a language server's completion: all it offered, which `items`
     /// are filtered from as typing goes on.
     pub server: Option<super::server_completion::ServerCompletion>,
+}
+
+/// What a completion step did to the text before the cursor, for `.` to
+/// do again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Completed {
+    /// How many characters it took out before the cursor (what was typed,
+    /// or the match before).
+    pub removed: usize,
+    /// What it put in their place.
+    pub text: String,
+    /// Where the cursor went, in characters into `text`.
+    pub cursor: usize,
 }
 
 impl WordCompletion {
@@ -273,6 +322,28 @@ impl Editor {
         self.completion = None;
     }
 
+    /// The last completion step since this was last called, for `.`.
+    pub fn take_completed(&mut self) -> Option<Completed> {
+        self.completed.take()
+    }
+
+    /// Does a completion step again (`.`): takes out `removed` characters
+    /// before the cursor and puts in `text`, the cursor at its place in it.
+    pub fn put_completed(&mut self, completed: &Completed) {
+        if self.mode != super::Mode::Insert {
+            return;
+        }
+        self.completion = None;
+        let cursor = self.document.cursor();
+        let start = chars_before(self.document.buffer(), cursor, completed.removed);
+        let removed = self.document.buffer().text_range(start, cursor);
+        self.document.delete(start, cursor);
+        self.document.insert(start, &completed.text);
+        let place: String = completed.text.chars().take(completed.cursor).collect();
+        self.document.set_cursor(position_after(start, &place));
+        self.note_typed_replacing(removed.chars().count(), &completed.text);
+    }
+
     /// Called before each key; see [`Editor::end_completion_unless_used`].
     pub fn note_key_for_completion(&mut self) {
         self.completion_used = false;
@@ -311,10 +382,50 @@ impl Editor {
         };
         let start = completion.start;
         let cursor = self.document.cursor();
+        let removed = self
+            .document
+            .buffer()
+            .text_range(start, cursor)
+            .chars()
+            .count();
         self.document.delete(start, cursor);
         let end = self.document.insert(start, &text);
         self.document.set_cursor(end);
-        self.note_typed_replacing(cursor.col - start.col, &text);
+        self.note_typed_replacing(removed, &text);
+        let cursor = text.chars().count();
+        self.completed = Some(Completed {
+            removed,
+            text,
+            cursor,
+        });
+    }
+
+    /// Notes that the cursor moved within the completion's text (into a
+    /// snippet), for `.`.
+    pub(super) fn note_completed_cursor(&mut self) {
+        let Some(completion) = &self.completion else {
+            return;
+        };
+        let text = match completion.selected {
+            Some(i) => completion.items[i].clone(),
+            None => completion.typed.clone(),
+        };
+        let cursor = self
+            .document
+            .buffer()
+            .text_range(completion.start, self.document.cursor())
+            .chars()
+            .count();
+        // Putting the item in, earlier in the same key, took out more.
+        let removed = match &self.completed {
+            Some(earlier) => earlier.removed,
+            None => text.chars().count(),
+        };
+        self.completed = Some(Completed {
+            removed,
+            text,
+            cursor,
+        });
     }
 
     /// Words matching `typed` (and not it): those starting with it, then
