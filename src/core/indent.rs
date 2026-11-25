@@ -3,7 +3,7 @@
 //! - **The indent style** (`Editor::indent_style`, an `IndentUnit`: tabs or N
 //!   spaces) is the buffer's `:indent` choice, else what `core/indent.rs`
 //!   detected when the file was read or reloaded (with `detect-indent`), else
-//!   `expand-tab` and `tab-width`. Detection looks at the first 1000 lines:
+//!   `expand-tab` and `shift-width`. Detection looks at the first 1000 lines:
 //!   mostly tab-indented means tabs; otherwise the commonest step by which a
 //!   line's indent grows over the previous non-blank line's, ignoring one-space
 //!   steps, `*` comment continuations and lines mixing tabs in (alignment, not
@@ -11,13 +11,19 @@
 //!   indents (`>`/`<`, block shifts, Tab, `=`, new lines, closing brackets)
 //!   goes through it; `tab-width` still sets how wide a tab is drawn. The
 //!   `indent` status line element shows it.
+//! - **A level with tabs** is `shift-width` wide (`EditorOptions::level_width`:
+//!   `tab-width` when it's 0). Narrower than a tab, a level is made of tabs
+//!   then spaces, so everything that indents works out the width it wants and
+//!   rebuilds the line's indentation to it (`Editor::indent_string`) rather
+//!   than adding or taking away a tab.
 
 use super::Buffer;
 
 /// How one level of indentation is made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndentUnit {
-    /// A tab character (as wide as `tab-width`).
+    /// Tabs, then spaces for what's left of a level narrower than a tab
+    /// (`shift-width` under `tab-width`).
     Tabs,
     /// This many spaces.
     Spaces(usize),

@@ -57,8 +57,8 @@ pub const CATEGORIES: &[&str] = &[
 fn category_of(path: &str) -> &'static str {
     let table = path.split('.').next().unwrap_or(path);
     match table {
-        "tab-width" | "expand-tab" | "detect-indent" | "auto-indent" | "auto-pairs"
-        | "text-width" | "auto-wrap" | "format-on-save" => "Editing",
+        "tab-width" | "shift-width" | "expand-tab" | "detect-indent" | "auto-indent"
+        | "auto-pairs" | "text-width" | "auto-wrap" | "format-on-save" => "Editing",
         "line-numbers"
         | "fold-column"
         | "wrap"
@@ -298,7 +298,7 @@ mod tests {
         assert_eq!(tab.category, "Editing");
         assert_eq!(
             tab.description,
-            "Width of a tab stop, and of one indent level."
+            "Width of a tab stop, and of one indent level unless shift-width says."
         );
 
         let numbers = find("line-numbers").unwrap();

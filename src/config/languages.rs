@@ -35,7 +35,7 @@ pub struct FileType {
     /// What wraps a block comment (`["<!--", "-->"]`), for `gc` in
     /// languages without line comments.
     pub block_comment: Option<[String; 2]>,
-    /// Options for this language's buffers (`tab-width`, `expand-tab`,
+    /// Options for this language's buffers (`tab-width`, `shift-width`, `expand-tab`,
     /// `auto-indent`, `text-width`), over the `[editor]` ones; a buffer's
     /// own `:setlocal` values still win.
     pub options: toml::Table,
@@ -152,7 +152,7 @@ impl Languages {
                 if set::scope(name) != Some(set::Scope::Buffer) {
                     return Err(format!(
                         "languages.{language}.options: {name} can't be set per language \
-                         (tab-width, expand-tab, auto-indent, text-width, auto-wrap, \
+                         (tab-width, shift-width, expand-tab, auto-indent, text-width, auto-wrap, \
                          format-on-save, path and suffixes-add can)"
                     ));
                 }

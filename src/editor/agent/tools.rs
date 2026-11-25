@@ -1145,7 +1145,10 @@ impl Editor {
     pub fn format_indent(&self, id: DocumentId) -> (usize, bool) {
         let options = self.options_for(self.windows.active(), id);
         let Some(document) = self.document_by_id(id) else {
-            return (options.tab_width, options.expand_tab);
+            return (
+                format_tab_size(&options, options.expand_tab),
+                options.expand_tab,
+            );
         };
         let unit = document
             .chosen_indent()
@@ -1153,7 +1156,10 @@ impl Editor {
         match unit {
             Some(crate::core::indent::IndentUnit::Spaces(n)) => (n.max(1), true),
             Some(crate::core::indent::IndentUnit::Tabs) => (options.tab_width, false),
-            None => (options.tab_width, options.expand_tab),
+            None => (
+                format_tab_size(&options, options.expand_tab),
+                options.expand_tab,
+            ),
         }
     }
 
@@ -1817,6 +1823,16 @@ fn full_message(d: &crate::editor::diagnostics::Diagnostic) -> String {
     match &d.source {
         Some(source) => format!("{}: {message} ({source})", d.severity.id()),
         None => format!("{}: {message}", d.severity.id()),
+    }
+}
+
+/// The `tabSize` a language server's formatting is told: a level's width
+/// when indenting with spaces, else how wide a tab is.
+fn format_tab_size(options: &crate::config::EditorOptions, spaces: bool) -> usize {
+    if spaces {
+        options.level_width()
+    } else {
+        options.tab_width
     }
 }
 
