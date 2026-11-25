@@ -10,7 +10,12 @@ use crate::files::WalkOptions;
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct EditorOptions {
     pub tab_width: usize,
-    /// Indent with spaces (`tab-width` of them) rather than tab characters.
+    /// How many columns a level of indentation takes, as Vim's
+    /// `shiftwidth` (0: `tab-width`; see [`EditorOptions::level_width`]).
+    /// With tabs and a level narrower than a tab, levels are made of tabs
+    /// then spaces.
+    pub shift_width: usize,
+    /// Indent with spaces (a level's worth) rather than tab characters.
     pub expand_tab: bool,
     /// Indent each file the way it's already indented (tabs, or how many
     /// spaces), over `expand-tab` and `tab-width`.
@@ -365,6 +370,16 @@ pub enum FoldColumn {
 }
 
 impl EditorOptions {
+    /// The columns of one level of indentation: `shift-width`, or with 0,
+    /// `tab-width`.
+    pub fn level_width(&self) -> usize {
+        match self.shift_width {
+            0 => self.tab_width,
+            n => n,
+        }
+        .max(1)
+    }
+
     /// Whether the fold column is shown: `fold-column`, with `auto`
     /// following the keymap.
     pub fn shows_fold_column(&self) -> bool {

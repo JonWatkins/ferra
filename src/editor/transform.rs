@@ -83,22 +83,24 @@ impl CaseChange {
 impl Editor {
     /// How this buffer is indented: as chosen with `:indent`, else as the
     /// file was found to be (with `detect-indent`), else per `expand-tab`
-    /// and `tab-width`.
+    /// and `shift-width`.
     pub fn indent_style(&self) -> IndentUnit {
         let doc = &self.document;
         doc.chosen_indent()
             .or_else(|| doc.detected_indent().filter(|_| self.options.detect_indent))
             .unwrap_or(if self.options.expand_tab {
-                IndentUnit::Spaces(self.options.tab_width.max(1))
+                IndentUnit::Spaces(self.options.level_width())
             } else {
                 IndentUnit::Tabs
             })
     }
 
-    /// How many display columns one level of indentation takes.
+    /// How many display columns one level of indentation takes: with
+    /// tabs, `shift-width` (which may be less than a tab, the level then
+    /// made of tabs and spaces).
     pub fn indent_width(&self) -> usize {
         match self.indent_style() {
-            IndentUnit::Tabs => self.options.tab_width.max(1),
+            IndentUnit::Tabs => self.options.level_width(),
             IndentUnit::Spaces(n) => n.max(1),
         }
     }
@@ -108,12 +110,37 @@ impl Editor {
         self.indent_style() == IndentUnit::Tabs
     }
 
-    /// One level of indentation: a tab, or spaces.
-    pub fn indent_unit(&self) -> String {
-        match self.indent_style() {
-            IndentUnit::Tabs => "\t".to_string(),
-            IndentUnit::Spaces(n) => " ".repeat(n.max(1)),
-        }
+    /// Tab in insert mode: one level of indentation. With spaces, a level's
+    /// worth of them; with tabs, the blanks before the cursor are made to
+    /// reach the next level stop (as Vim's `softtabstop` set to
+    /// `shiftwidth`), tabs then spaces, so with levels of 4 and tabs of 8
+    /// Tab makes 4 spaces, then a tab, then a tab and 4 spaces.
+    pub fn insert_indent_level(&mut self) {
+        let level = match self.indent_style() {
+            IndentUnit::Spaces(n) => {
+                self.document.insert_str(&" ".repeat(n.max(1)));
+                return;
+            }
+            IndentUnit::Tabs => self.options.level_width(),
+        };
+        let tab = self.options.tab_width.max(1);
+        let cursor = self.document.cursor();
+        let line = self.document.buffer().line(cursor.row).into_owned();
+        let before: Vec<char> = line.chars().take(cursor.col).collect();
+        let blanks = before
+            .iter()
+            .rev()
+            .take_while(|c| matches!(c, ' ' | '\t'))
+            .count();
+        let start = cursor.with_col(cursor.col - blanks);
+        let from = crate::core::columns::display_col(&line, start.col, tab);
+        let at = crate::core::columns::display_col(&line, cursor.col, tab);
+        let to = at - at % level + level;
+        let new = whitespace(from, to, tab, false);
+        self.document.delete(start, cursor);
+        self.document.insert(start, &new);
+        self.document
+            .set_cursor(start.with_col(start.col + new.chars().count()));
     }
 
     /// `>` and `<`: indents (or outdents) every line of `range` by one level.
@@ -359,16 +386,26 @@ impl Editor {
         if before.is_empty() || !before.iter().all(|c| c.is_whitespace()) {
             return;
         }
-        let remove = if before.ends_with(&['\t']) {
-            1
-        } else {
-            before
-                .iter()
-                .rev()
-                .take(self.indent_width())
-                .take_while(|&&c| c == ' ')
-                .count()
-        };
+        if self.indent_with_tabs() {
+            // Back to the level stop before: the indentation may be tabs
+            // and spaces, when a level is narrower than a tab.
+            let level = self.indent_width();
+            let tab = self.options.tab_width.max(1);
+            let width = crate::core::columns::display_col(&line, cursor.col, tab);
+            let new = self.indent_string(width.saturating_sub(1) / level * level);
+            let start = cursor.with_col(0);
+            self.document.delete(start, cursor);
+            self.document.insert(start, &new);
+            self.document
+                .set_cursor(start.with_col(new.chars().count()));
+            return;
+        }
+        let remove = before
+            .iter()
+            .rev()
+            .take(self.indent_width())
+            .take_while(|&&c| c == ' ')
+            .count();
         let start = cursor.with_col(cursor.col - remove);
         self.document.delete(start, cursor);
         self.document.set_cursor(start);
@@ -489,19 +526,15 @@ impl Editor {
             .unwrap_or_default();
         let ends_block =
             python && ["return", "pass", "raise", "break", "continue"].contains(&first_word);
-        if opens {
-            indent.push_str(&self.indent_unit());
+        let width = || crate::core::columns::display_width(&indent, self.options.tab_width.max(1));
+        if opens && !self.indent_with_tabs() {
+            indent.push_str(&" ".repeat(self.indent_width()));
+        } else if opens {
+            // Rebuilt, as a level may be narrower than a tab.
+            indent = self.indent_string(width() + self.indent_width());
         } else if ends_block {
             // The block is done: one level less.
-            let tab = self.options.tab_width.max(1);
-            let width = indent.chars().fold(0, |col, c| {
-                if c == '\t' {
-                    col - col % tab + tab
-                } else {
-                    col + 1
-                }
-            });
-            indent = self.indent_string(width.saturating_sub(self.indent_width()));
+            indent = self.indent_string(width().saturating_sub(self.indent_width()));
         }
         indent
     }

@@ -20,8 +20,7 @@ pub fn register(r: &mut CommandRegistry) {
             cx.editor.accept_completion();
             return Ok(());
         }
-        let indent = cx.editor.indent_unit();
-        cx.editor.document.insert_str(&indent);
+        cx.editor.insert_indent_level();
         cx.editor.note_typed("\t");
         Ok(())
     });
@@ -314,7 +313,7 @@ fn indent_style(cx: &mut Context) -> CommandResult {
             None
         }
         ["tabs" | "tab"] => Some(IndentUnit::Tabs),
-        ["spaces" | "space"] => Some(IndentUnit::Spaces(cx.editor.options.tab_width.max(1))),
+        ["spaces" | "space"] => Some(IndentUnit::Spaces(cx.editor.options.level_width())),
         ["spaces" | "space", n] => spaces(n)?,
         [n] if n.starts_with(|c: char| c.is_ascii_digit()) => spaces(n)?,
         _ => return Err(USAGE.into()),

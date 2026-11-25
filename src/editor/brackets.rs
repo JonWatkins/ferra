@@ -71,9 +71,7 @@ impl Editor {
             .or_else(|| document.detected_indent().filter(|_| options.detect_indent));
         match unit {
             Some(IndentUnit::Spaces(n)) => n.max(1),
-            Some(IndentUnit::Tabs) => options.tab_width.max(1),
-            None if options.expand_tab => options.tab_width.max(1),
-            None => options.tab_width.max(1),
+            Some(IndentUnit::Tabs) | None => options.level_width(),
         }
     }
 }

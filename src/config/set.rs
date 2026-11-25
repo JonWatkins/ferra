@@ -35,7 +35,7 @@
 //!   window and per buffer, a sparse TOML table of `:setlocal` values
 //!   (`config::set::scope` says which options may: `wrap`, `wrap-indent`,
 //!   `wrap-marker`, `line-numbers`, `fold-column`, `cursorline`, `scroll-off` per window;
-//!   `tab-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap`,
+//!   `tab-width`, `shift-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap`,
 //!   `format-on-save`, `path`, `suffixes-add` per buffer). `Editor::options` is always what's in force for the active window
 //!   and buffer (global, then the buffer's language's `options` from
 //!   `[languages]`, then the buffer's, then the window's, by
@@ -112,7 +112,7 @@ pub fn scope(name: &str) -> Option<Scope> {
     match name {
         "wrap" | "wrap-indent" | "wrap-marker" | "line-numbers" | "fold-column" | "cursorline"
         | "scroll-off" => Some(Scope::Window),
-        "tab-width" | "expand-tab" | "auto-indent" | "text-width" | "auto-wrap"
+        "tab-width" | "shift-width" | "expand-tab" | "auto-indent" | "text-width" | "auto-wrap"
         | "format-on-save" | "path" | "suffixes-add" => Some(Scope::Buffer),
         _ => None,
     }
@@ -191,6 +191,8 @@ pub fn option_names() -> Vec<String> {
 const ALIASES: &[(&str, &str)] = &[
     ("ts", "tab-width"),
     ("tabstop", "tab-width"),
+    ("sw", "shift-width"),
+    ("shiftwidth", "shift-width"),
     ("et", "expand-tab"),
     ("expandtab", "expand-tab"),
     ("ai", "auto-indent"),

@@ -9,13 +9,18 @@
 # Ctrl+C, Ctrl+X and Ctrl+V copy, cut and paste) or "vim" (Vim's modes:
 # normal, insert, visual...). Your own [keys] go over either.
 keymap = "vscode"
-# Width of a tab stop, and of one indent level.
+# Width of a tab stop, and of one indent level unless shift-width says.
 tab-width = 4
+# Width of one indent level (>>, Tab, new lines...), as Vim's shiftwidth; 0
+# means tab-width. Narrower than tab-width with expand-tab = false, levels
+# are tabs then spaces: tab-width = 8 and shift-width = 4 indent with 4
+# spaces, a tab, a tab and 4 spaces...
+shift-width = 0
 # Indent with spaces (true) or tab characters (false).
 expand-tab = true
 # Indent a file the way it's already indented (tabs, or 2, 3, 4... spaces),
 # looking at its first 1000 lines when it's opened. Files with nothing
-# indented yet use expand-tab and tab-width. :indent overrides it per buffer.
+# indented yet use expand-tab and shift-width. :indent overrides it per buffer.
 detect-indent = true
 # Enter, o and O indent the new line: by the language's rules where it has
 # them, otherwise like the line before (one level more after an opening

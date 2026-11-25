@@ -213,10 +213,17 @@ or a trailing `:` in Python and YAML. In Python, a line after `return`,
 Each file is indented the way it already is: tabs, or however many spaces
 its lines step in by, worked out from its first 1000 lines when it's
 opened (and again on `:e!`). That covers `>>`, Tab, `=` and new lines.
-Files with nothing indented yet use `expand-tab` and `tab-width`, and
+Files with nothing indented yet use `expand-tab` and `shift-width`, and
 `detect-indent = false` turns detection off. `:indent` shows the style in
 use; `:indent tabs`, `:indent 2` (or `:indent spaces 2`) set it for the
 buffer, and `:indent auto` looks at the text again.
+
+A level is `tab-width` columns wide unless `shift-width` (Vim's
+`shiftwidth`, `:set sw=4`) says otherwise. Narrower than a tab and
+indenting with tabs, levels are made of tabs then spaces, as in many C
+projects: with `tab-width = 8` and `shift-width = 4`, `>>` and Tab go
+4 spaces, a tab, a tab and 4 spaces... (Tab after text goes on to the next
+level's column).
 
 Macros are stored in their register as key notation (`A;<Esc>j`), so
 `"ap` pastes one to edit and `"ay$` yanks it back. Playback stops at the
@@ -1150,7 +1157,7 @@ extensions = ["py", "pyi", "star"]   # replaces the list, so keep the defaults
 file-names = [".bashrc", "my-tool"]
 ```
 
-A language can also set `tab-width`, `expand-tab`, `auto-indent`,
+A language can also set `tab-width`, `shift-width`, `expand-tab`, `auto-indent`,
 `text-width`, `auto-wrap`, `format-on-save`, `path` and `suffixes-add` for its buffers, over `[editor]` (a buffer's
 `:setlocal`, or a `:set` in it, still wins). By default Go and Makefiles
 indent with tabs, and commit messages (`COMMIT_EDITMSG`) wrap at 72 as
@@ -1414,6 +1421,7 @@ every option. Example:
 ```toml
 [editor]
 tab-width = 2
+shift-width = 0             # columns per indent level; 0 for tab-width
 expand-tab = true           # indent with spaces; false for tabs
 detect-indent = true        # but indent each file the way it already is
 auto-indent = true          # indent new lines (by the language's rules where it has them)
@@ -1454,7 +1462,7 @@ its name in the config (nested ones with a dot), Vim-style:
 | `:set` | Lists the options you've changed |
 
 Several can go on one line (`:set ts=2 et`), and Tab completes names.
-Vim's names work for the common ones: `ts`, `et`, `ai`, `so`, `cul`,
+Vim's names work for the common ones: `ts`, `sw`, `et`, `ai`, `so`, `cul`,
 `hls`, `ws`, `tw`, `pa`, `sua`, `nu`/`rnu` (for `line-numbers`) and `ic`/`scs` (for
 `search.case`). Changes last until ferra quits; put them in the config to
 keep them.
@@ -1465,7 +1473,7 @@ As in Vim, some options can also be set for one window or one buffer:
 their own `wrap`, `wrap-indent`, `wrap-marker`, `line-numbers`,
 `fold-column`, `cursorline` and `scroll-off` (a split
 starts with those of the window it came from); buffers their own
-`tab-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap`,
+`tab-width`, `shift-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap`,
 `format-on-save`, `path` and `suffixes-add`. `:set` changes an option
 everywhere (and drops this window's or buffer's own value), `:setglobal`
 only where there's no value of its own, and `:setlocal` alone lists this
