@@ -173,6 +173,9 @@ fn the_find_box_takes_clicks_on_its_toggles_and_fields() {
     let (x, y) = find(&mut app, "Whole word");
     click(&mut app, x - 4, y);
     assert!(app.editor().find_state().whole_word, "on its chip");
+    let (x, y) = find(&mut app, " AB ");
+    click(&mut app, x + 1, y);
+    assert!(app.editor().find_state().preserve_case, "preserve case");
     let (x, y) = find(&mut app, "Replace");
     click(&mut app, x + 12, y);
     assert_eq!(

@@ -354,6 +354,25 @@ fn regex_replacements_expand_captures() {
 }
 
 #[test]
+fn preserve_case_replaces_each_match_in_its_case() {
+    let _cwd = CWD.lock().unwrap_or_else(|e| e.into_inner());
+    let _project = project(FILES);
+    let mut app = searching("alpha");
+    keys(&mut app, "<Tab>omega<C-t>");
+    assert!(app.editor().project_search().fields.preserve_case);
+    let rows = render(&mut app, 70, 20).rows.join("\n");
+    assert!(rows.contains("AB  All"), "its chip: {rows}");
+    assert!(rows.contains("AlphaOmega is first"), "the preview: {rows}");
+    keys(&mut app, "<CR>y");
+    app.wait_for_background();
+    assert!(buffer_text(&mut app, "notes.txt").starts_with("Omega is first"));
+    assert_eq!(
+        buffer_text(&mut app, "src/main.rs"),
+        "fn main() {\n    omega();\n}\n\nfn omega() {}"
+    );
+}
+
+#[test]
 fn a_line_changed_since_the_search_isnt_replaced() {
     let _cwd = CWD.lock().unwrap_or_else(|e| e.into_inner());
     let _project = project(FILES);

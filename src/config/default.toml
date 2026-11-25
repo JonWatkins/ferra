@@ -928,6 +928,8 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "<A-w>" = "find_toggle_word"
 "<C-r>" = "find_toggle_regex"
 "<A-r>" = "find_toggle_regex"
+"<C-t>" = "find_toggle_preserve_case"
+"<A-p>" = "find_toggle_preserve_case"
 "<C-CR>" = "find_replace_all"
 "<A-a>" = "find_replace_all"
 "<C-A-CR>" = "find_replace_all"

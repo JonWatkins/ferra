@@ -5,7 +5,9 @@
 //!
 //! What's typed is found as it is; the toggles make it match case (`Aa`,
 //! `<A-c>`), whole words (`W`, `<A-w>`) or a regex (`.*`, `<A-r>`, Rust's
-//! `regex` syntax, with `$1` in the replacement). It has focus in
+//! `regex` syntax, with `$1` in the replacement), and preserve case (`AB`,
+//! `<A-p>`) cases each replacement like what it replaces
+//! (`core::search::preserve_case`, VS Code's rules). It has focus in
 //! `Mode::Find`, with its own `[keys.find]`. Closing it leaves its search
 //! as the last one, so `n`/`N` carry on; its highlights go with it, as in
 //! VS Code, and come back with the next `n`/`N`.
@@ -28,6 +30,9 @@
 //! so drawing doesn't search again), up to 10,000. Replacing goes through
 //! `SearchPattern::next_replacement` / `replace` (a literal replacement has `$`
 //! doubled); each command is an undo step as usual, so replace all is one.
+//! What a match becomes is a `Replacement` (`FindState::replacement`), which
+//! the Search view replaces with too; preserve case maps each expanded match
+//! through `SearchPattern::replace_mapped`. Flipping it doesn't find again.
 //! Closing hands the pattern to `set_last_search` and clears the highlight
 //! (`clear_search_highlight`), as VS Code does; `n`/`N` turn it back on. The
 //! app treats keys in find mode like the `:` line: replacements aren't repeated
@@ -43,7 +48,7 @@ use std::cell::RefCell;
 
 use super::text_field::TextField;
 use super::{DocumentId, Editor, Message, Mode};
-use crate::core::search::{Match, SearchPattern};
+use crate::core::search::{Match, SearchPattern, preserve_case};
 use crate::core::{Buffer, Position};
 
 /// The most matches counted (the box shows `10000+`).
@@ -67,6 +72,8 @@ pub struct FindState {
     pub match_case: bool,
     pub whole_word: bool,
     pub regex: bool,
+    /// Whether a replacement takes each match's case (`AB`).
+    pub preserve_case: bool,
     /// Where finding as you type starts from.
     origin: Position,
     /// The pattern typed (or why it isn't one).
@@ -99,6 +106,44 @@ pub enum FindCount {
         total: usize,
         more: bool,
     },
+}
+
+/// What the find box's (or the Search view's) matches become: the replace
+/// field's text in `regex` syntax (`$1`), and whether each takes the case
+/// of the text it replaces.
+#[derive(Debug, Clone)]
+pub(super) struct Replacement {
+    text: String,
+    preserve_case: bool,
+}
+
+impl Replacement {
+    /// The first match in `line` at or after char column `from`, as
+    /// `(start, end)`, and what it becomes.
+    pub(super) fn next(
+        &self,
+        pattern: &SearchPattern,
+        line: &str,
+        from: usize,
+    ) -> Option<(usize, usize, String)> {
+        let (start, end, text) = pattern.next_replacement(line, from, &self.text)?;
+        if !self.preserve_case {
+            return Some((start, end, text));
+        }
+        let matched: String = line.chars().skip(start).take(end - start).collect();
+        Some((start, end, preserve_case(&matched, &text)))
+    }
+
+    /// `line` with every match replaced, and how many.
+    pub(super) fn line(&self, pattern: &SearchPattern, line: &str) -> (String, usize) {
+        pattern.replace_mapped(line, &self.text, true, |matched, text| {
+            if self.preserve_case {
+                preserve_case(matched, &text)
+            } else {
+                text
+            }
+        })
+    }
 }
 
 impl FindState {
@@ -143,14 +188,16 @@ impl FindState {
         }
     }
 
-    /// The replacement for one match: as typed, or with a regex, expanded
-    /// (`$1`) by the caller.
-    pub(super) fn literal_replacement(&self) -> String {
-        if self.regex {
-            self.replace.text().to_string()
-        } else {
-            // `regex` replacement syntax, so `$` is written `$$`.
-            self.replace.text().replace('$', "$$")
+    /// What matches become, from the replace field and the toggles.
+    pub(super) fn replacement(&self) -> Replacement {
+        Replacement {
+            // `regex` replacement syntax, so a literal `$` is written `$$`.
+            text: if self.regex {
+                self.replace.text().to_string()
+            } else {
+                self.replace.text().replace('$', "$$")
+            },
+            preserve_case: self.preserve_case,
         }
     }
 
@@ -413,6 +460,17 @@ impl Editor {
         };
     }
 
+    /// `<A-p>` (`<C-t>`): flips preserve case. Only what matches become
+    /// changes, so it doesn't find (or search) again.
+    pub fn find_toggle_preserve_case(&mut self) {
+        let fields = if self.project_search.typing {
+            &mut self.project_search.fields
+        } else {
+            &mut self.find
+        };
+        fields.preserve_case = !fields.preserve_case;
+    }
+
     /// `<A-c>`, `<A-w>`, `<A-r>`: flips match case, whole word or regex.
     pub fn find_toggle(&mut self, toggle: impl FnOnce(&mut FindState)) {
         if self.project_search.typing {
@@ -461,9 +519,10 @@ impl Editor {
             return self.find_step(true);
         };
         let line = self.document.buffer().line(current.row).into_owned();
-        let replacement = self.find.literal_replacement();
-        let (start, end, text) = pattern
-            .next_replacement(&line, current.start, &replacement)
+        let (start, end, text) = self
+            .find
+            .replacement()
+            .next(&pattern, &line, current.start)
             .filter(|&(start, ..)| start == current.start)
             .ok_or("The match changed")?;
         let at = Position::new(current.row, start);
@@ -484,7 +543,7 @@ impl Editor {
             return self.search_ask_replace_all();
         }
         let pattern = self.find_pattern()?;
-        let replacement = self.find.literal_replacement();
+        let replacement = self.find.replacement();
         let mut replaced = 0;
         let mut lines = 0;
         // Bottom-up, so lines put in don't move the rows still to do.
@@ -493,7 +552,7 @@ impl Editor {
             if pattern.matches_in_line(&line).is_empty() {
                 continue;
             }
-            let (text, count) = pattern.replace(&line, &replacement, true);
+            let (text, count) = replacement.line(&pattern, &line);
             if text != line {
                 let end = self.document.buffer().line_end(row);
                 self.document.delete(Position::new(row, 0), end);
@@ -646,6 +705,28 @@ mod tests {
         e.find_edit(|f| "$2:$1".chars().for_each(|c| f.push(c)));
         e.find_replace_all().unwrap();
         assert_eq!(e.document.buffer().text(), "1:x, 22:y");
+    }
+
+    #[test]
+    fn preserve_case_replaces_each_match_in_its_case() {
+        let mut e = editor("foo Foo FOO foo_bar");
+        e.open_find(true);
+        e.find_toggle_preserve_case();
+        e.find_switch_field();
+        e.find_edit(|f| "baz".chars().for_each(|c| f.push(c)));
+        assert_eq!(cursor(&e), (0, 0));
+        e.find_replace_one().unwrap();
+        assert_eq!(e.document.buffer().text(), "baz Foo FOO foo_bar");
+        e.find_replace_all().unwrap();
+        assert_eq!(e.document.buffer().text(), "baz Baz BAZ baz_bar");
+
+        // Off, the replacement goes in as typed.
+        let mut e = editor("Foo FOO");
+        e.open_find(true);
+        e.find_switch_field();
+        e.find_edit(|f| "baz".chars().for_each(|c| f.push(c)));
+        e.find_replace_all().unwrap();
+        assert_eq!(e.document.buffer().text(), "baz baz");
     }
 
     #[test]

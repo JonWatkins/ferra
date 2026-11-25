@@ -5,7 +5,7 @@
 //!  SEARCH
 //!  alpha            Aa W .*
 //!
-//!  Replace              All
+//!  Replace           AB All
 //!  3 results in 2 files
 //!  ▾ main.rs src          2
 //!      fn alpha() {}
@@ -36,6 +36,10 @@ const HEAD: u16 = 5;
 /// them, as in the find box).
 const REPLACE_ROW: u16 = 2;
 
+/// The preserve-case toggle before the replace-all chip: plain, and a Nerd
+/// Font's (codicons' preserve-case).
+const PRESERVE_CASE: (&str, &str) = ("AB", "\u{eb2e}");
+
 /// The replace-all chip after the replace field: plain, and a Nerd Font's.
 const REPLACE_ALL: (&str, &str) = ("All", "\u{eb3c}");
 
@@ -46,8 +50,9 @@ struct SearchHits {
     field: Rect,
     /// Each toggle's chip: match case, whole word, regex.
     toggles: Vec<Rect>,
-    /// The replace field, and its replace-all chip.
+    /// The replace field, its preserve-case toggle and replace-all chip.
     replace: Rect,
+    preserve_case: Rect,
     replace_all: Rect,
 }
 
@@ -89,6 +94,7 @@ impl<'a> SearchViewWidget<'a> {
         screen.add(hits.field, part(SidebarPart::SearchField));
         screen.add(hits.replace, part(SidebarPart::SearchReplace));
         screen.add(hits.replace_all, part(SidebarPart::SearchReplaceAll));
+        screen.add(hits.preserve_case, part(SidebarPart::SearchToggle(3)));
         for (i, toggle) in hits.toggles.into_iter().enumerate() {
             screen.add(toggle, part(SidebarPart::SearchToggle(i)));
         }
@@ -123,11 +129,27 @@ impl<'a> SearchViewWidget<'a> {
             chip_width,
             1,
         );
+        let preserve_width = Self::preserve_case_chip(editor).width() as u16 + 2;
+        let preserve_case = Rect::new(
+            replace_all.x.saturating_sub(preserve_width),
+            y + REPLACE_ROW,
+            preserve_width,
+            1,
+        );
         SearchHits {
             field: Rect::new(field_x, y, field_width, 1),
             toggles,
             replace: Rect::new(field_x, y + REPLACE_ROW, field_width, 1),
+            preserve_case,
             replace_all,
+        }
+    }
+
+    fn preserve_case_chip(editor: &Editor) -> &'static str {
+        if editor.options.icons == Icons::Nerd {
+            PRESERVE_CASE.1
+        } else {
+            PRESERVE_CASE.0
         }
     }
 
@@ -201,6 +223,18 @@ impl Widget for SearchViewWidget<'_> {
             format!(" {chip} "),
             hits.replace_all.width as usize,
             theme.get("ui.find.toggle"),
+        );
+        let style = if search.fields.preserve_case {
+            theme.get("ui.find.toggle.on")
+        } else {
+            theme.get("ui.find.toggle")
+        };
+        buf.set_stringn(
+            hits.preserve_case.x,
+            hits.preserve_case.y,
+            format!(" {} ", Self::preserve_case_chip(editor)),
+            hits.preserve_case.width as usize,
+            style,
         );
         let on = [
             search.fields.match_case,

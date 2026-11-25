@@ -41,8 +41,9 @@
 //! commands.
 //!
 //! Replacing (`<Tab>` to the replace field, `FindField::Replace`): the results
-//! preview each match's replacement (`search_replacements`, through
-//! `SearchPattern::next_replacement`, so `$1` expands). Replacing a file's
+//! preview each match's replacement (`search_replacements`, through the
+//! fields' `Replacement`, as the find box's: `$1` expands, and preserve
+//! case cases it like the match). Replacing a file's
 //! matches (`replace_in_file`) opens its buffer in the background
 //! (`buffer_for_path`, as a rename's edits do) and replaces line by line,
 //! bottom up, as one undo step; one line (`r` on a match) is only replaced if
@@ -590,15 +591,16 @@ impl Editor {
     /// a regex), in the order of its ranges.
     pub fn search_replacements(&self, found: &LineMatch) -> Vec<String> {
         let fields = &self.project_search.fields;
-        let (Some(pattern), replacement) = (fields.pattern(), fields.literal_replacement()) else {
+        let Some(pattern) = fields.pattern() else {
             return Vec::new();
         };
+        let replacement = fields.replacement();
         found
             .ranges
             .iter()
             .map(|&(start, _)| {
-                pattern
-                    .next_replacement(&found.text, start, &replacement)
+                replacement
+                    .next(pattern, &found.text, start)
                     .map(|(_, _, text)| text)
                     .unwrap_or_default()
             })
@@ -734,7 +736,7 @@ impl Editor {
             .pattern()
             .cloned()
             .ok_or("Nothing to replace")?;
-        let replacement = self.project_search.fields.literal_replacement();
+        let replacement = self.project_search.fields.replacement();
         let path = self.project_search.root.join(relative);
         let id = self.buffer_for_path(&path)?;
         let document = self.document_by_id_mut(id).ok_or("The buffer went")?;
@@ -754,7 +756,7 @@ impl Editor {
             if !pattern.is_match(&line) {
                 continue;
             }
-            let (text, count) = pattern.replace(&line, &replacement, true);
+            let (text, count) = replacement.line(&pattern, &line);
             if text != line {
                 let end = document.buffer().line_end(row);
                 document.delete(Position::new(row, 0), end);
@@ -820,6 +822,23 @@ mod tests {
         assert_eq!(a.count(), 2);
         assert_eq!(a.lines[1].row, 1);
         assert_eq!(a.lines[1].ranges, [(11, 16)]);
+    }
+
+    #[test]
+    fn previews_replacements_in_each_match_case_with_preserve_case() {
+        let mut editor = Editor::default();
+        let fields = &mut editor.project_search.fields;
+        fields.find.set_selected("foo");
+        fields.replace.set_selected("bar");
+        fields.rebuild();
+        let found = LineMatch {
+            row: 0,
+            text: "foo Foo FOO".into(),
+            ranges: vec![(0, 3), (4, 7), (8, 11)],
+        };
+        assert_eq!(editor.search_replacements(&found), ["bar"; 3]);
+        editor.project_search.fields.preserve_case = true;
+        assert_eq!(editor.search_replacements(&found), ["bar", "Bar", "BAR"]);
     }
 
     fn line(row: usize) -> LineMatch {

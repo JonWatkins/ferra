@@ -4,7 +4,7 @@
 //! ╭──────────────────────────────────────────────────────────╮
 //! │ Find      needle█                             2 of 7     │
 //! │                                                          │
-//! │ Replace   pin                                            │
+//! │ Replace   pin                                 AB  A-p    │
 //! │                                                          │
 //! │  Aa  Match case A-c    W  Whole word A-w    .*  Regex A-r│
 //! ╰──── ⏎ replace one  A-a replace all  Tab find  Esc close ─╯
@@ -12,8 +12,9 @@
 //!
 //! The fields have their own background, a row apart, and the one with
 //! focus has its label highlighted. The toggles are chips, highlighted
-//! when on, each with what it does and its key. Text put in for you is
-//! shown selected (typing replaces it).
+//! when on, each with what it does and its key; preserve case (`AB`) is
+//! after the replace field, where the count is after the find field, as in
+//! VS Code. Text put in for you is shown selected (typing replaces it).
 //!
 //! `ui/find.rs` draws it at the top right of the active window
 //! (`windows::draw_windows` now also returns that window's area), the field
@@ -46,6 +47,7 @@ pub struct FindKeys {
     pub case: Option<String>,
     pub word: Option<String>,
     pub regex: Option<String>,
+    pub preserve_case: Option<String>,
     pub enter: Option<String>,
     pub prev: Option<String>,
     pub switch: Option<String>,
@@ -64,6 +66,7 @@ impl FindKeys {
             case: label("find_toggle_case"),
             word: label("find_toggle_word"),
             regex: label("find_toggle_regex"),
+            preserve_case: label("find_toggle_preserve_case"),
             enter: label("find_enter"),
             prev: label("find_prev"),
             switch: label("find_switch_field"),
@@ -130,6 +133,9 @@ const TOGGLES: [(&str, &str, &str); 3] = [
     (".*", "Regex", "Regex"),
 ];
 
+/// The preserve-case toggle's chip, after the replace field.
+const PRESERVE_CASE: &str = "AB";
+
 /// How much of each toggle is shown: its name (long or short), its key.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Names {
@@ -172,6 +178,12 @@ impl Parts {
             replace_y,
             toggles_y,
         }
+    }
+
+    /// Where the count goes after the find field (and preserve case after
+    /// the replace field).
+    fn count_x(&self) -> u16 {
+        self.field_x + self.field_width + 2
     }
 
     /// The columns a field's text gets (inside its padding).
@@ -356,6 +368,32 @@ impl<'a> FindView<'a> {
         }
     }
 
+    /// Preserve case's chip, and its key if that fits too.
+    fn draw_preserve_case(&self, x: u16, y: u16, right: u16, buf: &mut Buffer) {
+        let theme = self.theme;
+        let style = if self.state.preserve_case {
+            theme.get("ui.find.toggle.on")
+        } else {
+            theme.get("ui.find.toggle")
+        };
+        let mut spans = vec![Span::styled(format!(" {PRESERVE_CASE} "), style)];
+        let width = preserve_case_width(self.keys, x, right);
+        if width > spans[0].width() as u16
+            && let Some(key) = &self.keys.preserve_case
+        {
+            spans.push(Span::styled(format!(" {key}"), theme.get("ui.find.hint")));
+        }
+        let mut x = x;
+        for span in spans {
+            if x >= right {
+                return;
+            }
+            x = buf
+                .set_span(x, y, &span, (right - x).min(span.width() as u16))
+                .0;
+        }
+    }
+
     /// The toggles' row: as much as fits of each chip, its name and key.
     fn draw_toggles(&self, x: u16, y: u16, right: u16, buf: &mut Buffer) {
         let theme = self.theme;
@@ -393,7 +431,7 @@ impl<'a> FindView<'a> {
 
     /// Records where the box's parts are, for the mouse: the fields, and
     /// each toggle (chip, name and key) with which it is (0 case, 1 word, 2
-    /// regex).
+    /// regex, 3 preserve case).
     pub fn record(state: &FindState, keys: &FindKeys, area: Rect, screen: &mut ScreenMap) {
         let find = Target::Find;
         screen.add(area, find(FindPart::Rest));
@@ -425,6 +463,12 @@ impl<'a> FindView<'a> {
         if state.replacing && parts.replace_y < inner.bottom() {
             let replace = field(parts.replace_y);
             screen.add(replace, find(FindPart::Field(FindField::Replace)));
+            let x = parts.count_x();
+            let width = preserve_case_width(keys, x, right);
+            if width > 0 {
+                let chip = Rect::new(x, parts.replace_y, width, 1);
+                screen.add(chip, find(FindPart::Toggle(3)));
+            }
         }
     }
 
@@ -441,6 +485,23 @@ fn name_of(names: Names, long: &'static str, short: &'static str) -> Option<&'st
         Names::Long => Some(long),
         Names::Short => Some(short),
         Names::None => None,
+    }
+}
+
+/// How wide preserve case's chip is drawn from `x`: with its key if that
+/// fits before `right`, else the chip, cut.
+fn preserve_case_width(keys: &FindKeys, x: u16, right: u16) -> u16 {
+    let room = right.saturating_sub(x);
+    let chip = PRESERVE_CASE.width() as u16 + 2;
+    let with_key = chip
+        + keys
+            .preserve_case
+            .as_ref()
+            .map_or(0, |k| 1 + k.width() as u16);
+    if with_key <= room {
+        with_key
+    } else {
+        chip.min(room)
     }
 }
 
@@ -521,7 +582,7 @@ impl Widget for FindView<'_> {
             buf.set_style(text, theme.get("ui.find.none"));
         }
         let count = self.count_span();
-        let count_x = parts.field_x + parts.field_width + 2;
+        let count_x = parts.count_x();
         if count.width() > 0 && count_x < inner.right() {
             let room = inner.right() - count_x;
             buf.set_span(count_x, inner.y, &count, room);
@@ -536,6 +597,7 @@ impl Widget for FindView<'_> {
                 &parts,
                 buf,
             );
+            self.draw_preserve_case(parts.count_x(), parts.replace_y, inner.right(), buf);
         }
         if parts.toggles_y < inner.bottom() {
             self.draw_toggles(inner.x + 1, parts.toggles_y, inner.right(), buf);
@@ -648,6 +710,7 @@ mod tests {
         editor.find_switch_field();
         editor.find_edit(|f| f.push('q'));
         editor.find_toggle(|f| f.regex = true);
+        editor.find_toggle_preserve_case();
         let (rows, area, buf) = rows(editor.find_state(), editor.find_count(), 70);
         assert_eq!(area.height, 7);
         assert!(rows[1].contains("No results"), "{rows:#?}");
@@ -662,6 +725,18 @@ mod tests {
         let chip_x = rows[5][..regex_chip].chars().count() as u16;
         assert_eq!(
             buf[(chip_x, 5)].bg,
+            theme.get("ui.find.toggle.on").bg.unwrap(),
+            "on"
+        );
+        // Preserve case after the replace field, under the count, on.
+        let ab = rows[3].find(" AB ").expect("preserve case's chip");
+        let ab_x = rows[3][..ab].chars().count() as u16;
+        let count_x = rows[1][..rows[1].find("No results").unwrap()]
+            .chars()
+            .count() as u16;
+        assert_eq!(ab_x, count_x, "{rows:#?}");
+        assert_eq!(
+            buf[(ab_x, 3)].bg,
             theme.get("ui.find.toggle.on").bg.unwrap(),
             "on"
         );
