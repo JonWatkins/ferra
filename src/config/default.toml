@@ -94,6 +94,10 @@ mouse-hover-delay = 500
 # Columns the sidebar's file tree (<Space>e, :explorer) takes, left of the
 # windows. It never takes more than half the screen.
 sidebar-width = 30
+# While it's shown, the file tree follows buffer switches: it opens the
+# folders down to the file switched to and selects it, leaving focus where
+# it is (as VS Code's explorer.autoReveal).
+tree-follows-buffer = true
 # The menu bar along the top: File, Edit, View, Go, Git, Terminal, Help
 # (F10, or Alt/⌥ and a menu's letter, or a click).
 menu-bar = true

@@ -53,6 +53,8 @@ pub struct EditorOptions {
     pub scroll_off: usize,
     /// Columns the sidebar's file tree takes (at most half the screen).
     pub sidebar_width: u16,
+    /// The file tree reveals the file of each buffer switched to.
+    pub tree_follows_buffer: bool,
     /// Show git changes in the gutter (against what's staged) and the
     /// branch in the status line.
     pub git: bool,

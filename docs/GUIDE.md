@@ -505,7 +505,9 @@ it open. `:explorer` (or `:Explore`) opens and closes it, as does `q` in it.
 It lists the folder ferra started in, folders first, leaving out what
 `.gitignore` ignores and `.git` (dotfiles like `.github` are shown). The
 current file is highlighted and files with unsaved changes have a `●`.
-`sidebar-width` (30 columns, at most half the screen) sets its width; the
+Switching buffers reveals the new one's file in the tree (opening the
+folders down to it), focus staying in the editor; `tree-follows-buffer =
+false` turns that off. `sidebar-width` (30 columns, at most half the screen) sets its width; the
 colours are the `ui.sidebar.*` theme scopes.
 
 ### The menu bar

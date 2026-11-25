@@ -11,7 +11,10 @@
 //! from the open folders whenever one opens or closes, keeping the selected
 //! path selected. `reveal` opens the folders down to a file (how `<Space>e`
 //! starts at the current file), and a save calls `saw_file`, which lists the
-//! file's folder again if the file is new to it.
+//! file's folder again if the file is new to it. While the tree is shown it
+//! follows buffer switches (`Editor::follow_in_tree`, one of the app's
+//! sources; off with `tree-follows-buffer = false`): a different active
+//! buffer is revealed, focus left alone.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -325,6 +328,28 @@ impl Editor {
             explorer.reveal(&path);
         }
         self.set_mode(Mode::Sidebar);
+    }
+
+    /// The file tree follows buffer switches (`tree-follows-buffer`): when
+    /// the active buffer isn't the one it last followed, it reveals that
+    /// buffer's file, leaving focus where it is. Only a switch moves it, so moving about in the
+    /// tree isn't undone. Returns whether the tree changed.
+    pub fn follow_in_tree(&mut self) -> bool {
+        let id = self.document.id();
+        if !self.options.tree_follows_buffer
+            || !self.file_tree_shown()
+            || self.tree_followed == Some(id)
+        {
+            return false;
+        }
+        self.tree_followed = Some(id);
+        let Some(path) = self.document.path().map(Path::to_path_buf) else {
+            return false;
+        };
+        let explorer = self.explorer_mut();
+        let before = explorer.selected_row().map(|r| r.path.clone());
+        explorer.reveal(&path);
+        explorer.selected_row().map(|r| &r.path) != before.as_ref()
     }
 
     /// Opens or closes the sidebar (`:explorer`, `q` in it).

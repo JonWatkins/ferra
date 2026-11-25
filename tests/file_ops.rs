@@ -144,6 +144,41 @@ fn the_tree_makes_files_and_folders() {
 }
 
 #[test]
+fn the_tree_follows_buffer_switches() {
+    let project = project(&[("src/a.rs", "a\n"), ("docs/b.md", "b\n")]);
+    let mut app = app();
+    app.open(&project.path("src/a.rs"));
+    app.open(&project.path("docs/b.md"));
+    keys(&mut app, "<Space>e");
+    keys(&mut app, "<Space>e");
+    assert_eq!(app.editor().mode(), Mode::Normal);
+
+    let selected = |app: &App| {
+        let tree = app.editor().sidebar().unwrap();
+        tree.selected_row().unwrap().path.clone()
+    };
+    keys(&mut app, ":b#<CR>");
+    app.update();
+    assert_eq!(selected(&app), project.path("src/a.rs"), "revealed");
+    assert_eq!(
+        app.editor().mode(),
+        Mode::Normal,
+        "focus stays in the editor"
+    );
+
+    // Moving in the tree isn't undone while the buffer stays the same.
+    keys(&mut app, "<Space>e");
+    select(&mut app, "docs");
+    app.update();
+    assert_eq!(selected(&app), project.path("docs"));
+
+    // Turned off, a switch leaves the tree alone.
+    keys(&mut app, ":set notree-follows-buffer<CR>:b#<CR>");
+    app.update();
+    assert_eq!(selected(&app), project.path("docs"), "not followed");
+}
+
+#[test]
 fn renaming_takes_open_buffers_along() {
     let project = project(&[("a.txt", "a\n")]);
     let mut app = app();

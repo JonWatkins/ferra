@@ -70,8 +70,17 @@ fn category_of(path: &str) -> &'static str {
         | "indent-guides"
         | "bracket-colors"
         | "match-brackets" => "Display",
-        "menu-bar" | "activity-bar" | "tab-bar" | "breadcrumbs" | "restore-session" | "icons"
-        | "color-theme" | "sidebar-width" | "statusline" | "statusline-style"
+        "menu-bar"
+        | "activity-bar"
+        | "tab-bar"
+        | "breadcrumbs"
+        | "restore-session"
+        | "icons"
+        | "color-theme"
+        | "sidebar-width"
+        | "tree-follows-buffer"
+        | "statusline"
+        | "statusline-style"
         | "statusline-layout" => "Workbench",
         "search" => "Search",
         "file-picker" | "fallback-encoding" | "watch-files" => "Files",
