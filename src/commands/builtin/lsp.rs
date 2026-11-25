@@ -119,7 +119,7 @@ pub fn register(r: &mut CommandRegistry) {
     );
     r.register(
         "signature_help",
-        "Show the signature of the call the cursor is in (<C-s> in insert mode)",
+        "Show the signature of the call the cursor is in, or its next overload (<C-s> in insert mode)",
         |cx| cx.editor.request_signature_help(),
     );
     r.register(
