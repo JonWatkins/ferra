@@ -85,6 +85,119 @@ fn dragging_selects() {
 }
 
 #[test]
+fn dragging_past_a_windows_edge_scrolls_it() {
+    let lines: Vec<String> = (1..=100).map(|n| format!("line {n}")).collect();
+    let mut app = with_text(&lines.join("\n"));
+    // An empty window above, to drag onto. With `scroll-off = 5`, line 45
+    // at the top and line 50 five below.
+    keys(&mut app, ":split<CR><C-w>k:enew<CR><C-w>j50Gzt");
+    let (x, top) = find(&mut app, "line 45");
+    assert!(top > 0, "something above the window to drag onto");
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        x + 1,
+        top + 5,
+    );
+    // Above the window: a row up for each move there, the cursor kept
+    // `scroll-off` rows below the top.
+    for _ in 0..3 {
+        mouse(
+            &mut app,
+            MouseEventKind::Drag(MouseButton::Left),
+            x + 1,
+            top - 1,
+        );
+        render(&mut app, W, H);
+    }
+    assert_eq!(app.editor().mode(), Mode::Visual);
+    assert_eq!(
+        cursor(&app),
+        (46, 1),
+        "line 47, the column under the pointer"
+    );
+    assert_eq!(find(&mut app, "line 42").1, top, "scrolled three rows");
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        x + 1,
+        top - 1,
+    );
+    keys(&mut app, "d");
+    assert!(
+        common::text(&app).contains("line 46\nlne 50\n"),
+        "from the i of 47 to the i of 50"
+    );
+
+    // Below the window: a row down for each move there.
+    keys(&mut app, "u50Gzb");
+    let (x, bottom) = find(&mut app, "line 55");
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        x,
+        bottom - 5,
+    );
+    for _ in 0..2 {
+        mouse(
+            &mut app,
+            MouseEventKind::Drag(MouseButton::Left),
+            x,
+            bottom + 1,
+        );
+        render(&mut app, W, H);
+    }
+    assert_eq!(cursor(&app), (51, 0));
+    assert_eq!(find(&mut app, "line 57").1, bottom, "scrolled two rows");
+}
+
+#[test]
+fn dragging_past_a_windows_edge_scrolls_it_without_scroll_off() {
+    let lines: Vec<String> = (1..=100).map(|n| format!("line {n}")).collect();
+    let mut app = with_text(&lines.join("\n"));
+    keys(
+        &mut app,
+        ":split<CR><C-w>k:enew<CR><C-w>j:set so=0<CR>50Gzt",
+    );
+    let (x, top) = find(&mut app, "line 50");
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, top);
+    for _ in 0..2 {
+        mouse(
+            &mut app,
+            MouseEventKind::Drag(MouseButton::Left),
+            x,
+            top - 1,
+        );
+        render(&mut app, W, H);
+    }
+    assert_eq!(cursor(&app), (47, 0));
+    assert_eq!(find(&mut app, "line 48").1, top);
+}
+
+#[test]
+fn dragging_past_a_windows_side_scrolls_it_without_wrapping() {
+    let line: String = (0..200)
+        .map(|n| char::from(b'a' + (n % 26) as u8))
+        .collect();
+    let mut app = with_text(&line);
+    // An empty window to the right, to drag onto.
+    keys(&mut app, ":vsplit<CR><C-w>l:enew<CR><C-w>h:set nowrap<CR>0");
+    let (x, y) = find(&mut app, "abcdef");
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    let past = |app: &mut App| {
+        mouse(app, MouseEventKind::Drag(MouseButton::Left), W - 10, y);
+        render(app, W, H);
+        cursor(app).1
+    };
+    let first = past(&mut app);
+    assert!(first > 0);
+    // A char further for each move there, scrolling to show it.
+    assert_eq!(past(&mut app), first + 1);
+    assert_eq!(past(&mut app), first + 2);
+    assert_eq!(app.editor().mode(), Mode::Visual);
+}
+
+#[test]
 fn a_click_focuses_another_window() {
     let mut app = with_text("one\ntwo\nthree");
     keys(&mut app, "<C-w>v");

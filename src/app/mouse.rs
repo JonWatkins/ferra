@@ -51,7 +51,10 @@
 //! the agent sidebar or the panel. A window click focuses it and sets the
 //! cursor; double and triple clicks (same cell, within 400 ms) run
 //! `visual_mode` + `inner_word` or `visual_line_mode`; a drag from it
-//! starts visual mode and moves the cursor, kept inside the window.
+//! starts visual mode and moves the cursor. Past the window's top or bottom
+//! edge, each move scrolls it a row (`gk`/`gj` from the furthest row
+//! `scroll-off` lets the cursor reach, so it stays that far in); past its
+//! side without wrapping, a char (`h`/`l`), as in Vim.
 //!
 //! As the pointer moves, `App::pointer_for` names its shape from the target
 //! (`Target::pointer`, CSS names: `pointer`, `text`, `ew-resize`,
@@ -1049,10 +1052,6 @@ impl App {
         if area.is_empty() {
             return;
         }
-        let inside = Position::new(
-            at.x.clamp(area.x, area.right() - 1),
-            at.y.clamp(area.y, area.bottom() - 1),
-        );
         if self.editor.mode() != Mode::Visual {
             if self.editor.mode() == Mode::Insert {
                 self.editor.set_mode(Mode::Normal);
@@ -1060,11 +1059,40 @@ impl App {
             self.execute("visual_mode", Invocation::default());
         }
         let document = self.editor.document.id();
-        let tab_width = self.editor.options_for(id, document).tab_width;
-        if let Some(position) = self.views.get(&(id, document)).and_then(|state| {
-            state.position_at(&self.editor.document, inside.x, inside.y, tab_width)
-        }) {
-            self.editor.document.set_cursor(position);
+        let options = self.editor.options_for(id, document);
+        // Past the top or bottom edge, the cursor goes a row beyond the
+        // last one `scroll-off` lets it reach, so the view scrolls one row
+        // for each move there (as in Vim); past the left or right edge
+        // without wrapping, a char beyond, so it scrolls sideways.
+        let margin = (options.scroll_off as u16).min(area.height.saturating_sub(1) / 2);
+        let (y, vertical) = if at.y < area.y {
+            (area.y + margin, Some("move_screen_up"))
+        } else if at.y >= area.bottom() {
+            (area.bottom() - 1 - margin, Some("move_screen_down"))
+        } else {
+            (at.y, None)
+        };
+        let sideways = if options.wrap {
+            None
+        } else if at.x < area.x {
+            Some("move_left")
+        } else if at.x >= area.right() {
+            Some("move_right")
+        } else {
+            None
+        };
+        let x = at.x.clamp(area.x, area.right() - 1);
+        let Some(position) = self
+            .views
+            .get(&(id, document))
+            .and_then(|state| state.position_at(&self.editor.document, x, y, options.tab_width))
+        else {
+            return;
+        };
+        self.editor.document.set_cursor(position);
+        self.editor.forget_screen_column();
+        for command in vertical.into_iter().chain(sideways) {
+            self.execute(command, Invocation::default());
         }
     }
 
