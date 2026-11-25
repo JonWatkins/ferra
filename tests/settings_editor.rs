@@ -245,7 +245,7 @@ fn searching_and_the_categories() {
     assert_eq!(view.focus, SettingsFocus::Categories);
     assert_eq!(selected(&app), "line-numbers", "Display's first");
     keys(&mut app, "<CR>j");
-    assert_eq!(selected(&app), "wrap");
+    assert_eq!(selected(&app), "fold-column");
 }
 
 #[test]

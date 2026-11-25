@@ -1,15 +1,72 @@
-//! The line-number gutter on the left of the editor pane.
+//! The gutter on the left of the editor pane: the fold column
+//! (`fold-column`), then the line numbers.
 
 use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 
-use crate::config::LineNumbers;
+use crate::config::{EditorOptions, LineNumbers};
+use crate::core::fold::Mark;
 
 /// One cell of padding on each side of the number.
 const PADDING: usize = 2;
 
-/// Gutter width in cells for a buffer with `line_count` lines.
+/// The line numbers' width in cells for a buffer with `line_count` lines.
 pub fn width(line_count: usize, mode: LineNumbers) -> u16 {
-    crate::editor::windows::gutter_width(line_count, mode)
+    crate::editor::windows::numbers_width(line_count, mode)
+}
+
+/// The fold column's width in cells.
+pub fn fold_width(options: &EditorOptions) -> u16 {
+    crate::editor::windows::fold_column_width(options)
+}
+
+/// What the fold column shows beside a row.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FoldMark {
+    #[default]
+    None,
+    /// The first line of a closed fold.
+    Closed,
+    /// The first line of an open fold.
+    Open,
+    /// A line inside an open fold.
+    Inside,
+}
+
+impl From<Mark> for FoldMark {
+    fn from(mark: Mark) -> Self {
+        match mark {
+            Mark::None => Self::None,
+            Mark::Head => Self::Open,
+            Mark::Inside => Self::Inside,
+        }
+    }
+}
+
+impl FoldMark {
+    /// The mark for a wrapped line's later rows.
+    pub fn continued(self) -> Self {
+        match self {
+            Self::Open | Self::Inside => Self::Inside,
+            Self::None | Self::Closed => Self::None,
+        }
+    }
+
+    fn symbol(self) -> &'static str {
+        match self {
+            Self::None => " ",
+            Self::Closed => "▸",
+            Self::Open => "▾",
+            Self::Inside => "│",
+        }
+    }
+}
+
+/// Draws one row's fold column cell at `area` (one line high).
+pub fn render_fold(buf: &mut Buffer, area: Rect, mark: FoldMark, style: Style) {
+    if area.width == 0 {
+        return;
+    }
+    buf.set_stringn(area.x, area.y, mark.symbol(), area.width as usize, style);
 }
 
 /// The number displayed next to `row` (0-based), `distance` visible lines
@@ -43,6 +100,18 @@ mod tests {
         assert_eq!(width(5, LineNumbers::Absolute), 5);
         assert_eq!(width(12345, LineNumbers::Relative), 7);
         assert_eq!(width(5, LineNumbers::None), 0);
+    }
+
+    #[test]
+    fn fold_marks_draw_one_cell() {
+        let area = Rect::new(0, 0, 1, 1);
+        let mut buf = Buffer::empty(area);
+        render_fold(&mut buf, area, FoldMark::Closed, Style::default());
+        assert_eq!(buf[(0, 0)].symbol(), "▸");
+        render_fold(&mut buf, area, FoldMark::None, Style::default());
+        assert_eq!(buf[(0, 0)].symbol(), " ");
+        assert_eq!(FoldMark::Open.continued(), FoldMark::Inside);
+        assert_eq!(FoldMark::Closed.continued(), FoldMark::None);
     }
 
     #[test]

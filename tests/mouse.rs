@@ -441,3 +441,78 @@ fn what_is_drawn_on_top_is_what_is_under_the_pointer() {
     assert_eq!(app.target_at(field), Some(Target::Picker(None)));
     assert_eq!(app.pointer_for(field), "default");
 }
+
+/// `content` typed as it is (no auto-indent or pairs), in `keymap` (the
+/// fold column on with Vim's keys, by default with VS Code's); the cursor
+/// at the start.
+fn with_fold_column(keymap: &str, content: &str) -> App {
+    let mut app = common::app_with_config(&format!(
+        "[editor]\nkeymap = \"{keymap}\"\nauto-indent = false\nauto-pairs = false\n{}",
+        if keymap == "vim" {
+            "fold-column = \"on\"\n"
+        } else {
+            ""
+        }
+    ));
+    if keymap == "vim" {
+        keys(&mut app, "i");
+    }
+    for c in content.chars() {
+        app.editor_mut().insert_text_char(c);
+    }
+    if keymap == "vim" {
+        keys(&mut app, "<Esc>");
+    }
+    app.editor_mut().document.commit();
+    app.editor_mut()
+        .document
+        .set_cursor(ferra::core::Position::new(0, 0));
+    app
+}
+
+const FOLDABLE: &str = "fn a() {\n    x\n}\nfn b() {\n    y\n}\nend";
+
+#[test]
+fn clicks_on_the_fold_column_close_and_open_folds() {
+    for keymap in ["vim", "vscode"] {
+        let mut app = with_fold_column(keymap, FOLDABLE);
+        let mode = app.editor().mode();
+        let (_, y) = find(&mut app, "fn b");
+        let (fold_x, _) = find(&mut app, "▾");
+        let marker = ratatui::layout::Position::new(fold_x, y);
+        assert_eq!(
+            app.pointer_for(marker),
+            "pointer",
+            "{keymap}: a hand over ▾"
+        );
+        click(&mut app, fold_x, y);
+        assert_eq!(app.editor().document.closed_folds(), [(3, 5)], "{keymap}");
+        assert_eq!(cursor(&app), (3, 0), "{keymap}: on the fold's line");
+        assert_eq!(app.editor().mode(), mode, "{keymap}: the mode kept");
+        assert_eq!(find(&mut app, "▸"), (fold_x, y), "{keymap}");
+        click(&mut app, fold_x, y);
+        assert!(app.editor().document.closed_folds().is_empty(), "{keymap}");
+
+        // Beside a line inside a fold (│): text, and a click just puts
+        // the cursor there.
+        let (_, inside) = find(&mut app, "    y");
+        let bar = ratatui::layout::Position::new(fold_x, inside);
+        assert_eq!(app.pointer_for(bar), "text", "{keymap}");
+        click(&mut app, fold_x, inside);
+        assert!(app.editor().document.closed_folds().is_empty(), "{keymap}");
+        assert_eq!(cursor(&app).0, 4, "{keymap}");
+    }
+}
+
+#[test]
+fn the_fold_column_is_shown_with_vscodes_keys_and_follows_a_switch() {
+    let mut app = with_fold_column("vscode", FOLDABLE);
+    assert_eq!(find(&mut app, "▾").0, 0, "on by default with VS Code's keys");
+    keys(&mut app, "<C-g>set keymap=vim<CR>");
+    let screen = render(&mut app, W, H);
+    assert!(
+        !screen.rows.iter().any(|row| row.contains('▾')),
+        "off with Vim's:\n{}",
+        screen.rows.join("\n")
+    );
+}

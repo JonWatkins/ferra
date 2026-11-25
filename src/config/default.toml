@@ -30,6 +30,11 @@ auto-indent = true
 auto-pairs = true
 # "absolute", "relative" (hybrid: current line shows its absolute number) or "none".
 line-numbers = "relative"
+# A column left of the line numbers marking folds (ui.fold.column): ▸ a
+# closed one, ▾ where one starts, │ the lines inside it; with the mouse,
+# clicking ▸ or ▾ opens or closes it. "auto" (shown with VS Code's keys,
+# not Vim's), "on" or "off".
+fold-column = "auto"
 # The width gq and gw reflow text to (per buffer with :setlocal tw=72).
 text-width = 79
 # Typing past text-width breaks the line, keeping its indentation and
@@ -562,6 +567,7 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.splash.key" = "#e0af68"
 "ui.splash.text" = "#a9b1d6"
 "ui.fold" = { fg = "#6b7280", modifiers = ["italic"] }
+"ui.fold.column" = "#6b7280"
 # Diagnostics from language servers: underlines in the text, the line
 # number, and the message after the line.
 "diagnostic.error" = { underline = "#f7768e", modifiers = ["underlined"] }

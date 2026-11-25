@@ -42,6 +42,12 @@ pub enum Target {
     AgentEdge,
     /// A window's text (its tab row and breadcrumbs not included).
     Window(WindowId),
+    /// A `▸` or `▾` in a window's fold column, and its line: a click
+    /// opens or closes that fold.
+    Fold {
+        window: WindowId,
+        row: usize,
+    },
     /// The line after `window` (to its right if `vertical`, else under
     /// it): dragged to resize it.
     Split {
@@ -210,7 +216,7 @@ impl Target {
         const DEFAULT: &str = "default";
         match self {
             Self::MenuBar(Some(_)) | Self::Activity(Some(_)) | Self::Tab { .. } => HAND,
-            Self::Crumb { .. } => HAND,
+            Self::Crumb { .. } | Self::Fold { .. } => HAND,
             Self::MenuBar(None) | Self::Activity(None) | Self::TabBar(_) | Self::Hover => DEFAULT,
             Self::SidebarEdge
             | Self::AgentEdge

@@ -193,6 +193,12 @@ pub fn draw_windows(
             view
         };
         frame.render_stateful_widget(view, rect, state);
+        for (at, row) in state.fold_markers() {
+            map.add(
+                Rect::new(at.x, at.y, 1, 1),
+                Target::Fold { window: id, row },
+            );
+        }
         windows.note_top(id, state.viewport.top);
         if active {
             cursor = state.cursor;

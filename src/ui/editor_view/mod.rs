@@ -37,6 +37,8 @@ pub struct ViewState {
     pub rows: Vec<DrawnRow>,
     /// Where the text starts, after the gutter.
     pub text_x: u16,
+    /// The fold column's x, when it's shown.
+    pub fold_x: Option<u16>,
 }
 
 /// One screen row as drawn: which part of which buffer line.
@@ -53,9 +55,21 @@ pub struct DrawnRow {
     pub indent: usize,
     /// The line's last part (a click past its end goes to the end).
     pub last: bool,
+    /// What the fold column showed beside it.
+    pub fold: gutter::FoldMark,
 }
 
 impl ViewState {
+    /// The fold markers a click can open or close, as last drawn: each
+    /// `▸` and `▾` cell and its line.
+    pub fn fold_markers(&self) -> impl Iterator<Item = (Position, usize)> + '_ {
+        let x = self.fold_x;
+        self.rows.iter().filter_map(move |r| {
+            let clickable = matches!(r.fold, gutter::FoldMark::Closed | gutter::FoldMark::Open);
+            Some((Position::new(x?, r.y), r.row)).filter(|_| clickable)
+        })
+    }
+
     /// The buffer position shown at screen cell `(x, y)` when last drawn:
     /// in the gutter, the start of that row; past the end of a line, its
     /// end; below the text, the last line. `None` before it's drawn.
@@ -464,6 +478,7 @@ impl StatefulWidget for EditorView<'_> {
     fn render(mut self, area: Rect, buf: &mut Buffer, state: &mut ViewState) {
         state.cursor = None;
         state.rows.clear();
+        state.fold_x = None;
         if area.is_empty() {
             return;
         }
@@ -479,9 +494,15 @@ impl StatefulWidget for EditorView<'_> {
         let tab_width = self.options.tab_width;
         let line_numbers = self.options.line_numbers;
 
-        let gutter_width = gutter::width(text.line_count(), line_numbers).min(area.width);
-        let [gutter_area, text_area] =
-            Layout::horizontal([Constraint::Length(gutter_width), Constraint::Min(0)]).areas(area);
+        let fold_width = gutter::fold_width(self.options).min(area.width);
+        let numbers_width =
+            gutter::width(text.line_count(), line_numbers).min(area.width - fold_width);
+        let [fold_area, gutter_area, text_area] = Layout::horizontal([
+            Constraint::Length(fold_width),
+            Constraint::Length(numbers_width),
+            Constraint::Min(0),
+        ])
+        .areas(area);
 
         let height = text_area.height as usize;
         let width = text_area.width as usize;
@@ -512,6 +533,9 @@ impl StatefulWidget for EditorView<'_> {
                 .scroll_to(target, width, height, self.margins());
         }
         let Viewport { top, left } = state.viewport;
+        let mut fold_column =
+            (fold_width > 0).then(|| crate::core::fold::Column::new(text, top.line, tab_width));
+        state.fold_x = fold_column.as_ref().map(|_| fold_area.x);
         state.text_x = text_area.x;
 
         let text_style = self.theme.get("ui.text");
@@ -550,6 +574,10 @@ impl StatefulWidget for EditorView<'_> {
                 layout.row_starts(line_text)
             };
             let wrap = layout.wrap && fold.is_none();
+            let fold_mark = fold_column.as_mut().map(|column| match fold {
+                Some(_) => gutter::FoldMark::Closed,
+                None => column.mark(row).into(),
+            });
             let skipped = std::mem::take(&mut skip);
             for (part, &start) in starts.iter().enumerate().skip(skipped) {
                 if y >= height {
@@ -590,6 +618,16 @@ impl StatefulWidget for EditorView<'_> {
                     text_style,
                     &syntax_styles,
                 );
+                // A wrapped line's later rows are inside what it heads.
+                let drawn_mark =
+                    fold_mark.map(|mark| if part == 0 { mark } else { mark.continued() });
+                if let Some(mark) = drawn_mark {
+                    let style = buf[(area.x, screen_y)]
+                        .style()
+                        .patch(self.theme.get("ui.fold.column"));
+                    let cell = Rect::new(fold_area.x, screen_y, fold_area.width, 1);
+                    gutter::render_fold(buf, cell, mark, style);
+                }
                 if let Some((first, last)) = fold {
                     self.draw_fold_note(buf, text_area, screen_y, line_text, last - first, left);
                 }
@@ -611,6 +649,7 @@ impl StatefulWidget for EditorView<'_> {
                         0
                     },
                     last: last_part,
+                    fold: drawn_mark.unwrap_or_default(),
                 });
                 // The extra cursors on this part of the line: like the
                 // real one, a bar where there's no character (past the
@@ -1129,6 +1168,29 @@ mod tests {
         let mut state = ViewState::default();
         EditorView::new(doc, options, &Theme::default()).render(area, &mut buf, &mut state);
         (buf, state)
+    }
+
+    #[test]
+    fn the_fold_column_marks_folds_left_of_the_numbers() {
+        let mut doc = Document::with_text("fn a() {\n    x\n}\n{\n    y\n}\nz");
+        doc.close_fold(3, 5);
+        let folds = EditorOptions {
+            fold_column: crate::config::FoldColumn::On,
+            ..options(LineNumbers::Absolute)
+        };
+        let column = |buf: &Buffer| -> Vec<String> {
+            (0..5).map(|y| buf[(0, y)].symbol().to_string()).collect()
+        };
+        let (buf, state) = render(&doc, &folds, 24, 6);
+        assert_eq!(state.text_x, 6, "one cell for folds, five for numbers");
+        assert_eq!(column(&buf), ["▾", "│", "│", "▸", " "]);
+        assert_eq!(row_text(&buf, 4).trim_end(), "    7 z");
+
+        let (buf, _) = render(&doc, &folds, 12, 6);
+        assert_eq!(row_text(&buf, 1).trim_end(), "│     ↪ {", "wrapped: inside");
+
+        let (_, state) = render(&doc, &options(LineNumbers::Absolute), 24, 6);
+        assert_eq!(state.text_x, 5, "off by default");
     }
 
     #[test]

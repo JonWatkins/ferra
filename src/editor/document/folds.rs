@@ -30,7 +30,8 @@
 //! `TextLayout::rows_in` gives a closed fold one screen row (for keeping the
 //! cursor in sight, the view's last line and the highlight prediction), and
 //! drawing shows the first line, unwrapped, with a dim `⋯ N more lines`
-//! (`ui.fold`). `Editor::reveal_cursor` opens folds at the cursor after
+//! (`ui.fold`), with `▸` in the fold column (`fold-column`, beside open
+//! folds' `▾` and `│` from `core::fold::Column`). `Editor::reveal_cursor` opens folds at the cursor after
 //! searches, jump motions other than `gg`/`G`, mark jumps, undo and redo, as
 //! Vim's default `foldopen` does.
 
