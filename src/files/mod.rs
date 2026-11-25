@@ -19,6 +19,7 @@
 
 mod complete;
 mod error;
+mod find;
 mod launch;
 mod stamp;
 mod trash;
@@ -26,6 +27,7 @@ mod walk;
 
 pub use complete::{complete_path, complete_path_in};
 pub use error::FileError;
+pub use find::{FileSearch, find_file, split_list};
 pub use launch::open_externally;
 pub use stamp::{FileStamp, Recheck, recheck, stamp};
 pub use trash::{reveal, trash};

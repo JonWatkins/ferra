@@ -6,9 +6,10 @@
 //! Leaving insert mode sets the buffer's `^` mark (an ordinary local mark, so
 //! it follows edits), which `gi` and `` `^ `` go back to. `gf`
 //! (`Editor::open_file_under_cursor`) takes the run of file-name characters
-//! under the cursor, splits off a `:line[:col]` suffix, and opens the first of
-//! "beside the current file" and "from the working directory" that exists,
-//! through `open`, so it's a jump and `<C-^>` comes back. `gx`
+//! under the cursor, splits off a `:line[:col]` suffix, and opens the first
+//! file the buffer's `path` and `suffixes-add` options find
+//! (`files::find_file`: by default beside the current file, then from the
+//! working directory), through `open`, so it's a jump and `<C-^>` comes back. `gx`
 //! (`Editor::url_under_cursor`) finds the URL around the cursor (`url_at`),
 //! or failing that the file `gf` would, for the system's opener.
 
@@ -28,16 +29,15 @@ impl Editor {
     /// already open.
     /// `gf`: opens the file named under the cursor. A `:line` (and
     /// `:col`) after the name, as in compiler messages and grep output,
-    /// goes there. The name is looked for next to the current file, then
-    /// in the working directory; `~` is the home directory.
+    /// goes there. The name is looked for in the `path` option's
+    /// directories, with `suffixes-add`'s endings too; `~` is the home
+    /// directory.
     pub fn open_file_under_cursor(&mut self) -> Result<(), String> {
         let word = self
             .file_name_under_cursor()
             .ok_or("No file name under the cursor")?;
         let (name, row, col) = split_location(word.trim_end_matches([':', '.']));
-        let path = self
-            .find_named_file(name)
-            .map_err(|name| format!("Can't find file \"{}\"", name.display()))?;
+        let path = self.find_named_file(name)?;
         self.open(&path).map_err(|e| e.to_string())?;
         if let Some(row) = row {
             let row = row
@@ -64,9 +64,7 @@ impl Editor {
             .file_name_under_cursor()
             .ok_or("No URL under the cursor")?;
         let (name, _, _) = split_location(word.trim_end_matches([':', '.']));
-        let path = self
-            .find_named_file(name)
-            .map_err(|name| format!("Can't find file \"{}\"", name.display()))?;
+        let path = self.find_named_file(name)?;
         let path = std::fs::canonicalize(&path).unwrap_or(path);
         Ok(path.to_string_lossy().into_owned())
     }
@@ -99,25 +97,17 @@ impl Editor {
         Some(line[start..end].iter().collect())
     }
 
-    /// `name` beside the current file, else from the working directory;
-    /// `~/` is the home directory. The expanded name if neither exists.
-    fn find_named_file(&self, name: &str) -> Result<PathBuf, PathBuf> {
-        let name = match name.strip_prefix("~/") {
-            Some(rest) => std::env::var_os("HOME")
-                .map(|home| Path::new(&home).join(rest))
-                .unwrap_or_else(|| Path::new(name).to_path_buf()),
-            None => Path::new(name).to_path_buf(),
+    /// The file `name` finds through the buffer's `path` and
+    /// `suffixes-add`, or Vim's E447 message.
+    fn find_named_file(&self, name: &str) -> Result<PathBuf, String> {
+        let search = crate::files::FileSearch {
+            path: &self.options.path,
+            suffixes: &self.options.suffixes_add,
+            file_dir: self.document.path().and_then(Path::parent),
+            cwd: Path::new(""),
         };
-        let beside = self
-            .document
-            .path()
-            .and_then(Path::parent)
-            .map(|dir| dir.join(&name));
-        [beside, Some(name.clone())]
-            .into_iter()
-            .flatten()
-            .find(|p| p.is_file())
-            .ok_or(name)
+        crate::files::find_file(name, &search)
+            .ok_or_else(|| format!("Can't find file \"{name}\" in path"))
     }
 
     pub fn open(&mut self, path: &Path) -> Result<(), FileError> {
@@ -434,7 +424,7 @@ mod tests {
         );
         assert_eq!(
             at(&mut editor, 28),
-            Err("Can't find file \"nowhere.txt\"".into())
+            Err("Can't find file \"nowhere.txt\" in path".into())
         );
         assert_eq!(at(&mut editor, 2), Err("No URL under the cursor".into()));
 

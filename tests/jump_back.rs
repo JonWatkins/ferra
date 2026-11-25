@@ -45,10 +45,29 @@ fn gf_opens_the_file_under_the_cursor_at_its_line() {
 }
 
 #[test]
+fn gf_searches_path_with_suffixes_add() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src/editor")).unwrap();
+    fs::create_dir_all(dir.path().join("lib")).unwrap();
+    fs::write(dir.path().join("src/editor/files.rs"), "deep\n").unwrap();
+    fs::write(dir.path().join("lib/util.rs"), "util\n").unwrap();
+    fs::write(dir.path().join("a.txt"), "files util\n").unwrap();
+    let mut app = app();
+    app.open(&dir.path().join("a.txt"));
+    keys(&mut app, "gf");
+    assert_eq!(message(&app), "Can't find file \"files\" in path");
+    let path = format!("{}/**", dir.path().display());
+    keys(&mut app, &format!(":set path+={path} sua=.rs<CR>gf"));
+    assert_eq!(text(&app), "deep", "{}", message(&app));
+    keys(&mut app, "<C-^>w:setlocal path=./lib<CR>gf");
+    assert_eq!(text(&app), "util", "{}", message(&app));
+}
+
+#[test]
 fn gf_says_when_theres_no_such_file() {
     let mut app = app();
     keys(&mut app, "inowhere.txt here<Esc>0gf");
-    assert_eq!(message(&app), "Can't find file \"nowhere.txt\"");
+    assert_eq!(message(&app), "Can't find file \"nowhere.txt\" in path");
     keys(&mut app, "A <Esc>gf");
     assert_eq!(message(&app), "No file name under the cursor");
 }

@@ -28,6 +28,13 @@ pub struct EditorOptions {
     /// Whether typing past `text-width` breaks the line: never, in
     /// comments, or anywhere.
     pub auto_wrap: AutoWrap,
+    /// Where `gf` looks for a file: directories, comma-separated, as Vim's
+    /// `path` (`.` beside the file, empty the working directory, `**`
+    /// below; see `files::find_file`).
+    pub path: String,
+    /// Endings `gf` tries after the name as written, comma-separated
+    /// (`.rs`), as Vim's `suffixesadd`.
+    pub suffixes_add: String,
     /// Have the language server format the buffer before each save.
     pub format_on_save: bool,
     /// Long lines continue on the next screen rows (breaking between
