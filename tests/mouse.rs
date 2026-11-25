@@ -507,7 +507,11 @@ fn clicks_on_the_fold_column_close_and_open_folds() {
 #[test]
 fn the_fold_column_is_shown_with_vscodes_keys_and_follows_a_switch() {
     let mut app = with_fold_column("vscode", FOLDABLE);
-    assert_eq!(find(&mut app, "▾").0, 0, "on by default with VS Code's keys");
+    assert_eq!(
+        find(&mut app, "▾").0,
+        0,
+        "on by default with VS Code's keys"
+    );
     keys(&mut app, "<C-g>set keymap=vim<CR>");
     let screen = render(&mut app, W, H);
     assert!(
