@@ -984,6 +984,12 @@ impl Editor {
         self.screen_column = Some((self.document.id(), self.document.cursor(), column));
     }
 
+    /// Forgets the screen column `gj`/`gk` aimed for, so the next one
+    /// starts from where the cursor's drawn.
+    pub fn forget_screen_column(&mut self) {
+        self.screen_column = None;
+    }
+
     /// Shows the splash screen until the user starts working (see
     /// [`Editor::splash_visible`]).
     pub fn show_splash(&mut self) {
