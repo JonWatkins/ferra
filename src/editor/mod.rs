@@ -245,6 +245,8 @@ pub struct Editor {
     /// The file tree, once the sidebar's been opened, and whether it's open.
     explorer: Option<explorer::Explorer>,
     sidebar_open: bool,
+    /// The buffer the file tree last followed (`follow_in_tree`).
+    tree_followed: Option<DocumentId>,
     /// Plugins' sidebar views, which one's shown (0: the files), and
     /// whether the shown one's keys need binding.
     sidebar_views: Vec<sidebar_views::PluginView>,

@@ -11,6 +11,10 @@
 //! (agents), the request goes out and the answer comes back (language
 //! servers), and the agent gets it (agents again).
 //!
+//! One entry isn't input at all: the file tree following the active buffer
+//! is in the table so it catches every switch, however made, before the
+//! draw.
+//!
 //! A panic in one source is caught on its own: the message line names it,
 //! and the others still run.
 
@@ -95,6 +99,11 @@ pub static SOURCES: &[Source] = &[
         name: "the language servers",
         busy: |app| app.lsp.borrow().active(),
         update: App::update_lsp,
+    },
+    Source {
+        name: "the file tree following the buffer",
+        busy: |_| false,
+        update: |app| app.editor.follow_in_tree(),
     },
     Source {
         name: "the agent",
