@@ -49,9 +49,75 @@
 //! at a line's or the buffer's end. A count given to `.` is ignored for these,
 //! since the size comes from the selection. A count on a visual `>` or `<`
 //! shifts that many times.
+//!
+//! A completion is repeated by its text, not its keys, as in Vim: `.` after
+//! `ifo<C-n><Esc>` puts in the word chosen, not whatever `fo` completes to
+//! now (and `<Tab>` taking a server's item doesn't become a tab). After each
+//! key the app takes the editor's last completion step
+//! (`Editor::take_completed`), and the recorder swaps the keys of that key
+//! binding (from where it began, so `<C-x><C-f>` goes too) for a
+//! `<Completed>` block (`completion_keys`): `<BS>` for each character taken
+//! out, the text as in a paste, `<Left>` for each character the cursor ends
+//! before its end, then `<PasteEnd>`. A step straight after another
+//! (`<C-n><C-n>`, `<C-y>`) replaces its block, keeping what the first took
+//! out. On replay the app collects the block like a paste and hands it to
+//! `Editor::put_completed` (`completed_from_keys`), so key bindings,
+//! auto-pairs and auto-indent don't touch it.
 
-use crate::editor::{DocumentId, VisualShape};
-use crate::input::{KeyCode, KeyPress};
+use crate::editor::{Completed, DocumentId, VisualShape};
+use crate::input::{KeyCode, KeyPress, paste_keys};
+
+/// A completion step as keys, for `.` (see the module docs).
+pub fn completion_keys(completed: &Completed) -> Vec<KeyPress> {
+    let mut keys = vec![KeyPress::plain(KeyCode::Completed)];
+    keys.extend(std::iter::repeat_n(
+        KeyPress::plain(KeyCode::Backspace),
+        completed.removed,
+    ));
+    let text = paste_keys(&completed.text);
+    // Without the paste's own markers.
+    keys.extend_from_slice(&text[1..text.len() - 1]);
+    let back = completed
+        .text
+        .chars()
+        .count()
+        .saturating_sub(completed.cursor);
+    keys.extend(std::iter::repeat_n(KeyPress::plain(KeyCode::Left), back));
+    keys.push(KeyPress::plain(KeyCode::PasteEnd));
+    keys
+}
+
+/// The completion step in the keys between `<Completed>` and `<PasteEnd>`.
+pub fn completed_from_keys(keys: &[KeyPress]) -> Completed {
+    let removed = keys
+        .iter()
+        .take_while(|k| k.code == KeyCode::Backspace)
+        .count();
+    let back = keys[removed..]
+        .iter()
+        .rev()
+        .take_while(|k| k.code == KeyCode::Left)
+        .count();
+    let text: String = keys[removed..keys.len() - back]
+        .iter()
+        .filter_map(KeyPress::as_pasted)
+        .collect();
+    let cursor = text.chars().count() - back.min(text.chars().count());
+    Completed {
+        removed,
+        text,
+        cursor,
+    }
+}
+
+/// Where a recorded completion block is in the keys, and how many
+/// characters the completion took out first.
+#[derive(Debug, Clone, Copy)]
+struct CompletionBlock {
+    start: usize,
+    end: usize,
+    removed: usize,
+}
 
 /// The active buffer and how many edits it has had. Comparing two stamps
 /// tells whether a key sequence edited text: a sequence that ends in another
@@ -173,6 +239,8 @@ pub struct ChangeRecorder {
     /// An operator took a selection of this shape, in the binding that
     /// began at this index.
     visual: Option<(VisualShape, usize)>,
+    /// The last completion block put in the keys.
+    completion: Option<CompletionBlock>,
     last_change: Option<LastChange>,
 }
 
@@ -185,6 +253,7 @@ impl ChangeRecorder {
         self.replayed = false;
         self.binding_start = 0;
         self.visual = None;
+        self.completion = None;
     }
 
     /// The next key starts a new key binding (nothing is half typed).
@@ -195,6 +264,29 @@ impl ChangeRecorder {
     /// The binding being typed took a visual selection of `shape`.
     pub fn note_visual(&mut self, shape: VisualShape) {
         self.visual = Some((shape, self.binding_start));
+    }
+
+    /// The binding being typed made a completion step: its keys become
+    /// the step's block, or replace the block just before them.
+    pub fn note_completed(&mut self, completed: Completed) {
+        let start = self.binding_start.min(self.keys.len());
+        let (start, removed) = match self.completion {
+            Some(block) if block.end == start => (block.start, block.removed),
+            _ => (start, completed.removed),
+        };
+        self.keys.truncate(start);
+        let completed = Completed {
+            removed,
+            ..completed
+        };
+        for key in completion_keys(&completed) {
+            self.push(key);
+        }
+        self.completion = Some(CompletionBlock {
+            start,
+            end: self.keys.len(),
+            removed,
+        });
     }
 
     pub fn push(&mut self, key: KeyPress) {
@@ -425,5 +517,66 @@ mod tests {
         c.set_count(7);
         assert_eq!(c.keys(None), keys("7dw"), "the new digits are counts too");
         assert_eq!(c.body(), keys("dw"));
+    }
+
+    fn completed(removed: usize, text: &str, cursor: usize) -> Completed {
+        Completed {
+            removed,
+            text: text.into(),
+            cursor,
+        }
+    }
+
+    #[test]
+    fn completion_blocks_round_trip() {
+        for c in [
+            completed(2, "foobar", 6),
+            completed(0, "call()\n\tx", 5),
+            completed(3, "", 0),
+        ] {
+            let keys = completion_keys(&c);
+            assert_eq!(keys[0].code, KeyCode::Completed);
+            assert_eq!(keys.last().unwrap().code, KeyCode::PasteEnd);
+            assert_eq!(completed_from_keys(&keys[1..keys.len() - 1]), c);
+        }
+        assert_eq!(
+            completion_keys(&completed(2, "f(x)", 2)),
+            keys("<Completed><BS><BS>f(x)<Left><Left><PasteEnd>")
+        );
+    }
+
+    /// Records `notation` as one binding per key, except those after a
+    /// `<C-x>`, which continue it.
+    fn type_keys(recorder: &mut ChangeRecorder, notation: &str) {
+        let mut half_typed = false;
+        for key in keys(notation) {
+            if !half_typed {
+                recorder.mark_binding_start();
+            }
+            half_typed = key == keys("<C-x>")[0];
+            recorder.push(key);
+        }
+    }
+
+    #[test]
+    fn a_completion_replaces_its_binding_and_the_one_just_before() {
+        let mut recorder = ChangeRecorder::default();
+        recorder.begin(stamp(0));
+        type_keys(&mut recorder, "ifo<C-n>");
+        recorder.note_completed(completed(2, "foobar", 6));
+        type_keys(&mut recorder, "<C-n>");
+        recorder.note_completed(completed(6, "foobaz", 6));
+        type_keys(&mut recorder, "!<C-x><C-l>");
+        recorder.note_completed(completed(7, "foobaz! x", 9));
+        type_keys(&mut recorder, "<Esc>");
+        recorder.finish(stamp(1));
+        assert_eq!(
+            recorder.last_change().unwrap().keys(None),
+            keys(
+                "ifo<Completed><BS><BS>foobaz<PasteEnd>!\
+                 <Completed><BS><BS><BS><BS><BS><BS><BS>foobaz!<Space>x<PasteEnd><Esc>"
+            ),
+            "the first keeps what it took out; the third is apart from the others"
+        );
     }
 }

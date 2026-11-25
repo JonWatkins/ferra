@@ -62,7 +62,7 @@ pub mod windows;
 
 pub use buffers::BufferInfo;
 pub use command_line::{CommandLine, Completion, CompletionContext, Prompt};
-pub use completion::WordCompletion;
+pub use completion::{Completed, WordCompletion};
 pub use document::{
     DiskState, DisplayLine, Document, DocumentId, OpenInfo, RangeHighlight, SaveInfo, VirtualText,
 };
@@ -329,6 +329,8 @@ pub struct Editor {
     completion: Option<WordCompletion>,
     /// Whether the key being handled used the completion.
     completion_used: bool,
+    /// The last completion step, for the app to take for `.`.
+    completed: Option<completion::Completed>,
     /// Text typed by `I`/`A`/`c` on a block's first row, copied to the
     /// others when insert mode ends.
     block_insert: Option<block::BlockInsert>,

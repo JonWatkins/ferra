@@ -190,3 +190,39 @@ fn a_fuzzy_match_starts_at_the_start_of_a_word() {
     keys(&mut app, "ilog10<CR>x0<C-n>");
     assert_eq!(message(&app), "No completions for \"x0\"");
 }
+
+#[test]
+fn dot_puts_in_the_word_chosen_rather_than_completing_again() {
+    let mut app = app();
+    keys(&mut app, "ifoobar<CR>x<CR>foobaz<Esc>k");
+    keys(&mut app, "ofo<C-n><Esc>");
+    assert_eq!(text(&app), "foobar\nx\nfoobaz\nfoobaz");
+    // At the end, `fo<C-n>` would wrap round to "foobar" first.
+    keys(&mut app, "G.");
+    assert_eq!(last_line(&app), "foobaz");
+    assert_eq!(app.editor().mode(), Mode::Normal);
+}
+
+#[test]
+fn dot_repeats_the_last_of_several_presses_and_what_was_typed_after() {
+    let mut app = app();
+    keys(&mut app, "ifoobar foobaz<Esc>ofo<C-n><C-n>!<Esc>");
+    assert_eq!(last_line(&app), "foobaz!");
+    keys(&mut app, ".");
+    assert_eq!(text(&app), "foobar foobaz\nfoobaz!\nfoobaz!");
+    keys(&mut app, "u");
+    assert_eq!(text(&app), "foobar foobaz\nfoobaz!", "one undo step");
+}
+
+#[test]
+fn dot_repeats_a_line_completion_without_its_ctrl_x() {
+    let mut app = app();
+    keys(&mut app, "iuse std::fmt;<CR>use std::io;<Esc>");
+    keys(&mut app, "ouse<C-x><C-l><C-n><Esc>");
+    assert_eq!(text(&app).lines().last(), Some("use std::fmt;"));
+    keys(&mut app, ".");
+    assert_eq!(
+        text(&app),
+        "use std::fmt;\nuse std::io;\nuse std::fmt;\nuse std::fmt;"
+    );
+}
