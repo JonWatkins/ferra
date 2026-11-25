@@ -16,22 +16,50 @@
 //!   wrapped to at most four rows. No signature in the answer closes it; so
 //!   does leaving insert mode. It goes above the line, so the completion menu
 //!   can be below, or below when there's no room.
+//! - Overloads: all the answer's signatures are kept, and `<C-s>` while
+//!   more than one is showing steps to the next (round to the first), as
+//!   Neovim's `<C-s>` in its signature window; the popup's bottom edge says
+//!   which (`2/3`). The one stepped to goes back with each retrigger as
+//!   `activeSignatureHelp`, and if the server picks its own anyway, an
+//!   answer that still has it (by label) keeps it shown.
 
 use super::lsp::{LspQuery, LspRequest, Reply};
 use super::{Editor, Message, Mode};
 
-/// One signature to show.
+/// The server's signatures (overloads) for the call being typed, and the
+/// one shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignatureHelp {
+    /// Never empty.
+    pub signatures: Vec<Signature>,
+    /// The one shown: the server's active one, or the one stepped to.
+    pub index: usize,
+    /// It was stepped to (`<C-s>`), so a new answer keeps it if it has it.
+    pub picked: bool,
+}
+
+/// One signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signature {
     /// `fn area(&self, scale: f64) -> f64`.
     pub label: String,
     /// The parameter being typed: its chars in `label`.
     pub active: Option<(usize, usize)>,
-    /// Which of the server's signatures (overloads) this is, of how many.
-    pub index: usize,
-    pub total: usize,
     /// The parameter's documentation, or the signature's: a few lines.
     pub documentation: Vec<String>,
+}
+
+impl SignatureHelp {
+    /// The signature shown.
+    pub fn shown(&self) -> &Signature {
+        &self.signatures[self.index]
+    }
+
+    /// The one after the shown one, round to the first.
+    fn step(&mut self) {
+        self.index = (self.index + 1) % self.signatures.len();
+        self.picked = true;
+    }
 }
 
 impl Editor {
@@ -41,8 +69,15 @@ impl Editor {
     }
 
     /// `<C-s>` in insert mode: asks for the signature of the call the
-    /// cursor is in.
+    /// cursor is in, or, with one showing that has overloads, shows the
+    /// next of them (as Neovim's `<C-s>` in its signature window).
     pub fn request_signature_help(&mut self) -> Result<(), String> {
+        if let Some(help) = &mut self.signature
+            && help.signatures.len() > 1
+        {
+            help.step();
+            return Ok(());
+        }
         self.queue_signature_help(true, None)
     }
 
@@ -80,7 +115,7 @@ impl Editor {
         self.lsp_requests.push(LspRequest {
             query: LspQuery::SignatureHelp {
                 trigger: typed,
-                retrigger: false,
+                retrigger: None,
             },
             document: self.document.id(),
             position: cursor,
@@ -91,14 +126,27 @@ impl Editor {
         Ok(())
     }
 
-    /// Shows the server's answer to `request`: a signature, or none (which
-    /// closes it), if the editor is still typing in that buffer.
+    /// Shows the server's answer to `request`: its signatures, or none
+    /// (which closes it), if the editor is still typing in that buffer. An
+    /// overload stepped to stays shown if the answer has it, for servers
+    /// that pick their own whatever `activeSignatureHelp` says.
     pub fn show_signature_help(&mut self, request: &LspRequest, help: Option<SignatureHelp>) {
         if self.document.id() != request.document || self.mode() != Mode::Insert {
             return;
         }
         if help.is_none() && request.reply.explicit() {
             self.set_message(Message::info("No signature here"));
+        }
+        let mut help = help;
+        if let (Some(new), Some(old)) = (&mut help, &self.signature)
+            && old.picked
+            && let Some(at) = new
+                .signatures
+                .iter()
+                .position(|s| s.label == old.shown().label)
+        {
+            new.index = at;
+            new.picked = true;
         }
         self.signature = help;
     }
@@ -108,21 +156,71 @@ impl Editor {
 mod tests {
     use super::*;
 
-    fn help() -> SignatureHelp {
+    fn help(labels: &[&str]) -> SignatureHelp {
         SignatureHelp {
-            label: "f(a)".into(),
-            active: Some((2, 3)),
+            signatures: labels
+                .iter()
+                .map(|label| Signature {
+                    label: label.to_string(),
+                    active: Some((2, 3)),
+                    documentation: Vec::new(),
+                })
+                .collect(),
             index: 0,
-            total: 1,
-            documentation: Vec::new(),
+            picked: false,
         }
+    }
+
+    fn shown(editor: &Editor) -> &str {
+        &editor.signature_help().unwrap().shown().label
+    }
+
+    fn answer(editor: &mut Editor, help: SignatureHelp) {
+        let request = LspRequest {
+            query: LspQuery::SignatureHelp {
+                trigger: None,
+                retrigger: None,
+            },
+            document: editor.document.id(),
+            position: editor.document.cursor(),
+            buffer_id: editor.document.buffer().id(),
+            edit_seq: editor.document.buffer().edit_seq(),
+            reply: Reply::Typing,
+        };
+        editor.show_signature_help(&request, Some(help));
+    }
+
+    #[test]
+    fn ctrl_s_steps_through_the_overloads_and_an_answer_keeps_the_one_picked() {
+        let mut editor = Editor::default();
+        editor.set_mode(Mode::Insert);
+        editor.signature = Some(help(&["f(a)", "f(a, b)", "f()"]));
+        editor.request_signature_help().unwrap();
+        assert_eq!(shown(&editor), "f(a, b)");
+        // The server's answer to the next change has it second, as its
+        // active one first: the one picked stays.
+        let mut again = help(&["f()", "f(a, b)"]);
+        again.index = 0;
+        answer(&mut editor, again);
+        assert_eq!(shown(&editor), "f(a, b)");
+        editor.request_signature_help().unwrap();
+        editor.request_signature_help().unwrap();
+        assert_eq!(shown(&editor), "f(a, b)", "round to the first and on");
+        // An answer without it shows the server's.
+        answer(&mut editor, help(&["g()", "g(x)"]));
+        assert_eq!(shown(&editor), "g()");
+        assert!(editor.lsp_requests.is_empty(), "stepping doesn't ask");
+        // With only one, `<C-s>` asks again.
+        editor.signature = Some(help(&["f(a)"]));
+        let _ = editor.request_signature_help();
+        assert_eq!(shown(&editor), "f(a)");
     }
 
     #[test]
     fn leaving_insert_mode_closes_it() {
         let mut editor = Editor::default();
         editor.set_mode(Mode::Insert);
-        editor.signature = Some(help());
+        editor.signature = Some(help(&["f(a)"]));
         editor.signature_after_key(false);
         assert!(editor.signature_help().is_some(), "a key that didn't type");
         editor.set_mode(Mode::Normal);

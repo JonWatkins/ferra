@@ -76,7 +76,7 @@ use crate::editor::lsp::{
     NoAnswer, Reply,
 };
 use crate::editor::server_completion::ServerItem;
-use crate::editor::signature::SignatureHelp;
+use crate::editor::signature::{Signature, SignatureHelp};
 
 /// The kind of code actions the agent's asked for when it gives no line:
 /// the file-wide ones (organize imports, fix all, remove unused imports).
@@ -290,9 +290,9 @@ impl Lsp {
                 // Asked as you type: on a character the server names, or on
                 // any change while it's showing (so the parameter follows).
                 LspQuery::SignatureHelp { trigger, retrigger } if typing => {
-                    let showing = editor.signature_help().is_some();
+                    let showing = editor.signature_help().cloned();
                     let triggered = trigger.is_some_and(|c| client.signature_triggered_by(c));
-                    if !showing && !triggered {
+                    if showing.is_none() && !triggered {
                         continue;
                     }
                     *retrigger = showing;
@@ -903,20 +903,42 @@ fn symbol_kind(kind: Option<u64>) -> &'static str {
     }
 }
 
-/// The signature to show from a `SignatureHelp` answer: the active one,
-/// with its active parameter's place in its label, and the parameter's
-/// documentation (or else the signature's). `None` for none.
+/// The signatures from a `SignatureHelp` answer, the active one shown,
+/// each with its active parameter's place in its label, and the
+/// parameter's documentation (or else the signature's). `None` for none.
 fn signature_help(result: &Value) -> Option<SignatureHelp> {
-    let signatures = result["signatures"].as_array().filter(|s| !s.is_empty())?;
-    let index =
-        (result["activeSignature"].as_u64().unwrap_or(0) as usize).min(signatures.len() - 1);
-    let signature = &signatures[index];
+    let all = result["signatures"].as_array()?;
+    let active = result["activeSignature"].as_u64().unwrap_or(0) as usize;
+    let mut index = 0;
+    let mut signatures = Vec::new();
+    for (i, value) in all.iter().enumerate() {
+        let Some(signature) = signature(value, &result["activeParameter"]) else {
+            continue;
+        };
+        if i <= active {
+            index = signatures.len();
+        }
+        signatures.push(signature);
+    }
+    if signatures.is_empty() {
+        return None;
+    }
+    Some(SignatureHelp {
+        signatures,
+        index,
+        picked: false,
+    })
+}
+
+/// One `SignatureInformation`, with the answer's `activeParameter` for a
+/// signature that doesn't say its own.
+fn signature(signature: &Value, answer_parameter: &Value) -> Option<Signature> {
     let label = signature["label"].as_str()?.to_string();
     let parameters = signature["parameters"].as_array();
     // The signature's own active parameter wins over the answer's.
     let active = signature["activeParameter"]
         .as_u64()
-        .or_else(|| result["activeParameter"].as_u64())
+        .or_else(|| answer_parameter.as_u64())
         .and_then(|i| parameters?.get(i as usize));
     let place = active.and_then(|parameter| match &parameter["label"] {
         // A substring of the signature's label.
@@ -972,11 +994,9 @@ fn signature_help(result: &Value) -> Option<SignatureHelp> {
     if docs.is_empty() {
         docs = documentation(&signature["documentation"]);
     }
-    Some(SignatureHelp {
+    Some(Signature {
         label,
         active: place,
-        index,
-        total: signatures.len(),
         documentation: docs,
     })
 }
@@ -1578,19 +1598,25 @@ mod tests {
              "parameters": [{"label": [4, 5]}, {"label": [7, 10], "documentation": ""}]},
         ], "activeSignature": 1, "activeParameter": 0});
         let help = signature_help(&answer).unwrap();
-        assert_eq!((help.index, help.total), (1, 2));
-        let (s, e) = help.active.unwrap();
-        let active: String = help.label.chars().skip(s).take(e - s).collect();
+        assert_eq!((help.index, help.signatures.len()), (1, 2));
+        assert_eq!(
+            help.signatures[0].active,
+            Some((2, 7)),
+            "the answer's active parameter"
+        );
+        let shown = help.shown();
+        let (s, e) = shown.active.unwrap();
+        let active: String = shown.label.chars().skip(s).take(e - s).collect();
         assert_eq!(active, "why", "the signature's own active parameter");
         assert_eq!(
-            help.documentation,
+            shown.documentation,
             ["Does g."],
             "first paragraph, no fences"
         );
 
         let first = json!({"signatures": [{"label": "f(a: u8)", "parameters": [{"label": "a: u8"}]}],
                            "activeParameter": 0});
-        assert_eq!(signature_help(&first).unwrap().active, Some((2, 7)));
+        assert_eq!(signature_help(&first).unwrap().shown().active, Some((2, 7)));
         assert_eq!(signature_help(&json!({"signatures": []})), None);
         assert_eq!(signature_help(&Value::Null), None);
     }

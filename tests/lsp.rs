@@ -451,9 +451,23 @@ fn serve(
                 let open = before
                     .rfind("call(")
                     .filter(|&at| !before[at..].contains(')'));
-                let result = open.map(|at| {
+                // `over(` has two, the first always active (as a server
+                // that pays no heed to `activeSignatureHelp`).
+                let over = before
+                    .rfind("over(")
+                    .filter(|&at| !before[at..].contains(')'));
+                let result = over.map(|at| {
                     let commas = before[at..].matches(',').count();
-                    json!({"signatures": [{
+                    json!({"signatures": [
+                        {"label": "over(a: u8)", "parameters": [{"label": "a: u8"}]},
+                        {"label": "over(a: u8, b: u8)",
+                         "parameters": [{"label": "a: u8"}, {"label": "b: u8"}]},
+                    ], "activeSignature": 0, "activeParameter": commas})
+                });
+                let result = result.or_else(|| {
+                    open.map(|at| {
+                        let commas = before[at..].matches(',').count();
+                        json!({"signatures": [{
                         "label": "call(first: u8, second: u8)",
                         "documentation": "Calls it.",
                         "parameters": [
@@ -461,6 +475,7 @@ fn serve(
                             {"label": [16, 26]},
                         ],
                     }], "activeSignature": 0, "activeParameter": commas})
+                    })
                 });
                 reply(&mut output, result.into());
             }
@@ -1757,7 +1772,7 @@ fn a_list_for_text_since_changed_is_left_out() {
 }
 
 fn active_parameter(app: &App) -> Option<String> {
-    let help = app.editor().signature_help()?;
+    let help = app.editor().signature_help()?.shown();
     let (start, end) = help.active?;
     Some(help.label.chars().skip(start).take(end - start).collect())
 }
@@ -1790,6 +1805,48 @@ fn typing_a_call_shows_its_signature_above_the_line() {
     // Closing the call closes it.
     keys(&mut app, "2)");
     until(&mut app, |a| a.editor().signature_help().is_none());
+}
+
+#[test]
+fn ctrl_s_steps_through_a_calls_overloads() {
+    let (_dir, mut app, seen) = with_server(&"\n".repeat(8), true);
+    ready(&mut app);
+    keys(&mut app, "Goover(");
+    until(&mut app, |a| a.editor().signature_help().is_some());
+    let shown = |a: &App| a.editor().signature_help().unwrap().shown().label.clone();
+    assert_eq!(shown(&app), "over(a: u8)");
+    assert!(
+        render(&mut app, 60, 12)
+            .rows
+            .iter()
+            .any(|r| r.contains(" 1/2 "))
+    );
+    keys(&mut app, "<C-s>");
+    assert_eq!(shown(&app), "over(a: u8, b: u8)");
+    assert!(
+        render(&mut app, 60, 12)
+            .rows
+            .iter()
+            .any(|r| r.contains(" 2/2 "))
+    );
+
+    // Typing on asks again, saying which is picked; the server answers
+    // with its own first, but the one picked stays, its parameter
+    // following.
+    keys(&mut app, "1, ");
+    until(&mut app, |a| {
+        active_parameter(a).as_deref() == Some("b: u8")
+    });
+    assert_eq!(shown(&app), "over(a: u8, b: u8)");
+    let context = seen.lock().unwrap().signature_context.clone();
+    assert_eq!(context["activeSignatureHelp"]["activeSignature"], 1);
+    assert_eq!(
+        context["activeSignatureHelp"]["signatures"][1]["label"],
+        "over(a: u8, b: u8)"
+    );
+    // Round to the first.
+    keys(&mut app, "<C-s>");
+    assert_eq!(shown(&app), "over(a: u8)");
 }
 
 #[test]

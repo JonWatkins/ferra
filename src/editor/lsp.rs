@@ -237,10 +237,10 @@ pub enum LspQuery {
         action: CodeAction,
     },
     /// The signature being typed, maybe on typing `trigger` (a `(`);
-    /// `retrigger` while it's showing.
+    /// `retrigger` with the one showing, while it is.
     SignatureHelp {
         trigger: Option<char>,
-        retrigger: bool,
+        retrigger: Option<super::signature::SignatureHelp>,
     },
     DocumentSymbols,
     WorkspaceSymbols {

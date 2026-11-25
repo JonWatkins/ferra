@@ -158,7 +158,7 @@ iTerm2, set Profiles → Keys → Left Option key to "Esc+" for the `Alt` keys.
 | Insert  | `<C-n>` `<C-p>` | Complete the word before the cursor from the open buffers' words (nearest first); again for the next / previous match, round to what you typed |
 | Insert  | `<C-x><C-f>` | Complete a file name: from the directory the path before the cursor names, beside the current file (`<C-x><C-f>` again goes into a directory) |
 | Insert  | `<C-x><C-l>` | Complete the whole line from the lines that start with what you've typed on it, nearest above first |
-| Insert  | `<C-s>` | The signature of the call you're typing (it also comes up by itself after `(`) |
+| Insert  | `<C-s>` | The signature of the call you're typing (it also comes up by itself after `(`); again, the next overload |
 | Insert  | `<C-Space>` `<C-x><C-o>` | The language server's completions (they also come up by themselves as you type: see [Language servers](#language-servers)) |
 | Insert  | `<Tab>` | With the language server's completions up: take the chosen one (or the first) |
 | Insert  | `<C-y>` `<C-e>` | While completing: keep the match / put back what you typed (any other key keeps it and carries on) |
@@ -1248,7 +1248,10 @@ the buffers, as in Vim.
 Typing a call (`area(`) shows its signature above the line, with the
 argument you're on picked out and its documentation below; it follows
 as you type the arguments, and goes when the call's closed or you leave
-insert mode. `<C-s>` asks for it anywhere in a call.
+insert mode. `<C-s>` asks for it anywhere in a call. A function with
+overloads says which one it's showing at the popup's bottom edge (`1/2`);
+`<C-s>` while it's up shows the next, and typing on keeps to the one you
+picked.
 
 `:format` (or `:fmt`) has the server format the file, as one change (`u`
 undoes it), keeping the cursor on its text. To format on every save, set

@@ -35,8 +35,9 @@ impl<'a> SignatureView<'a> {
 
     /// How wide the text is in `screen`.
     fn text_width(&self, screen: Rect) -> usize {
-        let docs = self.help.documentation.join(" ");
-        Self::width_of(&self.help.label)
+        let shown = self.help.shown();
+        let docs = shown.documentation.join(" ");
+        Self::width_of(&shown.label)
             .max(Self::width_of(&docs).min(DOC_WIDTH))
             .min(MAX_WIDTH)
             .min((screen.width as usize).saturating_sub(4))
@@ -46,7 +47,7 @@ impl<'a> SignatureView<'a> {
     /// The documentation, as one paragraph wrapped to `width`, at most
     /// `DOC_ROWS` rows (the last ending in `…` if there's more).
     fn doc_rows(&self, width: usize) -> Vec<String> {
-        let text: Vec<char> = self.help.documentation.join(" ").chars().collect();
+        let text: Vec<char> = self.help.shown().documentation.join(" ").chars().collect();
         if text.is_empty() {
             return Vec::new();
         }
@@ -98,8 +99,9 @@ impl Widget for SignatureView<'_> {
         let base = self.theme.get("ui.popup");
         let border = base.patch(self.theme.get("ui.popup.border"));
         let mut block = Block::bordered().border_style(border).style(base);
-        if self.help.total > 1 {
-            let which = format!(" {}/{} ", self.help.index + 1, self.help.total);
+        let total = self.help.signatures.len();
+        if total > 1 {
+            let which = format!(" {}/{} ", self.help.index + 1, total);
             block = block.title_bottom(Line::from(which).right_aligned());
         }
         let inner = block.inner(area);
@@ -108,9 +110,10 @@ impl Widget for SignatureView<'_> {
 
         // The label, scrolled to keep the active parameter in view if it's
         // too wide.
-        let chars: Vec<char> = self.help.label.chars().collect();
-        let first = match self.help.active {
-            Some((_, end)) if Self::width_of(&self.help.label) > room => {
+        let shown = self.help.shown();
+        let chars: Vec<char> = shown.label.chars().collect();
+        let first = match shown.active {
+            Some((_, end)) if Self::width_of(&shown.label) > room => {
                 let mut start = 0;
                 while start < end
                     && chars[start..end]
@@ -133,7 +136,7 @@ impl Widget for SignatureView<'_> {
             if x + w > right {
                 break;
             }
-            let in_active = self.help.active.is_some_and(|(s, e)| s <= i && i < e);
+            let in_active = shown.active.is_some_and(|(s, e)| s <= i && i < e);
             let style = if in_active { active } else { base };
             buf.set_string(x, inner.y, c.to_string(), style);
             x += w;
@@ -158,6 +161,25 @@ impl Widget for SignatureView<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::signature::Signature;
+
+    fn one(
+        label: &str,
+        active: (usize, usize),
+        documentation: &[&str],
+        total: usize,
+    ) -> SignatureHelp {
+        let signature = Signature {
+            label: label.into(),
+            active: Some(active),
+            documentation: documentation.iter().map(|d| d.to_string()).collect(),
+        };
+        SignatureHelp {
+            signatures: vec![signature; total],
+            index: 0,
+            picked: false,
+        }
+    }
 
     fn rows(help: &SignatureHelp, width: u16) -> Vec<String> {
         let theme = crate::config::Config::default().theme;
@@ -178,13 +200,12 @@ mod tests {
 
     #[test]
     fn above_the_line_with_the_parameter_and_its_docs() {
-        let help = SignatureHelp {
-            label: "fn area(scale: f64) -> f64".into(),
-            active: Some((8, 18)),
-            index: 0,
-            total: 2,
-            documentation: vec!["How much bigger.".into()],
-        };
+        let help = one(
+            "fn area(scale: f64) -> f64",
+            (8, 18),
+            &["How much bigger."],
+            2,
+        );
         assert_eq!(
             rows(&help, 40),
             [
@@ -199,17 +220,15 @@ mod tests {
 
     #[test]
     fn long_documentation_wraps_to_a_few_rows() {
-        let help = SignatureHelp {
-            label: "Printf(format string, a ...any)".into(),
-            active: Some((7, 20)),
-            index: 0,
-            total: 1,
-            documentation: vec![
-                "Printf formats according to a format specifier and writes to standard output."
-                    .into(),
-                "It returns the number of bytes written and any write error encountered.".into(),
+        let help = one(
+            "Printf(format string, a ...any)",
+            (7, 20),
+            &[
+                "Printf formats according to a format specifier and writes to standard output.",
+                "It returns the number of bytes written and any write error encountered.",
             ],
-        };
+            1,
+        );
         assert_eq!(
             rows(&help, 50)[3..7],
             [
@@ -221,7 +240,7 @@ mod tests {
         );
         // More than four rows' worth: the fourth ends in `…`.
         let mut longer = help.clone();
-        longer
+        longer.signatures[0]
             .documentation
             .push("See the package documentation for the verbs.".into());
         let shown = rows(&longer, 50);
@@ -234,13 +253,7 @@ mod tests {
 
     #[test]
     fn a_long_signature_keeps_the_parameter_in_view() {
-        let help = SignatureHelp {
-            label: "fn f(first: u8, second: u8, third: u8)".into(),
-            active: Some((29, 38)),
-            index: 0,
-            total: 1,
-            documentation: Vec::new(),
-        };
+        let help = one("fn f(first: u8, second: u8, third: u8)", (29, 38), &[], 1);
         let shown = rows(&help, 24);
         assert!(shown[1].contains("third: u8"), "{shown:?}");
     }

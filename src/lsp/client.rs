@@ -651,8 +651,20 @@ impl Client {
             LspQuery::SignatureHelp { trigger, retrigger } => {
                 let mut context = json!({
                     "triggerKind": if request.reply.explicit() { 1 } else { 3 },
-                    "isRetrigger": retrigger,
+                    "isRetrigger": retrigger.is_some(),
                 });
+                // The one showing, with the overload stepped to as active.
+                if let Some(showing) = retrigger {
+                    let labels: Vec<Value> = showing
+                        .signatures
+                        .iter()
+                        .map(|s| json!({ "label": s.label }))
+                        .collect();
+                    context["activeSignatureHelp"] = json!({
+                        "signatures": labels,
+                        "activeSignature": showing.index,
+                    });
+                }
                 if let Some(c) = trigger.filter(|c| self.signature_triggered_by(*c)) {
                     context["triggerKind"] = json!(2);
                     context["triggerCharacter"] = json!(c.to_string());
