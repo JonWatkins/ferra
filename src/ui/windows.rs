@@ -164,6 +164,7 @@ pub fn draw_windows(
             .block(editor.selection_block().filter(|_| active))
             .extra_cursors(if active { editor.extra_cursors() } else { &[] })
             .search(editor.search_highlight())
+            .find_scope(if active { editor.find_scope() } else { None })
             .git_changes(editor.git_hunks(document.id()))
             .conflicts(editor.git_conflicts(document.id()))
             .caret(active && editor.mode() == crate::editor::Mode::Insert)

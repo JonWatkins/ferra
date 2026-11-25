@@ -38,6 +38,17 @@
 //! app treats keys in find mode like the `:` line: replacements aren't repeated
 //! by `.`.
 //!
+//! In selection (`≡`, `<A-l>`) finds only in a `FindScope`: the chars of
+//! each row of a selection, so lines, chars across lines and a block are
+//! all one shape. Opening the box from any selection but one line of chars
+//! (which seeds the find field instead) makes one and turns it on; the
+//! toggle otherwise takes the last selection (`gv`'s). `find_match`, the
+//! count, both replaces and the editor pane's highlights skip matches
+//! outside it, and the pane tints it (`ui.find.scope`). Replacing never
+//! adds or removes lines, so the scope only needs each row's end moved by
+//! what a replacement changed (`FindScope::replaced`). Closing the box
+//! forgets it.
+//!
 //! `<Up>`/`<Down>` browse what was searched for, newest first, whatever was
 //! typed (VS Code's way, not Vim's by prefix), and in the replace field what
 //! was replaced with. What was found is the command line's search history,
@@ -82,6 +93,11 @@ pub struct FindState {
     pub regex: bool,
     /// Whether a replacement takes each match's case (`AB`).
     pub preserve_case: bool,
+    /// Whether it finds only in `scope` (`≡`).
+    pub in_selection: bool,
+    /// The selection it finds in, kept while the toggle's off so it comes
+    /// back on.
+    scope: Option<FindScope>,
     /// What was replaced with (what was found is in the command line's
     /// search history, shared with `/`).
     replace_history: History,
@@ -101,6 +117,72 @@ struct Counted {
     matches: Vec<Match>,
     /// Whether there are more than `MAX_COUNTED`.
     more: bool,
+}
+
+/// The selection the box finds in, with "in selection" on: the chars of
+/// each of its rows, as a half-open range (`usize::MAX` running to the
+/// line's end), so a block is a column of them. Replacing in a row moves
+/// its span's end with the text; a replacement never adds or removes a
+/// line (matches don't span lines), so the rows stay put.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FindScope {
+    first: usize,
+    spans: Vec<(usize, usize)>,
+}
+
+impl FindScope {
+    /// The chars of `range`.
+    fn of_range(range: crate::core::Range) -> Self {
+        use crate::core::Range;
+        match range {
+            Range::Lines { first, last } => Self {
+                first,
+                spans: vec![(0, usize::MAX); last - first + 1],
+            },
+            Range::Chars { start, end } if start.row == end.row => Self {
+                first: start.row,
+                spans: vec![(start.col, end.col)],
+            },
+            Range::Chars { start, end } => {
+                let mut spans = vec![(0, usize::MAX); end.row - start.row + 1];
+                spans[0].0 = start.col;
+                spans[end.row - start.row].1 = end.col;
+                Self {
+                    first: start.row,
+                    spans,
+                }
+            }
+        }
+    }
+
+    pub fn rows(&self) -> std::ops::Range<usize> {
+        self.first..self.first + self.spans.len()
+    }
+
+    /// Row `row`'s span, if it's in the scope.
+    pub fn span(&self, row: usize) -> Option<(usize, usize)> {
+        self.spans.get(row.checked_sub(self.first)?).copied()
+    }
+
+    /// Whether chars `start..end` of row `row` are all inside.
+    pub fn contains(&self, row: usize, start: usize, end: usize) -> bool {
+        self.span(row).is_some_and(|(s, e)| s <= start && end <= e)
+    }
+
+    /// Where the scope starts.
+    fn start(&self) -> Position {
+        Position::new(self.first, self.spans[0].0)
+    }
+
+    /// `old` chars in row `row` became `new` chars (inside its span).
+    fn replaced(&mut self, row: usize, old: usize, new: usize) {
+        if let Some(i) = row.checked_sub(self.first)
+            && let Some((_, end)) = self.spans.get_mut(i)
+            && *end != usize::MAX
+        {
+            *end = *end + new - old;
+        }
+    }
 }
 
 /// What the box shows after the fields.
@@ -145,6 +227,37 @@ impl Replacement {
         Some((start, end, preserve_case(&matched, &text)))
     }
 
+    /// `line` with every match inside chars `span` replaced (half-open,
+    /// `usize::MAX` to its end), and how many.
+    pub(super) fn span(
+        &self,
+        pattern: &SearchPattern,
+        line: &str,
+        (from, to): (usize, usize),
+    ) -> (String, usize) {
+        let chars: Vec<char> = line.chars().collect();
+        let mut out = String::new();
+        let mut done = 0;
+        let mut at = from.min(chars.len());
+        let mut count = 0;
+        while let Some((start, end, text)) = self.next(pattern, line, at) {
+            if end > to {
+                break;
+            }
+            out.extend(&chars[done..start]);
+            out.push_str(&text);
+            done = end;
+            count += 1;
+            if end == chars.len() {
+                break;
+            }
+            // Past an empty match, so it isn't found again.
+            at = if end == start { end + 1 } else { end };
+        }
+        out.extend(&chars[done..]);
+        (out, count)
+    }
+
     /// `line` with every match replaced, and how many.
     pub(super) fn line(&self, pattern: &SearchPattern, line: &str) -> (String, usize) {
         pattern.replace_mapped(line, &self.text, true, |matched, text| {
@@ -160,6 +273,11 @@ impl Replacement {
 impl FindState {
     pub fn pattern(&self) -> Option<&SearchPattern> {
         self.pattern.as_ref().and_then(|p| p.as_ref().ok())
+    }
+
+    /// Where it finds, with "in selection" on.
+    pub fn scope(&self) -> Option<&FindScope> {
+        self.scope.as_ref().filter(|_| self.in_selection)
     }
 
     /// Why what's typed isn't a pattern (a regex that doesn't compile).
@@ -228,8 +346,15 @@ impl FindState {
         if stale {
             let mut matches = Vec::new();
             let mut more = false;
-            'rows: for row in 0..buffer.line_count() {
+            let scope = self.scope();
+            let rows = scope.map_or(0..buffer.line_count(), |s| {
+                s.rows().start.min(buffer.line_count())..s.rows().end.min(buffer.line_count())
+            });
+            'rows: for row in rows {
                 for (start, end) in pattern.matches_in_line(&buffer.line(row)) {
+                    if scope.is_some_and(|s| !s.contains(row, start, end)) {
+                        continue;
+                    }
                     if matches.len() == MAX_COUNTED {
                         more = true;
                         break 'rows;
@@ -260,10 +385,12 @@ impl FindState {
 
 /// The first non-empty match at or after `from` (or with `!forward`, the
 /// last before it), wrapping around the buffer. `inclusive` takes one
-/// starting at `from` (going forward).
+/// starting at `from` (going forward). With a `scope`, only matches inside
+/// it count.
 pub fn find_match(
     pattern: &SearchPattern,
     buffer: &Buffer,
+    scope: Option<&FindScope>,
     from: Position,
     forward: bool,
     inclusive: bool,
@@ -275,7 +402,10 @@ pub fn find_match(
         } else {
             (from.row + rows * 2 - step) % rows
         };
-        let matches = pattern.matches_in_line(&buffer.line(row));
+        let mut matches = pattern.matches_in_line(&buffer.line(row));
+        if let Some(scope) = scope {
+            matches.retain(|&(start, end)| scope.contains(row, start, end));
+        }
         let found = match (step, forward) {
             (0, true) => matches
                 .into_iter()
@@ -312,10 +442,20 @@ impl Editor {
     /// `<Space>/` (and `<Space>h`, with `replace`): opens the find box with
     /// focus in its find field, seeded with the visual selection (one
     /// line), or the word under the cursor if nothing was found before, or
-    /// else what was; selected, so typing replaces it.
+    /// else what was; selected, so typing replaces it. Any other visual
+    /// selection (lines, a block, chars across lines) is where it finds,
+    /// with "in selection" on.
     pub fn open_find(&mut self, replace: bool) {
         // The find box's keys are its own again (not the Search view's).
         self.project_search.typing = false;
+        let one_line = matches!(
+            self.selection_range(),
+            Some(crate::core::Range::Chars { start, end }) if start.row == end.row
+        );
+        self.find.scope = (self.mode() == Mode::Visual && !one_line)
+            .then(|| self.selection_scope())
+            .flatten();
+        self.find.in_selection = self.find.scope.is_some();
         let selected = self
             .selection_range()
             .filter(|_| self.mode() == Mode::Visual)
@@ -327,11 +467,10 @@ impl Editor {
             })
             .filter(|text| !text.is_empty());
         let from_selection = selected.is_some();
+        // Not the word under the cursor, at a selection's end.
+        let scoped = self.find.in_selection;
         let seed = selected.or_else(|| {
-            self.find
-                .find
-                .text()
-                .is_empty()
+            (self.find.find.text().is_empty() && !scoped)
                 .then(|| self.word_under_cursor(false))
                 .flatten()
         });
@@ -342,6 +481,7 @@ impl Editor {
         }
         // A selection's start, so its own text is the first match.
         let origin = match self.selection_range() {
+            _ if scoped => self.find.scope.as_ref().expect("scoped").start(),
             Some(crate::core::Range::Chars { start, .. }) if self.mode() == Mode::Visual => start,
             // The word the cursor's in, so it's the first match.
             _ if seeded_word => self.word_start(),
@@ -353,6 +493,62 @@ impl Editor {
         self.find.focus = FindField::Find;
         self.find.origin = origin;
         self.find_as_typed();
+    }
+
+    /// The scope the visual selection makes, or else the last selection
+    /// (`gv`'s).
+    fn selection_scope(&self) -> Option<FindScope> {
+        let (selection, cursor, to_eol) = self.selection_or_last()?;
+        if selection.kind != super::SelectionKind::Block {
+            return Some(FindScope::of_range(
+                selection.range(self.document.buffer(), cursor),
+            ));
+        }
+        let block = crate::core::Block::between(
+            (selection.anchor.row, selection.anchor.col),
+            (cursor.row, cursor.col),
+            to_eol,
+            |row| self.line_cells(row),
+        );
+        let spans = block
+            .rows()
+            .map(|row| {
+                let (start, end) = block.chars_in(&self.line_cells(row));
+                (start, if to_eol { usize::MAX } else { end })
+            })
+            .collect();
+        Some(FindScope {
+            first: block.first,
+            spans,
+        })
+    }
+
+    /// `<A-l>` (`<C-l>`): finds only in the selection the box opened from
+    /// (or the last one, `gv`'s), or everywhere again. In the Search view's
+    /// fields it does nothing: that searches files.
+    pub fn find_toggle_in_selection(&mut self) -> Result<(), String> {
+        if self.project_search.typing {
+            return Ok(());
+        }
+        if !self.find.in_selection && self.find.scope.is_none() {
+            self.find.scope = Some(self.selection_scope().ok_or("No selection to find in")?);
+        }
+        self.find.in_selection = !self.find.in_selection;
+        if self.find.in_selection {
+            // From its start, so its first match is the one found.
+            self.find.origin = self.find.scope.as_ref().expect("just set").start();
+        }
+        self.find_as_typed();
+        Ok(())
+    }
+
+    /// The selection the find box finds in, while it's shown with "in
+    /// selection" on (drawn behind the text).
+    pub fn find_scope(&self) -> Option<&FindScope> {
+        if self.mode() != Mode::Find || self.project_search.typing {
+            return None;
+        }
+        self.find.scope()
     }
 
     /// The start of the word the cursor's in (or the cursor, if it's not
@@ -387,6 +583,8 @@ impl Editor {
         self.command_line.search_history_mut().push(&found);
         self.clear_search_highlight();
         self.find.replacing = false;
+        self.find.in_selection = false;
+        self.find.scope = None;
         self.set_mode(Mode::Normal);
     }
 
@@ -398,8 +596,15 @@ impl Editor {
         }
         let pattern = self.find.pattern()?;
         let cursor = self.document.cursor();
-        find_match(pattern, self.document.buffer(), cursor, true, true)
-            .filter(|m| m.start_position() == cursor)
+        find_match(
+            pattern,
+            self.document.buffer(),
+            self.find.scope(),
+            cursor,
+            true,
+            true,
+        )
+        .filter(|m| m.start_position() == cursor)
     }
 
     /// The box's count of matches.
@@ -417,10 +622,16 @@ impl Editor {
     fn find_as_typed(&mut self) {
         self.find.rebuild();
         let origin = self.find.origin;
-        let target = self
-            .find
-            .pattern()
-            .and_then(|p| find_match(p, self.document.buffer(), origin, true, true));
+        let target = self.find.pattern().and_then(|p| {
+            find_match(
+                p,
+                self.document.buffer(),
+                self.find.scope(),
+                origin,
+                true,
+                true,
+            )
+        });
         self.document
             .set_cursor(target.map_or(origin, |m| m.start_position()));
         self.reveal_cursor();
@@ -549,8 +760,15 @@ impl Editor {
         }
         let pattern = self.find_pattern()?;
         let cursor = self.document.cursor();
-        let found = find_match(&pattern, self.document.buffer(), cursor, forward, false)
-            .ok_or_else(|| format!("No results for {}", self.find.find.text()))?;
+        let found = find_match(
+            &pattern,
+            self.document.buffer(),
+            self.find.scope(),
+            cursor,
+            forward,
+            false,
+        )
+        .ok_or_else(|| format!("No results for {}", self.find.find.text()))?;
         self.document.set_cursor(found.start_position());
         self.reveal_cursor();
         self.find.origin = found.start_position();
@@ -582,13 +800,32 @@ impl Editor {
             .find
             .replacement()
             .next(&pattern, &line, current.start)
+            .filter(|&(start, end, _)| {
+                self.find
+                    .scope()
+                    .is_none_or(|s| s.contains(current.row, start, end))
+            })
             .filter(|&(start, ..)| start == current.start)
             .ok_or("The match changed")?;
         let at = Position::new(current.row, start);
         self.document.delete(at, Position::new(current.row, end));
         let after = self.document.insert(at, &text);
+        match &mut self.find.scope {
+            Some(scope) if self.find.in_selection => {
+                scope.replaced(current.row, end - start, text.chars().count());
+            }
+            // Off, it doesn't follow the text, so it goes.
+            _ => self.find.scope = None,
+        }
         // The next match after what was put in (never inside it).
-        let next = find_match(&pattern, self.document.buffer(), after, true, true);
+        let next = find_match(
+            &pattern,
+            self.document.buffer(),
+            self.find.scope(),
+            after,
+            true,
+            true,
+        );
         let target = next.map_or(at, |m| m.start_position());
         self.document.set_cursor(target);
         self.find.origin = target;
@@ -596,7 +833,8 @@ impl Editor {
         Ok(())
     }
 
-    /// `<A-a>`: replaces every match in the buffer, as one undo step.
+    /// `<A-a>`: replaces every match in the buffer (or in the selection,
+    /// with "in selection" on), as one undo step.
     pub fn find_replace_all(&mut self) -> Result<(), String> {
         if self.project_search.typing {
             return self.search_ask_replace_all();
@@ -604,15 +842,30 @@ impl Editor {
         let pattern = self.find_pattern()?;
         self.find_remember_replace();
         let replacement = self.find.replacement();
+        let mut scope = self.find.scope().cloned();
         let mut replaced = 0;
         let mut lines = 0;
+        let line_count = self.document.buffer().line_count();
+        let rows = scope.as_ref().map_or(0..line_count, |s| {
+            s.rows().start.min(line_count)..s.rows().end.min(line_count)
+        });
         // Bottom-up, so lines put in don't move the rows still to do.
-        for row in (0..self.document.buffer().line_count()).rev() {
+        for row in rows.rev() {
             let line = self.document.buffer().line(row).into_owned();
-            if pattern.matches_in_line(&line).is_empty() {
+            let (text, count) = match scope.as_mut() {
+                Some(scope) => {
+                    let span = scope.span(row).expect("a row of the scope");
+                    let (text, count) = replacement.span(&pattern, &line, span);
+                    let len = |s: &str| s.chars().count();
+                    scope.replaced(row, len(&line), len(&text));
+                    (text, count)
+                }
+                None if pattern.matches_in_line(&line).is_empty() => continue,
+                None => replacement.line(&pattern, &line),
+            };
+            if count == 0 {
                 continue;
             }
-            let (text, count) = replacement.line(&pattern, &line);
             if text != line {
                 let end = self.document.buffer().line_end(row);
                 self.document.delete(Position::new(row, 0), end);
@@ -621,6 +874,8 @@ impl Editor {
             replaced += count;
             lines += 1;
         }
+        // Off, the kept scope doesn't follow the text, so it goes.
+        self.find.scope = scope;
         if replaced == 0 {
             return Err(format!("No results for {}", self.find.find.text()));
         }
@@ -845,6 +1100,128 @@ mod tests {
         assert_eq!(e.document.buffer().text(), "baz baz");
     }
 
+    /// A visual selection of `kind` from `from` to `to`.
+    fn select(
+        e: &mut Editor,
+        kind: super::super::SelectionKind,
+        from: (usize, usize),
+        to: (usize, usize),
+    ) {
+        e.document.set_cursor(Position::new(from.0, from.1));
+        e.toggle_visual(kind);
+        e.document.set_cursor(Position::new(to.0, to.1));
+    }
+
+    fn total(e: &Editor) -> usize {
+        match e.find_count() {
+            FindCount::Found { total, .. } => total,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_selection_across_lines_is_where_it_finds() {
+        use super::super::SelectionKind;
+        let mut e = editor("ab ab\nab ab\nab ab\nab");
+        e.open_find(false);
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, "ab");
+        e.close_find();
+        // From the middle of row 0 to the first ab of row 2.
+        select(&mut e, SelectionKind::Char, (0, 3), (2, 1));
+        e.open_find(true);
+        assert!(e.find_state().in_selection, "on by itself");
+        assert_eq!(
+            e.find_state().find.text(),
+            "ab",
+            "the last search, not the selection"
+        );
+        assert_eq!(total(&e), 4);
+        assert_eq!(cursor(&e), (0, 3), "its first match");
+        assert!(e.find_scope().is_some(), "drawn");
+        e.find_step(false).unwrap();
+        assert_eq!(cursor(&e), (2, 0), "wraps inside it");
+
+        e.find_switch_field();
+        e.find_edit(|f| "xyz".chars().for_each(|c| f.push(c)));
+        e.find_replace_all().unwrap();
+        assert_eq!(e.document.buffer().text(), "ab xyz\nxyz xyz\nxyz ab\nab");
+        e.find_edit(|f| f.delete_to_start());
+        assert_eq!(total(&e), 0, "replaced, nothing left inside");
+        e.find_toggle_in_selection().unwrap();
+        assert_eq!(total(&e), 3, "off: the whole file");
+        e.find_toggle_in_selection().unwrap();
+        assert_eq!(total(&e), 0, "and back on, the same selection");
+        e.close_find();
+        e.open_find(false);
+        assert!(!e.find_state().in_selection, "off again without one");
+    }
+
+    #[test]
+    fn replacing_one_keeps_the_scope_with_the_text() {
+        use super::super::SelectionKind;
+        let mut e = editor("a a a a\nb");
+        // `v` over "a a a" (cols 0..=4): the last a is outside.
+        select(&mut e, SelectionKind::Char, (0, 0), (0, 4));
+        e.open_find(true);
+        assert!(!e.find_state().in_selection, "one line: the find text");
+        e.find_toggle_in_selection().unwrap();
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, "a");
+        assert_eq!(total(&e), 3);
+        e.find_switch_field();
+        e.find_edit(|f| "long".chars().for_each(|c| f.push(c)));
+        e.find_replace_one().unwrap();
+        assert_eq!(cursor(&e), (0, 5), "the next, moved along");
+        e.find_replace_one().unwrap();
+        e.find_replace_one().unwrap();
+        assert_eq!(e.document.buffer().text(), "long long long a\nb");
+        assert!(e.find_replace_one().is_err(), "none left inside");
+    }
+
+    #[test]
+    fn lines_and_blocks() {
+        use super::super::SelectionKind;
+        let mut e = editor("x1 x2\nx3 x4\nx5 x6");
+        select(&mut e, SelectionKind::Line, (1, 0), (2, 0));
+        e.open_find(true);
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, "x");
+        assert_eq!(total(&e), 4);
+
+        let mut e = editor("x1 x2\nx3 x4\nx5 x6");
+        // The second column, rows 0 and 1.
+        select(&mut e, SelectionKind::Block, (0, 3), (1, 4));
+        e.open_find(true);
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, "x");
+        assert_eq!(total(&e), 2);
+        e.find_switch_field();
+        e.find_edit(|f| f.push('y'));
+        e.find_replace_all().unwrap();
+        assert_eq!(e.document.buffer().text(), "x1 y2\nx3 y4\nx5 x6");
+    }
+
+    #[test]
+    fn the_toggle_takes_the_last_selection_or_says_there_is_none() {
+        use super::super::SelectionKind;
+        let mut e = editor("ab\nab\nab");
+        e.open_find(false);
+        assert_eq!(
+            e.find_toggle_in_selection(),
+            Err("No selection to find in".into())
+        );
+        assert!(!e.find_state().in_selection);
+        e.close_find();
+        select(&mut e, SelectionKind::Line, (1, 0), (2, 0));
+        e.set_mode(Mode::Normal);
+        e.document.set_cursor(Position::new(0, 0));
+        e.open_find(false);
+        e.find_toggle_in_selection().unwrap();
+        assert_eq!(total(&e), 2, "gv's");
+        assert_eq!(cursor(&e), (1, 0));
+    }
+
     #[test]
     fn closing_clears_the_highlights_but_leaves_the_search_for_n() {
         let mut e = editor("ab ab ab");
@@ -865,15 +1242,16 @@ mod tests {
         let buffer = Buffer::from_text("ab\nxab ab");
         let p = SearchPattern::new("ab", CaseMode::Sensitive).unwrap();
         let at = |r, c| Position::new(r, c);
-        let found =
-            |from, fwd, inc| find_match(&p, &buffer, from, fwd, inc).map(|m| (m.row, m.start));
+        let found = |from, fwd, inc| {
+            find_match(&p, &buffer, None, from, fwd, inc).map(|m| (m.row, m.start))
+        };
         assert_eq!(found(at(0, 0), true, true), Some((0, 0)));
         assert_eq!(found(at(0, 0), true, false), Some((1, 1)));
         assert_eq!(found(at(1, 4), true, false), Some((0, 0)), "wraps");
         assert_eq!(found(at(0, 0), false, false), Some((1, 4)), "wraps back");
         let one = Buffer::from_text("ab");
         assert_eq!(
-            find_match(&p, &one, at(0, 0), true, false).map(|m| m.start),
+            find_match(&p, &one, None, at(0, 0), true, false).map(|m| m.start),
             Some(0),
             "the only match, all the way round"
         );

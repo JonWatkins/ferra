@@ -1,20 +1,21 @@
 //! The find box (`editor/find.rs`), at the top right of the active window:
 //!
 //! ```text
-//! ╭──────────────────────────────────────────────────────────╮
-//! │ Find      needle█                             2 of 7     │
-//! │                                                          │
-//! │ Replace   pin                                 AB  A-p    │
-//! │                                                          │
-//! │  Aa  Match case A-c    W  Whole word A-w    .*  Regex A-r│
-//! ╰──── ⏎ replace one  A-a replace all  Tab find  Esc close ─╯
+//! ╭────────────────────────────────────────────────────────────╮
+//! │ Find       needle█                     2 of 7        ≡  C-l │
+//! │                                                            │
+//! │ Replace    pin                         AB  C-t             │
+//! │                                                            │
+//! │  Aa  Match case C-a    W  Whole word C-w    .*  Regex C-r  │
+//! ╰─────── ⏎ replace one  C-⏎ replace all  Tab find  Esc close ╯
 //! ```
 //!
 //! The fields have their own background, a row apart, and the one with
 //! focus has its label highlighted. The toggles are chips, highlighted
 //! when on, each with what it does and its key; preserve case (`AB`) is
-//! after the replace field, where the count is after the find field, as in
-//! VS Code. Text put in for you is shown selected (typing replaces it).
+//! after the replace field, where the count is after the find field, and
+//! in selection (`≡`) after the count, as in VS Code. Text put in for you
+//! is shown selected (typing replaces it).
 //!
 //! `ui/find.rs` draws it at the top right of the active window
 //! (`windows::draw_windows` now also returns that window's area), the field
@@ -48,6 +49,7 @@ pub struct FindKeys {
     pub word: Option<String>,
     pub regex: Option<String>,
     pub preserve_case: Option<String>,
+    pub in_selection: Option<String>,
     pub enter: Option<String>,
     pub prev: Option<String>,
     pub switch: Option<String>,
@@ -67,6 +69,7 @@ impl FindKeys {
             word: label("find_toggle_word"),
             regex: label("find_toggle_regex"),
             preserve_case: label("find_toggle_preserve_case"),
+            in_selection: label("find_toggle_in_selection"),
             enter: label("find_enter"),
             prev: label("find_prev"),
             switch: label("find_switch_field"),
@@ -125,6 +128,8 @@ const LABEL: u16 = 10;
 /// Room for the count after the find field ("10000 of 10000+" is longer,
 /// and cut).
 const COUNT: u16 = 13;
+/// Room for in selection's chip and key after the count.
+const SCOPE: u16 = 8;
 
 /// The toggles: the chip, what it does (and shorter).
 const TOGGLES: [(&str, &str, &str); 3] = [
@@ -135,6 +140,8 @@ const TOGGLES: [(&str, &str, &str); 3] = [
 
 /// The preserve-case toggle's chip, after the replace field.
 const PRESERVE_CASE: &str = "AB";
+/// The in-selection toggle's chip, after the count.
+const IN_SELECTION: &str = "≡";
 
 /// How much of each toggle is shown: its name (long or short), its key.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -164,7 +171,10 @@ struct Parts {
 impl Parts {
     fn new(state: &FindState, area: Rect) -> Self {
         let inner = Block::bordered().inner(area);
-        let field_width = inner.width.saturating_sub(1 + LABEL + 1 + COUNT).max(3);
+        let field_width = inner
+            .width
+            .saturating_sub(1 + LABEL + 1 + COUNT + SCOPE)
+            .max(3);
         let replace_y = inner.y + 2;
         let toggles_y = if state.replacing {
             inner.y + 4
@@ -184,6 +194,11 @@ impl Parts {
     /// the replace field).
     fn count_x(&self) -> u16 {
         self.field_x + self.field_width + 2
+    }
+
+    /// Where in selection's chip goes, after the count.
+    fn scope_x(&self) -> u16 {
+        self.count_x() + COUNT
     }
 
     /// The columns a field's text gets (inside its padding).
@@ -368,18 +383,29 @@ impl<'a> FindView<'a> {
         }
     }
 
-    /// Preserve case's chip, and its key if that fits too.
-    fn draw_preserve_case(&self, x: u16, y: u16, right: u16, buf: &mut Buffer) {
+    /// A chip on its own (preserve case's, in selection's), and its key if
+    /// that fits too.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_chip(
+        &self,
+        chip: &str,
+        on: bool,
+        key: &Option<String>,
+        x: u16,
+        y: u16,
+        right: u16,
+        buf: &mut Buffer,
+    ) {
         let theme = self.theme;
-        let style = if self.state.preserve_case {
+        let style = if on {
             theme.get("ui.find.toggle.on")
         } else {
             theme.get("ui.find.toggle")
         };
-        let mut spans = vec![Span::styled(format!(" {PRESERVE_CASE} "), style)];
-        let width = preserve_case_width(self.keys, x, right);
+        let mut spans = vec![Span::styled(format!(" {chip} "), style)];
+        let width = chip_width(chip, key, x, right);
         if width > spans[0].width() as u16
-            && let Some(key) = &self.keys.preserve_case
+            && let Some(key) = key
         {
             spans.push(Span::styled(format!(" {key}"), theme.get("ui.find.hint")));
         }
@@ -431,7 +457,7 @@ impl<'a> FindView<'a> {
 
     /// Records where the box's parts are, for the mouse: the fields, and
     /// each toggle (chip, name and key) with which it is (0 case, 1 word, 2
-    /// regex, 3 preserve case).
+    /// regex, 3 preserve case, 4 in selection).
     pub fn record(state: &FindState, keys: &FindKeys, area: Rect, screen: &mut ScreenMap) {
         let find = Target::Find;
         screen.add(area, find(FindPart::Rest));
@@ -464,11 +490,17 @@ impl<'a> FindView<'a> {
             let replace = field(parts.replace_y);
             screen.add(replace, find(FindPart::Field(FindField::Replace)));
             let x = parts.count_x();
-            let width = preserve_case_width(keys, x, right);
+            let width = chip_width(PRESERVE_CASE, &keys.preserve_case, x, right);
             if width > 0 {
                 let chip = Rect::new(x, parts.replace_y, width, 1);
                 screen.add(chip, find(FindPart::Toggle(3)));
             }
+        }
+        let x = parts.scope_x();
+        let width = chip_width(IN_SELECTION, &keys.in_selection, x, right);
+        if width > 0 {
+            let chip = Rect::new(x, inner.y, width, 1);
+            screen.add(chip, find(FindPart::Toggle(4)));
         }
     }
 
@@ -488,16 +520,12 @@ fn name_of(names: Names, long: &'static str, short: &'static str) -> Option<&'st
     }
 }
 
-/// How wide preserve case's chip is drawn from `x`: with its key if that
+/// How wide a chip on its own is drawn from `x`: with its key if that
 /// fits before `right`, else the chip, cut.
-fn preserve_case_width(keys: &FindKeys, x: u16, right: u16) -> u16 {
+fn chip_width(chip: &str, key: &Option<String>, x: u16, right: u16) -> u16 {
     let room = right.saturating_sub(x);
-    let chip = PRESERVE_CASE.width() as u16 + 2;
-    let with_key = chip
-        + keys
-            .preserve_case
-            .as_ref()
-            .map_or(0, |k| 1 + k.width() as u16);
+    let chip = chip.width() as u16 + 2;
+    let with_key = chip + key.as_ref().map_or(0, |k| 1 + k.width() as u16);
     if with_key <= room {
         with_key
     } else {
@@ -584,9 +612,18 @@ impl Widget for FindView<'_> {
         let count = self.count_span();
         let count_x = parts.count_x();
         if count.width() > 0 && count_x < inner.right() {
-            let room = inner.right() - count_x;
+            let room = (inner.right() - count_x).min(COUNT - 1);
             buf.set_span(count_x, inner.y, &count, room);
         }
+        self.draw_chip(
+            IN_SELECTION,
+            state.in_selection,
+            &self.keys.in_selection,
+            parts.scope_x(),
+            inner.y,
+            inner.right(),
+            buf,
+        );
 
         if state.replacing && parts.replace_y < inner.bottom() {
             self.draw_field(
@@ -597,7 +634,15 @@ impl Widget for FindView<'_> {
                 &parts,
                 buf,
             );
-            self.draw_preserve_case(parts.count_x(), parts.replace_y, inner.right(), buf);
+            self.draw_chip(
+                PRESERVE_CASE,
+                state.preserve_case,
+                &self.keys.preserve_case,
+                parts.count_x(),
+                parts.replace_y,
+                inner.right(),
+                buf,
+            );
         }
         if parts.toggles_y < inner.bottom() {
             self.draw_toggles(inner.x + 1, parts.toggles_y, inner.right(), buf);
@@ -744,6 +789,46 @@ mod tests {
         assert_eq!(
             FindView::cursor_position(editor.find_state(), area).map(|p| p.y),
             Some(3)
+        );
+    }
+
+    #[test]
+    fn in_selection_is_after_the_count_and_clickable() {
+        let mut editor = Editor::default();
+        editor.document.insert(At::new(0, 0), "ab\nab\nab");
+        editor.document.set_cursor(At::new(1, 0));
+        editor.toggle_visual(crate::editor::SelectionKind::Line);
+        editor.document.set_cursor(At::new(2, 0));
+        editor.open_find(true);
+        editor.find_edit(|f| "ab".chars().for_each(|c| f.push(c)));
+        let (rows, area, buf) = rows(editor.find_state(), editor.find_count(), 70);
+        let chip = format!(" ≡  {}", label("<C-l>"));
+        assert!(rows[1].contains("1 of 2"), "{rows:#?}");
+        assert!(
+            rows[1]
+                .trim_end_matches(['│', ' '])
+                .ends_with(chip.trim_end()),
+            "{rows:#?}"
+        );
+        let x = rows[1][..rows[1].find(" ≡ ").unwrap()].chars().count() as u16;
+        let theme = crate::config::Config::default().theme;
+        assert_eq!(
+            buf[(x, 1)].bg,
+            theme.get("ui.find.toggle.on").bg.unwrap(),
+            "on"
+        );
+        // The fields keep one width, AB still under the count.
+        let ab = rows[3][..rows[3].find(" AB ").unwrap()].chars().count();
+        let count = rows[1][..rows[1].find("1 of 2").unwrap()].chars().count();
+        assert_eq!(ab, count, "{rows:#?}");
+
+        let config = crate::config::Config::default();
+        let keys = FindKeys::from_keymap(&config.keys);
+        let mut screen = ScreenMap::default();
+        FindView::record(editor.find_state(), &keys, area, &mut screen);
+        assert_eq!(
+            screen.at(Position::new(x + 1, 1)).map(|r| r.target.clone()),
+            Some(Target::Find(FindPart::Toggle(4)))
         );
     }
 

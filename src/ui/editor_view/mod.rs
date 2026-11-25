@@ -171,6 +171,8 @@ pub struct EditorView<'a> {
     extra_cursors: &'a [crate::editor::multi_cursor::ExtraCursor],
     block: Option<crate::core::Block>,
     search: Option<&'a SearchPattern>,
+    /// The find box's "in selection": tinted, and the only matches shown.
+    find_scope: Option<&'a crate::editor::find::FindScope>,
     current_match: Option<Match>,
     /// Git changes, for marks in the gutter.
     git: &'a [crate::git::Hunk],
@@ -215,6 +217,7 @@ impl<'a> EditorView<'a> {
             extra_cursors: &[],
             block: None,
             search: None,
+            find_scope: None,
             current_match: None,
             git: &[],
             conflicts: &[],
@@ -432,6 +435,13 @@ impl<'a> EditorView<'a> {
     /// Highlights `found` apart from the other matches (the find box's).
     pub fn current_match(mut self, found: Option<Match>) -> Self {
         self.current_match = found;
+        self
+    }
+
+    /// Tints the selection the find box finds in, and highlights only the
+    /// matches inside it.
+    pub fn find_scope(mut self, scope: Option<&'a crate::editor::find::FindScope>) -> Self {
+        self.find_scope = scope;
         self
     }
 
@@ -1047,10 +1057,22 @@ impl EditorView<'_> {
                 }
             }
         }
+        let span = self.find_scope.and_then(|scope| scope.span(row));
+        if let Some((from, to)) = span {
+            // Running to the line's end, the line break too (as a
+            // selection's is), so empty lines in it show.
+            let to = to.min(line_len + 1);
+            if from < to {
+                highlight(from, to, self.theme.get("ui.find.scope"));
+            }
+        }
         if let Some(pattern) = self.search {
             let style = self.theme.get("ui.search.match");
             for (from, to) in pattern.matches_in_line(real_line) {
-                highlight(from, to, style);
+                let inside = span.is_some_and(|(s, e)| s <= from && to <= e);
+                if self.find_scope.is_none() || inside {
+                    highlight(from, to, style);
+                }
             }
         }
         if let Some(found) = self.current_match.filter(|m| m.row == row) {

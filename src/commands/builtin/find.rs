@@ -94,6 +94,11 @@ pub fn register(r: &mut CommandRegistry) {
         },
     );
     r.register(
+        "find_toggle_in_selection",
+        "Find: only in the selection (or the last one), or everywhere",
+        |cx| cx.editor.find_toggle_in_selection(),
+    );
+    r.register(
         "find_toggle_regex",
         "Find: a regular expression, or the text as it is",
         |cx| {

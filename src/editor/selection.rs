@@ -329,6 +329,28 @@ impl Editor {
         true
     }
 
+    /// The visual selection (in visual mode) or else the last one (`gv`'s,
+    /// clamped to the text): what it is, where the cursor was, and whether
+    /// a block ran to each row's end (`$`).
+    pub(super) fn selection_or_last(&self) -> Option<(Selection, Position, bool)> {
+        if self.mode() == Mode::Visual
+            && let Some(selection) = self.selection
+        {
+            return Some((selection, self.document.cursor(), self.block_to_eol));
+        }
+        let last = self.last_selection?;
+        let buffer = self.document.buffer();
+        let clamp = |p: Position| {
+            let row = p.row.min(buffer.line_count() - 1);
+            Position::new(row, p.col.min(buffer.line_len(row)))
+        };
+        let selection = Selection {
+            anchor: clamp(last.selection.anchor),
+            ..last.selection
+        };
+        Some((selection, clamp(last.cursor), last.to_eol))
+    }
+
     /// First and last rows of the last visual selection (`'<` and `'>`).
     pub fn last_visual_rows(&self) -> Option<(usize, usize)> {
         let last = self.last_selection?;
