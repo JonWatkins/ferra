@@ -386,28 +386,40 @@ impl Editor {
     }
 
     /// A message shown, or a language server's log line: kept for the
-    /// Output tab (the same again isn't).
+    /// Output tab (the same again isn't), a row for each of its lines.
     pub fn note_output(&mut self, text: &str, error: bool) {
-        let text = text.trim();
-        if text.is_empty() {
+        let lines: Vec<&str> = text
+            .trim()
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.trim().is_empty())
+            .collect();
+        if lines.is_empty() {
             return;
         }
         // The same again (a server's log line, then the same shown as an
-        // error): one line, an error if either was.
-        if let Some(last) = self.panel.output.last_mut()
-            && last.text == text
+        // error): kept once, an error if either was.
+        let output = &mut self.panel.output;
+        if let Some(start) = output.len().checked_sub(lines.len())
+            && output[start..]
+                .iter()
+                .zip(&lines)
+                .all(|(o, l)| o.text == *l)
         {
-            last.error |= error;
+            for line in &mut output[start..] {
+                line.error |= error;
+            }
             return;
         }
         let stamp = crate::log::timestamp(std::time::SystemTime::now());
-        self.panel.output.push(OutputLine {
-            time: stamp.split(' ').nth(1).unwrap_or_default().to_string(),
+        let time = stamp.split(' ').nth(1).unwrap_or_default();
+        output.extend(lines.iter().map(|line| OutputLine {
+            time: time.to_string(),
             error,
-            text: text.to_string(),
-        });
-        if self.panel.output.len() > OUTPUT_LINES {
-            self.panel.output.remove(0);
+            text: line.to_string(),
+        }));
+        if output.len() > OUTPUT_LINES {
+            output.drain(..output.len() - OUTPUT_LINES);
         }
     }
 
@@ -432,5 +444,23 @@ mod tests {
         assert!(e.panel.output[0].error);
         e.note_output("something else", false);
         assert_eq!(e.panel.output.len(), 2);
+    }
+
+    #[test]
+    fn a_message_of_several_lines_is_that_many_output_lines() {
+        // Drawn one to a row, a `\n` inside one ran its lines together.
+        let mut e = Editor::default();
+        let message = "invalid config: expected string only\nin `editor.fold-column`";
+        e.note_output(message, false);
+        e.note_output(message, true);
+        let lines: Vec<&str> = e.panel.output.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(
+            lines,
+            [
+                "invalid config: expected string only",
+                "in `editor.fold-column`"
+            ]
+        );
+        assert!(e.panel.output.iter().all(|l| l.error));
     }
 }
