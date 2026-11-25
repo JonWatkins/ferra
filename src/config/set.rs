@@ -182,6 +182,7 @@ pub fn option_names() -> Vec<String> {
     names.extend(ALIASES.iter().map(|(alias, _)| alias.to_string()));
     names.extend(SWITCHES.iter().map(|s| s.name.to_string()));
     names.sort();
+    names.dedup();
     names
 }
 
@@ -211,14 +212,18 @@ const ALIASES: &[(&str, &str)] = &[
     ("textwidth", "text-width"),
 ];
 
-/// Vim switches that are values of one of ferra's options here: `nu` and
-/// `rnu` pick `line-numbers`, `ic` and `scs` pick `search.case`.
+/// Switches that are values of one of ferra's options: Vim's `nu` and
+/// `rnu` pick `line-numbers`, `ic` and `scs` pick `search.case`, and
+/// `fold-column` picks `on` or `off` of its own option (which also takes
+/// `auto`, so `fold-column=auto` still works).
 struct Switch {
     name: &'static str,
     option: &'static str,
     on: fn(&str) -> &'static str,
     off: fn(&str) -> &'static str,
-    is_on: fn(&str) -> bool,
+    /// Whether it's on, given the option's value and all the options (for
+    /// `fold-column = "auto"`, which follows the keymap).
+    is_on: fn(&str, &Table) -> bool,
 }
 
 const SWITCHES: &[Switch] = &[
@@ -233,7 +238,7 @@ const SWITCHES: &[Switch] = &[
             }
         },
         off: |_| "none",
-        is_on: |now| now != "none",
+        is_on: |now, _| now != "none",
     },
     Switch {
         name: "relativenumber",
@@ -246,7 +251,7 @@ const SWITCHES: &[Switch] = &[
                 now_static(now)
             }
         },
-        is_on: |now| now == "relative",
+        is_on: |now, _| now == "relative",
     },
     Switch {
         name: "ignorecase",
@@ -259,7 +264,7 @@ const SWITCHES: &[Switch] = &[
             }
         },
         off: |_| "sensitive",
-        is_on: |now| now != "sensitive",
+        is_on: |now, _| now != "sensitive",
     },
     Switch {
         name: "smartcase",
@@ -272,7 +277,17 @@ const SWITCHES: &[Switch] = &[
                 now_static(now)
             }
         },
-        is_on: |now| now == "smart",
+        is_on: |now, _| now == "smart",
+    },
+    Switch {
+        name: "fold-column",
+        option: "fold-column",
+        on: |_| "on",
+        off: |_| "off",
+        is_on: |now, table| match now {
+            "auto" => matches!(get(table, "keymap"), Some(Value::String(k)) if k == "vscode"),
+            _ => now == "on",
+        },
     },
 ];
 
@@ -328,7 +343,7 @@ fn apply(
             Some(stripped) => (stripped, name.chars().last()),
             None => (name, None),
         };
-        if let Some(switch) = switch(name) {
+        if let Some(switch) = switch(name).filter(|s| s.name != s.option) {
             return Err(format!(
                 "{}: takes no value (:set {0} or :set no{0})",
                 switch.name
@@ -381,7 +396,7 @@ fn apply(
         let on = match change {
             Toggle::On => true,
             Toggle::Off => false,
-            Toggle::Flip => !(switch.is_on)(&now),
+            Toggle::Flip => !(switch.is_on)(&now, table),
         };
         let value = if on {
             (switch.on)(&now)
@@ -532,7 +547,7 @@ fn leaf_names(table: &Table) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{LineNumbers, SearchCase};
+    use crate::config::{FoldColumn, LineNumbers, SearchCase};
 
     fn args(text: &str) -> Vec<String> {
         text.split_whitespace().map(String::from).collect()
@@ -620,6 +635,38 @@ mod tests {
         assert_eq!(options.search.case, SearchCase::Smart);
         run(&mut options, "noscs").unwrap();
         assert_eq!(options.search.case, SearchCase::Insensitive);
+    }
+
+    #[test]
+    fn fold_column_is_a_switch_and_still_takes_auto() {
+        let mut options = EditorOptions::default();
+        run(&mut options, "fold-column").unwrap();
+        assert_eq!(options.fold_column, FoldColumn::On);
+        run(&mut options, "nofold-column").unwrap();
+        assert_eq!(options.fold_column, FoldColumn::Off);
+        run(&mut options, "fold-column!").unwrap();
+        assert_eq!(options.fold_column, FoldColumn::On);
+        run(&mut options, "invfold-column").unwrap();
+        assert_eq!(options.fold_column, FoldColumn::Off);
+        assert_eq!(
+            run(&mut options, "fold-column=auto").unwrap().shown,
+            ["fold-column=auto"]
+        );
+        assert_eq!(options.fold_column, FoldColumn::Auto);
+        assert_eq!(
+            run(&mut options, "fold-column?").unwrap().shown,
+            ["fold-column=auto"]
+        );
+
+        // `!` under `auto` flips what's shown, which follows the keymap.
+        run(&mut options, "fold-column!").unwrap();
+        assert_eq!(
+            options.fold_column,
+            FoldColumn::On,
+            "hidden with Vim's keys"
+        );
+        run(&mut options, "keymap=vscode fold-column=auto fold-column!").unwrap();
+        assert_eq!(options.fold_column, FoldColumn::Off, "shown with VS Code's");
     }
 
     #[test]
