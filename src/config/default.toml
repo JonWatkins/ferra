@@ -41,6 +41,15 @@ text-width = 79
 # comment marker: "off", "comments" (only in comments, for code) or "all"
 # (for prose). Per language: options = { auto-wrap = "all" }.
 auto-wrap = "off"
+# Where gf looks for the file named under the cursor: directories separated
+# by commas, as Vim's 'path'. "." is the current file's directory, an empty
+# entry (the ",," here) the working directory, "**" any depth below
+# ("src/**"), and ";" after one also searches above it (".;"). A name
+# starting with ./ or ../ is only looked for beside the file.
+path = ".,,"
+# Endings gf also tries after the name, as Vim's 'suffixesadd': ".rs" finds
+# util.rs from "util". Per language: options = { suffixes-add = ".py" }.
+suffixes-add = ""
 # Have the language server format the file before each save (as :format
 # does), waiting up to 2 seconds for it. Per language:
 # [languages.rust] options = { format-on-save = true }.
@@ -275,7 +284,8 @@ command = "claude-agent-acp"
 #
 # `comment` (or `block-comment` for languages without line comments) is what
 # gc uses to comment lines out. `options` sets tab-width, expand-tab,
-# auto-indent or text-width for the language's buffers (:setlocal still wins):
+# auto-indent, text-width, auto-wrap, format-on-save, path or suffixes-add
+# for the language's buffers (:setlocal still wins):
 #
 #   [languages.python]
 #   options = { tab-width = 4, text-width = 88 }

@@ -129,7 +129,7 @@ iTerm2, set Profiles → Keys → Left Option key to "Esc+" for the `Alt` keys.
 | Normal  | `<C-o>`, `<C-i>` / `<Tab>` | Back / forward through the jump list, across buffers (`3<C-o>`) |
 | Normal  | `g;`, `g,` | Older / newer place in the change list; `'.` is the last change |
 | Normal  | `gi` | Insert where insert mode was last left in this buffer (`` `^ `` goes there) |
-| Normal  | `gf` | Open the file named under the cursor (beside this file, or in the working directory); `name:12` or `name:12:5` goes to that line and column |
+| Normal  | `gf` | Open the file named under the cursor, looked for in `path` (by default beside this file, then in the working directory; `:set path+=src/**` searches below `src`) with `suffixes-add`'s endings too (`:setlocal sua=.rs` finds `util.rs` from `util`); `name:12` or `name:12:5` goes to that line and column |
 | Normal  | `gx` | Open the URL under the cursor in the browser (or, if there isn't one, the file `gf` would open, in its default app) |
 | Normal  | `<C-^>` (Ctrl-6) | Switch to the alternate buffer (`:b#`) |
 | Normal  | `/` `?` | Search forward / backward (regex; matches preview as you type) |
@@ -1151,7 +1151,7 @@ file-names = [".bashrc", "my-tool"]
 ```
 
 A language can also set `tab-width`, `expand-tab`, `auto-indent`,
-`text-width` and `auto-wrap` for its buffers, over `[editor]` (a buffer's
+`text-width`, `auto-wrap`, `format-on-save`, `path` and `suffixes-add` for its buffers, over `[editor]` (a buffer's
 `:setlocal`, or a `:set` in it, still wins). By default Go and Makefiles
 indent with tabs, and commit messages (`COMMIT_EDITMSG`) wrap at 72 as
 you type:
@@ -1447,14 +1447,15 @@ its name in the config (nested ones with a dot), Vim-style:
 |---------|------|
 | `:set tab-width=2`, `:set line-numbers=absolute` | Sets an option |
 | `:set expand-tab`, `:set noexpand-tab`, `:set expand-tab!` | Turns a switch on, off, or over |
-| `:set scroll-off+=2` | Adds to (or `-=` takes from) a number |
+| `:set scroll-off+=2` | Adds to (or `-=` takes from, `^=` multiplies) a number |
+| `:set path+=src/**`, `:set sua-=.py` | Appends an item to (or `-=` removes one from, `^=` puts one first in) a comma list: `path`, `suffixes-add` |
 | `:set tab-width?` | Shows an option |
 | `:set tab-width&` | Puts back its default |
 | `:set` | Lists the options you've changed |
 
 Several can go on one line (`:set ts=2 et`), and Tab completes names.
 Vim's names work for the common ones: `ts`, `et`, `ai`, `so`, `cul`,
-`hls`, `ws`, `nu`/`rnu` (for `line-numbers`) and `ic`/`scs` (for
+`hls`, `ws`, `tw`, `pa`, `sua`, `nu`/`rnu` (for `line-numbers`) and `ic`/`scs` (for
 `search.case`). Changes last until ferra quits; put them in the config to
 keep them.
 
@@ -1464,7 +1465,8 @@ As in Vim, some options can also be set for one window or one buffer:
 their own `wrap`, `wrap-indent`, `wrap-marker`, `line-numbers`,
 `fold-column`, `cursorline` and `scroll-off` (a split
 starts with those of the window it came from); buffers their own
-`tab-width`, `expand-tab`, `auto-indent` and `text-width`. `:set` changes an option
+`tab-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap`,
+`format-on-save`, `path` and `suffixes-add`. `:set` changes an option
 everywhere (and drops this window's or buffer's own value), `:setglobal`
 only where there's no value of its own, and `:setlocal` alone lists this
 window's and buffer's own values. Lists are written as in the config, without spaces

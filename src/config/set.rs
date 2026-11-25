@@ -11,7 +11,8 @@
 //! | Form | Does |
 //! |------|------|
 //! | `name=value` (or `name:value`) | Sets it |
-//! | `name+=n`, `name-=n` | Adds to or takes from a number |
+//! | `name+=n`, `name-=n`, `name^=n` | Adds to, takes from or multiplies a number |
+//! | `name+=item`, `name-=item`, `name^=item` | Appends, removes or prepends an item of a comma list (`path`, `suffixes-add`) |
 //! | `name` | Turns a switch on; shows any other option |
 //! | `noname`, `name!` (or `invname`) | Turns a switch off; flips it |
 //! | `name?` | Shows it |
@@ -24,7 +25,7 @@
 //!   nested tables) replaced, and the table deserialized back, so a value is
 //!   checked exactly as in the config file and the message names the option.
 //!   Text is taken without quotes and coerced by the current value's type;
-//!   `+=`/`-=` work on numbers. Vim names map to ferra's (`ts` → `tab-width`),
+//!   `+=`/`-=`/`^=` work on numbers and on the comma lists. Vim names map to ferra's (`ts` → `tab-width`),
 //!   and Vim's `nu`, `rnu`, `ic` and `scs` switches pick values of
 //!   `line-numbers` and `search.case`. Nearly every option is read where it's
 //!   used, so it applies at once; `clipboard` and `clipboard-provider` are
@@ -34,8 +35,8 @@
 //!   window and per buffer, a sparse TOML table of `:setlocal` values
 //!   (`config::set::scope` says which options may: `wrap`, `wrap-indent`,
 //!   `wrap-marker`, `line-numbers`, `fold-column`, `cursorline`, `scroll-off` per window;
-//!   `tab-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap` per
-//!   buffer). `Editor::options` is always what's in force for the active window
+//!   `tab-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap`,
+//!   `format-on-save`, `path`, `suffixes-add` per buffer). `Editor::options` is always what's in force for the active window
 //!   and buffer (global, then the buffer's language's `options` from
 //!   `[languages]`, then the buffer's, then the window's, by
 //!   `set::with_locals`), recomputed by `refresh_options` when the active
@@ -112,7 +113,7 @@ pub fn scope(name: &str) -> Option<Scope> {
         "wrap" | "wrap-indent" | "wrap-marker" | "line-numbers" | "fold-column" | "cursorline"
         | "scroll-off" => Some(Scope::Window),
         "tab-width" | "expand-tab" | "auto-indent" | "text-width" | "auto-wrap"
-        | "format-on-save" => Some(Scope::Buffer),
+        | "format-on-save" | "path" | "suffixes-add" => Some(Scope::Buffer),
         _ => None,
     }
 }
@@ -210,7 +211,14 @@ const ALIASES: &[(&str, &str)] = &[
     ("showbreak", "wrap-marker"),
     ("tw", "text-width"),
     ("textwidth", "text-width"),
+    ("pa", "path"),
+    ("sua", "suffixes-add"),
+    ("suffixesadd", "suffixes-add"),
 ];
+
+/// Options whose text is a comma-separated list, as in Vim: `+=`, `-=`
+/// and `^=` append, remove and prepend an item.
+const COMMA_LISTS: &[&str] = &["path", "suffixes-add"];
 
 /// Switches that are values of one of ferra's options: Vim's `nu` and
 /// `rnu` pick `line-numbers`, `ic` and `scs` pick `search.case`, and
@@ -336,10 +344,10 @@ fn apply(
     arg: &str,
     result: &mut SetResult,
 ) -> Result<(), String> {
-    // `name=value`, `name:value`, `name+=n`, `name-=n`.
+    // `name=value`, `name:value`, `name+=n`, `name-=n`, `name^=n`.
     if let Some(at) = arg.find(['=', ':']) {
         let (name, value) = (&arg[..at], &arg[at + 1..]);
-        let (name, op) = match name.strip_suffix(['+', '-']) {
+        let (name, op) = match name.strip_suffix(['+', '-', '^']) {
             Some(stripped) => (stripped, name.chars().last()),
             None => (name, None),
         };
@@ -353,16 +361,23 @@ fn apply(
         let current = get(table, name).ok_or_else(|| format!("Unknown option: {name}"))?;
         let value = match op {
             None => parse_value(name, value, current)?,
-            Some(op) => {
-                let Value::Integer(now) = current else {
-                    return Err(format!("{name}: {op}= needs a number option"));
-                };
-                let by: i64 = value
-                    .trim()
-                    .parse()
-                    .map_err(|_| format!("{name}: not a number: {value}"))?;
-                Value::Integer(if op == '+' { now + by } else { now - by })
-            }
+            Some(op) => match current {
+                Value::String(now) if COMMA_LISTS.contains(&name) => {
+                    Value::String(change_list(now, op, value))
+                }
+                Value::Integer(now) => {
+                    let by: i64 = value
+                        .trim()
+                        .parse()
+                        .map_err(|_| format!("{name}: not a number: {value}"))?;
+                    Value::Integer(match op {
+                        '+' => now + by,
+                        '-' => now - by,
+                        _ => now * by,
+                    })
+                }
+                _ => return Err(format!("{name}: {op}= needs a number or list option")),
+            },
         };
         return assign(table, name, value, result);
     }
@@ -423,6 +438,26 @@ fn apply(
         Some(_) => Err(format!("{name}: not a switch (on or off)")),
         None => Err(format!("Unknown option: {name}")),
     }
+}
+
+/// Vim's `+=` (append), `-=` (remove) and `^=` (prepend) on a comma
+/// list: an item already there isn't added again.
+fn change_list(now: &str, op: char, item: &str) -> String {
+    let mut items: Vec<&str> = if now.is_empty() {
+        Vec::new()
+    } else {
+        now.split(',').collect()
+    };
+    let at = items.iter().position(|i| *i == item);
+    match (op, at) {
+        ('-', Some(at)) => {
+            items.remove(at);
+        }
+        ('+', None) => items.push(item),
+        ('^', None) => items.insert(0, item),
+        _ => {}
+    }
+    items.join(",")
 }
 
 enum Toggle {
@@ -555,6 +590,30 @@ mod tests {
 
     fn run(options: &mut EditorOptions, text: &str) -> Result<SetResult, String> {
         set(options, &args(text))
+    }
+
+    #[test]
+    fn comma_lists_take_items_as_vim_does() {
+        let mut options = EditorOptions::default();
+        assert_eq!(options.path, ".,,");
+        run(&mut options, "path+=src/** sua+=.rs suffixesadd+=.py").unwrap();
+        assert_eq!(options.path, ".,,,src/**");
+        assert_eq!(options.suffixes_add, ".rs,.py");
+        run(&mut options, "sua+=.rs sua^=.toml pa-=src/**").unwrap();
+        assert_eq!(options.suffixes_add, ".toml,.rs,.py", "no second .rs");
+        assert_eq!(options.path, ".,,");
+        let result = run(&mut options, "sua-=.nothing").unwrap();
+        assert!(result.changed.is_empty());
+        run(&mut options, "path=.,,** scroll-off^=3").unwrap();
+        assert_eq!(options.path, ".,,**");
+        assert_eq!(options.scroll_off, EditorOptions::default().scroll_off * 3);
+        assert_eq!(
+            run(&mut options, "wrap-marker+=x"),
+            Err("wrap-marker: += needs a number or list option".into())
+        );
+        assert_eq!(scope("sua"), None, "scope takes canonical names");
+        assert_eq!(scope("suffixes-add"), Some(Scope::Buffer));
+        assert_eq!(scope("path"), Some(Scope::Buffer));
     }
 
     #[test]
@@ -695,7 +754,10 @@ mod tests {
                 "nu=1",
                 "number: takes no value (:set number or :set nonumber)",
             ),
-            ("line-numbers+=1", "line-numbers: += needs a number option"),
+            (
+                "line-numbers+=1",
+                "line-numbers: += needs a number or list option",
+            ),
         ];
         for (arg, message) in errors {
             assert_eq!(

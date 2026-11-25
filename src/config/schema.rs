@@ -83,7 +83,7 @@ fn category_of(path: &str) -> &'static str {
         | "statusline-style"
         | "statusline-layout" => "Workbench",
         "search" => "Search",
-        "file-picker" | "fallback-encoding" | "watch-files" => "Files",
+        "file-picker" | "fallback-encoding" | "watch-files" | "path" | "suffixes-add" => "Files",
         "git" | "git-blame" => "Git",
         "lsp" | "auto-complete" | "highlight-references" | "inlay-hints" => "Language servers",
         "keymap" | "mouse" | "mouse-hover" | "mouse-hover-delay" | "kitty-keyboard"
