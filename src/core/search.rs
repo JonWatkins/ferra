@@ -1,7 +1,15 @@
 //! Text search: compiling a pattern and finding matches in a [`Buffer`].
 //!
 //! Patterns use Rust's `regex` syntax, plus Vim's `\<` and `\>` word
-//! boundaries (both become `\b`). Matches don't span lines.
+//! boundaries (both become `\b`).
+//!
+//! A pattern that can match a line break spans lines (`spans_lines`): one
+//! with a line break in it, or `\n`, `\r` or `\W` (VS Code's rule, so
+//! `\s` and `[^x]` don't start matching across lines). Those are matched
+//! against the text of whole rows (`matches_between`, `find`), with `^` and
+//! `$` at each line's start and end; any other pattern line by line, which
+//! needs no copy of the text. `:s` replaces line by line, so a pattern that
+//! spans lines finds nothing there.
 
 use regex::{Regex, RegexBuilder};
 
@@ -17,17 +25,47 @@ pub enum CaseMode {
     Insensitive,
 }
 
-/// A match on one line: columns `start..end` (in chars) of `row`.
+/// A match: chars `start..end`, on one row or running across several.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Match {
-    pub row: usize,
-    pub start: usize,
-    pub end: usize,
+    pub start: Position,
+    pub end: Position,
 }
 
 impl Match {
+    /// A match of chars `start..end` on `row`.
+    pub fn on_row(row: usize, start: usize, end: usize) -> Self {
+        Self {
+            start: Position::new(row, start),
+            end: Position::new(row, end),
+        }
+    }
+
     pub fn start_position(&self) -> Position {
-        Position::new(self.row, self.start)
+        self.start
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+
+    /// Its chars on `row` (`len` chars long), if it's on it: running on to
+    /// `len + 1` (the line break) on a row it carries on past.
+    pub fn cols_on(&self, row: usize, len: usize) -> Option<(usize, usize)> {
+        if row < self.start.row || row > self.end.row {
+            return None;
+        }
+        let from = if row == self.start.row {
+            self.start.col
+        } else {
+            0
+        };
+        let to = if row == self.end.row {
+            self.end.col
+        } else {
+            len + 1
+        };
+        Some((from, to))
     }
 }
 
@@ -43,6 +81,8 @@ pub struct Found {
 pub struct SearchPattern {
     source: String,
     regex: Regex,
+    /// Whether it can match a line break.
+    spans_lines: bool,
 }
 
 impl SearchPattern {
@@ -53,27 +93,28 @@ impl SearchPattern {
             CaseMode::Smart => !pattern.chars().any(char::is_uppercase),
         };
         let translated = pattern.replace(r"\<", r"\b").replace(r"\>", r"\b");
-        let regex = RegexBuilder::new(&translated)
-            .case_insensitive(ignore_case)
-            .build()
-            .map_err(|e| format!("Invalid pattern: {}", last_line(&e.to_string())))?;
-        Ok(Self {
-            source: pattern.to_string(),
-            regex,
-        })
+        Self::from_regex(&translated, pattern, ignore_case)
     }
 
     /// A pattern from a regex in `regex` syntax as it is (no `\<` `\>`
     /// translation), shown as `source`: the find box builds these.
     pub fn from_regex(regex: &str, source: &str, ignore_case: bool) -> Result<Self, String> {
+        let spans_lines = can_match_line_break(regex);
         let regex = RegexBuilder::new(regex)
             .case_insensitive(ignore_case)
+            .multi_line(true)
             .build()
             .map_err(|e| format!("Invalid pattern: {}", last_line(&e.to_string())))?;
         Ok(Self {
             source: source.to_string(),
             regex,
+            spans_lines,
         })
+    }
+
+    /// Whether it's matched across lines (see the module docs).
+    pub fn spans_lines(&self) -> bool {
+        self.spans_lines
     }
 
     /// A pattern matching `word` exactly, as a whole word (for `*` and `#`).
@@ -126,6 +167,50 @@ impl SearchPattern {
             .collect()
     }
 
+    /// Every match (empty ones too) starting in rows `rows`: in the text of
+    /// those rows if the pattern spans lines (so a match running past the
+    /// last one is cut short), else line by line.
+    pub fn matches_between(&self, buffer: &Buffer, rows: std::ops::Range<usize>) -> Vec<Match> {
+        let rows = rows.start.min(buffer.line_count())..rows.end.min(buffer.line_count());
+        if rows.is_empty() {
+            return Vec::new();
+        }
+        if !self.spans_lines {
+            return rows
+                .flat_map(|row| {
+                    self.match_starts(&buffer.line(row))
+                        .into_iter()
+                        .map(move |(start, end)| Match::on_row(row, start, end))
+                })
+                .collect();
+        }
+        let text = buffer.lines_text(rows.start, rows.end - 1);
+        let base = buffer.byte_of(Position::new(rows.start, 0));
+        let at = |byte: usize| buffer.position_at_byte(base + byte);
+        self.regex
+            .find_iter(&text)
+            .map(|m| Match {
+                start: at(m.start()),
+                end: at(m.end()),
+            })
+            .collect()
+    }
+
+    /// The first match in `text` starting at or after byte `from` (empty
+    /// ones too), as a byte range, with `replacement` expanded for it.
+    pub fn replacement_at(
+        &self,
+        text: &str,
+        from: usize,
+        replacement: &str,
+    ) -> Option<(std::ops::Range<usize>, String)> {
+        let captures = self.regex.captures_at(text, from)?;
+        let found = captures.get(0)?;
+        let mut expanded = String::new();
+        captures.expand(replacement, &mut expanded);
+        Some((found.range(), expanded))
+    }
+
     /// Replaces the first match in `line` (or every match, with `all`),
     /// with `replacement` in `regex` syntax (`$0`, `${1}`). Returns the new
     /// text and how many matches were replaced.
@@ -168,6 +253,32 @@ impl SearchPattern {
         forward: bool,
         wrap: bool,
     ) -> Option<Found> {
+        if self.spans_lines {
+            let matches = self.matches_between(buffer, 0..buffer.line_count());
+            let found = if forward {
+                matches.iter().find(|m| m.start > from)
+            } else {
+                matches.iter().rev().find(|m| m.start < from)
+            };
+            return match found {
+                Some(&found) => Some(Found {
+                    found,
+                    wrapped: false,
+                }),
+                None if !wrap => None,
+                None => {
+                    let found = if forward {
+                        matches.first()
+                    } else {
+                        matches.last()
+                    };
+                    found.map(|&found| Found {
+                        found,
+                        wrapped: true,
+                    })
+                }
+            };
+        }
         let rows = buffer.line_count();
         // Visit every row once, starting at the cursor's, then the cursor's
         // row again for matches on the far side of the cursor after wrapping.
@@ -198,7 +309,7 @@ impl SearchPattern {
 
             if let Some((start, end)) = candidate {
                 return Some(Found {
-                    found: Match { row, start, end },
+                    found: Match::on_row(row, start, end),
                     wrapped,
                 });
             }
@@ -282,6 +393,20 @@ pub fn preserve_case(matched: &str, replacement: &str) -> String {
     }
 }
 
+/// Whether `regex` can match a line break: it has one in it, or `\n`,
+/// `\r` or `\W` (VS Code's rule).
+fn can_match_line_break(regex: &str) -> bool {
+    let mut chars = regex.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' | '\r' => return true,
+            '\\' if matches!(chars.next(), Some('n' | 'r' | 'W')) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn last_line(text: &str) -> &str {
     text.lines().last().unwrap_or(text).trim()
 }
@@ -299,7 +424,7 @@ mod tests {
     }
 
     fn found_at(found: Option<Found>) -> Option<(usize, usize, bool)> {
-        found.map(|f| (f.found.row, f.found.start, f.wrapped))
+        found.map(|f| (f.found.start.row, f.found.start.col, f.wrapped))
     }
 
     #[test]
@@ -451,5 +576,71 @@ mod tests {
             Some((1, 0, false))
         );
         assert!(p.matches_in_line("a").is_empty());
+    }
+
+    #[test]
+    fn patterns_with_a_line_break_span_lines() {
+        assert!(pattern(r"a\nb").spans_lines());
+        assert!(pattern("a\nb").spans_lines(), "a line break in it");
+        assert!(pattern(r"a\Wb").spans_lines());
+        assert!(!pattern(r"a\sb").spans_lines(), "as in VS Code");
+        assert!(!pattern(r"a\\nb").spans_lines(), "an escaped backslash");
+        assert!(!pattern(r"[^x]").spans_lines());
+    }
+
+    #[test]
+    fn matches_run_across_rows() {
+        let b = Buffer::from_text("one\ntwo\nthree two\nfour");
+        let p = pattern(r"two\n\w+");
+        assert_eq!(
+            p.matches_between(&b, 0..4),
+            vec![
+                Match {
+                    start: pos(1, 0),
+                    end: pos(2, 5)
+                },
+                Match {
+                    start: pos(2, 6),
+                    end: pos(3, 4)
+                },
+            ]
+        );
+        assert_eq!(p.matches_between(&b, 2..3).len(), 0, "cut at the last row");
+        assert_eq!(
+            pattern(r"o$\n^[tf]").matches_between(&b, 0..4).len(),
+            2,
+            "^ and $ at each line"
+        );
+    }
+
+    #[test]
+    fn find_across_lines_wraps() {
+        let b = Buffer::from_text("a\nb a\nb");
+        let p = pattern(r"a\nb");
+        assert_eq!(
+            found_at(p.find(&b, pos(0, 0), true, true)),
+            Some((1, 2, false))
+        );
+        assert_eq!(
+            found_at(p.find(&b, pos(1, 2), true, true)),
+            Some((0, 0, true))
+        );
+        assert_eq!(p.find(&b, pos(1, 2), true, false), None);
+        assert_eq!(
+            found_at(p.find(&b, pos(1, 2), false, true)),
+            Some((0, 0, false))
+        );
+    }
+
+    #[test]
+    fn a_match_s_columns_on_each_row() {
+        let m = Match {
+            start: pos(1, 2),
+            end: pos(3, 1),
+        };
+        assert_eq!(m.cols_on(0, 5), None);
+        assert_eq!(m.cols_on(1, 5), Some((2, 6)), "on past the line break");
+        assert_eq!(m.cols_on(2, 0), Some((0, 1)));
+        assert_eq!(m.cols_on(3, 5), Some((0, 1)));
     }
 }

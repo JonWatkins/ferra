@@ -22,6 +22,18 @@
 //! along. `find_match` walks lines for the next non-empty match either way,
 //! wrapping, so the box never lands on an empty regex match.
 //!
+//! A pattern with a line break (pasted into the field, which keeps it and
+//! shows it as `↵`) or `\n` (`\r`, `\W`) spans lines
+//! (`SearchPattern::spans_lines`): its matches (`core::search::Match`, from
+//! one position to another) are found in the buffer's text rather than line
+//! by line, both for finding and counting (`box_matches`) and in the editor
+//! pane, which finds them once a draw around the rows shown. Replacing one
+//! puts its replacement in over the match; replace all works out every
+//! replacement from the text first (`Replacement::each`), then puts them in
+//! from the bottom up. A replacement can have line breaks in it either way.
+//! Closing the box hands such a pattern to `n`/`N` as usual (`core::search`
+//! finds across lines too).
+//!
 //! The box has focus in `Mode::Find` (its own `[keys.find]`, text typed into
 //! the field). `search_highlight` returns its pattern while it's open, and
 //! `find_current_match` the match at the cursor, which the editor pane draws
@@ -44,10 +56,11 @@
 //! (which seeds the find field instead) makes one and turns it on; the
 //! toggle otherwise takes the last selection (`gv`'s). `find_match`, the
 //! count, both replaces and the editor pane's highlights skip matches
-//! outside it, and the pane tints it (`ui.find.scope`). Replacing never
-//! adds or removes lines, so the scope only needs each row's end moved by
-//! what a replacement changed (`FindScope::replaced`). Closing the box
-//! forgets it.
+//! outside it, and the pane tints it (`ui.find.scope`). A match across
+//! lines is inside if every row it's on is, the rows between whole
+//! (`FindScope::contains`). A replacement moves the scope with the text,
+//! its rows growing or shrinking by the lines it put in or took out
+//! (`FindScope::replaced`). Closing the box forgets it.
 //!
 //! `<Up>`/`<Down>` browse what was searched for, newest first, whatever was
 //! typed (VS Code's way, not Vim's by prefix), and in the replace field what
@@ -121,9 +134,8 @@ struct Counted {
 
 /// The selection the box finds in, with "in selection" on: the chars of
 /// each of its rows, as a half-open range (`usize::MAX` running to the
-/// line's end), so a block is a column of them. Replacing in a row moves
-/// its span's end with the text; a replacement never adds or removes a
-/// line (matches don't span lines), so the rows stay put.
+/// line's end), so a block is a column of them. A replacement moves the
+/// spans after it with the text (`FindScope::replaced`), lines and all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FindScope {
     first: usize,
@@ -164,9 +176,24 @@ impl FindScope {
         self.spans.get(row.checked_sub(self.first)?).copied()
     }
 
-    /// Whether chars `start..end` of row `row` are all inside.
-    pub fn contains(&self, row: usize, start: usize, end: usize) -> bool {
-        self.span(row).is_some_and(|(s, e)| s <= start && end <= e)
+    /// Whether `found` is all inside: on one row, inside its span; across
+    /// rows, from inside the first row's span to its line's end, every row
+    /// between whole, and the last from its start.
+    pub fn contains(&self, found: &Match) -> bool {
+        let (start, end) = (found.start, found.end);
+        let Some((first_from, first_to)) = self.span(start.row) else {
+            return false;
+        };
+        if start.row == end.row {
+            return first_from <= start.col && end.col <= first_to;
+        }
+        let whole = |row| self.span(row) == Some((0, usize::MAX));
+        first_from <= start.col
+            && first_to == usize::MAX
+            && (start.row + 1..end.row).all(whole)
+            && self
+                .span(end.row)
+                .is_some_and(|(from, to)| from == 0 && end.col <= to)
     }
 
     /// Where the scope starts.
@@ -174,14 +201,31 @@ impl FindScope {
         Position::new(self.first, self.spans[0].0)
     }
 
-    /// `old` chars in row `row` became `new` chars (inside its span).
-    fn replaced(&mut self, row: usize, old: usize, new: usize) {
-        if let Some(i) = row.checked_sub(self.first)
-            && let Some((_, end)) = self.spans.get_mut(i)
-            && *end != usize::MAX
-        {
-            *end = *end + new - old;
+    /// Chars `start..end` (inside it) were replaced by text ending at
+    /// `new_end`: the rows they were on become the rows it's on, the last
+    /// one's span ending as far past it as it did, and the rows after
+    /// move up or down with it.
+    fn replaced(&mut self, start: Position, end: Position, new_end: Position) {
+        let (Some(first), Some(last)) = (
+            start.row.checked_sub(self.first),
+            end.row.checked_sub(self.first),
+        ) else {
+            return;
+        };
+        if last >= self.spans.len() {
+            return;
         }
+        let from = self.spans[first].0;
+        let to = match self.spans[last].1 {
+            usize::MAX => usize::MAX,
+            to => to + new_end.col - end.col,
+        };
+        let rows = new_end.row - start.row;
+        let spans = (0..=rows).map(|i| {
+            let from = if i == 0 { from } else { 0 };
+            (from, if i == rows { to } else { usize::MAX })
+        });
+        self.spans.splice(first..=last, spans);
     }
 }
 
@@ -225,6 +269,46 @@ impl Replacement {
         }
         let matched: String = line.chars().skip(start).take(end - start).collect();
         Some((start, end, preserve_case(&matched, &text)))
+    }
+
+    /// What each of `matches` becomes, in one pass over the text. A match
+    /// no longer found where it was (from a stale list) is left out.
+    pub(super) fn each(
+        &self,
+        pattern: &SearchPattern,
+        buffer: &Buffer,
+        matches: &[Match],
+    ) -> Vec<(Match, String)> {
+        // The whole text if the pattern spans lines, else each match's line
+        // (which a pattern like `a[^x]*` mustn't run on past).
+        let whole = pattern.spans_lines().then(|| buffer.text());
+        matches
+            .iter()
+            .filter_map(|&found| {
+                let line;
+                let (haystack, base) = match &whole {
+                    Some(text) => (text.as_str(), 0),
+                    None => {
+                        line = buffer.line(found.start.row);
+                        let base = buffer.byte_of(Position::new(found.start.row, 0));
+                        (&*line, base)
+                    }
+                };
+                let from = buffer.byte_of(found.start) - base;
+                let end = buffer.byte_of(found.end) - base;
+                let (range, text) = pattern.replacement_at(haystack, from, &self.text)?;
+                (range == (from..end)).then(|| (found, self.cased(&haystack[range], text)))
+            })
+            .collect()
+    }
+
+    /// `text`, cased like `matched` with preserve case on.
+    fn cased(&self, matched: &str, text: String) -> String {
+        if self.preserve_case {
+            preserve_case(matched, &text)
+        } else {
+            text
+        }
     }
 
     /// `line` with every match inside chars `span` replaced (half-open,
@@ -344,24 +428,9 @@ impl FindState {
             .as_ref()
             .is_none_or(|c| c.document != document || c.edits != edits);
         if stale {
-            let mut matches = Vec::new();
-            let mut more = false;
-            let scope = self.scope();
-            let rows = scope.map_or(0..buffer.line_count(), |s| {
-                s.rows().start.min(buffer.line_count())..s.rows().end.min(buffer.line_count())
-            });
-            'rows: for row in rows {
-                for (start, end) in pattern.matches_in_line(&buffer.line(row)) {
-                    if scope.is_some_and(|s| !s.contains(row, start, end)) {
-                        continue;
-                    }
-                    if matches.len() == MAX_COUNTED {
-                        more = true;
-                        break 'rows;
-                    }
-                    matches.push(Match { row, start, end });
-                }
-            }
+            let mut matches = box_matches(pattern, buffer, self.scope());
+            let more = matches.len() > MAX_COUNTED;
+            matches.truncate(MAX_COUNTED);
             *counted = Some(Counted {
                 document,
                 edits,
@@ -383,6 +452,14 @@ impl FindState {
     }
 }
 
+/// The box's matches in `buffer`: the non-empty ones, inside `scope`.
+fn box_matches(pattern: &SearchPattern, buffer: &Buffer, scope: Option<&FindScope>) -> Vec<Match> {
+    let rows = scope.map_or(0..buffer.line_count(), FindScope::rows);
+    let mut matches = pattern.matches_between(buffer, rows);
+    matches.retain(|m| !m.is_empty() && scope.is_none_or(|s| s.contains(m)));
+    matches
+}
+
 /// The first non-empty match at or after `from` (or with `!forward`, the
 /// last before it), wrapping around the buffer. `inclusive` takes one
 /// starting at `from` (going forward). With a `scope`, only matches inside
@@ -395,6 +472,22 @@ pub fn find_match(
     forward: bool,
     inclusive: bool,
 ) -> Option<Match> {
+    if pattern.spans_lines() {
+        let matches = box_matches(pattern, buffer, scope);
+        let found = if forward {
+            matches
+                .iter()
+                .find(|m| m.start > from || (inclusive && m.start == from))
+                .or(matches.first())
+        } else {
+            matches
+                .iter()
+                .rev()
+                .find(|m| m.start < from)
+                .or(matches.last())
+        };
+        return found.copied();
+    }
     let rows = buffer.line_count();
     for step in 0..=rows {
         let row = if forward {
@@ -404,7 +497,7 @@ pub fn find_match(
         };
         let mut matches = pattern.matches_in_line(&buffer.line(row));
         if let Some(scope) = scope {
-            matches.retain(|&(start, end)| scope.contains(row, start, end));
+            matches.retain(|&(start, end)| scope.contains(&Match::on_row(row, start, end)));
         }
         let found = match (step, forward) {
             (0, true) => matches
@@ -418,7 +511,7 @@ pub fn find_match(
             (_, false) => matches.into_iter().next_back(),
         };
         if let Some((start, end)) = found {
-            return Some(Match { row, start, end });
+            return Some(Match::on_row(row, start, end));
         }
     }
     None
@@ -596,6 +689,16 @@ impl Editor {
         }
         let pattern = self.find.pattern()?;
         let cursor = self.document.cursor();
+        // Across lines, from the counted matches (found in the whole text,
+        // so not again every draw).
+        if pattern.spans_lines() {
+            self.find_count();
+            let counted = self.find.counted.borrow();
+            if let Some(counted) = counted.as_ref().filter(|c| !c.more) {
+                let at = counted.matches.binary_search_by(|m| m.start.cmp(&cursor));
+                return at.ok().map(|i| counted.matches[i]);
+            }
+        }
         find_match(
             pattern,
             self.document.buffer(),
@@ -795,25 +898,17 @@ impl Editor {
             return self.find_step(true);
         };
         self.find_remember_replace();
-        let line = self.document.buffer().line(current.row).into_owned();
-        let (start, end, text) = self
+        let (_, text) = self
             .find
             .replacement()
-            .next(&pattern, &line, current.start)
-            .filter(|&(start, end, _)| {
-                self.find
-                    .scope()
-                    .is_none_or(|s| s.contains(current.row, start, end))
-            })
-            .filter(|&(start, ..)| start == current.start)
+            .each(&pattern, self.document.buffer(), &[current])
+            .pop()
             .ok_or("The match changed")?;
-        let at = Position::new(current.row, start);
-        self.document.delete(at, Position::new(current.row, end));
+        let at = current.start;
+        self.document.delete(at, current.end);
         let after = self.document.insert(at, &text);
         match &mut self.find.scope {
-            Some(scope) if self.find.in_selection => {
-                scope.replaced(current.row, end - start, text.chars().count());
-            }
+            Some(scope) if self.find.in_selection => scope.replaced(at, current.end, after),
             // Off, it doesn't follow the text, so it goes.
             _ => self.find.scope = None,
         }
@@ -843,6 +938,9 @@ impl Editor {
         self.find_remember_replace();
         let replacement = self.find.replacement();
         let mut scope = self.find.scope().cloned();
+        if pattern.spans_lines() {
+            return self.find_replace_all_across_lines(&pattern, &replacement, scope);
+        }
         let mut replaced = 0;
         let mut lines = 0;
         let line_count = self.document.buffer().line_count();
@@ -857,7 +955,11 @@ impl Editor {
                     let span = scope.span(row).expect("a row of the scope");
                     let (text, count) = replacement.span(&pattern, &line, span);
                     let len = |s: &str| s.chars().count();
-                    scope.replaced(row, len(&line), len(&text));
+                    scope.replaced(
+                        Position::new(row, 0),
+                        Position::new(row, len(&line)),
+                        Position::new(row, len(&text)),
+                    );
                     (text, count)
                 }
                 None if pattern.matches_in_line(&line).is_empty() => continue,
@@ -876,6 +978,37 @@ impl Editor {
         }
         // Off, the kept scope doesn't follow the text, so it goes.
         self.find.scope = scope;
+        self.report_replaced_all(replaced, lines)
+    }
+
+    /// Replace all with a pattern that spans lines: every match's
+    /// replacement worked out from the text first, then put in from the
+    /// bottom up, so those still to do don't move.
+    fn find_replace_all_across_lines(
+        &mut self,
+        pattern: &SearchPattern,
+        replacement: &Replacement,
+        mut scope: Option<FindScope>,
+    ) -> Result<(), String> {
+        let buffer = self.document.buffer();
+        let matches = box_matches(pattern, buffer, scope.as_ref());
+        let each = replacement.each(pattern, buffer, &matches);
+        let mut rows: Vec<usize> = each.iter().map(|(m, _)| m.start.row).collect();
+        rows.dedup();
+        for (found, text) in each.iter().rev() {
+            self.document.delete(found.start, found.end);
+            let after = self.document.insert(found.start, text);
+            if let Some(scope) = scope.as_mut() {
+                scope.replaced(found.start, found.end, after);
+            }
+        }
+        self.find.scope = scope;
+        self.report_replaced_all(each.len(), rows.len())
+    }
+
+    /// Says how many were replaced by replace all, on how many lines (where
+    /// they started).
+    fn report_replaced_all(&mut self, replaced: usize, lines: usize) -> Result<(), String> {
         if replaced == 0 {
             return Err(format!("No results for {}", self.find.find.text()));
         }
@@ -1243,7 +1376,7 @@ mod tests {
         let p = SearchPattern::new("ab", CaseMode::Sensitive).unwrap();
         let at = |r, c| Position::new(r, c);
         let found = |from, fwd, inc| {
-            find_match(&p, &buffer, None, from, fwd, inc).map(|m| (m.row, m.start))
+            find_match(&p, &buffer, None, from, fwd, inc).map(|m| (m.start.row, m.start.col))
         };
         assert_eq!(found(at(0, 0), true, true), Some((0, 0)));
         assert_eq!(found(at(0, 0), true, false), Some((1, 1)));
@@ -1251,9 +1384,127 @@ mod tests {
         assert_eq!(found(at(0, 0), false, false), Some((1, 4)), "wraps back");
         let one = Buffer::from_text("ab");
         assert_eq!(
-            find_match(&p, &one, None, at(0, 0), true, false).map(|m| m.start),
+            find_match(&p, &one, None, at(0, 0), true, false).map(|m| m.start.col),
             Some(0),
             "the only match, all the way round"
         );
+    }
+
+    #[test]
+    fn a_line_break_finds_across_lines() {
+        let mut e = editor("let a\n  = 1;\nlet b\n= 2;");
+        e.open_find(false);
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, "\n");
+        assert_eq!(total(&e), 3, "every line break, as typed");
+        e.find_toggle(|f| f.regex = true);
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, r"(\w)\n\s*=");
+        assert_eq!(total(&e), 2);
+        assert_eq!(cursor(&e), (0, 4), "the first, from the start");
+        let current = e.find_current_match().expect("on it");
+        assert_eq!(current.end, Position::new(1, 3));
+        e.find_step(true).unwrap();
+        assert_eq!(cursor(&e), (2, 4));
+        e.find_step(true).unwrap();
+        assert_eq!(cursor(&e), (0, 4), "wraps");
+
+        e.find_switch_field();
+        e.find_edit(|f| "$1 =".chars().for_each(|c| f.push(c)));
+        e.find_replace_one().unwrap();
+        assert_eq!(e.document.buffer().text(), "let a = 1;\nlet b\n= 2;");
+        assert_eq!(cursor(&e), (1, 4), "on to the next");
+        e.find_replace_all().unwrap();
+        assert_eq!(e.document.buffer().text(), "let a = 1;\nlet b = 2;");
+    }
+
+    #[test]
+    fn replacing_puts_line_breaks_in_and_takes_them_out() {
+        let mut e = editor("a, b, c\nd, e");
+        e.open_find(true);
+        e.find_toggle(|f| f.regex = true);
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, ", ");
+        e.find_switch_field();
+        e.find_edit(|f| f.push('\n'));
+        e.find_replace_all().unwrap();
+        assert_eq!(e.document.buffer().text(), "a\nb\nc\nd\ne");
+        e.find_switch_field();
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, r"\n");
+        e.find_switch_field();
+        e.find_edit(|f| f.delete_to_start());
+        e.find_replace_all().unwrap();
+        assert_eq!(e.document.buffer().text(), "abcde");
+        assert_eq!(
+            e.message().map(|m| m.text.as_str()),
+            Some("Replaced 4 matches on 4 lines")
+        );
+    }
+
+    #[test]
+    fn in_a_selection_matches_across_lines_stay_inside_it() {
+        use super::super::SelectionKind;
+        let mut e = editor("x\ny\nx\ny\nx\ny");
+        // Rows 1 to 4: the x/y pairs at rows 2-3 are inside; 0-1 and 4-5 aren't.
+        select(&mut e, SelectionKind::Line, (1, 0), (4, 0));
+        e.open_find(true);
+        e.find_toggle(|f| f.regex = true);
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, r"x\ny");
+        assert_eq!(total(&e), 1);
+        assert_eq!(cursor(&e), (2, 0));
+        e.find_switch_field();
+        e.find_edit(|f| "x\ny\nz".chars().for_each(|c| f.push(c)));
+        e.find_replace_one().unwrap();
+        assert_eq!(e.document.buffer().text(), "x\ny\nx\ny\nz\nx\ny");
+        let scope = e.find_scope().expect("kept");
+        assert_eq!(scope.rows(), 1..6, "grown by the line put in");
+        e.find_edit(|f| f.delete_to_start());
+        e.find_switch_field();
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, r"z\nx\ny");
+        assert_eq!(total(&e), 0, "it runs on past the scope");
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, r"y\nz");
+        assert_eq!(total(&e), 1);
+    }
+
+    #[test]
+    fn the_scope_follows_a_replacement_that_changes_lines() {
+        let mut scope = FindScope {
+            first: 2,
+            spans: vec![(3, usize::MAX), (0, usize::MAX), (0, 4), (0, usize::MAX)],
+        };
+        // Row 3 col 1 to row 4 col 2 became one line ending at row 3 col 5.
+        scope.replaced(
+            Position::new(3, 1),
+            Position::new(4, 2),
+            Position::new(3, 5),
+        );
+        assert_eq!(scope.spans, vec![(3, usize::MAX), (0, 7), (0, usize::MAX)]);
+        // Row 3 col 0..2 became two lines.
+        scope.replaced(
+            Position::new(3, 0),
+            Position::new(3, 2),
+            Position::new(4, 1),
+        );
+        assert_eq!(
+            scope.spans,
+            vec![(3, usize::MAX), (0, usize::MAX), (0, 6), (0, usize::MAX)]
+        );
+    }
+
+    #[test]
+    fn a_pattern_on_one_line_replaces_only_on_its_line() {
+        let mut e = editor("ab\ncd");
+        e.open_find(true);
+        e.find_toggle(|f| f.regex = true);
+        e.find_edit(|f| f.delete_to_start());
+        type_find(&mut e, "a[^x]*");
+        e.find_switch_field();
+        e.find_edit(|f| f.push('z'));
+        e.find_replace_one().unwrap();
+        assert_eq!(e.document.buffer().text(), "z\ncd");
     }
 }

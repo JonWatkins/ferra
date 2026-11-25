@@ -85,3 +85,20 @@ fn a_match_left_of_the_box_leaves_it_at_the_top() {
         screen.rows
     );
 }
+
+#[test]
+fn a_paste_with_line_breaks_finds_across_lines() {
+    let mut app = app_with("fn a()\n{\n}\nfn b() {}\n");
+    keys(&mut app, "<Space>/");
+    app.handle_paste(")\r\n{");
+    assert_eq!(app.editor().find_state().find.text(), ")\n{");
+    assert_eq!(common::cursor(&app), (0, 5), "on the match");
+    let screen = render(&mut app, 60, 10);
+    let find_row = screen
+        .rows
+        .iter()
+        .find(|row| row.contains("Find"))
+        .expect("the box");
+    assert!(find_row.contains(")↵{"), "the line break shown: {find_row}");
+    assert!(find_row.contains("1 of 1"), "{find_row}");
+}

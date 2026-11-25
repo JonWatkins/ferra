@@ -280,7 +280,17 @@ tinted (`ui.find.scope`), and replace all replaces only inside it.
 
 Text is found as it's typed, ignoring case, unless the toggles say
 otherwise; with `.*` it's a Rust regex, and the replacement can use `$1`,
-`${name}`. Closing it clears the highlights, as VS Code does; `n` and `N`
+`${name}`.
+
+Matches can run across lines. Paste text with line breaks into the find
+field (shown as `↵`) to find it as it is, or with `.*` on use `\n` in the
+pattern; `\n` in the replacement puts a line break in. As in VS Code, a
+regex matches across lines only when it has `\n`, `\r` or `\W` in it, so
+`\s` and `[^x]` still stop at the end of a line. With in selection on, a
+match across lines must be inside the selection all the way. `/` finds
+across lines the same way, but `:s` doesn't.
+
+Closing it clears the highlights, as VS Code does; `n` and `N`
 carry on with the same search and highlight its matches again (`:noh`
 hides them). The colours are the
 `ui.find.*` scopes and `ui.search.current`.
