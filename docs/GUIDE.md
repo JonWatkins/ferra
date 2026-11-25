@@ -347,7 +347,8 @@ step over it, and `dd`, `yy`, `>>` and other line operators take all of it.
 Searches, mark jumps and undo open a fold they land in; changing text
 inside one opens it too. With `fold-column = true` (or `:set fold-column`),
 a column left of the line numbers shows where folds are: `▸` on a closed
-one, `▾` on a line that starts one, `│` beside the lines inside.
+one, `▾` on a line that starts one, `│` beside the lines inside. With the
+mouse on, clicking a `▸` or `▾` opens or closes that fold, in either keymap.
 
 ### Sorting
 

@@ -37,6 +37,8 @@ pub struct ViewState {
     pub rows: Vec<DrawnRow>,
     /// Where the text starts, after the gutter.
     pub text_x: u16,
+    /// The fold column's x, when it's shown.
+    pub fold_x: Option<u16>,
 }
 
 /// One screen row as drawn: which part of which buffer line.
@@ -53,9 +55,21 @@ pub struct DrawnRow {
     pub indent: usize,
     /// The line's last part (a click past its end goes to the end).
     pub last: bool,
+    /// What the fold column showed beside it.
+    pub fold: gutter::FoldMark,
 }
 
 impl ViewState {
+    /// The fold markers a click can open or close, as last drawn: each
+    /// `▸` and `▾` cell and its line.
+    pub fn fold_markers(&self) -> impl Iterator<Item = (Position, usize)> + '_ {
+        let x = self.fold_x;
+        self.rows.iter().filter_map(move |r| {
+            let clickable = matches!(r.fold, gutter::FoldMark::Closed | gutter::FoldMark::Open);
+            Some((Position::new(x?, r.y), r.row)).filter(|_| clickable)
+        })
+    }
+
     /// The buffer position shown at screen cell `(x, y)` when last drawn:
     /// in the gutter, the start of that row; past the end of a line, its
     /// end; below the text, the last line. `None` before it's drawn.
@@ -464,6 +478,7 @@ impl StatefulWidget for EditorView<'_> {
     fn render(mut self, area: Rect, buf: &mut Buffer, state: &mut ViewState) {
         state.cursor = None;
         state.rows.clear();
+        state.fold_x = None;
         if area.is_empty() {
             return;
         }
@@ -520,6 +535,7 @@ impl StatefulWidget for EditorView<'_> {
         let Viewport { top, left } = state.viewport;
         let mut fold_column =
             (fold_width > 0).then(|| crate::core::fold::Column::new(text, top.line, tab_width));
+        state.fold_x = fold_column.as_ref().map(|_| fold_area.x);
         state.text_x = text_area.x;
 
         let text_style = self.theme.get("ui.text");
@@ -602,9 +618,10 @@ impl StatefulWidget for EditorView<'_> {
                     text_style,
                     &syntax_styles,
                 );
-                if let Some(mark) = fold_mark {
-                    // A wrapped line's later rows are inside what it heads.
-                    let mark = if part == 0 { mark } else { mark.continued() };
+                // A wrapped line's later rows are inside what it heads.
+                let drawn_mark =
+                    fold_mark.map(|mark| if part == 0 { mark } else { mark.continued() });
+                if let Some(mark) = drawn_mark {
                     let style = buf[(area.x, screen_y)]
                         .style()
                         .patch(self.theme.get("ui.fold.column"));
@@ -632,6 +649,7 @@ impl StatefulWidget for EditorView<'_> {
                         0
                     },
                     last: last_part,
+                    fold: drawn_mark.unwrap_or_default(),
                 });
                 // The extra cursors on this part of the line: like the
                 // real one, a bar where there's no character (past the

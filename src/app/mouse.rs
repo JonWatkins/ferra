@@ -3,7 +3,9 @@
 //!
 //! - In a window, a click moves the cursor there (and to that window),
 //!   staying in insert mode if that's where you were; a double click
-//!   selects the word, a triple click the line; dragging selects.
+//!   selects the word, a triple click the line; dragging selects. A click
+//!   on a `▸` or `▾` in the fold column (`Target::Fold`) opens or closes
+//!   that fold, as `za` on its line.
 //! - In the sidebar, a click gives it focus: on a tab it shows that view;
 //!   on a line it selects it, and in the file tree opens the file or folder.
 //! - A click in the terminal panel gives it focus.
@@ -412,6 +414,19 @@ impl App {
                     3 => self.select_after_click(&["visual_line_mode"]),
                     _ => {}
                 }
+            }
+            Some(Target::Fold { window, row }) => {
+                self.leave_panes();
+                if self.editor.mode() == Mode::Visual {
+                    self.editor.set_mode(Mode::Normal);
+                }
+                self.editor.focus_window(window);
+                self.editor.clear_extra_cursors();
+                let col = crate::core::motion::first_non_blank(self.editor.document.buffer(), row);
+                self.editor
+                    .document
+                    .set_cursor(crate::core::Position::new(row, col));
+                self.execute("fold_toggle", Invocation::default());
             }
             Some(Target::Activity(Some(name))) => {
                 self.leave_panes();

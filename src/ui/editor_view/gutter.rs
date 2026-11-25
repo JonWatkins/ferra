@@ -20,8 +20,9 @@ pub fn fold_width(options: &EditorOptions) -> u16 {
 }
 
 /// What the fold column shows beside a row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FoldMark {
+    #[default]
     None,
     /// The first line of a closed fold.
     Closed,
