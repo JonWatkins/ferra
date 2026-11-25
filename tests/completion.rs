@@ -163,3 +163,30 @@ fn no_files_or_lines_say_so() {
     keys(&mut app, "<CR>zzz<C-x><C-l>");
     assert_eq!(message(&app), "No lines starting \"zzz\"");
 }
+
+#[test]
+fn words_match_fuzzily_after_the_ones_starting_with_what_was_typed() {
+    let mut app = app();
+    keys(&mut app, "iflat_map<CR>fmt<CR>fm<C-n>");
+    assert_eq!(last_line(&app), "fmt", "starting with it first");
+    keys(&mut app, "<C-n>");
+    assert_eq!(last_line(&app), "flat_map", "then fuzzily");
+}
+
+#[test]
+fn other_cases_come_between_prefix_and_fuzzy_matches() {
+    let mut app = app();
+    keys(&mut app, "ifo_o_bar<CR>Foobar<CR>foobaz<CR>foo<C-n>");
+    assert_eq!(last_line(&app), "foobaz");
+    keys(&mut app, "<C-n>");
+    assert_eq!(last_line(&app), "Foobar");
+    keys(&mut app, "<C-n>");
+    assert_eq!(last_line(&app), "fo_o_bar");
+}
+
+#[test]
+fn a_fuzzy_match_starts_at_the_start_of_a_word() {
+    let mut app = app();
+    keys(&mut app, "ilog10<CR>x0<C-n>");
+    assert_eq!(message(&app), "No completions for \"x0\"");
+}

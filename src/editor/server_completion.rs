@@ -112,11 +112,12 @@ pub struct ServerCompletion {
     pub incomplete: bool,
 }
 
-/// How well `typed` matches `filter`: 0 if it starts with it, 1 if it does
+/// How well `typed` matches `filter` (a server's item, or a word for
+/// `<C-n>`): 0 if it starts with it, 1 if it does
 /// in another case, 2 if its letters are in it in order (fuzzily) and the
 /// first starts a word in it (`fm` for `flat_map`, `ce` for
 /// `createElement`, but not `0` for `log10`).
-fn match_tier(typed: &str, filter: &str) -> Option<u8> {
+pub(super) fn match_tier(typed: &str, filter: &str) -> Option<u8> {
     if filter.starts_with(typed) {
         Some(0)
     } else if filter.to_lowercase().starts_with(&typed.to_lowercase()) {
