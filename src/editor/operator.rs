@@ -149,10 +149,14 @@ impl Editor {
                 let (first, last) = range.rows();
                 // As Neovim's `formatexpr`: `gq` has a server that can
                 // format the lines do it, from their start as Vim leaves
-                // the cursor; `gw` is always the reflow.
+                // the cursor; then `format-program` (`formatprg`); `gw` is
+                // always the reflow.
                 if !keep_cursor && self.server_formats_ranges() {
                     self.document.set_cursor(Position::new(first, 0));
                     return self.format(false, Some((first, last)));
+                }
+                if !keep_cursor && !self.options.format_program.trim().is_empty() {
+                    return self.format_with_program(first, last);
                 }
                 self.format_text(first, last, keep_cursor);
                 return Ok(());

@@ -1450,6 +1450,30 @@ fn gq_reflows_without_a_server_that_formats_ranges() {
     assert_eq!(text(&app), "a b c");
 }
 
+#[cfg(unix)]
+#[test]
+fn gq_asks_the_server_before_format_program() {
+    let (_dir, mut app, _) = with_server("b  =  2\na  =  1\n", true);
+    ready(&mut app);
+    keys(&mut app, ":setlocal fp=sort<CR>gqj");
+    assert_eq!(
+        text(&app),
+        "b = 2\na = 1",
+        "the server's, as Neovim's formatexpr"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn gq_uses_format_program_when_the_server_formats_only_whole_files() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("whole-only"), "").unwrap();
+    let (_dir, mut app, _) = with_server_at(dir, app(), "b\na\n", true);
+    ready(&mut app);
+    keys(&mut app, ":setlocal fp=sort<CR>gqj");
+    assert_eq!(text(&app), "a\nb");
+}
+
 #[test]
 fn a_server_that_formats_only_whole_files_says_so_for_a_range() {
     let dir = tempfile::tempdir().unwrap();

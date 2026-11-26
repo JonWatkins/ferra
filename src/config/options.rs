@@ -42,6 +42,9 @@ pub struct EditorOptions {
     pub suffixes_add: String,
     /// Have the language server format the buffer before each save.
     pub format_on_save: bool,
+    /// A command line `gq` runs its lines through (Vim's `formatprg`),
+    /// when there's no language server to format them; "" reflows them.
+    pub format_program: String,
     /// Long lines continue on the next screen rows (breaking between
     /// words) rather than running off the edge.
     pub wrap: bool,

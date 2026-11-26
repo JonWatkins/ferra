@@ -257,6 +257,39 @@ impl Editor {
         }
     }
 
+    /// `gq` with `format-program`: runs lines `first..=last` through it and
+    /// puts what it prints in their place, as one change, the cursor on the
+    /// first one's first non-blank (as Vim's filter). If it fails, the lines
+    /// stay and the error is the message.
+    pub fn format_with_program(&mut self, first: usize, last: usize) -> Result<(), String> {
+        let doc = &self.document;
+        let lines: Vec<String> = (first..=last)
+            .map(|row| doc.buffer().line(row).into_owned())
+            .collect();
+        let formatted = crate::filter::run(
+            self.options.format_program.trim(),
+            &self.options.shell,
+            &lines,
+            crate::filter::TIMEOUT,
+        )
+        .map_err(|e| format!("format-program: {e}"))?;
+        let doc = &mut self.document;
+        if formatted != lines {
+            let end = doc.buffer().line_end(last);
+            if formatted.is_empty() {
+                // Nothing printed: the lines go, as with Vim's filter.
+                doc.delete_lines(first, last);
+            } else {
+                doc.delete(Position::new(first, 0), end);
+                doc.insert(Position::new(first, 0), &formatted.join("\n"));
+            }
+        }
+        let row = first.min(doc.buffer().line_count() - 1);
+        let col = motion::first_non_blank(doc.buffer(), row);
+        doc.set_cursor(Position::new(row, col));
+        Ok(())
+    }
+
     /// After `c` is typed in insert mode, with `auto-wrap`: if the line now
     /// runs past `text-width`, breaks it at the last space within it, the
     /// new line starting with the same leader (indentation, comment marker,

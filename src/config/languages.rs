@@ -153,7 +153,7 @@ impl Languages {
                     return Err(format!(
                         "languages.{language}.options: {name} can't be set per language \
                          (tab-width, shift-width, expand-tab, auto-indent, text-width, auto-wrap, \
-                         format-on-save, path and suffixes-add can)"
+                         format-on-save, format-program, path and suffixes-add can)"
                     ));
                 }
                 let mut options = editor.clone();

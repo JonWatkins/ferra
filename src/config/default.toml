@@ -59,6 +59,13 @@ suffixes-add = ""
 # does), waiting up to 2 seconds for it. Per language:
 # [languages.rust] options = { format-on-save = true }.
 format-on-save = false
+# A program gq runs its lines through, given them on its input and taking
+# what it prints in their place, as Vim's 'formatprg': "fmt -w 72", "par",
+# "jq .". It runs in the shell (see shell below) and gets 5 seconds; if it
+# fails the lines stay as they were. A language server that formats part of
+# a file comes first (as in Neovim), and gw always reflows. "" reflows to
+# text-width. Per language: options = { format-program = "jq ." }.
+format-program = ""
 # Long lines continue on the next screen rows, breaking between words, and
 # gj/gk move by screen rows. false scrolls sideways instead.
 wrap = true
@@ -145,7 +152,8 @@ terminal-height = 12
 # once there are two or more (at most half the panel; drag its line to
 # change it).
 terminal-list-width = 22
-# The terminal panel's shell. "" runs $SHELL (or /bin/sh).
+# The terminal panel's shell, and format-program's. "" runs $SHELL (or
+# /bin/sh).
 shell = ""
 # What ending a terminal (closing it, or quitting ferra) does to what its
 # shell started: "kill" ends everything it started, even what ignores the
@@ -289,8 +297,8 @@ command = "claude-agent-acp"
 #
 # `comment` (or `block-comment` for languages without line comments) is what
 # gc uses to comment lines out. `options` sets tab-width, expand-tab,
-# auto-indent, text-width, auto-wrap, format-on-save, path or suffixes-add
-# for the language's buffers (:setlocal still wins):
+# auto-indent, text-width, auto-wrap, format-on-save, format-program, path or
+# suffixes-add for the language's buffers (:setlocal still wins):
 #
 #   [languages.python]
 #   options = { tab-width = 4, text-width = 88 }
