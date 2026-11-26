@@ -89,3 +89,21 @@ fn text_width_can_be_set_per_buffer() {
     keys(&mut app, ":setlocal tw=10<CR>ione two three four<Esc>gqq");
     assert_eq!(text(&app), "one two\nthree four");
 }
+
+#[test]
+fn block_comments_keep_their_stars() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.rs");
+    fs::write(
+        &path,
+        "/**\n * a doc comment that is much too long\n * for thirty columns\n */\nfn f() {}\n",
+    )
+    .unwrap();
+    let mut app = app_with_config("[editor]\ntext-width = 30");
+    app.open(&path);
+    keys(&mut app, "jgqip");
+    assert_eq!(
+        text(&app),
+        "/**\n * a doc comment that is much\n * too long for thirty columns\n */\nfn f() {}"
+    );
+}

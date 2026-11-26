@@ -1,45 +1,54 @@
 //! `gq`: reflowing lines of text to a width.
 //!
-//! Lines are taken a paragraph at a time: blank lines (or a comment marker
-//! alone) separate paragraphs and are kept, and so does a change in whether
-//! lines are comments. A paragraph's words are joined with single spaces
-//! (two after a sentence's `.`, `!` or `?` where its line had two or more;
-//! joining lines puts one, as Vim's `nojoinspaces`) and broken into lines
-//! no wider than the width, each starting with the first line's *leader*:
-//! its indentation, and its line-comment marker (`//`, `#`...) with the
-//! space after it. A list item (`- `, `* `, `+ `,
-//! `1. `, `1) `) starts a paragraph of its own, and its later lines line up
-//! under its text. A word wider than the width gets a line to itself.
-//!
 //! `gq` is `Operator::Format` (`gw` with `keep_cursor`) over the lines its
-//! range touches. `core/format.rs` does the work, a paragraph at a time: blank
-//! lines (or a comment marker alone) separate paragraphs and are kept, as does
-//! a change between comment and code. Each paragraph's words are joined with
-//! single spaces (two kept after a sentence, as above) and broken greedily
-//! at `text-width` (0 means 79, Vim's fallback; it's buffer-local), every
-//! line starting with the first line's leader: its indentation and the
-//! language's line-comment marker with its space (block comments aren't
-//! leaders, so Markdown's `#` headings stay put). A list item (`- `, `* `,
-//! `+ `, `1. `, `1) `) starts its own paragraph, its later lines indented to
-//! its text. The lines are replaced as one change; the
-//! cursor goes to the last one's first non-blank, or with `gw` stays where it
-//! was. `gqq`, `gqgq` and `gwgw` come from operator-pending `q`, `gq` and `gw`
-//! bound to `current_line`.
+//! range touches, a paragraph at a time: blank lines (or a comment marker
+//! alone) separate paragraphs and are kept, as does a change between code and
+//! a kind of comment. A paragraph's words are joined with single spaces (two
+//! after a sentence's `.`, `!` or `?` where its line had two or more; joining
+//! lines puts one, as Vim's `nojoinspaces`) and broken greedily at
+//! `text-width` (0 means 79, Vim's fallback; it's buffer-local), every line
+//! starting with the first line's *leader*: its indentation and its comment
+//! marker with the space after it. A word wider than the width gets a line to
+//! itself. The lines are replaced as one change; the cursor goes to the last
+//! one's first non-blank, or with `gw` stays where it was. `gqq`, `gqgq` and
+//! `gwgw` come from operator-pending `q`, `gq` and `gw` bound to
+//! `current_line`.
+//!
+//! - **Comment markers** (`CommentMarkers`) are the language's line comment
+//!   (`//`, `#`...) and, in languages with C's comments, the ` * ` of a
+//!   `/* */` comment's middle lines, as Vim's `comments=s1:/*,mb:*,ex:*/`.
+//!   Text after a `/*` or `/**` starts a paragraph whose later lines start
+//!   ` * `, lined up under the first `*`; a line of just `/**`, ` *` or ` */`
+//!   separates paragraphs. Other block comments (`<!-- -->`) aren't leaders,
+//!   and in languages without C's comments a leading `*` is a list item.
+//! - **A list item** (`- `, `* `, `+ `, `1. `, `1) `) starts a paragraph of its
+//!   own, and its later lines line up under its text.
+//! - **Auto-wrap** uses the same leaders: `continuation` gives what a line
+//!   broken while typing continues with.
 
 use super::columns::display_width;
 
-/// Reflows `lines` to `width` display columns. `comment` is the language's
-/// line-comment marker, if it has one.
+/// The comment markers that are leaders for `gq` and auto-wrap.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommentMarkers {
+    /// The language's line-comment marker (`//`, `#`), if it has one.
+    pub line: Option<String>,
+    /// Whether the language has C's `/* */` comments, whose middle lines
+    /// start ` * ` (Vim's `s1:/*,mb:*,ex:*/`).
+    pub c_block: bool,
+}
+
+/// Reflows `lines` to `width` display columns.
 pub fn format_lines(
     lines: &[String],
     width: usize,
-    comment: Option<&str>,
+    markers: &CommentMarkers,
     tab_width: usize,
 ) -> Vec<String> {
     let mut out = Vec::new();
     let mut paragraph: Option<Paragraph> = None;
     for line in lines {
-        let parsed = Line::parse(line, comment);
+        let parsed = Line::parse(line, markers);
         if parsed.text.is_empty() {
             if let Some(p) = paragraph.take() {
                 p.fill(width, tab_width, &mut out);
@@ -47,9 +56,9 @@ pub fn format_lines(
             out.push(line.trim_end().to_string());
             continue;
         }
-        let continues = paragraph
-            .as_ref()
-            .is_some_and(|p| p.commented == parsed.commented && parsed.bullet.is_none());
+        let continues = paragraph.as_ref().is_some_and(|p| {
+            p.kind == parsed.kind && parsed.bullet.is_none() && !parsed.opens_block
+        });
         if continues {
             let p = paragraph.as_mut().expect("checked");
             p.words.extend(words(&parsed.text));
@@ -57,14 +66,11 @@ pub fn format_lines(
             if let Some(p) = paragraph.take() {
                 p.fill(width, tab_width, &mut out);
             }
-            let rest_leader = match parsed.bullet {
-                Some(bullet) => format!("{}{}", parsed.leader, " ".repeat(bullet)),
-                None => parsed.leader.clone(),
-            };
+            let rest_leader = parsed.rest_leader();
             paragraph = Some(Paragraph {
                 first_leader: parsed.leader,
                 rest_leader,
-                commented: parsed.commented,
+                kind: parsed.kind,
                 words: words(&parsed.text).collect(),
             });
         }
@@ -77,54 +83,95 @@ pub fn format_lines(
 
 /// For wrapping `line` as it's typed: the char column its text starts at
 /// (after indentation and any comment marker), what a line continuing it
-/// starts with (the same leader, lined up under a list item's text), and
-/// whether it's a comment.
-pub fn continuation(line: &str, comment: Option<&str>) -> (usize, String, bool) {
-    let parsed = Line::parse(line, comment);
-    let rest = line.trim_start_matches([' ', '\t']);
-    let text_start = match comment.and_then(|c| rest.strip_prefix(c)) {
-        Some(after) => line.chars().count() - after.trim_start_matches([' ', '\t']).chars().count(),
-        None => line.chars().count() - rest.chars().count(),
-    };
-    let leader = match parsed.bullet {
-        Some(bullet) => format!("{}{}", parsed.leader, " ".repeat(bullet)),
-        None => parsed.leader,
-    };
-    (text_start, leader, parsed.commented)
+/// starts with (the same leader, ` * ` after a `/*`, lined up under a list
+/// item's text), and whether it's a comment.
+pub fn continuation(line: &str, markers: &CommentMarkers) -> (usize, String, bool) {
+    let parsed = Line::parse(line, markers);
+    let leader = parsed.rest_leader();
+    (parsed.text_start, leader, parsed.kind != Kind::Code)
+}
+
+/// What a line is, for which lines join: code (or prose) and the two kinds
+/// of comment don't.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Code,
+    LineComment,
+    BlockComment,
 }
 
 /// A line split into its leader and its text.
 struct Line {
     leader: String,
+    /// What lines after it start with, before any list item's alignment:
+    /// the leader, except after a `/*`, where it's ` * `.
+    next_leader: String,
     text: String,
-    commented: bool,
+    /// The char column the text starts at.
+    text_start: usize,
+    kind: Kind,
+    /// Whether it starts a block comment (`/* text`): a paragraph of its own.
+    opens_block: bool,
     /// The width of a list marker the text starts with (`- ` is 2).
     bullet: Option<usize>,
 }
 
 impl Line {
-    fn parse(line: &str, comment: Option<&str>) -> Line {
+    fn parse(line: &str, markers: &CommentMarkers) -> Line {
         let rest = line.trim_start_matches([' ', '\t']);
         let indent = &line[..line.len() - rest.len()];
-        let (leader, text, commented) = match comment.and_then(|c| rest.strip_prefix(c)) {
-            Some(after) => {
-                let text = after.trim_start_matches([' ', '\t']);
-                let marker = &rest[..rest.len() - text.len()];
-                (format!("{indent}{marker}"), text, true)
-            }
-            None => (indent.to_string(), rest, false),
-        };
+        // `after` is what follows the comment marker.
+        let mut opens_block = false;
+        let (kind, after) =
+            if let Some(after) = markers.line.as_deref().and_then(|c| rest.strip_prefix(c)) {
+                (Kind::LineComment, after)
+            } else if markers.c_block && rest.trim_end() == "*/" {
+                (Kind::BlockComment, "")
+            } else if let Some(after) = rest
+                .strip_prefix("/*")
+                .map(|a| a.trim_start_matches('*'))
+                .filter(|a| markers.c_block && !a.starts_with('/'))
+            {
+                opens_block = true;
+                (Kind::BlockComment, after)
+            } else if let Some(after) = rest
+                .strip_prefix('*')
+                .filter(|a| markers.c_block && (a.is_empty() || a.starts_with([' ', '\t'])))
+            {
+                (Kind::BlockComment, after)
+            } else {
+                (Kind::Code, rest)
+            };
+        let text = after.trim_start_matches([' ', '\t']);
+        let marker = &rest[..rest.len() - text.len()];
         // A comment marker alone gets a space after it when text follows.
-        let leader = if commented && !leader.ends_with([' ', '\t']) && !text.is_empty() {
-            format!("{leader} ")
+        let space = if kind != Kind::Code && !marker.ends_with([' ', '\t']) && !text.is_empty() {
+            " "
         } else {
-            leader
+            ""
+        };
+        let leader = format!("{indent}{marker}{space}");
+        let next_leader = if opens_block {
+            format!("{indent} * ")
+        } else {
+            leader.clone()
         };
         Line {
             leader,
+            next_leader,
             text: text.trim_end().to_string(),
-            commented,
+            text_start: line.chars().count() - text.chars().count(),
+            kind,
+            opens_block,
             bullet: bullet_width(text),
+        }
+    }
+
+    /// What the lines a paragraph from this line wraps onto start with.
+    fn rest_leader(&self) -> String {
+        match self.bullet {
+            Some(bullet) => format!("{}{}", self.next_leader, " ".repeat(bullet)),
+            None => self.next_leader.clone(),
         }
     }
 }
@@ -173,7 +220,7 @@ fn words(text: &str) -> impl Iterator<Item = Word> + '_ {
 struct Paragraph {
     first_leader: String,
     rest_leader: String,
-    commented: bool,
+    kind: Kind,
     words: Vec<Word>,
 }
 
@@ -204,9 +251,16 @@ impl Paragraph {
 mod tests {
     use super::*;
 
+    fn markers(comment: Option<&str>) -> CommentMarkers {
+        CommentMarkers {
+            line: comment.map(String::from),
+            c_block: comment == Some("//"),
+        }
+    }
+
     fn format(text: &str, width: usize, comment: Option<&str>) -> String {
         let lines: Vec<String> = text.split('\n').map(String::from).collect();
-        format_lines(&lines, width, comment, 4).join("\n")
+        format_lines(&lines, width, &markers(comment), 4).join("\n")
     }
 
     #[test]
@@ -263,14 +317,17 @@ mod tests {
     #[test]
     fn continuing_a_line_as_its_typed() {
         assert_eq!(
-            continuation("    // some text", Some("//")),
+            continuation("    // some text", &markers(Some("//"))),
             (7, "    // ".into(), true)
         );
         assert_eq!(
-            continuation("  - item text", None),
+            continuation("  - item text", &markers(None)),
             (2, "    ".into(), false)
         );
-        assert_eq!(continuation("plain", None), (0, String::new(), false));
+        assert_eq!(
+            continuation("plain", &markers(None)),
+            (0, String::new(), false)
+        );
     }
 
     #[test]
@@ -307,5 +364,50 @@ mod tests {
             format("a supercalifragilistic b", 10, None),
             "a\nsupercalifragilistic\nb"
         );
+    }
+
+    #[test]
+    fn block_comments_middle_lines_are_leaders() {
+        let c = Some("//");
+        assert_eq!(
+            format("/**\n * one two three\n * four five\n */", 12, c),
+            "/**\n * one two\n * three\n * four five\n */",
+            "the opening and closing lines stay"
+        );
+        assert_eq!(
+            format("  /* one two three four", 12, c),
+            "  /* one two\n   * three\n   * four",
+            "text after /* carries on as ` * ` lines"
+        );
+        assert_eq!(
+            format("/* one\n * two\n *\n * three", 80, c),
+            "/* one two\n *\n * three",
+            "a `*` alone separates paragraphs"
+        );
+        assert_eq!(
+            format(" * - one two three", 9, c),
+            " * - one\n *   two\n *   three"
+        );
+        assert_eq!(
+            format("// a\n * b\n*ptr = c;\nd", 80, c),
+            "// a\n * b\n*ptr = c; d",
+            "line comments, block comments and code don't join"
+        );
+        assert_eq!(
+            format("* one\n* two", 80, None),
+            "* one\n* two",
+            "without C comments, `*` is a list item"
+        );
+    }
+
+    #[test]
+    fn continuing_a_block_comment_as_its_typed() {
+        let c = markers(Some("//"));
+        assert_eq!(
+            continuation("   * some text", &c),
+            (5, "   * ".into(), true)
+        );
+        assert_eq!(continuation("/** some text", &c), (4, " * ".into(), true));
+        assert_eq!(continuation("*ptr = 1", &c), (0, String::new(), false));
     }
 }

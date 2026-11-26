@@ -106,7 +106,7 @@ iTerm2, set Profiles → Keys → Left Option key to "Esc+" for the `Alt` keys.
 | Normal  | `=` + motion, `==` | Re-indent lines by the language's rules (`gg=G` for the whole file; visual `=`) |
 | Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |
 | Normal  | `gcc`, `gc` + motion (`gcap`, `gcj`), visual `gc` | Toggle comments on those lines, using the file's language |
-| Normal  | `gq` + motion (`gqip`, `gqq`), visual `gq`; `gw` | Reflow those lines to `text-width` (79), keeping indentation, comment markers and list items; `gw` leaves the cursor put. `auto-wrap` breaks lines as you type past it |
+| Normal  | `gq` + motion (`gqip`, `gqq`), visual `gq`; `gw` | Reflow those lines to `text-width` (79), keeping indentation, comment markers (` * ` in `/* */` comments too) and list items; `gw` leaves the cursor put. `auto-wrap` breaks lines as you type past it |
 | Normal  | `~` | Toggle case under the cursor and move on |
 | Normal  | `<C-a>` `<C-x>` (`5<C-a>`) | Add to / take from the number under or after the cursor: decimal (`-` signs, leading zeros kept), `0x` hex, `0b` binary |
 | Visual  | `<C-a>` `<C-x>`, `g<C-a>` `g<C-x>` | The same for the first number on each selected line; the `g` forms make a sequence (+1, +2, +3...) |

@@ -43,9 +43,9 @@
 //! `formatoptions` `c`/`t`) does the same as you type: after a non-blank char
 //! lands past `text-width`, `Editor::auto_wrap` breaks the line at the last
 //! space within the width, starting the new line with
-//! `core::format::continuation` (the leader `gq` would use), and moves the
-//! cursor with the text. It's part of the insert session, so one undo and `.`
-//! replays the keys, which wrap the same way.
+//! `core::format::continuation` (the leader `gq` would use, ` * ` in a C block
+//! comment), and moves the cursor with the text. It's part of the insert
+//! session, so one undo and `.` replays the keys, which wrap the same way.
 
 use std::ops::RangeInclusive;
 
@@ -211,17 +211,26 @@ impl Editor {
         self.document.set_cursor(Position::new(cursor.row, col));
     }
 
+    /// The comment markers that are leaders for `gq` and auto-wrap in this
+    /// buffer's language: its line comment, and C's `/* */` middle lines.
+    fn comment_markers(&self) -> crate::core::format::CommentMarkers {
+        let language = self.language_of(&self.document);
+        crate::core::format::CommentMarkers {
+            line: language
+                .and_then(|language| self.languages.comment_tokens(language))
+                .filter(|tokens| tokens.end.is_none())
+                .map(|tokens| tokens.start.trim().to_string()),
+            c_block: language.is_some_and(|language| self.languages.has_c_comments(language)),
+        }
+    }
+
     /// `gq` (`gw` with `keep_cursor`): reflows lines `first` to `last` to
     /// `text-width` (see [`format_lines`](crate::core::format::format_lines)),
-    /// keeping indentation and the language's line-comment marker. The
+    /// keeping indentation and the language's comment markers. The
     /// cursor goes to the last line's first non-blank, as in Vim, or with
     /// `keep_cursor` stays where it was.
     pub fn format_text(&mut self, first: usize, last: usize, keep_cursor: bool) {
-        let comment = self
-            .language_of(&self.document)
-            .and_then(|language| self.languages.comment_tokens(language))
-            .filter(|tokens| tokens.end.is_none())
-            .map(|tokens| tokens.start.trim().to_string());
+        let markers = self.comment_markers();
         // 0 means Vim's fallback for `gq`, 79.
         let width = match self.options.text_width {
             0 => 79,
@@ -233,8 +242,7 @@ impl Editor {
         let lines: Vec<String> = (first..=last)
             .map(|row| doc.buffer().line(row).into_owned())
             .collect();
-        let formatted =
-            crate::core::format::format_lines(&lines, width, comment.as_deref(), tab_width);
+        let formatted = crate::core::format::format_lines(&lines, width, &markers, tab_width);
         if formatted != lines {
             let end = doc.buffer().line_end(last);
             doc.delete(Position::new(first, 0), end);
@@ -252,8 +260,9 @@ impl Editor {
     /// After `c` is typed in insert mode, with `auto-wrap`: if the line now
     /// runs past `text-width`, breaks it at the last space within it, the
     /// new line starting with the same leader (indentation, comment marker,
-    /// list item alignment) as `gq` would give it. With `comments`, only
-    /// comment lines. A word too long to fit is left alone.
+    /// ` * ` in a `/* */` comment, list item alignment) as `gq` would give
+    /// it. With `comments`, only comment lines. A word too long to fit is
+    /// left alone.
     pub(super) fn auto_wrap(&mut self, c: char) {
         use crate::config::AutoWrap;
         if self.options.auto_wrap == AutoWrap::Off || c.is_whitespace() {
@@ -269,13 +278,8 @@ impl Editor {
         if crate::core::columns::display_col(&line, cursor.col, tab) <= width {
             return;
         }
-        let comment = self
-            .language_of(&self.document)
-            .and_then(|language| self.languages.comment_tokens(language))
-            .filter(|tokens| tokens.end.is_none())
-            .map(|tokens| tokens.start.trim().to_string());
-        let (text_start, leader, commented) =
-            crate::core::format::continuation(&line, comment.as_deref());
+        let markers = self.comment_markers();
+        let (text_start, leader, commented) = crate::core::format::continuation(&line, &markers);
         if self.options.auto_wrap == AutoWrap::Comments && !commented {
             return;
         }

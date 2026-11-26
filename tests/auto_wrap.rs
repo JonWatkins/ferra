@@ -82,3 +82,17 @@ fn one_undo_takes_back_the_insert() {
     keys(&mut app, "ione two three four<Esc>u");
     assert_eq!(text(&app), "");
 }
+
+#[test]
+fn block_comments_wrap_onto_star_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.rs");
+    fs::write(&path, "fn f() {\n    /**\n     *\n     */\n}\n").unwrap();
+    let mut app = wrapping("comments", 24);
+    app.open(&path);
+    keys(&mut app, "jjA a comment that runs past the width<Esc>");
+    assert_eq!(
+        text(&app),
+        "fn f() {\n    /**\n     * a comment that\n     * runs past the\n     * width\n     */\n}"
+    );
+}
