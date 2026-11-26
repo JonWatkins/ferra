@@ -144,10 +144,21 @@ impl std::fmt::Debug for LspFormatter {
 }
 
 impl crate::editor::lsp::Formatter for LspFormatter {
-    fn format(&mut self, editor: &mut Editor, quiet: bool) -> Result<(), String> {
+    fn format(
+        &mut self,
+        editor: &mut Editor,
+        quiet: bool,
+        lines: Option<(usize, usize)>,
+    ) -> Result<(), String> {
         // Only ever called from a command, never while drawing, so the
         // app isn't using it.
-        self.0.borrow_mut().format(editor, quiet)
+        self.0.borrow_mut().format(editor, quiet, lines)
+    }
+
+    fn formats_ranges(&self, editor: &Editor) -> bool {
+        self.0
+            .try_borrow()
+            .is_ok_and(|lsp| lsp.formats_ranges(editor))
     }
 }
 

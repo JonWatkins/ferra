@@ -28,8 +28,10 @@ struct Seen {
     /// `workspace/configuration` request.
     settings: Value,
     configuration: Value,
-    /// The options a formatting request came with.
+    /// The options a formatting request came with, and the range a
+    /// range formatting one was for.
     format_options: Value,
+    format_range: Value,
     /// The range the last code action request was for, and ferra's
     /// answer to the server's `workspace/applyEdit`.
     action_range: Value,
@@ -118,6 +120,10 @@ fn serve(
                         "referencesProvider": features,
                         "completionProvider": {"triggerCharacters": ["."]},
                         "documentFormattingProvider": features,
+                        // Unless the project says it formats only whole
+                        // files (a `whole-only` file).
+                        "documentRangeFormattingProvider":
+                            features && !root.join("whole-only").exists(),
                         "renameProvider": rename,
                         "documentSymbolProvider": features,
                         "documentHighlightProvider": features,
@@ -632,6 +638,21 @@ fn serve(
                     continue; // Never answers.
                 }
                 reply(&mut output, Value::Array(format_edits(&text)));
+            }
+            "textDocument/rangeFormatting" => {
+                let text = seen.lock().unwrap().text.clone();
+                seen.lock().unwrap().format_range = params["range"].clone();
+                let (first, last) = (
+                    params["range"]["start"]["line"].as_u64().unwrap(),
+                    params["range"]["end"]["line"].as_u64().unwrap(),
+                );
+                let edits = format_edits(&text)
+                    .into_iter()
+                    .filter(|e| {
+                        (first..=last).contains(&e["range"]["start"]["line"].as_u64().unwrap())
+                    })
+                    .collect();
+                reply(&mut output, Value::Array(edits));
             }
             "completionItem/resolve" => {
                 let mut item = params.clone();
@@ -1381,6 +1402,68 @@ fn format_makes_the_servers_edits_as_one_change() {
     assert_eq!(options, json!({"tabSize": 4, "insertSpaces": true}));
     keys(&mut app, "u");
     assert_eq!(text(&app), "let  x =   1;  \nfine\n    y  =  2", "one undo");
+}
+
+#[test]
+fn format_with_a_range_formats_only_its_lines() {
+    let (_dir, mut app, seen) = with_server("a  =  1\nb  =  2\nc  =  3\nd  =  4\n", true);
+    ready(&mut app);
+    keys(&mut app, "jVj:format<CR>");
+    assert_eq!(text(&app), "a  =  1\nb = 2\nc = 3\nd  =  4");
+    let range = seen.lock().unwrap().format_range.clone();
+    assert_eq!(
+        range,
+        json!({"start": {"line": 1, "character": 0}, "end": {"line": 2, "character": 7}})
+    );
+    keys(&mut app, ":4format<CR>");
+    assert_eq!(text(&app), "a  =  1\nb = 2\nc = 3\nd = 4");
+    keys(&mut app, "u");
+    assert_eq!(text(&app), "a  =  1\nb = 2\nc = 3\nd  =  4", "one undo");
+}
+
+#[test]
+fn gq_has_a_server_that_formats_ranges_format_its_lines() {
+    let (_dir, mut app, seen) = with_server("a  =  1\nb  =  2\nc  =  3\n", true);
+    ready(&mut app);
+    keys(&mut app, "jgqj");
+    assert_eq!(
+        text(&app),
+        "a  =  1\nb = 2\nc = 3",
+        "the server's, not a reflow"
+    );
+    assert_eq!(seen.lock().unwrap().format_range["start"]["line"], 1);
+    assert_eq!(common::cursor(&app), (1, 0), "at the start, as Neovim");
+    keys(&mut app, "u");
+    assert_eq!(text(&app), "a  =  1\nb  =  2\nc  =  3", "one undo");
+    // `gw` is always ferra's own reflow.
+    keys(&mut app, "ggjgwj");
+    assert_eq!(text(&app), "a  =  1\nb = 2 c = 3");
+}
+
+#[test]
+fn gq_reflows_without_a_server_that_formats_ranges() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("whole-only"), "").unwrap();
+    let (_dir, mut app, _) = with_server_at(dir, app(), "a  b\nc\n", true);
+    ready(&mut app);
+    keys(&mut app, "gqj");
+    assert_eq!(text(&app), "a b c");
+}
+
+#[test]
+fn a_server_that_formats_only_whole_files_says_so_for_a_range() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("whole-only"), "").unwrap();
+    let (_dir, mut app, _) = with_server_at(dir, app(), "a  =  1\nb  =  2\n", true);
+    ready(&mut app);
+    keys(&mut app, ":2format<CR>");
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "rust-analyzer doesn't format part of a file"
+    );
+    assert_eq!(text(&app), "a  =  1\nb  =  2");
+    keys(&mut app, ":format<CR>");
+    assert_eq!(text(&app), "a = 1\nb = 2", "the whole file it does");
 }
 
 #[test]

@@ -427,17 +427,38 @@ impl Client {
 
     /// Asks the server to format `request`'s document, indenting with
     /// `tab_size` columns, in spaces or tabs. Returns the request's id.
-    pub fn request_format(&mut self, request: LspRequest, tab_size: usize, spaces: bool) -> i64 {
+    pub fn request_format(
+        &mut self,
+        request: LspRequest,
+        tab_size: usize,
+        spaces: bool,
+        range: Option<(Value, Value)>,
+    ) -> i64 {
         let uri = self
             .documents
             .get(&request.document)
             .map(|s| s.uri.clone())
             .unwrap_or_default();
-        let params = json!({
+        let mut params = json!({
             "textDocument": { "uri": uri },
             "options": { "tabSize": tab_size, "insertSpaces": spaces },
         });
-        self.request("textDocument/formatting", params, Pending::Feature(request))
+        let method = match range {
+            Some((start, end)) => {
+                params["range"] = json!({ "start": start, "end": end });
+                "textDocument/rangeFormatting"
+            }
+            None => "textDocument/formatting",
+        };
+        self.request(method, params, Pending::Feature(request))
+    }
+
+    /// Whether it formats part of a file (`documentRangeFormattingProvider`).
+    pub fn formats_ranges(&self) -> bool {
+        !matches!(
+            self.capabilities.get("documentRangeFormattingProvider"),
+            None | Some(Value::Null | Value::Bool(false))
+        )
     }
 
     fn notify(&mut self, method: &str, params: Value) {

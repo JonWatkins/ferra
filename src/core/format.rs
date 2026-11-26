@@ -12,7 +12,9 @@
 //! itself. The lines are replaced as one change; the cursor goes to the last
 //! one's first non-blank, or with `gw` stays where it was. `gqq`, `gqgq` and
 //! `gwgw` come from operator-pending `q`, `gq` and `gw` bound to
-//! `current_line`.
+//! `current_line`. In a buffer whose language server formats ranges, `gq`
+//! asks it instead (Neovim's `formatexpr` default: `Editor::apply_operator_over`
+//! sends the lines to `:format`), and `gw` is always this reflow.
 //!
 //! - **Comment markers** (`CommentMarkers`) are the language's line comment
 //!   (`//`, `#`...) and, in languages with C's comments, the ` * ` of a
