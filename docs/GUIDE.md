@@ -1281,7 +1281,9 @@ in view (`highlight-references = false` under `[editor]` turns it off).
 Inlay hints show what a server knows but the code doesn't say, in grey in
 the text: variables' types, parameters' names, closing labels (`let
 files: Vec<PathBuf> = cli::parse(args: …)`). They're asked for once
-you've paused typing, move with your edits in between, and take room like
+you've paused typing, for the lines on screen and a screen either side
+(and again as you scroll further), so a huge file is no slower; they
+move with your edits in between, and take room like
 text: lines wrap around them, and the cursor, clicks and `gj`/`gk` step
 over them. `:inlay_hints` (or `inlay-hints = false`) turns them off; their
 colours are `ui.virtual.inlay-hint.type` and `.parameter`.

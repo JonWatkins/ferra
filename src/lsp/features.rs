@@ -404,12 +404,12 @@ impl Lsp {
                 }
                 continue;
             }
-            if request.feature() == LspFeature::InlayHint {
-                // The whole buffer.
+            if let LspQuery::InlayHint { first, last } = request.query {
+                // The lines asked about, start to end.
                 let buffer = document.buffer();
-                let last = buffer.line_count() - 1;
-                let start =
-                    convert::to_lsp(buffer, crate::core::Position::new(0, 0), client.encoding);
+                let last = last.min(buffer.line_count() - 1);
+                let first = crate::core::Position::new(first.min(last), 0);
+                let start = convert::to_lsp(buffer, first, client.encoding);
                 let end = convert::to_lsp(buffer, buffer.line_end(last), client.encoding);
                 client.request_inlay_hints(request, start, end);
                 continue;

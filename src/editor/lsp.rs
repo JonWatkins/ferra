@@ -248,7 +248,12 @@ pub enum LspQuery {
     },
     Outline,
     DocumentHighlight,
-    InlayHint,
+    /// The inlay hints on lines `first..=last` (what's on screen, and
+    /// some way either side).
+    InlayHint {
+        first: usize,
+        last: usize,
+    },
     /// The functions that call the one at the place; `found` once the
     /// server's found that function, for asking for its calls.
     Callers {
@@ -287,7 +292,7 @@ impl LspQuery {
             LspQuery::WorkspaceSymbols { .. } => LspFeature::WorkspaceSymbols,
             LspQuery::Outline => LspFeature::Outline,
             LspQuery::DocumentHighlight => LspFeature::DocumentHighlight,
-            LspQuery::InlayHint => LspFeature::InlayHint,
+            LspQuery::InlayHint { .. } => LspFeature::InlayHint,
             LspQuery::Callers { .. } => LspFeature::Callers,
             LspQuery::Callees { .. } => LspFeature::Callees,
             LspQuery::MoveFile { .. } => LspFeature::MoveFile,
@@ -309,7 +314,6 @@ impl LspQuery {
             LspFeature::DocumentSymbols => LspQuery::DocumentSymbols,
             LspFeature::Outline => LspQuery::Outline,
             LspFeature::DocumentHighlight => LspQuery::DocumentHighlight,
-            LspFeature::InlayHint => LspQuery::InlayHint,
             LspFeature::Callers => LspQuery::Callers { found: false },
             LspFeature::Callees => LspQuery::Callees { found: false },
             _ => return None,
@@ -857,14 +861,19 @@ impl Editor {
         Ok(())
     }
 
-    /// A server's inlay hints for the buffer `request` was about, if its
-    /// text hasn't changed since (else new ones are on their way).
+    /// A server's inlay hints for the lines `request` was about, in place
+    /// of those shown there, if the text hasn't changed since (else new
+    /// ones are on their way). Hints on other lines stay (moved along with
+    /// any edits), to be asked for again when they're in sight.
     pub fn set_inlay_hints(&mut self, request: &LspRequest, hints: Vec<VirtualText>) {
+        let LspQuery::InlayHint { first, last } = request.query else {
+            return;
+        };
         let Some(document) = self.document_by_id_mut(request.document) else {
             return;
         };
         if document.buffer().edit_seq() == request.edit_seq {
-            document.set_virtual_text("inlay", hints);
+            document.set_virtual_text_on("inlay", first..=last, hints);
         }
     }
 

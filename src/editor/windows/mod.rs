@@ -596,6 +596,22 @@ impl Editor {
         Some((document, Position::new(row, col)))
     }
 
+    /// The first and last lines (at least partly) on screen in the active
+    /// window, as the next draw will show them; `None` before it has any
+    /// rows.
+    pub fn shown_lines(&self) -> Option<(usize, usize)> {
+        let windows = &self.windows;
+        let active = windows.active();
+        let height = windows.height(active);
+        if height == 0 {
+            return None;
+        }
+        let document = &self.document;
+        let top = windows.view_top(active, document, document.cursor(), &self.options);
+        let layout = TextLayout::new(windows.width(active), document, &self.options);
+        Some((top.line, layout.bottom(document, top, height)))
+    }
+
     /// Resizes the active window's height (`Horizontal`) or width
     /// (`Vertical`); `want` maps the current size and the most it can be to
     /// the size wanted. Like Vim, does nothing (returning `false`) when no

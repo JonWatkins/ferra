@@ -130,6 +130,21 @@ impl Document {
         self.virtual_text.sort_by_key(|v| v.at);
     }
 
+    /// Replaces the virtual text from `source` on `lines` with the
+    /// `pieces` there (any elsewhere are left out), keeping the rest.
+    pub fn set_virtual_text_on(
+        &mut self,
+        source: &str,
+        lines: std::ops::RangeInclusive<usize>,
+        pieces: Vec<VirtualText>,
+    ) {
+        self.virtual_text
+            .retain(|v| v.source != source || !lines.contains(&v.at.row));
+        self.virtual_text
+            .extend(pieces.into_iter().filter(|v| lines.contains(&v.at.row)));
+        self.virtual_text.sort_by_key(|v| v.at);
+    }
+
     pub fn clear_virtual_text(&mut self, source: &str) {
         self.virtual_text.retain(|v| v.source != source);
     }
@@ -375,5 +390,30 @@ mod tests {
         assert_eq!(doc.virtual_text()[0].at, Position::new(2, 5));
         doc.set_virtual_text("inlay", vec![]);
         assert!(doc.virtual_text().is_empty());
+    }
+
+    #[test]
+    fn virtual_text_on_some_lines_replaces_only_those() {
+        let mut doc = Document::with_text("a\nb\nc\nd");
+        let blame = VirtualText {
+            source: "blame".into(),
+            ..hint(1, 0, "you")
+        };
+        doc.set_virtual_text("blame", vec![blame]);
+        doc.set_virtual_text(
+            "inlay",
+            vec![hint(0, 0, "0"), hint(1, 0, "1"), hint(3, 0, "3")],
+        );
+        doc.set_virtual_text_on(
+            "inlay",
+            1..=2,
+            vec![hint(0, 0, "past the lines"), hint(2, 0, "2")],
+        );
+        let left: Vec<(usize, &str)> = doc
+            .virtual_text()
+            .iter()
+            .map(|v| (v.at.row, v.text.as_str()))
+            .collect();
+        assert_eq!(left, [(0, "0"), (1, "you"), (2, "2"), (3, "3")]);
     }
 }
