@@ -10,7 +10,11 @@
 //!   word's definition, or opens the URL there.
 //! - In the sidebar, a click gives it focus: on a tab it shows that view;
 //!   on a line it selects it, and in the file tree opens the file or folder.
-//! - A click in the terminal panel gives it focus.
+//! - A click in the terminal panel gives it focus. A program there that
+//!   asks for the mouse (Vim, htop, tmux...) gets it over its screen:
+//!   clicks, drags, the wheel and moves, as its mode says, a press giving
+//!   the panel focus too; the rest of a drag goes to it wherever the
+//!   pointer goes.
 //! - In the picker or a plugin's list popup, a click chooses the line; in
 //!   the find box, the toggles flip and the fields take the cursor; in an
 //!   input box, the field does. A click outside one of these closes it
@@ -101,6 +105,9 @@ pub(super) enum Drag {
     Agent,
     /// Resizing the terminal panel (its title row), whose bottom is here.
     Panel { bottom: u16 },
+    /// A press given to the program in the terminal panel: its drag and
+    /// release go there too.
+    Terminal,
     /// Resizing the terminal panel's list of shells (the line left of
     /// it), whose right edge is here.
     ShellList { right: u16 },
@@ -131,8 +138,14 @@ impl App {
         }
         let at = Position::new(event.column, event.row);
         self.pointer_at = Some(at);
+        if event.kind != MouseEventKind::Moved && self.terminal_mouse(event, at) {
+            self.after_popup_key();
+            self.dispatch_events();
+            return;
+        }
         match event.kind {
             MouseEventKind::Moved => {
+                self.terminal_mouse(event, at);
                 self.pointer = self.pointer_for(at);
                 // Ctrl (or ⌥, as for Ctrl+click) held: peek at the
                 // definition.
@@ -190,6 +203,67 @@ impl App {
         self.dispatch_events();
     }
 
+    /// The mouse over the terminal panel's screen, for its program, if it
+    /// asked for it (and no box has focus): a press gives the panel focus
+    /// too, and the drag and release after it go there wherever they are
+    /// (at the screen's nearest cell). Returns whether it went there.
+    fn terminal_mouse(&mut self, event: MouseEvent, at: Position) -> bool {
+        use crate::terminal::{Mouse, MouseAction, MouseButton as B};
+        let screen = Target::Panel(PanelPart::Terminal);
+        let held = self.dragging == Some(Drag::Terminal);
+        if !held
+            && (self.target_at(at).as_ref() != Some(&screen)
+                || !self.clicks_allowed()
+                || !self.editor.terminal_wants_mouse())
+        {
+            return false;
+        }
+        let button = |b: MouseButton| match b {
+            MouseButton::Left => B::Left,
+            MouseButton::Middle => B::Middle,
+            MouseButton::Right => B::Right,
+        };
+        let action = match event.kind {
+            MouseEventKind::Down(b) => MouseAction::Press(button(b)),
+            MouseEventKind::Up(b) => MouseAction::Release(button(b)),
+            MouseEventKind::Drag(b) => MouseAction::Drag(button(b)),
+            MouseEventKind::Moved => MouseAction::Move,
+            MouseEventKind::ScrollUp => MouseAction::WheelUp,
+            MouseEventKind::ScrollDown => MouseAction::WheelDown,
+            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => return held,
+        };
+        if matches!(action, MouseAction::Release(_)) {
+            self.dragging = None;
+        }
+        let Some(area) = self.screen_map.area(&screen).filter(|a| !a.is_empty()) else {
+            return held;
+        };
+        if let MouseAction::Press(_) = action {
+            self.hover_wait = None;
+            self.editor.end_any_hover();
+            if self.editor.mode() != Mode::Popup && self.editor.popup().is_some() {
+                self.editor.close_popup();
+            }
+            self.input.reset();
+            if self.editor.mode() != Mode::Terminal
+                && let Err(error) = self.editor.focus_terminal()
+            {
+                self.editor.set_message(Message::error(error));
+            }
+            self.dragging = Some(Drag::Terminal);
+        }
+        let mouse = Mouse {
+            action,
+            row: at.y.clamp(area.y, area.bottom() - 1) - area.y,
+            col: at.x.clamp(area.x, area.right() - 1) - area.x,
+            shift: event.modifiers.contains(KeyModifiers::SHIFT),
+            alt: event.modifiers.contains(KeyModifiers::ALT),
+            ctrl: event.modifiers.contains(KeyModifiers::CONTROL),
+        };
+        self.editor.terminal_mouse(mouse);
+        true
+    }
+
     /// What's on top at `at`, as the last frame drew it.
     pub fn target_at(&self, at: Position) -> Option<Target> {
         self.screen_map.at(at).map(|region| region.target.clone())
@@ -197,8 +271,13 @@ impl App {
 
     /// The pointer's shape over `at`: a CSS cursor name.
     pub fn pointer_for(&self, at: Position) -> &'static str {
-        self.target_at(at)
-            .map_or("default", |target| target.pointer())
+        let target = self.target_at(at);
+        // A program with the mouse: an arrow, as xterm shows.
+        if target == Some(Target::Panel(PanelPart::Terminal)) && self.editor.terminal_wants_mouse()
+        {
+            return "default";
+        }
+        target.map_or("default", |target| target.pointer())
     }
 
     /// The drag an edge starts: the sidebar's, the agent sidebar's, the
@@ -918,7 +997,7 @@ impl App {
                     .resize_window(axis, |_, most| want.clamp(1, most.max(1)));
                 self.editor.focus_window(active);
             }
-            Some(Drag::Tab { .. } | Drag::Tree { .. }) | None => {}
+            Some(Drag::Tab { .. } | Drag::Tree { .. } | Drag::Terminal) | None => {}
         }
     }
 

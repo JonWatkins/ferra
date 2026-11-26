@@ -136,7 +136,8 @@ pub enum PanelPart {
     Title,
     /// A tab on the title row.
     Tab(PanelTab),
-    /// The terminal's rows, while it's the tab shown.
+    /// The terminal's screen (the cells its program draws), while it's
+    /// the tab shown.
     Terminal,
     /// A shell's row in the terminal's list (which, from 0).
     Shell(usize),

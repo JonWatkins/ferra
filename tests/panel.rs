@@ -284,3 +284,63 @@ fn the_list_of_shells_is_resized_by_dragging_its_line() {
     let rows = render(&mut app, W, H).rows;
     assert_eq!(column(&rows[y], "│ $ sh"), W / 2 - 1, "half of it");
 }
+
+#[test]
+fn a_program_in_the_terminal_that_asks_for_the_mouse_gets_it() {
+    let dir = tempfile::tempdir().unwrap();
+    // Asks for presses, releases and drags, in SGR's encoding, then shows
+    // what it reads (`^[` for Esc).
+    let script = dir.path().join("mouse.sh");
+    std::fs::write(
+        &script,
+        "printf '\\033[?1002h\\033[?1006hready\\n'; stty -echo raw; cat -v\n",
+    )
+    .unwrap();
+    let mut app = common::app_with_config("[editor]\nshell = \"/bin/sh\"\n");
+    let mouse = |app: &mut App, kind: MouseEventKind, x: u16, y: u16| {
+        app.handle_mouse(MouseEvent {
+            kind,
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        });
+    };
+    let read = |app: &App| app.editor().terminal_panel().unwrap().text_lines().concat();
+    let wait_for = |app: &mut App, what: &str| {
+        let start = std::time::Instant::now();
+        while !read(app).contains(what) && start.elapsed() < std::time::Duration::from_secs(3) {
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(read(app).contains(what), "{what:?} in {:?}", read(app));
+    };
+    keys(&mut app, ":terminal<CR>");
+    keys(&mut app, &format!("sh {}<CR>", script.display()));
+    wait_for(&mut app, "ready");
+    keys(&mut app, "<C-\\><C-n>");
+    assert_eq!(app.editor().mode(), Mode::Normal);
+
+    // The shell's screen starts a column in, under the title row.
+    let rows = render(&mut app, W, H).rows;
+    let title = rows.iter().rposition(|r| r.contains("TERMINAL")).unwrap() as u16;
+    let (x, y) = (1 + 4, title + 1 + 2);
+
+    // A click: the panel gets focus, and the program the press.
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    assert_eq!(app.editor().mode(), Mode::Terminal);
+    wait_for(&mut app, "^[[<0;5;3M");
+
+    // Dragged off the top, it's still the program's (at its top row).
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), x, 0);
+    wait_for(&mut app, "^[[<32;5;1M");
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), x, 0);
+    wait_for(&mut app, "^[[<0;5;1m");
+
+    // The wheel goes to it too, rather than scrolling the history.
+    mouse(&mut app, MouseEventKind::ScrollDown, x, y);
+    wait_for(&mut app, "^[[<65;5;3M");
+    assert_eq!(
+        app.editor().terminal_panel().unwrap().screen().scrollback(),
+        0
+    );
+}

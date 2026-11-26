@@ -438,10 +438,12 @@ With `mouse = true` (the default):
   click** selects the word, **triple click** the line, and **dragging**
   selects (visual mode, so `d`, `y`, `c`... act on it).
 - **The wheel** scrolls what's under the pointer: a window, the sidebar,
-  the terminal panel's history, the picker or a popup.
+  the terminal panel's history (unless its program takes the mouse), the
+  picker or a popup.
 - In the **sidebar**, a click on a file opens it, on a folder opens or
   closes it, and on a tab shows that view. A click on the **terminal
-  panel** goes to it.
+  panel** goes to it, and a program there that asks for the mouse (Vim,
+  `htop`, tmux, lazygit) gets its clicks, drags and wheel.
 - In the **picker** and plugins' list popups, a click chooses. In a
   question (`y move it   n cancel`, `s save   d don't save   Esc
   cancel`), a click on a key or the words after it is that key. In the
@@ -690,7 +692,11 @@ icons. With two or more shells, they're listed down the panel's right
 side, each with its title, as VS Code's tabs; click one to show it, and
 drag the line left of the list to resize it (`terminal-list-width`, 22
 columns, at most half the panel).
-Colours, full-screen programs (`htop`, `vim`, `less`) and pastes work.
+Colours, full-screen programs (`htop`, `vim`, `less`) and pastes work,
+and so does the mouse in a program that asks for it (`:set mouse=a` in
+Vim, `htop`, tmux with `mouse on`): clicks, drags and the wheel over its
+screen go to it, a click giving the panel focus too, and the pointer's an
+arrow there. Until it asks, the wheel scrolls the panel's history.
 While the panel has focus, the cursor takes the shape its program asks
 for (Vim's bar in insert mode), else `cursor-shape.terminal`. A program's
 bell is ignored, as Neovim's `belloff=all` ignores it; with
