@@ -44,6 +44,8 @@ struct Seen {
     /// queries for the project's symbols.
     signature_context: Value,
     symbol_queries: Vec<String>,
+    /// The lines the last inlay hint request was for.
+    hint_lines: (u64, u64),
     /// How many times the server has been started.
     starts: usize,
 }
@@ -485,11 +487,20 @@ fn serve(
                 });
                 reply(&mut output, result.into());
             }
-            // `: i32` after each `let name`.
+            // `: i32` after each `let name`, on the lines asked about.
             "textDocument/inlayHint" => {
+                let range = &params["range"];
+                let lines = (
+                    range["start"]["line"].as_u64().unwrap(),
+                    range["end"]["line"].as_u64().unwrap(),
+                );
+                seen.lock().unwrap().hint_lines = lines;
                 let text = seen.lock().unwrap().text.clone();
                 let mut hints = Vec::new();
                 for (line, line_text) in text.split('\n').enumerate() {
+                    if !(lines.0..=lines.1).contains(&(line as u64)) {
+                        continue;
+                    }
                     if let Some(rest) = line_text.strip_prefix("let ") {
                         let name: String =
                             rest.chars().take_while(|c| c.is_alphanumeric()).collect();
@@ -2297,6 +2308,38 @@ fn inlay_hints_show_in_the_text_and_follow_edits() {
     assert!(screen.rows[1].contains("let x = 1;"), "{:?}", screen.rows);
     keys(&mut app, ":inlay_hints<CR>");
     until(&mut app, |a| hints(a).len() == 2);
+}
+
+#[test]
+fn inlay_hints_are_asked_for_around_the_screen_and_again_after_scrolling() {
+    let text: String = (0..500).map(|i| format!("let v{i} = {i};\n")).collect();
+    let (_dir, mut app, seen) = with_server(&text, true);
+    render(&mut app, 40, 12);
+    ready(&mut app);
+    until(&mut app, |a| !hints(a).is_empty());
+    let (first, last) = seen.lock().unwrap().hint_lines;
+    let shown = app.editor().shown_lines().unwrap();
+    let screen = (shown.1 - shown.0 + 1) as u64;
+    assert_eq!(first, 0);
+    assert_eq!(last, shown.1 as u64 + screen, "a screen's worth below");
+    assert_eq!(hints(&app).len() as u64, last + 1, "none past those lines");
+
+    // A little way down: they're there already, and not asked again.
+    let asked = seen.lock().unwrap().methods.len();
+    keys(&mut app, "<C-e><C-e>");
+    render(&mut app, 40, 12);
+    app.update();
+    assert_eq!(seen.lock().unwrap().hint_lines, (first, last));
+    assert_eq!(seen.lock().unwrap().methods.len(), asked);
+
+    // Far down: asked for there (at once, as the text hasn't changed),
+    // and the hints above are kept.
+    keys(&mut app, "300G");
+    render(&mut app, 40, 12);
+    until(&mut app, |a| hints(a).iter().any(|h| h.0 == 299));
+    let (first, last) = seen.lock().unwrap().hint_lines;
+    assert!(first < 299 && 299 < last && first > 0, "{first}..{last}");
+    assert!(hints(&app).iter().any(|h| h.0 == 0), "the first ones stay");
 }
 
 /// Draws, as the event loop does (which asks for the outline), until

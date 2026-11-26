@@ -13,13 +13,17 @@
 //! when it also sends the edits made since. Diagnostics go to the editor
 //! ([`Editor::set_diagnostics`]).
 //!
-//! Inlay hints (`LspQuery::InlayHint`) are asked for the whole buffer once its
-//! text has been still for 300 ms and a ready server has it
-//! (`Lsp::ask_for_inlay_hints`), again after each change and when the server
-//! sends `workspace/inlayHint/refresh` (rust-analyzer does once it's indexed).
-//! The screen keeps an answer only for the text it was asked about
-//! (`Editor::set_inlay_hints`). Labels made of parts are joined, and
-//! `paddingLeft`/`paddingRight` become spaces.
+//! Inlay hints (`LspQuery::InlayHint`) are asked for the lines on screen and a
+//! screen's worth either side, once the text has been still for 300 ms and a
+//! ready server has it (`Lsp::ask_for_inlay_hints`), so a huge file costs no
+//! more than a small one. They're asked again after each change, when the view
+//! moves past those lines (at once: the text hasn't changed), and when the
+//! server sends `workspace/inlayHint/refresh` (rust-analyzer does once it's
+//! indexed). An answer replaces the hints on the lines it was for, and only if
+//! the text is still what it was asked about (`Editor::set_inlay_hints`); hints
+//! elsewhere stay, moved along with edits, until those lines are asked about
+//! again, so answers arriving out of order don't undo each other. Labels made
+//! of parts are joined, and `paddingLeft`/`paddingRight` become spaces.
 //!
 //! - `mod.rs`: `Lsp`, owned by `App`. `update`, called before each draw, drains
 //!   the channel (answers, server requests, `publishDiagnostics`, `showMessage`
@@ -98,9 +102,10 @@ pub struct Lsp {
     /// The formatting request `format` waits for: its server, and its id.
     formatting: Option<(ClientId, i64)>,
     /// Inlay hints: the buffer, text (edit count) and clearing (see
-    /// `Editor::inlay_hints_cleared`) last asked about, and the same last
-    /// seen, since when (asked once it's been still a moment).
-    hints_asked: Option<HintsAt>,
+    /// `Editor::inlay_hints_cleared`) last asked about, with the lines
+    /// asked for, and the same last seen, since when (asked once it's been
+    /// still a moment).
+    hints_asked: Option<(HintsAt, (usize, usize))>,
     hints_seen: Option<(HintsAt, std::time::Instant)>,
 }
 
@@ -236,9 +241,11 @@ impl Lsp {
         changed
     }
 
-    /// Asks for the buffer's inlay hints (with `inlay-hints`) once its text
-    /// has been still for a moment and a ready server has it, again after
-    /// each change. In between, the hints shown move with the edits.
+    /// Asks for the inlay hints on and around the lines on screen (with
+    /// `inlay-hints`) once the text has been still for a moment and a
+    /// ready server has it, again after each change and when the view
+    /// moves past the lines asked about. In between, the hints shown move
+    /// with the edits.
     fn ask_for_inlay_hints(&mut self, editor: &mut Editor) {
         const STILL: std::time::Duration = std::time::Duration::from_millis(300);
         if !editor.options.inlay_hints {
@@ -249,12 +256,19 @@ impl Lsp {
         if editor.document.path().is_none() {
             return;
         }
+        let Some((top, bottom)) = editor.shown_lines() else {
+            return;
+        };
         let here = (
             editor.document.id(),
             editor.document.buffer().edit_seq(),
             editor.inlay_hints_cleared(),
         );
-        if self.hints_asked == Some(here) {
+        if let Some((asked, (first, last))) = self.hints_asked
+            && asked == here
+            && first <= top
+            && bottom <= last
+        {
             return;
         }
         match self.hints_seen {
@@ -264,13 +278,19 @@ impl Lsp {
                         && c.state == State::Ready
                         && c.supports(LspFeature::InlayHint)
                 });
+                // A screen's worth either side, so scrolling a little
+                // finds them there already.
+                let screen = bottom - top + 1;
+                let end = editor.document.buffer().line_count() - 1;
+                let (first, last) = (top.saturating_sub(screen), (bottom + screen).min(end));
+                let query = crate::editor::lsp::LspQuery::InlayHint { first, last };
                 if since.elapsed() >= STILL
                     && ready
-                    && editor.request_lsp(LspFeature::InlayHint).is_ok()
+                    && editor.ask_lsp(query).is_ok()
                     && let Some(request) = editor.lsp_requests_mut().last_mut()
                 {
                     request.reply = crate::editor::lsp::Reply::View;
-                    self.hints_asked = Some(here);
+                    self.hints_asked = Some((here, (first, last)));
                 }
             }
             _ => self.hints_seen = Some((here, std::time::Instant::now())),

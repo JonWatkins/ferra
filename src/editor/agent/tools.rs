@@ -217,22 +217,11 @@ impl Editor {
     /// last places changed.
     fn agent_where_notes(&self) -> Vec<String> {
         let mut notes = Vec::new();
-        let cursor = self.document.cursor();
         if let Some(symbol) = self.agent_enclosing_symbol() {
             notes.push(format!("In: {symbol}"));
         }
-        let windows = self.windows();
-        let active = windows.active();
-        let height = windows.height(active);
-        if height > 0 {
-            let top = windows.view_top(active, &self.document, cursor, &self.options);
-            let layout = crate::editor::windows::TextLayout::new(
-                windows.width(active),
-                &self.document,
-                &self.options,
-            );
-            let bottom = layout.bottom(&self.document, top, height);
-            notes.push(format!("Showing lines {}-{}", top.line + 1, bottom + 1));
+        if let Some((top, bottom)) = self.shown_lines() {
+            notes.push(format!("Showing lines {}-{}", top + 1, bottom + 1));
         }
         let changes: Vec<String> = self
             .document
