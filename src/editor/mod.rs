@@ -256,6 +256,8 @@ pub struct Editor {
     find: find::FindState,
     /// The terminal panel's shells (kept while the panel's hidden).
     terminals: terminal_panel::Shells,
+    /// A shell rang the bell, for the app to pass on (`terminal-bell`).
+    terminal_bell: bool,
     /// Whether the bottom panel is open (at `panel.tab`).
     panel_open: bool,
     /// The bottom panel: its tab, the Problems' selection, the Output.
