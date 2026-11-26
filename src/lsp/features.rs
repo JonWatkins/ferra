@@ -52,8 +52,12 @@
 //!   `LspFormatter`, sharing the `Lsp` through an `Rc<RefCell>` (only ever
 //!   borrowed by a command or the draw, never both). `Lsp::format` syncs
 //!   the buffer, sends `textDocument/formatting` with `tab-width` and
-//!   `expand-tab`, and handles everything servers send until its answer
-//!   comes (known by its request id) or 2 seconds pass. The edits go
+//!   `expand-tab` (`textDocument/rangeFormatting` for `:'<,'>format`'s
+//!   lines, start of the first to end of the last, from a server with
+//!   `documentRangeFormattingProvider`; one without says it can't rather
+//!   than format the whole file), and handles everything servers send
+//!   until its answer comes (known by its request id) or 2 seconds pass.
+//!   The edits go
 //!   through `Editor::apply_text_edits`: last first, the cursor moved along
 //!   by those before it and kept at its place in one that replaces its
 //!   text; in a command they're one undo step. `format-on-save` is a buffer
@@ -158,10 +162,16 @@ const START_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 const FORMAT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl Lsp {
-    /// Has the active buffer's server format it, waiting for the answer
-    /// (handling anything else servers send meanwhile), and makes its
-    /// edits. With `quiet`, a buffer without a server that formats is fine.
-    pub fn format(&mut self, editor: &mut Editor, quiet: bool) -> Result<(), String> {
+    /// Has the active buffer's server format it, or only its `lines`
+    /// (first and last, 0-based), waiting for the answer (handling anything
+    /// else servers send meanwhile), and makes its edits. With `quiet`, a
+    /// buffer without a server that formats is fine.
+    pub fn format(
+        &mut self,
+        editor: &mut Editor,
+        quiet: bool,
+        lines: Option<(usize, usize)>,
+    ) -> Result<(), String> {
         if !self.enabled {
             return Ok(());
         }
@@ -187,7 +197,17 @@ impl Lsp {
                 Err(format!("{} doesn't format", client.name))
             };
         }
+        if lines.is_some() && !client.formats_ranges() {
+            return Err(format!("{} doesn't format part of a file", client.name));
+        }
         let buffer = editor.document.buffer();
+        // The lines' start to the end of the last.
+        let range = lines.map(|(first, last)| {
+            (
+                convert::to_lsp(buffer, Position::new(first, 0), client.encoding),
+                convert::to_lsp(buffer, buffer.line_end(last), client.encoding),
+            )
+        });
         let request = LspRequest {
             query: LspQuery::Format,
             document,
@@ -199,7 +219,7 @@ impl Lsp {
         let (tab_size, spaces) = editor.format_indent(document);
         let (name, encoding, client_id) = (client.name.clone(), client.encoding, client.id);
         let edit_seq = request.edit_seq;
-        let id = client.request_format(request, tab_size, spaces);
+        let id = client.request_format(request, tab_size, spaces, range);
 
         self.formatted = None;
         self.formatting = Some((client_id, id));
@@ -247,6 +267,18 @@ impl Lsp {
             .collect();
         editor.apply_text_edits(edits);
         Ok(())
+    }
+
+    /// Whether the server [`format`](Self::format) would ask for the
+    /// active buffer formats part of a file.
+    pub fn formats_ranges(&self, editor: &Editor) -> bool {
+        let document = editor.document.id();
+        self.enabled
+            && self
+                .clients
+                .iter()
+                .find(|c| c.has_document(document) && c.state == State::Ready)
+                .is_some_and(|c| c.supports(LspFeature::Format) && c.formats_ranges())
     }
 
     /// Sends the editor's requests, each to the server with its document
@@ -320,7 +352,7 @@ impl Lsp {
             // `answer` (`:format` waits for its own, in `format`).
             if request.feature() == LspFeature::Format {
                 let (tab_size, spaces) = editor.format_indent(request.document);
-                client.request_format(request, tab_size, spaces);
+                client.request_format(request, tab_size, spaces, None);
                 continue;
             }
             if request.feature() == LspFeature::CodeAction {

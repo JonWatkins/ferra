@@ -105,8 +105,8 @@ pub fn register(r: &mut CommandRegistry) {
     r.alias("lsp-restart", "lsp_restart");
     r.register(
         "format",
-        "Have the language server format the buffer",
-        |cx| cx.editor.format(false),
+        "Have the language server format the buffer, or the lines given (:'<,'>format)",
+        |cx| cx.editor.format(false, cx.range),
     );
     r.alias("fmt", "format");
     r.register(
@@ -159,7 +159,7 @@ pub fn register(r: &mut CommandRegistry) {
         "format-on-save",
         |cx, _| {
             if cx.editor.options.format_on_save
-                && let Err(error) = cx.editor.format(true)
+                && let Err(error) = cx.editor.format(true, None)
             {
                 cx.editor.note_for_save(format!("not formatted: {error}"));
             }

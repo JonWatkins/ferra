@@ -667,9 +667,19 @@ fn decode_entities(line: &str) -> String {
 /// Formats a buffer by asking its language server, waiting for the answer
 /// (so `:wq` saves the formatted text). The app gives the editor one.
 pub trait Formatter: std::fmt::Debug {
-    /// Formats the active buffer. With `quiet` (formatting on save), not
-    /// having a server that formats it is fine.
-    fn format(&mut self, editor: &mut Editor, quiet: bool) -> Result<(), String>;
+    /// Formats the active buffer, or only its `lines` (first and last,
+    /// 0-based). With `quiet` (formatting on save), not having a server
+    /// that formats it is fine.
+    fn format(
+        &mut self,
+        editor: &mut Editor,
+        quiet: bool,
+        lines: Option<(usize, usize)>,
+    ) -> Result<(), String>;
+
+    /// Whether the active buffer's server formats part of a file (so
+    /// `gq` asks it).
+    fn formats_ranges(&self, editor: &Editor) -> bool;
 }
 
 /// The uses of the symbol under the cursor, as the server found them for
@@ -729,8 +739,8 @@ impl Editor {
     }
 
     /// `:format`, or before saving with `format-on-save` (`quiet`): has
-    /// the buffer's language server format it.
-    pub fn format(&mut self, quiet: bool) -> Result<(), String> {
+    /// the buffer's language server format it, or only its `lines` (`:'<,'>format`).
+    pub fn format(&mut self, quiet: bool, lines: Option<(usize, usize)>) -> Result<(), String> {
         if !self.options.lsp {
             return if quiet {
                 Ok(())
@@ -745,9 +755,19 @@ impl Editor {
                 Err("No language server for this buffer (see :lsp)".into())
             };
         };
-        let result = formatter.format(self, quiet);
+        let result = formatter.format(self, quiet, lines);
         self.formatter = Some(formatter);
         result
+    }
+
+    /// Whether `gq` has the buffer's language server format its lines (as
+    /// Neovim's `formatexpr`): when one's running that formats a range.
+    pub fn server_formats_ranges(&self) -> bool {
+        self.options.lsp
+            && self
+                .formatter
+                .as_ref()
+                .is_some_and(|formatter| formatter.formats_ranges(self))
     }
 
     /// Replaces each `start..end` with its text (a server's edits: they

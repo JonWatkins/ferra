@@ -60,12 +60,12 @@ pub fn register(r: &mut CommandRegistry) {
 
     r.register(
         "operator_format",
-        "Reflow the lines of a motion or text object to text-width (gq, gqq, gqip)",
+        "Reflow the lines of a motion or text object to text-width, or have a language server that formats ranges format them (gq, gqq, gqip)",
         |cx| begin(cx, Operator::Format { keep_cursor: false }),
     );
     r.register(
         "operator_format_keep_cursor",
-        "Like gq, leaving the cursor where it was (gw)",
+        "Reflow like gq, never asking a language server, leaving the cursor where it was (gw)",
         |cx| begin(cx, Operator::Format { keep_cursor: true }),
     );
 
