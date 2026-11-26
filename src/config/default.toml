@@ -160,6 +160,10 @@ shell = ""
 # hangup (nohup); "hangup" hangs up, as closing a terminal app's window
 # does, and what ignores it keeps running.
 terminal-close = "kill"
+# Pass a terminal panel program's bell on to the terminal ferra runs in,
+# which then does what it does with a bell (a sound, a flash, a mark on the
+# tab). Off, as Neovim's belloff=all.
+terminal-bell = false
 # The coding agent :agent talks to: one of the [agents] below.
 agent = "claude"
 # Columns the agent sidebar (Ctrl+Alt+B, :agent) takes, right of the

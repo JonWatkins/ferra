@@ -13,7 +13,9 @@
 //! (which polls while a shell runs, as it does for language servers), feeds it
 //! to a `vt100` parser, whose screen the panel draws. The parser's callbacks
 //! answer the queries programs wait on (`ESC [ 6 n`, the device attributes) and
-//! take the window title. Keys go back as the bytes a terminal sends
+//! take the window title, and note the bell (`take_bell`). The cursor shape a
+//! program asks for (`ESC [ n SP q`, as Vim and Neovim send in insert mode)
+//! is the parser's; `cursor_shape` gives it to the app to set. Keys go back as the bytes a terminal sends
 //! (`terminal::key_bytes`: control characters, xterm's modifier parameters,
 //! application cursor mode); pastes are bracketed when the program asked.
 //!
@@ -35,6 +37,7 @@ use std::time::{Duration, Instant};
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+use crate::config::CursorShape;
 use crate::input::{KeyCode, KeyPress};
 
 /// Lines kept above the screen to scroll back through.
@@ -46,14 +49,24 @@ enum Output {
     Closed,
 }
 
-/// Replies to queries, and the title, collected as the parser runs.
+/// Replies to queries, the title, and whether the bell rang, collected as
+/// the parser runs.
 #[derive(Default)]
 struct Callbacks {
     replies: Vec<u8>,
     title: Option<String>,
+    bell: bool,
 }
 
 impl vt100::Callbacks for Callbacks {
+    fn audible_bell(&mut self, _: &mut vt100::Screen) {
+        self.bell = true;
+    }
+
+    fn visual_bell(&mut self, _: &mut vt100::Screen) {
+        self.bell = true;
+    }
+
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
         self.title = Some(String::from_utf8_lossy(title).into_owned());
     }
@@ -210,6 +223,26 @@ impl Terminal {
             .as_deref()
             .filter(|t| !t.is_empty())
             .unwrap_or(&self.name)
+    }
+
+    /// The cursor shape the program asked for, and whether it blinks:
+    /// `None` until it asks, or once it asks for the default back.
+    pub fn cursor_shape(&self) -> Option<(CursorShape, bool)> {
+        use vt100::CursorStyle as S;
+        Some(match self.screen().cursor_style() {
+            S::Default => return None,
+            S::BlinkBlock => (CursorShape::Block, true),
+            S::SteadyBlock => (CursorShape::Block, false),
+            S::BlinkUnderline => (CursorShape::Underline, true),
+            S::SteadyUnderline => (CursorShape::Underline, false),
+            S::BlinkVerticalBar => (CursorShape::Bar, true),
+            S::SteadyVerticalBar => (CursorShape::Bar, false),
+        })
+    }
+
+    /// Whether the bell rang (BEL, or a visual bell) since last asked.
+    pub fn take_bell(&mut self) -> bool {
+        std::mem::take(&mut self.parser.callbacks_mut().bell)
     }
 
     /// Whether ending it ends everything its shell started too, or only

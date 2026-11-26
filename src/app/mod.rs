@@ -965,17 +965,23 @@ impl App {
                 .options
                 .cursor_shape
                 .for_mode(self.editor.mode());
-            let wanted = if self.editor.replacing() {
-                self.editor.options.cursor_shape.replace
+            let wanted = if let Some(asked) = self.editor.terminal_cursor_shape() {
+                // What the panel's program asked for (Vim's bar in insert).
+                asked
+            } else if self.editor.replacing() {
+                (self.editor.options.cursor_shape.replace, false)
             } else if self.editor.modeless() && self.editor.mode() == Mode::Visual {
                 // A selection with VS Code's keys ends at the cursor: a bar.
-                self.editor.options.cursor_shape.insert
+                (self.editor.options.cursor_shape.insert, false)
             } else {
-                wanted
+                (wanted, false)
             };
             if shape != Some(wanted) {
-                terminal::set_cursor_shape(wanted)?;
+                terminal::set_cursor_shape(wanted.0, wanted.1)?;
                 shape = Some(wanted);
+            }
+            if self.editor.take_terminal_bell() {
+                terminal::ring_bell()?;
             }
             if mouse != self.editor.options.mouse {
                 mouse = self.editor.options.mouse;

@@ -90,7 +90,11 @@ fn category_of(path: &str) -> &'static str {
         "lsp" | "auto-complete" | "highlight-references" | "inlay-hints" => "Language servers",
         "keymap" | "mouse" | "mouse-hover" | "mouse-hover-delay" | "kitty-keyboard"
         | "key-timeout" | "clipboard" | "clipboard-provider" => "Keyboard and mouse",
-        "terminal-height" | "terminal-list-width" | "shell" | "terminal-close" => "Terminal",
+        "terminal-height"
+        | "terminal-list-width"
+        | "shell"
+        | "terminal-close"
+        | "terminal-bell" => "Terminal",
         "agent" | "agent-width" | "agent-context" => "Agent",
         "cursor-shape" => "Cursor shape",
         "plugin-index" | "plugin-suggestions" => "Plugins",

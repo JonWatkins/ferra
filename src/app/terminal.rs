@@ -14,13 +14,25 @@ use crossterm::{
 
 use crate::config::CursorShape;
 
-pub fn set_cursor_shape(shape: CursorShape) -> io::Result<()> {
-    let style = match shape {
-        CursorShape::Block => SetCursorStyle::SteadyBlock,
-        CursorShape::Bar => SetCursorStyle::SteadyBar,
-        CursorShape::Underline => SetCursorStyle::SteadyUnderScore,
+/// Sets the cursor's shape, blinking or steady.
+pub fn set_cursor_shape(shape: CursorShape, blink: bool) -> io::Result<()> {
+    let style = match (shape, blink) {
+        (CursorShape::Block, false) => SetCursorStyle::SteadyBlock,
+        (CursorShape::Block, true) => SetCursorStyle::BlinkingBlock,
+        (CursorShape::Bar, false) => SetCursorStyle::SteadyBar,
+        (CursorShape::Bar, true) => SetCursorStyle::BlinkingBar,
+        (CursorShape::Underline, false) => SetCursorStyle::SteadyUnderScore,
+        (CursorShape::Underline, true) => SetCursorStyle::BlinkingUnderScore,
     };
     execute!(stdout(), style)
+}
+
+/// Rings the bell of the terminal ferra runs in (a panel program's,
+/// passed on with `terminal-bell`).
+pub fn ring_bell() -> io::Result<()> {
+    let mut out = stdout();
+    out.write_all(b"\x07")?;
+    out.flush()
 }
 
 pub fn restore_cursor_shape() -> io::Result<()> {

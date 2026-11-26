@@ -248,6 +248,7 @@ impl Editor {
         for (i, terminal) in self.terminals.list.iter_mut().enumerate() {
             let was_running = terminal.is_running();
             changed |= terminal.update();
+            self.terminal_bell |= terminal.take_bell() && self.options.terminal_bell;
             if was_running && !terminal.is_running() && shown != Some(i) {
                 gone.push(i);
             }
@@ -265,6 +266,21 @@ impl Editor {
             changed = true;
         }
         changed
+    }
+
+    /// Whether a shell rang the bell since last asked, with `terminal-bell`
+    /// on (any shell, shown or not: a long job's bell says it's done).
+    pub fn take_terminal_bell(&mut self) -> bool {
+        std::mem::take(&mut self.terminal_bell)
+    }
+
+    /// The cursor shape the shown shell's program asked for, and whether
+    /// it blinks, while the panel has focus (else `cursor-shape`'s).
+    pub fn terminal_cursor_shape(&self) -> Option<(crate::config::CursorShape, bool)> {
+        if self.mode() != Mode::Terminal {
+            return None;
+        }
+        self.terminal_panel()?.cursor_shape()
     }
 
     /// Resizes the shells' terminals to the size the panel was drawn at.
@@ -361,6 +377,51 @@ mod tests {
             read.contains("w1 6/6") && read.contains("w15 6/6"),
             "{read}"
         );
+    }
+
+    fn shown_text_has(editor: &Editor, text: &str) -> bool {
+        editor
+            .terminal_panel()
+            .is_some_and(|t| t.screen().contents().contains(text))
+    }
+
+    #[test]
+    fn the_programs_cursor_shape_is_used_while_the_panel_has_focus() {
+        let mut editor = editor_with_shell("echo none");
+        update_until(&mut editor, |e| shown_text_has(e, "none\n"));
+        assert_eq!(editor.terminal_cursor_shape(), None, "cursor-shape's");
+
+        // As Vim does going into insert mode: a blinking bar.
+        let keys = crate::input::parse_keys("printf '\\033[5 q'; echo bar<CR>").unwrap();
+        editor.terminal_keys(&keys);
+        update_until(&mut editor, |e| shown_text_has(e, "bar\n"));
+        assert_eq!(
+            editor.terminal_cursor_shape(),
+            Some((crate::config::CursorShape::Bar, true))
+        );
+        editor.leave_terminal();
+        assert_eq!(editor.terminal_cursor_shape(), None, "the editor's own");
+        editor.focus_terminal().unwrap();
+
+        // And back to the default.
+        let keys = crate::input::parse_keys("printf '\\033[0 q'; echo back<CR>").unwrap();
+        editor.terminal_keys(&keys);
+        update_until(&mut editor, |e| shown_text_has(e, "back\n"));
+        assert_eq!(editor.terminal_cursor_shape(), None);
+    }
+
+    #[test]
+    fn the_bell_is_passed_on_only_with_terminal_bell() {
+        let mut editor = editor_with_shell("printf '\\a'; echo once");
+        update_until(&mut editor, |e| shown_text_has(e, "once\n"));
+        assert!(!editor.take_terminal_bell(), "off by default");
+
+        editor.options.terminal_bell = true;
+        let keys = crate::input::parse_keys("printf '\\a'; echo twice<CR>").unwrap();
+        editor.terminal_keys(&keys);
+        update_until(&mut editor, |e| shown_text_has(e, "twice\n"));
+        assert!(editor.take_terminal_bell());
+        assert!(!editor.take_terminal_bell(), "once per ring");
     }
 
     #[test]

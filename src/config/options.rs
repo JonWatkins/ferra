@@ -109,6 +109,8 @@ pub struct EditorOptions {
     pub shell: String,
     /// What ending a terminal (or quitting) does to what its shell started.
     pub terminal_close: TerminalClose,
+    /// A terminal panel program's bell rings ferra's terminal's.
+    pub terminal_bell: bool,
     /// The coding agent `:agent` talks to (a name in `[agents]`).
     pub agent: String,
     /// Columns the agent sidebar takes, right of the windows.

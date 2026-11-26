@@ -691,6 +691,11 @@ side, each with its title, as VS Code's tabs; click one to show it, and
 drag the line left of the list to resize it (`terminal-list-width`, 22
 columns, at most half the panel).
 Colours, full-screen programs (`htop`, `vim`, `less`) and pastes work.
+While the panel has focus, the cursor takes the shape its program asks
+for (Vim's bar in insert mode), else `cursor-shape.terminal`. A program's
+bell is ignored, as Neovim's `belloff=all` ignores it; with
+`terminal-bell = true` it rings the terminal ferra runs in, from any shell,
+shown or not.
 When a shell exits, a key closes it (one that exits while it isn't shown
 goes at once); `:terminal-close` ends the one shown any time, and the
 panel closes with the last. The coding agent's `read_terminal` reads the
