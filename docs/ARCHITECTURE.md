@@ -59,6 +59,9 @@ A shell in a pseudo-terminal for the panel: `portable-pty`, a `vt100` parser, an
 **plugins** (`src/plugins/`):
 Lua plugins ([ADR 0007](adr/0007-plugins-are-lua.md)): the host (`PluginHost`, registering into the same command registry, keymap and hooks as built-ins), the `ctx` API, popups and prompts, plugin packages (`packages.rs`: git clones with a manifest, the lock file, the directory) and grammars compiled on install (`grammars.rs`).
 
+**filter** (`src/filter.rs`):
+Running a program over lines of text through the shell, as Vim's `:{range}!`, waiting for it (killed after 5s); a failure changes nothing. Used by `gq` for `format-program`. Interface: `filter::run`.
+
 **outbox** (`src/outbox.rs`):
 Writing to another program (a server, an agent) on a thread of its own, so a slow reader never blocks the editor.
 

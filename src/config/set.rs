@@ -36,7 +36,7 @@
 //!   (`config::set::scope` says which options may: `wrap`, `wrap-indent`,
 //!   `wrap-marker`, `line-numbers`, `fold-column`, `cursorline`, `scroll-off` per window;
 //!   `tab-width`, `shift-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap`,
-//!   `format-on-save`, `path`, `suffixes-add` per buffer). `Editor::options` is always what's in force for the active window
+//!   `format-on-save`, `format-program`, `path`, `suffixes-add` per buffer). `Editor::options` is always what's in force for the active window
 //!   and buffer (global, then the buffer's language's `options` from
 //!   `[languages]`, then the buffer's, then the window's, by
 //!   `set::with_locals`), recomputed by `refresh_options` when the active
@@ -65,6 +65,38 @@ pub struct SetResult {
     pub shown: Vec<String>,
     /// The canonical names of the options that changed.
     pub changed: Vec<String>,
+}
+
+/// `:set`'s arguments from its text: separated by spaces, except a space
+/// after a backslash (`fp=fmt\ -w\ 20`, as Vim: `\\` is a backslash,
+/// and one before anything else is kept) or inside double quotes
+/// (`fp="fmt -w 20"`, the quotes kept for the value to take off).
+pub fn split_args(text: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut arg = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if !quoted && matches!(chars.peek(), Some(' ' | '\t' | '\\')) => {
+                arg.extend(chars.next());
+            }
+            '"' => {
+                quoted = !quoted;
+                arg.push(c);
+            }
+            c if c.is_whitespace() && !quoted => {
+                if !arg.is_empty() {
+                    args.push(std::mem::take(&mut arg));
+                }
+            }
+            c => arg.push(c),
+        }
+    }
+    if !arg.is_empty() {
+        args.push(arg);
+    }
+    args
 }
 
 /// Applies `:set`'s `args` to `options`. Nothing changes if any part is
@@ -113,7 +145,7 @@ pub fn scope(name: &str) -> Option<Scope> {
         "wrap" | "wrap-indent" | "wrap-marker" | "line-numbers" | "fold-column" | "cursorline"
         | "scroll-off" => Some(Scope::Window),
         "tab-width" | "shift-width" | "expand-tab" | "auto-indent" | "text-width" | "auto-wrap"
-        | "format-on-save" | "path" | "suffixes-add" => Some(Scope::Buffer),
+        | "format-on-save" | "format-program" | "path" | "suffixes-add" => Some(Scope::Buffer),
         _ => None,
     }
 }
@@ -214,6 +246,8 @@ const ALIASES: &[(&str, &str)] = &[
     ("tw", "text-width"),
     ("textwidth", "text-width"),
     ("pa", "path"),
+    ("fp", "format-program"),
+    ("formatprg", "format-program"),
     ("sua", "suffixes-add"),
     ("suffixesadd", "suffixes-add"),
 ];
@@ -587,7 +621,33 @@ mod tests {
     use crate::config::{FoldColumn, LineNumbers, SearchCase};
 
     fn args(text: &str) -> Vec<String> {
-        text.split_whitespace().map(String::from).collect()
+        split_args(text)
+    }
+
+    #[test]
+    fn arguments_keep_escaped_and_quoted_spaces() {
+        assert_eq!(args("  ts=4   sw=2 "), ["ts=4", "sw=2"]);
+        assert_eq!(args(r"fp=fmt\ -w\ 20 tw=9"), ["fp=fmt -w 20", "tw=9"]);
+        assert_eq!(
+            args(r#"fp="fmt -w 20" tw=9"#),
+            [r#"fp="fmt -w 20""#, "tw=9"]
+        );
+        assert_eq!(
+            args(r"path=a\\b,c\d"),
+            [r"path=a\b,c\d"],
+            "\\\\ is one, \\d kept"
+        );
+        assert_eq!(args(r#"x="a\ b""#), [r#"x="a\ b""#], "quoted: as written");
+    }
+
+    #[test]
+    fn format_program_takes_a_command_line() {
+        let mut options = EditorOptions::default();
+        run(&mut options, r"fp=fmt\ -w\ 20").unwrap();
+        assert_eq!(options.format_program, "fmt -w 20");
+        run(&mut options, r#"formatprg="jq .""#).unwrap();
+        assert_eq!(options.format_program, "jq .");
+        assert_eq!(scope("format-program"), Some(Scope::Buffer));
     }
 
     fn run(options: &mut EditorOptions, text: &str) -> Result<SetResult, String> {

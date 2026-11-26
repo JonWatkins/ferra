@@ -107,3 +107,63 @@ fn block_comments_keep_their_stars() {
         "/**\n * a doc comment that is much\n * too long for thirty columns\n */\nfn f() {}"
     );
 }
+
+// `format-program`: `gq` runs the lines through a program (Vim's `formatprg`).
+
+#[cfg(unix)]
+#[test]
+fn gq_runs_the_lines_through_format_program() {
+    let mut app = with_text("  c<CR>  a<CR>  b<CR><CR>last");
+    keys(&mut app, r":setlocal fp=sort\ -r<CR>jgqip");
+    assert_eq!(text(&app), "  c\n  b\n  a\n\nlast");
+    assert_eq!(cursor(&app), (0, 2), "the first line's first non-blank");
+    keys(&mut app, "u");
+    assert_eq!(text(&app), "  c\n  a\n  b\n\nlast", "one undo");
+}
+
+#[cfg(unix)]
+#[test]
+fn format_program_can_change_how_many_lines_there_are() {
+    let mut app = with_text("one two<CR>three<CR>end");
+    keys(&mut app, r#":set format-program="tr ' ' '\n'"<CR>Vjgq"#);
+    assert_eq!(text(&app), "one\ntwo\nthree\nend");
+    keys(&mut app, "G.");
+    assert_eq!(text(&app), "one\ntwo\nthree\nend", "the same, by .");
+    let mut app = with_text("gone<CR>kept");
+    keys(&mut app, ":set fp=true<CR>gqq");
+    assert_eq!(
+        text(&app),
+        "kept",
+        "nothing printed: the lines go, as in Vim"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_format_program_that_fails_changes_nothing() {
+    let mut app = with_text("one<CR>two");
+    keys(&mut app, r":set fp=echo\ oops\ >&2;\ exit\ 2<CR>gqip");
+    assert_eq!(text(&app), "one\ntwo");
+    let message = app.editor().message().unwrap().text.clone();
+    assert!(message.contains("exited 2: oops"), "{message}");
+}
+
+#[cfg(unix)]
+#[test]
+fn gw_still_reflows() {
+    let mut app = with_text("one two three four five six seven");
+    keys(&mut app, ":set fp=sort<CR>gwip");
+    assert_eq!(text(&app), "one two three four\nfive six seven");
+}
+
+#[cfg(unix)]
+#[test]
+fn format_program_can_be_set_per_language() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.json");
+    fs::write(&path, "b\na\n").unwrap();
+    let mut app = app_with_config("[languages.json]\noptions = { format-program = \"sort\" }");
+    app.open(&path);
+    keys(&mut app, "gqj");
+    assert_eq!(text(&app), "a\nb");
+}

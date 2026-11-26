@@ -12,6 +12,7 @@
 //! - [`input`]: key notation, keymaps and pending-key/count handling.
 //! - [`config`]: TOML configuration (options, theme, keybindings).
 //! - [`files`]: reading and writing files on disk (atomic saves).
+//! - [`filter`]: running a program over lines of text (`format-program`).
 //! - [`clipboard`]: the system clipboard (and an in-memory one for tests).
 //! - [`cli`]: command-line argument parsing.
 //! - [`plugins`]: Lua plugins (commands, hooks and key bindings).
@@ -31,6 +32,7 @@ pub mod core;
 pub mod editor;
 pub mod events;
 pub mod files;
+pub mod filter;
 pub mod git;
 pub mod input;
 pub mod log;

@@ -58,7 +58,9 @@ fn category_of(path: &str) -> &'static str {
     let table = path.split('.').next().unwrap_or(path);
     match table {
         "tab-width" | "shift-width" | "expand-tab" | "detect-indent" | "auto-indent"
-        | "auto-pairs" | "text-width" | "auto-wrap" | "format-on-save" => "Editing",
+        | "auto-pairs" | "text-width" | "auto-wrap" | "format-on-save" | "format-program" => {
+            "Editing"
+        }
         "line-numbers"
         | "fold-column"
         | "wrap"

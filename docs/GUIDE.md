@@ -106,7 +106,7 @@ iTerm2, set Profiles → Keys → Left Option key to "Esc+" for the `Alt` keys.
 | Normal  | `=` + motion, `==` | Re-indent lines by the language's rules (`gg=G` for the whole file; visual `=`) |
 | Normal  | `gu` `gU` `g~` + motion, `guu`... | Lowercase / uppercase / toggle case (visual `u` `U` `~`) |
 | Normal  | `gcc`, `gc` + motion (`gcap`, `gcj`), visual `gc` | Toggle comments on those lines, using the file's language |
-| Normal  | `gq` + motion (`gqip`, `gqq`), visual `gq`; `gw` | Reflow those lines to `text-width` (79), keeping indentation, comment markers (` * ` in `/* */` comments too) and list items; `gw` leaves the cursor put. In a buffer whose language server can format part of a file, `gq` has the server format the lines instead, as Neovim does; `gw` always reflows. `auto-wrap` breaks lines as you type past it |
+| Normal  | `gq` + motion (`gqip`, `gqq`), visual `gq`; `gw` | Reflow those lines to `text-width` (79), keeping indentation, comment markers (` * ` in `/* */` comments too) and list items; `gw` leaves the cursor put. In a buffer whose language server can format part of a file, `gq` has the server format the lines instead, as Neovim does; otherwise, with `format-program` set (`:setlocal fp=fmt\ -w\ 60`, Vim's `formatprg`), `gq` runs them through that program. `gw` always reflows. `auto-wrap` breaks lines as you type past it |
 | Normal  | `~` | Toggle case under the cursor and move on |
 | Normal  | `<C-a>` `<C-x>` (`5<C-a>`) | Add to / take from the number under or after the cursor: decimal (`-` signs, leading zeros kept), `0x` hex, `0b` binary |
 | Visual  | `<C-a>` `<C-x>`, `g<C-a>` `g<C-x>` | The same for the first number on each selected line; the `g` forms make a sequence (+1, +2, +3...) |
@@ -1160,7 +1160,7 @@ file-names = [".bashrc", "my-tool"]
 ```
 
 A language can also set `tab-width`, `shift-width`, `expand-tab`, `auto-indent`,
-`text-width`, `auto-wrap`, `format-on-save`, `path` and `suffixes-add` for its buffers, over `[editor]` (a buffer's
+`text-width`, `auto-wrap`, `format-on-save`, `format-program`, `path` and `suffixes-add` for its buffers, over `[editor]` (a buffer's
 `:setlocal`, or a `:set` in it, still wins). By default Go and Makefiles
 indent with tabs, and commit messages (`COMMIT_EDITMSG`) wrap at 72 as
 you type:
@@ -1464,6 +1464,7 @@ its name in the config (nested ones with a dot), Vim-style:
 | `:set expand-tab`, `:set noexpand-tab`, `:set expand-tab!` | Turns a switch on, off, or over |
 | `:set scroll-off+=2` | Adds to (or `-=` takes from, `^=` multiplies) a number |
 | `:set path+=src/**`, `:set sua-=.py` | Appends an item to (or `-=` removes one from, `^=` puts one first in) a comma list: `path`, `suffixes-add` |
+| `:set fp=fmt\ -w\ 60`, `:set fp="fmt -w 60"` | A value with spaces: a backslash before each, or in double quotes |
 | `:set tab-width?` | Shows an option |
 | `:set tab-width&` | Puts back its default |
 | `:set` | Lists the options you've changed |
@@ -1481,7 +1482,7 @@ their own `wrap`, `wrap-indent`, `wrap-marker`, `line-numbers`,
 `fold-column`, `cursorline` and `scroll-off` (a split
 starts with those of the window it came from); buffers their own
 `tab-width`, `shift-width`, `expand-tab`, `auto-indent`, `text-width`, `auto-wrap`,
-`format-on-save`, `path` and `suffixes-add`. `:set` changes an option
+`format-on-save`, `format-program`, `path` and `suffixes-add`. `:set` changes an option
 everywhere (and drops this window's or buffer's own value), `:setglobal`
 only where there's no value of its own, and `:setlocal` alone lists this
 window's and buffer's own values. Lists are written as in the config, without spaces

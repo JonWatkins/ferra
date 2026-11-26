@@ -46,7 +46,7 @@ pub fn register(r: &mut CommandRegistry) {
 /// and buffer's own values for them.
 fn set_option(cx: &mut Context) -> CommandResult {
     let mut options = cx.editor.options.clone();
-    let result = set::set(&mut options, cx.args)?;
+    let result = set::set(&mut options, &args_of(cx))?;
     let mut global = cx.editor.global_options().clone();
     set::copy_values(&options, &mut global, &result.changed);
     cx.editor.set_global_options(global);
@@ -57,7 +57,7 @@ fn set_option(cx: &mut Context) -> CommandResult {
 
 fn set_global_option(cx: &mut Context) -> CommandResult {
     let mut global = cx.editor.global_options().clone();
-    let result = set::set(&mut global, cx.args)?;
+    let result = set::set(&mut global, &args_of(cx))?;
     cx.editor.set_global_options(global);
     finish(cx.editor, &result);
     Ok(())
@@ -75,7 +75,7 @@ fn set_local_option(cx: &mut Context) -> CommandResult {
         return Ok(());
     }
     let mut options = cx.editor.options.clone();
-    let result = set::set(&mut options, cx.args)?;
+    let result = set::set(&mut options, &args_of(cx))?;
     if let Some(name) = result.changed.iter().find(|n| set::scope(n).is_none()) {
         return Err(format!(
             "{name} is the same everywhere: use :set (a window or buffer can have its own wrap, wrap-indent, wrap-marker, line-numbers, cursorline, scroll-off, tab-width, expand-tab, auto-indent, text-width, auto-wrap)"
@@ -88,6 +88,16 @@ fn set_local_option(cx: &mut Context) -> CommandResult {
     }
     finish(cx.editor, &result);
     Ok(())
+}
+
+/// `:set`'s arguments, where a value can have spaces (`fp=fmt\ -w\ 20`);
+/// as given when run with arguments rather than a `:` line.
+fn args_of(cx: &Context) -> Vec<String> {
+    if cx.arg_text.is_empty() {
+        cx.args.to_vec()
+    } else {
+        set::split_args(cx.arg_text)
+    }
 }
 
 /// Re-applies what was put in place at startup, and reports the values.

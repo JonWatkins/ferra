@@ -14,7 +14,9 @@
 //! `gwgw` come from operator-pending `q`, `gq` and `gw` bound to
 //! `current_line`. In a buffer whose language server formats ranges, `gq`
 //! asks it instead (Neovim's `formatexpr` default: `Editor::apply_operator_over`
-//! sends the lines to `:format`), and `gw` is always this reflow.
+//! sends the lines to `:format`); otherwise, with `format-program` (Vim's
+//! `formatprg`), `Editor::format_with_program` runs them through it (see
+//! `filter`). `gw` is always this reflow.
 //!
 //! - **Comment markers** (`CommentMarkers`) are the language's line comment
 //!   (`//`, `#`...) and, in languages with C's comments, the ` * ` of a
