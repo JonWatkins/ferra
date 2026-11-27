@@ -228,7 +228,8 @@ pub fn draw(
                         .focused(focused)
                         .current(editor.document.path())
                         .modified(editor.modified_paths())
-                        .git(editor.git_tree_marks());
+                        .git(editor.git_tree_marks())
+                        .diagnostics(editor.diagnostic_files());
                     if editor.options.icons == crate::config::Icons::Nerd {
                         view = view.icons(&editor.languages);
                     }

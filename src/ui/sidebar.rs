@@ -9,7 +9,11 @@
 //! ```
 //!
 //! The selected row is highlighted while the sidebar has focus; the current
-//! file's row is marked always, and unsaved files have a `●`.
+//! file's row is marked always, and unsaved files have a `●`. A file with
+//! errors or warnings (open or not, as a language server reported them) has
+//! its name in `ui.sidebar.diagnostic.error` or `.warning`, over git's
+//! colour, and so does each folder above it: the worst inside. Infos and
+//! hints don't count.
 //!
 //! `ui/sidebar.rs` draws it. `ui::draw` takes the sidebar's columns (plus a
 //! `│`) from the left before the windows are laid out, so splits, resizing and
@@ -34,6 +38,7 @@ use unicode_width::UnicodeWidthStr;
 use super::icons;
 use super::text::truncate_end;
 use crate::config::Theme;
+use crate::editor::diagnostics::Severity;
 use crate::editor::explorer::Explorer;
 use crate::editor::sidebar_views::PluginView;
 
@@ -45,6 +50,8 @@ pub struct SidebarView<'a> {
     modified: Vec<PathBuf>,
     /// Git's letters for changed files, and `•` for folders with changes.
     git: HashMap<PathBuf, char>,
+    /// Files' worst errors and warnings, and their folders' worst inside.
+    diagnostics: HashMap<PathBuf, Severity>,
     /// With a Nerd Font: the languages, for files' icons.
     icons: Option<&'a crate::config::Languages>,
 }
@@ -76,6 +83,7 @@ impl<'a> SidebarView<'a> {
             current: None,
             modified: Vec::new(),
             git: HashMap::new(),
+            diagnostics: HashMap::new(),
             icons: None,
         }
     }
@@ -86,7 +94,24 @@ impl<'a> SidebarView<'a> {
         self
     }
 
-    /// Whether the sidebar has focus (the selection is shown).
+    /// Files' worst errors and warnings (`Editor::diagnostic_files`),
+    /// colouring their names; each folder in the tree takes the worst of
+    /// what's inside it.
+    pub fn diagnostics(mut self, files: HashMap<PathBuf, Severity>) -> Self {
+        let root = self.explorer.root();
+        for (path, severity) in files {
+            let path = canonical(&path);
+            if !path.starts_with(root) {
+                continue;
+            }
+            for at in path.ancestors().take_while(|at| *at != root) {
+                let worst = self.diagnostics.entry(at.to_path_buf()).or_insert(severity);
+                *worst = (*worst).min(severity);
+            }
+        }
+        self
+    }
+
     /// Draws file and folder icons (`icons = "nerd"`) in place of the
     /// folder markers; `languages` give icons for files ferra's own table
     /// doesn't know.
@@ -95,6 +120,7 @@ impl<'a> SidebarView<'a> {
         self
     }
 
+    /// Whether the sidebar has focus (the selection is shown).
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
         self
@@ -193,6 +219,9 @@ impl Widget for SidebarView<'_> {
             let git = self.git.get(&row.path).copied();
             if let Some(letter) = git {
                 style = style.patch(theme.get(git_scope(letter)));
+            }
+            if let Some(severity) = self.diagnostics.get(&row.path) {
+                style = style.patch(theme.get(&format!("ui.sidebar.diagnostic.{}", severity.id())));
             }
             if is_current {
                 style = style.patch(theme.get("ui.sidebar.current"));
@@ -746,6 +775,39 @@ mod tests {
             "src has changes"
         );
         assert!(rows[3].ends_with("U "), "{rows:?}");
+    }
+
+    #[test]
+    fn errors_and_warnings_colour_files_and_their_folders() {
+        let dir = project();
+        let root = std::fs::canonicalize(dir.path().join("demo")).unwrap();
+        let mut tree = Explorer::new(&root);
+        tree.reveal(&root.join("src/main.rs"));
+        let theme = crate::config::Config::default().theme;
+        let files = HashMap::from([
+            (root.join("src/main.rs"), Severity::Warning),
+            (root.join("src/other.rs"), Severity::Error),
+            (root.join("a-rather-long-file-name.txt"), Severity::Warning),
+            (dir.path().join("elsewhere.rs"), Severity::Error),
+        ]);
+        let view = SidebarView::new(&tree, &theme)
+            .git(HashMap::from([(root.join("src/main.rs"), 'M')]))
+            .diagnostics(files);
+        let (rows, buf) = render(view, 20, 4);
+        let fg = |scope: &str| theme.get(scope).fg.unwrap();
+        assert_eq!(
+            buf[(3, 1)].fg,
+            fg("ui.sidebar.diagnostic.error"),
+            "src: the worst"
+        );
+        assert_eq!(
+            buf[(5, 2)].fg,
+            fg("ui.sidebar.diagnostic.warning"),
+            "over git's colour"
+        );
+        assert_eq!(rows[2], "     main.rs      M ", "git's letter stays");
+        assert_eq!(buf[(18, 2)].fg, fg("ui.sidebar.git.modified"));
+        assert_eq!(buf[(3, 3)].fg, fg("ui.sidebar.diagnostic.warning"));
     }
 
     #[test]

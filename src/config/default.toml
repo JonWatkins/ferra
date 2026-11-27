@@ -468,6 +468,10 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.sidebar.git.folder" = "#c8a96e"
 "ui.sidebar.git.header" = { fg = "#7aa2f7", modifiers = ["bold"] }
 "ui.sidebar.git.branch" = "#6b7280"
+# Files with errors or warnings in the file tree, and the folders they're in
+# (over git's colours).
+"ui.sidebar.diagnostic.error" = "#f7768e"
+"ui.sidebar.diagnostic.warning" = "#e0af68"
 # The agent sidebar (Ctrl+Alt+B, :agent), right of the windows: its header
 # (the agent, its mode), the chat, the agent's question and its box.
 "ui.sidebar.agent.header" = { bg = "#1f2229" }
