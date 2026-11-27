@@ -26,7 +26,7 @@ use crate::clipboard::{self, Clipboard};
 use crate::commands::{CommandRegistry, Invocation};
 use crate::config::StatusElement;
 use crate::config::{Config, Theme};
-use crate::editor::{DocumentId, Editor, Message, Mode};
+use crate::editor::{Editor, Message, Mode};
 use crate::events::{self, EventKind};
 use crate::input::{InputHandler, KeyCode, KeyPress, Keymap, Lookup, Outcome, paste_keys};
 use crate::plugins::PluginHost;
@@ -1423,9 +1423,9 @@ impl App {
             self.editor.clear_inlay_hints();
         }
         let pending = self.input.pending_display();
-        let count = self.editor.buffer_count();
-        if self.syntax.cached_count() > count || self.editor.syntax_trees.count() > count {
-            let open: Vec<DocumentId> = self.editor.buffers().iter().map(|b| b.id).collect();
+        let open = self.editor.highlighted_documents();
+        if self.syntax.cached_count() > open.len() || self.editor.syntax_trees.count() > open.len()
+        {
             self.syntax.retain(&open);
             self.editor.syntax_trees.retain(&open);
         }

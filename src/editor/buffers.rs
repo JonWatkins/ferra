@@ -51,6 +51,22 @@ impl Editor {
         1 + self.background.len()
     }
 
+    /// Every document shown with highlighting: the buffers, and the scratch
+    /// ones (the hover's, the git view's), whose syntax is kept while
+    /// they're there.
+    pub fn highlighted_documents(&self) -> Vec<DocumentId> {
+        let mut ids: Vec<DocumentId> = self.buffers().iter().map(|b| b.id).collect();
+        ids.extend(self.hover().map(|h| h.document.id()));
+        if let Some(gui) = self.git_gui() {
+            ids.extend(gui.blame.as_ref().map(|b| b.document.id()));
+            if let Some(side) = &gui.side {
+                ids.extend(side.documents.iter().map(Document::id));
+            }
+            ids.extend(gui.diff_syntax.document_ids());
+        }
+        ids
+    }
+
     /// Makes buffer `id` active. Returns `false` if there's no such buffer.
     pub fn switch_to(&mut self, id: DocumentId) -> bool {
         // From the terminal's scrollback: to the window it came from first.
