@@ -4,15 +4,18 @@
 //! Indentation follows the language's rules where it has them
 //! (`syntax::indent`, from the syntax tree): `=` re-indents lines, Enter,
 //! `o` and `O` start a line at the right depth, and typing a closing
-//! bracket first on a line puts it where it belongs. Without rules (Python,
-//! YAML, plain text, or `auto-indent` off for new lines), a new line copies
-//! the indentation of the one it was opened from, one level more after an
-//! opening bracket (or `:` in Python).
+//! bracket first on a line puts it where it belongs. Without rules (plain
+//! text, or `auto-indent` off for new lines), and in Python and YAML, whose
+//! rules only re-indent (`indent::significant`: the block a new line is in
+//! is the typist's to choose), a new line copies the indentation of the one
+//! it was opened from, one level more after an opening bracket (or `:` in
+//! Python).
 //!
 //! - **`=`** is `Operator::Reindent`, over the lines its range touches, so
 //!   `==`, `=ip`, `gg=G`, visual `=` and `.` all work. Blank lines are emptied.
 //!   A language without rules, or a file without a language, gets a message
-//!   instead.
+//!   instead, as does Python or YAML with a syntax error (its lines' blocks
+//!   aren't known).
 //! - **New lines** (Enter, `o`, `O`; `indent_for_opened_line`) are indented by
 //!   the rules once the line exists, so text carried onto it (`}` after Enter)
 //!   counts. Without rules, the line it was opened from is copied, plus a level
@@ -32,7 +35,7 @@
 //!     remembered (`Editor::keyword_indent`), and put back if the word carries
 //!     on (`fi` → `file`), since the half-typed line may not parse as anything
 //!     better.
-//!   - Python has no rules, so the `:` ending an `else:`, `elif`, `except` or
+//!   - Python's rules don't place typed lines, so the `:` ending an `else:`, `elif`, `except` or
 //!     `finally` line moves it to the nearest line above that starts the block
 //!     it continues (`if`/`elif` for `elif`; `try`/`except` for `except`...),
 //!     looking only at lines no deeper than it and than every line between.
@@ -467,8 +470,15 @@ impl Editor {
         indent::compute(language, &tree, buffer, rows, style)
     }
 
-    /// One line's indentation by the rules.
+    /// One line's indentation by the rules, as it's typed: none where
+    /// indentation is meaning (`indent::significant`).
     fn rule_indent(&self, row: usize) -> Option<usize> {
+        if self
+            .language_of(&self.document)
+            .is_some_and(indent::significant)
+        {
+            return None;
+        }
         self.rule_indents(row..=row)?.first().copied().flatten()
     }
 
@@ -483,6 +493,16 @@ impl Editor {
         if !indent::has_rules(&language) {
             return Err(format!(
                 "Can't re-indent: no indentation rules for {language}"
+            ));
+        }
+        let broken = || {
+            self.syntax_trees
+                .tree(&self.document, &language)
+                .is_some_and(|tree| tree.root_node().has_error())
+        };
+        if indent::significant(&language) && broken() {
+            return Err(format!(
+                "Can't re-indent: a syntax error, and indentation is meaning in {language}"
             ));
         }
         let widths = self
@@ -630,8 +650,10 @@ impl Editor {
     pub(super) fn type_with_indent(&mut self, c: char) {
         let cursor = self.document.cursor();
         let language = self.language_of(&self.document).map(str::to_string);
-        let with_rules =
-            self.options.auto_indent && language.as_deref().is_some_and(indent::has_rules);
+        let with_rules = self.options.auto_indent
+            && language
+                .as_deref()
+                .is_some_and(|l| indent::has_rules(l) && !indent::significant(l));
         let before: String = self
             .document
             .buffer()

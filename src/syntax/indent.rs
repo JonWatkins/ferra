@@ -8,6 +8,12 @@
 //!   the level of the node it closes (`}`, `)`, `fi`, `else`, `</div>`):
 //!   the token's parent, or, for a token that begins its parent (`else`
 //!   beginning an `else` clause), the node around that.
+//! - `@align` marks a node whose lines after its first line up with where it
+//!   starts (YAML's mapping after `- `: `- a: 1` then `  b: 2`).
+//! - `@follow` marks a node whose lines after its first each move as far as
+//!   its first line does, keeping their place relative to it (a YAML block
+//!   scalar's text after `key: |`, whose meaning is its indentation past the
+//!   key's).
 //!
 //! A line's indentation is *relative*: the indentation of the line where
 //! its innermost enclosing `@indent` node starts, plus one level (or plus
@@ -23,8 +29,22 @@
 //! it's taken to be open to the end of the text.
 //!
 //! Lines that start inside a multi-line string or comment (or an HTML
-//! `<script>`'s raw text) are left alone. Languages where indentation is
-//! meaning (Python, YAML) or that don't nest (Markdown) have no rules.
+//! `<script>`'s raw text) are left alone. Markdown, which doesn't nest, has
+//! no rules.
+//!
+//! - **Where indentation is meaning** (Python, YAML: [`significant`]), the
+//!   rules only re-indent (`=`), never place a line being typed: the tree is
+//!   parsed from the indentation, so it holds which block each line is in,
+//!   and `=` keeps that while making the widths the file's levels (and
+//!   bracketed lines one level in), but a new line's block is the typist's
+//!   choice (`return` ends one, a blank line may end one), which the heuristics
+//!   in `editor/transform.rs` guess. `=` declines while the file has a
+//!   syntax error, which would leave lines in the wrong blocks. Python's
+//!   `else`, `elif`, `except` and `finally` go back to their statement's
+//!   line; YAML's sequence items' mappings `@align` (the `- ` is part of the
+//!   width), and its multi-line scalars `@follow`, as their text's
+//!   indentation past their key's is part of their value (a block scalar's)
+//!   or must stay past the key's (a folded one's).
 //!
 //! - **Only the rows asked for are looked at**: `compute` takes the kept tree
 //!   (`SyntaxTrees`), runs the query over just their bytes (which catches the
@@ -67,6 +87,40 @@ const RUST: &str = r#"
   (struct_pattern) (where_clause)
 ] @indent
 ["}" ")" "]" ">"] @outdent
+"#;
+
+/// Python's: blocks are their statements' (`def` and its body are a
+/// `function_definition`); a line continued with `\` is one level in, as
+/// its statement is `@indent`.
+#[cfg(feature = "test-languages")]
+const PYTHON: &str = r#"
+[
+  (class_definition) (function_definition) (if_statement) (elif_clause)
+  (else_clause) (for_statement) (while_statement) (try_statement)
+  (except_clause) (finally_clause) (with_statement) (with_clause)
+  (match_statement) (case_clause)
+  (argument_list) (parameters) (list) (tuple) (dictionary) (set)
+  (parenthesized_expression) (subscript) (list_comprehension)
+  (dictionary_comprehension) (set_comprehension) (generator_expression)
+  (import_from_statement) (type_parameter)
+  (expression_statement) (return_statement) (raise_statement)
+  (assert_statement) (delete_statement)
+] @indent
+[")" "]" "}"] @outdent
+(elif_clause "elif" @outdent)
+(else_clause "else" @outdent)
+(except_clause "except" @outdent)
+(finally_clause "finally" @outdent)
+"#;
+
+/// YAML's: a pair's value one level in from its key, a sequence's or
+/// mapping's entries lined up with its first, and multi-line scalars moved
+/// with the line they start on.
+const YAML: &str = r#"
+[(block_mapping_pair) (block_sequence_item) (flow_mapping) (flow_sequence)] @indent
+[(block_mapping) (block_sequence)] @align
+[(block_scalar) (plain_scalar) (double_quote_scalar) (single_quote_scalar)] @follow
+["]" "}"] @outdent
 "#;
 
 const JSON: &str = r#"
@@ -199,6 +253,9 @@ fn rules_source(language: &str) -> Option<String> {
         "rust" => RUST.into(),
         "json" => JSON.into(),
         "toml" => TOML.into(),
+        "yaml" => YAML.into(),
+        #[cfg(feature = "test-languages")]
+        "python" => PYTHON.into(),
         #[cfg(feature = "test-languages")]
         "javascript" => format!("{JAVASCRIPT}\n{JSX}"),
         #[cfg(feature = "test-languages")]
@@ -260,6 +317,12 @@ pub fn has_rules(language: &str) -> bool {
     rules(language).is_some()
 }
 
+/// Whether indentation is meaning in `language` (Python, YAML): its rules
+/// re-indent (`=`), but don't place lines being typed.
+pub fn significant(language: &str) -> bool {
+    matches!(language, "python" | "yaml")
+}
+
 /// How indentation is measured and written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IndentStyle {
@@ -319,13 +382,35 @@ pub fn compute(
         }
         let line = buffer.line(row);
         let point = Point::new(row, leading_blanks(&line).len());
+        let innermost = innermost[row - rows.start()];
+        let own = |row: usize| display_width(leading_blanks(&buffer.line(row)), style.tab_width);
+        let follows = innermost.filter(|n| n.placement == Placement::Follow);
+        if let Some(node) = follows {
+            // Moved as far as the node's first line (a blank one is left).
+            let width = (!line.trim().is_empty()).then(|| {
+                (own(row) + width_of(&decided, node.start_row)).saturating_sub(own(node.start_row))
+            });
+            if let Some(width) = width {
+                decided.insert(row, width);
+            }
+            result.push(width);
+            continue;
+        }
         if inside_text(tree, point) {
             result.push(None);
             continue;
         }
-        let width = match innermost[row - rows.start()] {
+        let width = match innermost {
             None => 0,
             Some(node) if structure.outdents_at(point, node) => width_of(&decided, node.start_row),
+            Some(node) if node.placement == Placement::Align => {
+                // Where the node starts, past its line's indentation.
+                let start = buffer.line(node.start_row);
+                let before = start.get(..node.start_column).unwrap_or(&start);
+                let past =
+                    display_width(before, style.tab_width).saturating_sub(own(node.start_row));
+                width_of(&decided, node.start_row) + past
+            }
             Some(node) => width_of(&decided, node.start_row) + style.unit,
         };
         decided.insert(row, width);
@@ -349,10 +434,24 @@ struct IndentNode {
     /// `ERROR`).
     id: Option<usize>,
     start_row: usize,
+    /// The byte in its start row it starts at.
+    start_column: usize,
     start_byte: usize,
     end: Point,
     /// Its closing token is missing, so it runs to the end of the text.
     unterminated: bool,
+    placement: Placement,
+}
+
+/// Where a node puts its lines after the first (its capture).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Placement {
+    /// `@indent`: one level in from its first line.
+    Indent,
+    /// `@align`: lined up with where it starts.
+    Align,
+    /// `@follow`: moved as far as its first line.
+    Follow,
 }
 
 impl Structure {
@@ -368,14 +467,25 @@ impl Structure {
         while let Some((m, index)) = captures.next() {
             let capture = m.captures()[*index];
             let node = capture.node;
-            match names[capture.index as usize] {
-                "indent" => indents.push(IndentNode {
+            let placement = match names[capture.index as usize] {
+                "indent" => Some(Placement::Indent),
+                "align" => Some(Placement::Align),
+                "follow" => Some(Placement::Follow),
+                _ => None,
+            };
+            if let Some(placement) = placement {
+                indents.push(IndentNode {
                     id: Some(node.id()),
                     start_row: node.start_position().row,
+                    start_column: node.start_position().column,
                     start_byte: node.start_byte(),
                     end: node.end_position(),
                     unterminated: ends_missing(node),
-                }),
+                    placement,
+                });
+                continue;
+            }
+            match names[capture.index as usize] {
                 // A closer made up by error recovery (a `fi` the user
                 // hasn't typed) isn't on the line it's placed at.
                 "outdent" if node.is_missing() => {}
@@ -453,9 +563,11 @@ fn loose_brackets(query: &Query, node: Node, buffer: &Buffer, structure: &mut St
                 structure.indents.push(IndentNode {
                     id: Some(id),
                     start_row: bracket.start_position().row,
+                    start_column: bracket.start_position().column,
                     start_byte: bracket.start_byte(),
                     end: point,
                     unterminated: false,
+                    placement: Placement::Indent,
                 });
             }
         };
@@ -501,9 +613,11 @@ fn loose_brackets(query: &Query, node: Node, buffer: &Buffer, structure: &mut St
             .extend(open.into_iter().map(|(bracket, id)| IndentNode {
                 id: Some(id),
                 start_row: bracket.start_position().row,
+                start_column: bracket.start_position().column,
                 start_byte: bracket.start_byte(),
                 end: bracket.end_position(),
                 unterminated: true,
+                placement: Placement::Indent,
             }));
     }
     for i in 0..node.child_count() {
@@ -594,14 +708,17 @@ fn ends_missing(node: Node) -> bool {
 }
 
 /// Whether `point` (a line's first non-blank) is inside a string, comment
-/// or raw text that began on an earlier line.
+/// or raw text that began on an earlier line. Strings written one after
+/// another (C's and Python's `"a"` then `"b"` on the next line, a
+/// `concatenated_string`) are code between strings.
 fn inside_text(tree: &Tree, point: Point) -> bool {
     let mut node = tree.root_node().descendant_for_point_range(point, point);
     while let Some(n) = node {
         let kind = n.kind();
         let text_like = ["string", "comment", "raw_text", "heredoc"]
             .iter()
-            .any(|k| kind.contains(k));
+            .any(|k| kind.contains(k))
+            && !kind.contains("concatenated");
         if text_like && n.start_position().row < point.row {
             return true;
         }
@@ -734,6 +851,14 @@ mod tests {
                 "html",
                 "<ul>\n    <li>\n        a\n    </li>\n</ul>\n<div>\n",
             ),
+            (
+                "python",
+                "def f(a,\n        b):\n    if a:\n        x\n    else:\n        y = [\n            1,\n        ]\n",
+            ),
+            (
+                "yaml",
+                "a:\n    - b: 1\n      c: |\n        x\n    - d\ne: [1,\n    2]\n",
+            ),
         ];
         for (language, text) in samples {
             let rows = text.split('\n').count() - 1;
@@ -847,6 +972,152 @@ done",
         );
     }
 
+    /// `text` re-indented with `style`, blank lines left empty.
+    fn reindent_with(language: &str, text: &str, style: IndentStyle) -> String {
+        let lines: Vec<&str> = text.split('\n').collect();
+        let widths = compute(language, text, 0..=lines.len() - 1, style).unwrap();
+        lines
+            .iter()
+            .zip(widths)
+            .map(|(line, width)| match width {
+                None => line.to_string(),
+                Some(_) if line.trim().is_empty() => String::new(),
+                Some(width) => format!("{}{}", " ".repeat(width), line.trim_start()),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn python_keeps_each_lines_block_and_levels_brackets() {
+        let messy = "class A:
+  def f(self,
+      a):
+    if a:
+      x = foo(
+              1)
+    elif b:
+      pass
+    else:
+      y = 1 + \\
+       2
+    # c
+  \x20
+    return x
+z = (\"a\"
+  \"b\")
+s = \"\"\"
+  kept
+\"\"\"
+try:
+  a
+except E:
+  b
+finally:
+  c
+for i in x:
+      a
+else:
+      b
+match x:
+ case 1:
+  a
+from m import (
+        a,
+)";
+        let tidy = "class A:
+    def f(self,
+        a):
+        if a:
+            x = foo(
+                1)
+        elif b:
+            pass
+        else:
+            y = 1 + \\
+                2
+        # c
+
+        return x
+z = (\"a\"
+    \"b\")
+s = \"\"\"
+  kept
+\"\"\"
+try:
+    a
+except E:
+    b
+finally:
+    c
+for i in x:
+    a
+else:
+    b
+match x:
+    case 1:
+        a
+from m import (
+    a,
+)";
+        assert_eq!(reindent("python", messy), tidy);
+        assert_eq!(reindent("python", tidy), tidy, "already tidy");
+    }
+
+    #[test]
+    fn yaml_keeps_its_structure_and_scalars_text() {
+        let style = IndentStyle {
+            tab_width: 4,
+            unit: 2,
+        };
+        let messy = "a:
+ b: 1
+ c:
+    - d: 1
+      e: 2
+    -   f: 3
+        g: 4
+    - h
+list:
+- x
+- y
+n:
+ s: |
+  line
+    more
+
+  after
+f: [1,
+       2]
+q: \"a
+   b\"
+";
+        let tidy = "a:
+  b: 1
+  c:
+    - d: 1
+      e: 2
+    -   f: 3
+        g: 4
+    - h
+list:
+  - x
+  - y
+n:
+  s: |
+   line
+     more
+
+   after
+f: [1,
+  2]
+q: \"a
+   b\"
+";
+        assert_eq!(reindent_with("yaml", messy, style), tidy);
+        assert_eq!(reindent_with("yaml", tidy, style), tidy, "already tidy");
+    }
+
     #[test]
     fn every_languages_rules_compile() {
         for def in LANGUAGES.iter() {
@@ -854,7 +1125,8 @@ done",
                 Query::new(&def.grammar(), &source).unwrap_or_else(|e| panic!("{}: {e}", def.name));
             }
         }
-        assert!(!has_rules("python"));
+        assert!(has_rules("python") && has_rules("yaml"));
+        assert!(!has_rules("markdown"));
         assert!(!has_rules("nonsense"));
     }
 }
