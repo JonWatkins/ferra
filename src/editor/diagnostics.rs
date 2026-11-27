@@ -224,6 +224,31 @@ impl Editor {
         }
     }
 
+    /// For the file tree: each file's most serious error or warning, from
+    /// its buffer's diagnostics or, for a file that isn't open, those kept
+    /// by path. Infos and hints are left out, as too many files have some.
+    pub fn diagnostic_files(&self) -> std::collections::HashMap<PathBuf, Severity> {
+        let mut files = std::collections::HashMap::new();
+        let mut add = |path: &Path, list: &[Diagnostic]| {
+            let worst = list.iter().map(|d| d.severity).min();
+            if let Some(worst) = worst.filter(|s| *s <= Severity::Warning) {
+                files.insert(path.to_path_buf(), worst);
+            }
+        };
+        for (path, list) in &self.file_diagnostics {
+            // Open since: its buffer's are the ones that count.
+            if self.find_open_path(path).is_none() {
+                add(path, list);
+            }
+        }
+        for document in std::iter::once(&self.document).chain(&self.background) {
+            if let Some(path) = document.path() {
+                add(path, document.diagnostics());
+            }
+        }
+        files
+    }
+
     /// Document `id`'s diagnostics, in order.
     pub fn diagnostics(&self, id: DocumentId) -> &[Diagnostic] {
         self.document_by_id(id).map_or(&[], |d| d.diagnostics())
@@ -298,6 +323,44 @@ mod tests {
             message: format!("at {row}:{col}"),
             source: Some("test".into()),
         }
+    }
+
+    #[test]
+    fn the_file_tree_gets_each_files_worst_error_or_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let open = root.join("open.rs");
+        std::fs::write(&open, "a\nb\nc").unwrap();
+        let mut e = Editor::with_document(Document::with_text(""));
+        e.open(&open).unwrap();
+        let id = e.document.id();
+        e.set_diagnostics(
+            id,
+            vec![
+                diagnostic(0, 0, Severity::Hint),
+                diagnostic(1, 0, Severity::Warning),
+                diagnostic(2, 0, Severity::Error),
+            ],
+        );
+        e.set_file_diagnostics(
+            root.join("warned.rs"),
+            vec![diagnostic(0, 0, Severity::Warning)],
+        );
+        e.set_file_diagnostics(
+            root.join("hinted.rs"),
+            vec![diagnostic(0, 0, Severity::Info)],
+        );
+        assert_eq!(
+            e.diagnostic_files(),
+            std::collections::HashMap::from([
+                (open.clone(), Severity::Error),
+                (root.join("warned.rs"), Severity::Warning),
+            ])
+        );
+
+        // Fixed: the buffer's count, not what was kept from before.
+        e.set_diagnostics(id, Vec::new());
+        assert!(!e.diagnostic_files().contains_key(&open));
     }
 
     #[test]
