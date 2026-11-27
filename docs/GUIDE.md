@@ -916,7 +916,11 @@ lazygit, over the editor; `q` closes it.
 ```
 
 The right-hand panel shows the diff of what's selected: a file's unstaged
-or staged changes, a commit, or a branch's log.
+or staged changes, a commit, or a branch's log. The code in it is
+highlighted in its file's language, added and removed lines tinted (the
+theme's `ui.git.side.added` and `ui.git.side.removed`, as side by side)
+with the `+` or `-` in the diff's colour; a file in no language is coloured
+as a plain diff.
 
 To stage only some of a hunk, `<CR>` on it picks lines, as lazygit does:
 `j` `k` move between its added and removed lines (marked `▌`), `v`

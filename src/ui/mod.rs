@@ -521,6 +521,7 @@ pub fn draw(
         // The blame's code (or each side's) is highlighted around the
         // selected line, as far as it could scroll either way.
         let mut highlights = [None, None];
+        let mut diff_highlights = std::collections::HashMap::new();
         if let (Some(gui), Some(engine)) = (editor.git_gui(), syntax) {
             let reach = full.height as usize;
             let around = |line: usize| line.saturating_sub(reach)..line + reach;
@@ -565,8 +566,40 @@ pub fn draw(
                     )
                     .cloned();
             }
+            // The diff panel's files' code, each side's rows around those
+            // shown, as far as a page scrolls either way.
+            if gui.blame.is_none() && gui.side.is_none() {
+                let shown = gui.diff_scroll.saturating_sub(reach)..gui.diff_scroll + 2 * reach;
+                let mut rows: std::collections::BTreeMap<(usize, usize), std::ops::Range<usize>> =
+                    Default::default();
+                for &(file, side, row) in
+                    gui.diff_syntax.lines[shown.start.min(gui.diff_syntax.lines.len())
+                        ..shown.end.min(gui.diff_syntax.lines.len())]
+                        .iter()
+                        .flatten()
+                {
+                    let range = rows.entry((file, side)).or_insert(row..row + 1);
+                    range.start = range.start.min(row);
+                    range.end = range.end.max(row + 1);
+                }
+                for ((file, side), range) in rows {
+                    let file_syntax = &gui.diff_syntax.files[file];
+                    if let Some(found) = engine.highlight_as(
+                        &file_syntax.documents[side],
+                        Some(&file_syntax.language),
+                        &editor.languages,
+                        &editor.syntax_trees,
+                        range,
+                    ) {
+                        diff_highlights.insert((file, side), found.clone());
+                    }
+                }
+            }
         }
-        frame.render_widget(git_gui::GitGuiView::new(editor, theme, highlights), full);
+        frame.render_widget(
+            git_gui::GitGuiView::new(editor, theme, highlights).diff_highlights(diff_highlights),
+            full,
+        );
         git_gui::GitGuiView::record(editor, full, &mut map);
     }
 

@@ -23,6 +23,15 @@
 //! (`BLAME_DOCUMENT`), as the hover's is. `<CR>` opens the line's commit
 //! (selected in the log, or read on its own if it's older than the log goes).
 //! Opened from a buffer, `<Esc>` closes the whole view.
+//!
+//! The diff panel's code is highlighted too, from `DiffSyntax`'s documents
+//! (each file's old and new lines, hunk after hunk): `ui::draw` highlights
+//! the rows around those shown and hands them over (`diff_highlights`). A
+//! highlighted file's added and removed lines are tinted as the side-by-side
+//! view's are, the sign keeping the diff's colour; a file in no language keeps
+//! the diff's colour for the whole line.
+
+use std::collections::HashMap;
 
 use ratatui::{
     buffer::Buffer,
@@ -40,13 +49,51 @@ use crate::config::Theme;
 use crate::editor::git_gui::{DiffOf, GitPanel};
 use crate::editor::{Editor, GitRow};
 use crate::git::{DiffLineKind, SideKind};
-use crate::syntax::Highlights;
+use crate::syntax::{Highlights, Span as CodeSpan};
 
 pub struct GitGuiView<'a> {
     editor: &'a Editor,
     theme: &'a Theme,
     /// The blame's code (the first), or each side's, highlighted.
     highlights: [Option<Highlights>; 2],
+    /// The diff panel's code: each `(file, side)` of its `DiffSyntax`.
+    diff_highlights: HashMap<(usize, usize), Highlights>,
+}
+
+/// Draws `text` on row `y` from `x` up to `right`, each character styled by
+/// the `spans` over it on top of `base` (a tab as four spaces).
+#[allow(clippy::too_many_arguments)]
+fn draw_code(
+    buf: &mut Buffer,
+    mut x: u16,
+    y: u16,
+    right: u16,
+    text: &str,
+    spans: &[CodeSpan],
+    base: Style,
+    theme: &Theme,
+) {
+    for (col, c) in text.chars().enumerate() {
+        let style = spans
+            .iter()
+            .filter(|s| s.start <= col && col < s.end)
+            .fold(base, |style, s| style.patch(theme.get(s.name())));
+        let (shown, w) = match c {
+            '\t' => ("    ".to_string(), 4),
+            c => (
+                c.to_string(),
+                unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16,
+            ),
+        };
+        if w == 0 {
+            continue;
+        }
+        if x + w > right {
+            break;
+        }
+        buf.set_string(x, y, shown, style);
+        x += w;
+    }
 }
 
 /// The panels' areas in `area`.
@@ -85,7 +132,14 @@ impl<'a> GitGuiView<'a> {
             editor,
             theme,
             highlights,
+            diff_highlights: HashMap::new(),
         }
+    }
+
+    /// The diff panel's code, highlighted.
+    pub fn diff_highlights(mut self, highlights: HashMap<(usize, usize), Highlights>) -> Self {
+        self.diff_highlights = highlights;
+        self
     }
 
     /// Records where its parts are in `area`, with each list's first item
@@ -334,6 +388,17 @@ impl<'a> GitGuiView<'a> {
         {
             let y = inner.y + offset as u16;
             let mut style = theme.get("ui.git");
+            // The line's code, if its file is highlighted.
+            let code = gui.diff_syntax.lines.get(index).copied().flatten();
+            let tint = match kind {
+                DiffLineKind::Added => Some("ui.git.side.added"),
+                DiffLineKind::Removed => Some("ui.git.side.removed"),
+                _ => None,
+            };
+            if let (Some(tint), Some(_)) = (tint, code) {
+                style = style.patch(theme.get(tint));
+                buf.set_style(Rect::new(inner.x, y, inner.width, 1), style);
+            }
             let selected = match &chosen {
                 Some(chosen) => chosen.contains(&index),
                 None => selected_hunk.is_some_and(|h| (h.start..h.end).contains(&index)),
@@ -362,6 +427,28 @@ impl<'a> GitGuiView<'a> {
                 DiffLineKind::Header => None,
                 DiffLineKind::Context => None,
             };
+            if let Some((file, side, row)) = code {
+                // The sign in the diff's colour, the code highlighted.
+                let sign = text.get(..1).unwrap_or(" ");
+                let sign_style = scope.map_or(style, |scope| style.patch(theme.get(scope)));
+                buf.set_string(inner.x + 1, y, sign, sign_style);
+                let spans = self
+                    .diff_highlights
+                    .get(&(file, side))
+                    .map_or(&[][..], |h| h.line(row));
+                let code = text.get(1..).unwrap_or("");
+                draw_code(
+                    buf,
+                    inner.x + 2,
+                    y,
+                    inner.right(),
+                    code,
+                    spans,
+                    style,
+                    theme,
+                );
+                continue;
+            }
             if let Some(scope) = scope {
                 style = style.patch(theme.get(scope));
             }
@@ -486,27 +573,7 @@ impl<'a> GitGuiView<'a> {
             let spans = self.highlights[0]
                 .as_ref()
                 .map_or(&[][..], |h| h.line(index));
-            for (col, c) in line.text.chars().enumerate() {
-                let style = spans
-                    .iter()
-                    .filter(|s| s.start <= col && col < s.end)
-                    .fold(base, |style, s| style.patch(theme.get(s.name())));
-                let (text, w) = match c {
-                    '\t' => ("    ".to_string(), 4),
-                    c => (
-                        c.to_string(),
-                        unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16,
-                    ),
-                };
-                if w == 0 {
-                    continue;
-                }
-                if x + w > inner.right() {
-                    break;
-                }
-                buf.set_string(x, y, text, style);
-                x += w;
-            }
+            draw_code(buf, x, y, inner.right(), &line.text, spans, base, theme);
         }
     }
 
@@ -584,27 +651,7 @@ impl<'a> GitGuiView<'a> {
                 let spans = self.highlights[i]
                     .as_ref()
                     .map_or(&[][..], |h| h.line(line));
-                for (col, c) in text.chars().enumerate() {
-                    let style = spans
-                        .iter()
-                        .filter(|s| s.start <= col && col < s.end)
-                        .fold(base, |style, s| style.patch(theme.get(s.name())));
-                    let (shown, w) = match c {
-                        '\t' => ("    ".to_string(), 4),
-                        c => (
-                            c.to_string(),
-                            unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16,
-                        ),
-                    };
-                    if w == 0 {
-                        continue;
-                    }
-                    if x + w > inner.right() {
-                        break;
-                    }
-                    buf.set_string(x, y, shown, style);
-                    x += w;
-                }
+                draw_code(buf, x, y, inner.right(), &text, spans, base, theme);
             }
         }
     }
@@ -748,6 +795,69 @@ mod tests {
         assert_eq!(left, 29, "the left panels fill the height");
         assert_eq!(panels[3].0, Rect::new(35, 0, 65, 29));
         assert_eq!(hint, Rect::new(0, 29, 100, 1));
+    }
+
+    #[test]
+    fn the_diffs_code_is_highlighted() {
+        let Some(dir) = crate::git::tests_support::repo() else {
+            return;
+        };
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let path = root.join("main.rs");
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        crate::git::stage(&root, &["main.rs"]).unwrap();
+        crate::git::commit(&root, "main").unwrap();
+        std::fs::write(&path, "fn main() {}\nfn other() {}\n").unwrap();
+        let mut editor = Editor::default();
+        editor.open(&path).unwrap();
+        editor.open_git_gui().unwrap();
+        let gui = editor.git_gui().unwrap();
+        let file = &gui.diff_syntax.files[0];
+        assert_eq!(file.language, "rust");
+
+        let theme = crate::config::Config::default().theme;
+        let mut engine = crate::syntax::SyntaxEngine::default();
+        let mut highlights = HashMap::new();
+        for side in 0..2 {
+            let found = engine.highlight_as(
+                &file.documents[side],
+                Some("rust"),
+                &editor.languages,
+                &editor.syntax_trees,
+                0..2,
+            );
+            highlights.insert((0, side), found.cloned().unwrap());
+        }
+        let area = Rect::new(0, 0, 100, 20);
+        let mut buf = Buffer::empty(area);
+        GitGuiView::new(&editor, &theme, [None, None])
+            .diff_highlights(highlights)
+            .render(area, &mut buf);
+        let (y, row) = (0..20)
+            .map(|y| {
+                (
+                    y,
+                    (0..100).map(|x| buf[(x, y)].symbol()).collect::<String>(),
+                )
+            })
+            .find(|(_, row)| row.contains("+fn other"))
+            .expect("the added line");
+        let x = row[..row.find("+fn other").unwrap()].chars().count() as u16;
+        assert_eq!(
+            buf[(x, y)].fg,
+            theme.get("ui.git.diff.added").fg.unwrap(),
+            "the sign in the diff's colour: {row}"
+        );
+        assert_eq!(
+            buf[(x + 1, y)].fg,
+            theme.get("keyword").fg.unwrap(),
+            "`fn` as a keyword: {row}"
+        );
+        assert_eq!(
+            buf[(x + 1, y)].bg,
+            theme.get("ui.git.side.added").bg.unwrap(),
+            "the line tinted as added: {row}"
+        );
     }
 
     #[test]

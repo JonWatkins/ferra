@@ -95,6 +95,15 @@
 //! filler on the shorter side), the old text from `git show :path` or
 //! `HEAD:path` (`git::blob`), the new from the file or the index. Both sides
 //! are scratch documents (`SIDE_DOCUMENTS`) highlighted like the blame's.
+//! The diff panel's code is too: `DiffSyntax` makes each file's old lines
+//! (context and removed) and new ones (context and added) into a pair of
+//! scratch documents (`diff_document`), hunk after hunk, its language from
+//! the `+++`/`---` path, and maps each diff line to its row in one (context
+//! to the new side). It's made again only when the diff read differs, so the
+//! highlights are kept; `Editor::highlighted_documents` keeps them in the
+//! caches. Hunks are parsed together though there are lines between them, so
+//! a construct cut by a hunk's edge (a block comment's start) can colour
+//! what follows wrongly, as in other tools' diffs.
 //! Opened from the sidebar (`<CR>` and clicks in the Git tab), `<Esc>` closes
 //! the view back to the sidebar (`return_to`).
 
@@ -153,6 +162,8 @@ pub struct GitGui {
     /// The file's name in each of `commits` (it may have been renamed).
     pub history_names: Vec<String>,
     pub diff: Diff,
+    /// The diff's code, for highlighting.
+    pub diff_syntax: DiffSyntax,
     pub diff_title: String,
     pub diff_of: DiffOf,
     /// The diff's first line shown.
@@ -266,6 +277,124 @@ impl BlameView {
     }
 }
 
+/// The diff panel's code as documents, for highlighting: each file's old
+/// lines (context and removed) and its new ones (context and added), hunk
+/// after hunk, for files in a language that's highlighted.
+#[derive(Debug, Default)]
+pub struct DiffSyntax {
+    pub files: Vec<DiffFile>,
+    /// Each diff line's place in them: its file (in `files`), side (0 old,
+    /// 1 new) and row. `None` for headers, `\ No newline` and files that
+    /// aren't highlighted.
+    pub lines: Vec<Option<(usize, usize, usize)>>,
+}
+
+#[derive(Debug)]
+pub struct DiffFile {
+    pub language: String,
+    pub documents: [Document; 2],
+}
+
+/// The diff panel's documents' ids, counting down from below the blame's
+/// and the side-by-side view's (never ones that are open).
+pub fn diff_document(file: usize, side: usize) -> DocumentId {
+    DocumentId(u64::MAX - 16 - 2 * file as u64 - side as u64)
+}
+
+impl DiffSyntax {
+    pub fn new(diff: &Diff, languages: &crate::config::Languages) -> Self {
+        use crate::git::DiffLineKind;
+        let mut syntax = DiffSyntax {
+            files: Vec::new(),
+            lines: vec![None; diff.lines.len()],
+        };
+        // Each file's lines on each side, and where each diff line went.
+        let mut file_start = 0;
+        let flush = |syntax: &mut DiffSyntax, header: usize, end: usize| {
+            let mut sides: [Vec<&str>; 2] = [Vec::new(), Vec::new()];
+            let mut places = Vec::new();
+            let (mut path, mut first_line) = (None, "");
+            for i in header..end {
+                let (kind, text) = &diff.lines[i];
+                match kind {
+                    DiffLineKind::Header => {
+                        // `--- a/path` and `+++ b/path` (one may be `/dev/null`).
+                        if let Some(name) = text
+                            .strip_prefix("+++ ")
+                            .or_else(|| text.strip_prefix("--- "))
+                            .filter(|n| *n != "/dev/null")
+                        {
+                            let name = name.split_once('/').map_or(name, |(_, rest)| rest);
+                            path = Some(std::path::PathBuf::from(name));
+                        }
+                    }
+                    DiffLineKind::HunkHeader => {
+                        // The file's first line, for a `#!` line.
+                        if sides[1].is_empty() && (text.contains(" +1,") || text.contains(" +1 ")) {
+                            first_line = diff
+                                .lines
+                                .get(i + 1)
+                                .and_then(|(_, t)| t.get(1..))
+                                .unwrap_or("");
+                        }
+                    }
+                    DiffLineKind::Context if text.starts_with('\\') => {}
+                    DiffLineKind::Context | DiffLineKind::Added | DiffLineKind::Removed => {
+                        let code = &text[1..];
+                        if *kind != DiffLineKind::Added {
+                            sides[0].push(code);
+                        }
+                        if *kind != DiffLineKind::Removed {
+                            sides[1].push(code);
+                        }
+                        let side = usize::from(*kind != DiffLineKind::Removed);
+                        places.push((i, side, sides[side].len() - 1));
+                    }
+                }
+            }
+            // A combined diff's lines have a sign per parent: not code.
+            let combined = diff
+                .lines
+                .get(header)
+                .is_some_and(|(_, t)| t.starts_with("diff --cc"));
+            let Some(language) = path
+                .filter(|_| !combined && !places.is_empty())
+                .and_then(|p| languages.detect(Some(&p), first_line))
+            else {
+                return;
+            };
+            let file = syntax.files.len();
+            let documents = [0, 1].map(|side| {
+                let mut document = Document::with_text(&sides[side].join("\n"));
+                document.set_id(diff_document(file, side));
+                document
+            });
+            syntax.files.push(DiffFile {
+                language: language.to_string(),
+                documents,
+            });
+            for (i, side, row) in places {
+                syntax.lines[i] = Some((file, side, row));
+            }
+        };
+        for (i, (_, text)) in diff.lines.iter().enumerate() {
+            if text.starts_with("diff --git") || text.starts_with("diff --cc") {
+                flush(&mut syntax, file_start, i);
+                file_start = i;
+            }
+        }
+        flush(&mut syntax, file_start, diff.lines.len());
+        syntax
+    }
+
+    /// Every document's id, for keeping their highlights.
+    pub fn document_ids(&self) -> impl Iterator<Item = DocumentId> + '_ {
+        self.files
+            .iter()
+            .flat_map(|f| f.documents.iter().map(Document::id))
+    }
+}
+
 /// A diff being read on a thread.
 #[derive(Debug)]
 pub struct DiffJob {
@@ -294,13 +423,23 @@ fn spawn_diff(read: impl FnOnce() -> String + Send + 'static) -> Receiver<Diff> 
 const DIFF_CACHE_SIZE: usize = 100;
 
 impl GitGui {
-    fn set_diff(&mut self, of: DiffOf, title: String, diff: Diff) {
+    fn set_diff(
+        &mut self,
+        of: DiffOf,
+        title: String,
+        diff: Diff,
+        languages: &crate::config::Languages,
+    ) {
         if of != self.diff_of {
             self.diff_scroll = 0;
             self.hunk = 0;
             self.line = None;
         }
         self.anchor = None;
+        // The same diff read again keeps its documents (and highlights).
+        if diff != self.diff || self.diff_syntax.lines.len() != diff.lines.len() {
+            self.diff_syntax = DiffSyntax::new(&diff, languages);
+        }
         self.diff = diff;
         self.diff_title = title;
         self.diff_of = of;
@@ -328,7 +467,7 @@ impl GitGui {
         Some(from..to)
     }
 
-    fn finish_job(&mut self, diff: Diff) {
+    fn finish_job(&mut self, diff: Diff, languages: &crate::config::Languages) {
         let Some(job) = self.diff_job.take() else {
             return;
         };
@@ -338,7 +477,7 @@ impl GitGui {
             }
             self.diff_cache.insert(key, diff.clone());
         }
-        self.set_diff(job.of, job.title, diff);
+        self.set_diff(job.of, job.title, diff, languages);
     }
 }
 
@@ -512,7 +651,7 @@ impl Editor {
         match load {
             Load::Ready(of, title, diff) => {
                 gui.diff_job = None;
-                gui.set_diff(of, title, diff);
+                gui.set_diff(of, title, diff, &self.languages);
             }
             // The one asked for last wins; an earlier one's answer is dropped.
             Load::Thread(job) => gui.diff_job = Some(job),
@@ -530,7 +669,7 @@ impl Editor {
         };
         match job.receiver.try_recv() {
             Ok(diff) => {
-                gui.finish_job(diff);
+                gui.finish_job(diff, &self.languages);
                 true
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => false,
@@ -558,7 +697,7 @@ impl Editor {
             .receiver
             .recv_timeout(std::time::Duration::from_secs(10))
         {
-            Ok(diff) => gui.finish_job(diff),
+            Ok(diff) => gui.finish_job(diff, &self.languages),
             Err(_) => gui.diff_job = None,
         }
     }
@@ -1274,6 +1413,74 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_diffs_code_is_split_into_each_files_old_and_new_text() {
+        let diff = Diff::parse(concat!(
+            "commit abc\n",
+            "--- not a file, a commit message line\n",
+            "diff --git a/src/a.rs b/src/a.rs\n",
+            "index 1..2 100644\n",
+            "--- a/src/a.rs\n",
+            "+++ b/src/a.rs\n",
+            "@@ -1,3 +1,3 @@\n",
+            " fn a() {\n",
+            "-    old();\n",
+            "+    new();\n",
+            " }\n",
+            "@@ -10,1 +10,2 @@\n",
+            " x\n",
+            "+y\n",
+            "\\ No newline at end of file\n",
+            "diff --git a/notes.unknown b/notes.unknown\n",
+            "--- a/notes.unknown\n",
+            "+++ b/notes.unknown\n",
+            "@@ -1 +1 @@\n",
+            "-a\n",
+            "+b\n",
+            "diff --git a/gone.py b/gone.py\n",
+            "deleted file mode 100644\n",
+            "--- a/gone.py\n",
+            "+++ /dev/null\n",
+            "@@ -1 +0,0 @@\n",
+            "-print(1)\n",
+        ));
+        let languages = crate::config::Config::default().languages;
+        let syntax = DiffSyntax::new(&diff, &languages);
+        let names: Vec<&str> = syntax.files.iter().map(|f| f.language.as_str()).collect();
+        assert_eq!(
+            names,
+            ["rust", "python"],
+            "a file in no language is left out"
+        );
+        let rust = &syntax.files[0];
+        assert_eq!(
+            rust.documents[0].buffer().text(),
+            "fn a() {\n    old();\n}\nx"
+        );
+        assert_eq!(
+            rust.documents[1].buffer().text(),
+            "fn a() {\n    new();\n}\nx\ny"
+        );
+        let place = |text: &str| {
+            let i = diff.lines.iter().position(|(_, t)| t == text).unwrap();
+            syntax.lines[i]
+        };
+        assert_eq!(place(" fn a() {"), Some((0, 1, 0)), "context: the new side");
+        assert_eq!(place("-    old();"), Some((0, 0, 1)));
+        assert_eq!(place("+    new();"), Some((0, 1, 1)));
+        assert_eq!(place("+y"), Some((0, 1, 4)));
+        assert_eq!(place("\\ No newline at end of file"), None);
+        assert_eq!(place("+b"), None);
+        assert_eq!(place("-print(1)"), Some((1, 0, 0)), "named by its old path");
+        assert_eq!(place("@@ -1,3 +1,3 @@"), None);
+        let ids: Vec<DocumentId> = syntax.document_ids().collect();
+        assert_eq!(ids.len(), 4);
+        assert!(
+            ids.iter().all(|id| id.0 > u64::MAX - 1000),
+            "never an open one's"
+        );
+    }
 
     #[test]
     fn opens_on_the_changes_and_stages_one_hunk() {

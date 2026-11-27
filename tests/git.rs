@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use common::{app, cursor, keys, render, text};
+use ratatui::{Terminal, backend::TestBackend, style::Color};
 
 fn git(dir: &Path, args: &[&str]) -> bool {
     Command::new("git")
@@ -1226,4 +1227,52 @@ fn every_files_diff_is_cut_on_its_own_and_empty_buffers_left_out() {
     );
     assert!(all.contains("a.txt (editor)") && all.contains("b.txt (editor)"));
     assert!(!all.contains("[unnamed buffer]"), "empty: left out");
+}
+
+#[test]
+fn the_git_views_diff_is_syntax_coloured() {
+    let Some(dir) = repo() else {
+        return;
+    };
+    let path = dir.path().join("main.rs");
+    let lines: Vec<String> = (1..=40).map(|n| format!("fn f{n}() {{}}")).collect();
+    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+    assert!(git(dir.path(), &["add", "."]));
+    assert!(git(
+        dir.path(),
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "-m",
+            "forty functions"
+        ]
+    ));
+    let mut changed = lines.clone();
+    changed[1] = "fn two() {}".into();
+    changed[37] = "fn thirty_eight() {}".into();
+    std::fs::write(&path, changed.join("\n") + "\n").unwrap();
+
+    let mut app = common::app_with_config("[theme]\n\"keyword\" = \"red\"");
+    keys(&mut app, &format!(":e {}<CR><Space>g", path.display()));
+    let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
+    // Twice: the second frame's highlights are the ones kept from the first.
+    for _ in 0..2 {
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        for line in ["-fn f2()", "+fn two()", "-fn f38()", "+fn thirty_eight()"] {
+            let (x, y) = (0..30)
+                .find_map(|y| {
+                    let row: String = (0..110).map(|x| buffer[(x, y)].symbol()).collect();
+                    let at = row.find(line)?;
+                    Some((row[..at].chars().count() as u16, y))
+                })
+                .unwrap_or_else(|| panic!("{line} in the diff"));
+            assert_eq!(buffer[(x + 1, y)].fg, Color::Red, "`fn` in {line}");
+            assert_ne!(buffer[(x + 4, y)].fg, Color::Red, "the name in {line}");
+        }
+    }
 }
