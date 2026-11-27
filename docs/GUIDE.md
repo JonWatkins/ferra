@@ -208,7 +208,10 @@ the indentation of the line above, one level more after an opening bracket
 or a trailing `:` in Python and YAML. In Python, a line after `return`,
 `pass`, `break`... goes back a level, and typing the `:` of `else:`,
 `elif ...:`, `except ...:` or `finally:` lines it up with its `if` or
-`try`.
+`try`. In Python and YAML, where indentation is meaning, `=` re-indents
+too, keeping each line in the block it's in (making the levels the file's
+own, and bracketed lines one level in), and moving a YAML block scalar's
+text (`key: |`) with its key; it won't while the file has a syntax error.
 
 Each file is indented the way it already is: tabs, or however many spaces
 its lines step in by, worked out from its first 1000 lines when it's

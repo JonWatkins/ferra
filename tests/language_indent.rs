@@ -142,17 +142,40 @@ fn other_languages_follow_their_own_rules() {
 }
 
 #[test]
-fn python_has_no_rules_but_new_lines_follow_colons() {
-    let (_dir, mut app) = open("a.py", "def f():\n  return 1");
+fn python_reindents_keeping_its_blocks_and_new_lines_follow_colons() {
+    let (_dir, mut app) = open("a.py", "def f():\n  if a:\n        b\n  return (1,\n2)");
+    keys(&mut app, "=G");
+    // The file indents by two: `b` stays in the `if`, `return` after it.
+    assert_eq!(text(&app), "def f():\n  if a:\n    b\n  return (1,\n    2)");
+    keys(&mut app, "ggox<Esc>");
+    assert_eq!(
+        text(&app),
+        "def f():\n  x\n  if a:\n    b\n  return (1,\n    2)"
+    );
+}
+
+#[test]
+fn python_and_yaml_with_a_syntax_error_arent_reindented() {
+    let (_dir, mut app) = open("a.py", "def f(:\n      x");
     keys(&mut app, "=G");
     assert_eq!(
         message(&app),
-        "Can't re-indent: no indentation rules for python"
+        "Can't re-indent: a syntax error, and indentation is meaning in python"
     );
-    assert_eq!(text(&app), "def f():\n  return 1", "unchanged");
-    keys(&mut app, "ggox<Esc>");
-    // The file indents by two, so the new line does too.
-    assert_eq!(text(&app), "def f():\n  x\n  return 1");
+    assert_eq!(text(&app), "def f(:\n      x", "unchanged");
+}
+
+#[test]
+fn yaml_reindents_keeping_its_structure() {
+    let (_dir, mut app) = open(
+        "a.yml",
+        "a:\n  b:\n     - c: 1\n       d: |\n          x\n            y\n",
+    );
+    keys(&mut app, "=G");
+    assert_eq!(
+        text(&app),
+        "a:\n  b:\n    - c: 1\n      d: |\n         x\n           y"
+    );
 }
 
 #[test]
