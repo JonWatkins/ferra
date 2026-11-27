@@ -79,7 +79,7 @@ use super::App;
 use crate::commands::Invocation;
 use crate::editor::find::FindField;
 use crate::editor::git_gui::GitPanel;
-use crate::editor::windows::SplitDirection;
+use crate::editor::windows::{PANEL_WINDOW, SplitDirection};
 use crate::editor::{Message, Mode, WindowId};
 use crate::input::Lookup;
 use crate::ui::screen_map::{
@@ -108,6 +108,10 @@ pub(super) enum Drag {
     /// A press given to the program in the terminal panel: its drag and
     /// release go there too.
     Terminal,
+    /// A press on the terminal panel's screen, its program not taking the
+    /// mouse (at this row and column of it): a drag selects its text, in
+    /// terminal-normal mode.
+    Shell { row: u16, col: u16 },
     /// Resizing the terminal panel's list of shells (the line left of
     /// it), whose right edge is here.
     ShellList { right: u16 },
@@ -262,6 +266,22 @@ impl App {
         };
         self.editor.terminal_mouse(mouse);
         true
+    }
+
+    /// A press at `at` on the terminal panel's screen: a drag from it
+    /// selects the shell's text (`Drag::Shell`).
+    fn press_shell(&mut self, at: Position) {
+        let Some(area) = self
+            .screen_map
+            .area(&Target::Panel(PanelPart::Terminal))
+            .filter(|a| a.contains(at))
+        else {
+            return;
+        };
+        self.dragging = Some(Drag::Shell {
+            row: at.y - area.y,
+            col: at.x - area.x,
+        });
     }
 
     /// What's on top at `at`, as the last frame drew it.
@@ -490,6 +510,12 @@ impl App {
         }
         let clicks = self.count_click(at);
         match target {
+            // With VS Code's keys, a click in the terminal's text is the
+            // shell again (and a drag a new selection).
+            Some(Target::Window(PANEL_WINDOW)) if self.editor.modeless() => {
+                self.editor.set_mode(Mode::Terminal);
+                self.press_shell(at);
+            }
             Some(Target::Window(id)) => {
                 self.leave_panes();
                 if self.editor.mode() == Mode::Visual {
@@ -526,7 +552,12 @@ impl App {
             }
             Some(Target::Sidebar(part)) => self.sidebar_click(part, clicks),
             Some(Target::Agent(part)) => self.agent_click(part),
-            Some(Target::Panel(part)) => self.panel_click(part),
+            Some(Target::Panel(part)) => {
+                self.panel_click(part);
+                if part == PanelPart::Terminal {
+                    self.press_shell(at);
+                }
+            }
             _ => {}
         }
     }
@@ -963,6 +994,13 @@ impl App {
         }
         match self.dragging {
             Some(Drag::Text(id)) => self.drag_select(id, at),
+            // Out of the press's cell: its text, selected from there.
+            Some(Drag::Shell { row, col }) => {
+                if self.editor.scrollback_at(row, col).is_some() {
+                    self.execute("visual_mode", Invocation::default());
+                    self.dragging = Some(Drag::Text(PANEL_WINDOW));
+                }
+            }
             Some(Drag::Sidebar) => {
                 if let Some(sidebar) = self.screen_map.area(&Target::Sidebar(SidebarPart::Rest)) {
                     self.editor.options.sidebar_width = at.x.saturating_sub(sidebar.x).max(10);

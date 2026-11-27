@@ -86,6 +86,11 @@ use crate::core::Position;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WindowId(pub u64);
 
+/// The terminal panel's window, in terminal-normal mode
+/// (`editor/terminal_normal.rs`): active while its scrollback is the
+/// buffer, but never in the layout. Its size is where the panel drew it.
+pub const PANEL_WINDOW: WindowId = WindowId(u64::MAX);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Window {
     pub id: WindowId,
@@ -115,6 +120,9 @@ pub struct Windows {
     /// Rows at the top of each window for its tabs and breadcrumbs (set by
     /// the UI).
     chrome: Cell<u16>,
+    /// Where the terminal panel drew its scrollback (`PANEL_WINDOW`), set
+    /// by the UI.
+    panel_area: Cell<Area>,
 }
 
 /// The area assumed before anything is drawn (tests, a first command).
@@ -136,6 +144,7 @@ impl Default for Windows {
             tops: RefCell::default(),
             requested_tops: RefCell::default(),
             chrome: Cell::new(0),
+            panel_area: Cell::new(Area::new(0, 0, 80, 12)),
         }
     }
 }
@@ -173,6 +182,24 @@ impl Windows {
         self.layout.arrange(self.area.get()).0
     }
 
+    /// Records where the terminal panel drew its scrollback (the UI calls
+    /// this).
+    pub fn note_panel_area(&self, area: Area) {
+        self.panel_area.set(area);
+    }
+
+    /// Window `id`'s area, as last drawn: its tabs and breadcrumbs
+    /// included, and none for the panel's.
+    fn area_of(&self, id: WindowId) -> Option<Area> {
+        if id == PANEL_WINDOW {
+            return Some(self.panel_area.get());
+        }
+        self.sizes()
+            .into_iter()
+            .find(|(window, _)| *window == id)
+            .map(|(_, area)| area)
+    }
+
     /// Records how many rows each window's tabs and breadcrumbs take (the
     /// UI calls this).
     pub fn note_chrome(&self, rows: u16) {
@@ -188,12 +215,11 @@ impl Windows {
 
     /// How many rows of text window `id` shows.
     pub fn height(&self, id: WindowId) -> usize {
-        self.sizes()
-            .into_iter()
-            .find(|(window, _)| *window == id)
-            .map_or(0, |(_, area)| {
-                (area.height - self.chrome_for(area.height)) as usize
-            })
+        match self.area_of(id) {
+            Some(area) if id == PANEL_WINDOW => area.height as usize,
+            Some(area) => (area.height - self.chrome_for(area.height)) as usize,
+            None => 0,
+        }
     }
 
     /// Records where window `id`'s view started when drawn (the UI calls
@@ -216,10 +242,7 @@ impl Windows {
 
     /// How many cells wide window `id` is.
     pub fn width(&self, id: WindowId) -> usize {
-        self.sizes()
-            .into_iter()
-            .find(|(window, _)| *window == id)
-            .map_or(0, |(_, area)| area.width as usize)
+        self.area_of(id).map_or(0, |area| area.width as usize)
     }
 
     /// Where window `id`'s view of `document` starts: where a command asked
@@ -241,6 +264,12 @@ impl Windows {
             .unwrap_or_default();
         let layout = TextLayout::new(self.width(id), document, options);
         layout.follow_cursor(top, document, cursor, self.height(id), options.scroll_off)
+    }
+
+    /// Makes `id` the active window, and nothing else (the buffer's the
+    /// caller's to swap).
+    pub(in crate::editor) fn set_active(&mut self, id: WindowId) {
+        self.active = id;
     }
 
     fn get_mut(&mut self, id: WindowId) -> Option<&mut Window> {
@@ -662,6 +691,8 @@ impl Editor {
     /// `:split` / `:vsplit`: opens a new window on the current buffer, at
     /// the same place, and makes it active.
     pub fn split_window(&mut self, direction: SplitDirection) -> WindowId {
+        // Splits the window the scrollback came from.
+        self.scrollback_to_windows();
         self.windows.last_id += 1;
         let id = WindowId(self.windows.last_id);
         let active = self.windows.active;
@@ -682,6 +713,10 @@ impl Editor {
 
     /// Makes window `id` active. Returns `false` if there's no such window.
     pub fn focus_window(&mut self, id: WindowId) -> bool {
+        if id == PANEL_WINDOW {
+            return self.in_scrollback();
+        }
+        self.scrollback_to_windows();
         let Some(target) = self.windows.get(id).cloned() else {
             return false;
         };
@@ -699,6 +734,9 @@ impl Editor {
 
     /// `<C-w>w`: the next window in reading order, wrapping.
     pub fn focus_next_window(&mut self) {
+        if self.scrollback_to_windows() {
+            return;
+        }
         let order = self.windows.layout.windows();
         let i = order
             .iter()
@@ -710,6 +748,10 @@ impl Editor {
     /// `<C-w>h/j/k/l`: the window in `direction`. Returns `false` if there
     /// is none.
     pub fn focus_window_in(&mut self, direction: Direction) -> bool {
+        // The panel's under every window.
+        if self.in_scrollback() {
+            return direction == Direction::Up && self.scrollback_to_windows();
+        }
         match self.windows.layout.neighbor(self.windows.active, direction) {
             Some(id) => self.focus_window(id),
             None => false,
@@ -719,6 +761,10 @@ impl Editor {
     /// `:close`: closes the active window (its buffer stays open). The last
     /// window can't be closed.
     pub fn close_window(&mut self) -> Result<(), String> {
+        // The panel's window: back to the one before (the shell stays).
+        if self.scrollback_to_windows() {
+            return Ok(());
+        }
         if self.windows.count() == 1 {
             return Err("Cannot close the last window".into());
         }
@@ -735,6 +781,7 @@ impl Editor {
 
     /// `:only`: closes every other window.
     pub fn only_window(&mut self) {
+        self.scrollback_to_windows();
         let active = self.windows.active;
         self.windows.layout = Layout::Window(active);
         self.windows.windows.retain(|w| w.id == active);
@@ -986,7 +1033,7 @@ impl Editor {
         self.forget_tab(old);
     }
 
-    fn save_active_window(&mut self) {
+    pub(in crate::editor) fn save_active_window(&mut self) {
         let document = self.document.id();
         let cursor = self.document.cursor();
         if let Some(window) = self.windows.get_mut(self.windows.active) {

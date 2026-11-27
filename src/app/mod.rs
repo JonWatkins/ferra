@@ -1460,8 +1460,16 @@ impl App {
                     .hint_keys(mode, command)
                     .map(|keys| ui::key_label(&keys, cfg!(target_os = "macos")))
             };
+            // With VS Code's keys, `terminal_normal` is back to the editor.
+            let normal = label(Mode::Terminal, "terminal_normal");
+            let (normal, leave) = if self.editor.modeless() {
+                (None, label(Mode::Terminal, "terminal_leave").or(normal))
+            } else {
+                (normal, label(Mode::Terminal, "terminal_leave"))
+            };
             ui::TerminalKeys {
-                leave: label(Mode::Terminal, "terminal_leave"),
+                normal,
+                leave,
                 hide: label(Mode::Terminal, "terminal_toggle"),
                 focus: label(self.home_mode(), "terminal_toggle"),
             }
@@ -1838,6 +1846,14 @@ impl App {
                         ..Invocation::default()
                     };
                     self.execute(&command, invocation);
+                }
+                // VS Code's keys, typing over the terminal's selection: the
+                // shell's again, and it gets the key.
+                Outcome::InsertChar(c)
+                    if self.editor.in_scrollback() && self.editor.mode() == Mode::Visual =>
+                {
+                    let key = crate::input::KeyPress::plain(crate::input::KeyCode::Char(c));
+                    self.editor.scrollback_type(key);
                 }
                 Outcome::InsertChar(c) if self.editor.has_extra_cursors() => {
                     let _ = self.editor.for_each_cursor(|editor| {

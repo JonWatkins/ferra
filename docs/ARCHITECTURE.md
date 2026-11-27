@@ -23,6 +23,7 @@ All of the editor's state, mutated by commands and read by the UI: the buffers (
 - `git.rs`, `git_gui.rs`, `conflicts.rs`: the gutter, Source Control and the git view.
 - `explorer.rs`, `project_search.rs`, `sidebar_views.rs`: the sidebar's views.
 - `modeless.rs`: VS Code's keys over the modal engine ([ADR 0006](adr/0006-vscode-keys-over-a-modal-engine.md)).
+- `terminal_panel.rs`, `terminal_normal.rs`: the terminal panel's shells, and terminal-normal mode: the shell's text as a read-only buffer in the panel's own window (`PANEL_WINDOW`, outside the layout), so every editor key works on it.
 
 **commands** (`src/commands/`):
 The named command registry and every built-in command (`builtin/`), the `:` line's ex commands (`ex/`: ranges, `:s`, `:g`, `:sort`, `|`), and running hooks. Interface: `CommandRegistry::register` and `execute`, a handler taking a `Context` (editor, registry, `Invocation`).

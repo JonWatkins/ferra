@@ -932,7 +932,7 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 # The terminal panel (<Space>t), while it has focus. Every other key goes
 # to the shell.
 [keys.terminal]
-"<C-\\><C-n>" = "terminal_leave"
+"<C-\\><C-n>" = "terminal_normal"
 "<C-`>" = "terminal_toggle"
 "<S-PageUp>" = "terminal_scroll_up"
 "<S-PageDown>" = "terminal_scroll_down"

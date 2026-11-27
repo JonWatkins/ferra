@@ -317,7 +317,7 @@ fn a_program_in_the_terminal_that_asks_for_the_mouse_gets_it() {
     keys(&mut app, ":terminal<CR>");
     keys(&mut app, &format!("sh {}<CR>", script.display()));
     wait_for(&mut app, "ready");
-    keys(&mut app, "<C-\\><C-n>");
+    keys(&mut app, "<C-\\><C-n><C-w>k");
     assert_eq!(app.editor().mode(), Mode::Normal);
 
     // The shell's screen starts a column in, under the title row.

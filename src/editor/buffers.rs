@@ -53,6 +53,8 @@ impl Editor {
 
     /// Makes buffer `id` active. Returns `false` if there's no such buffer.
     pub fn switch_to(&mut self, id: DocumentId) -> bool {
+        // From the terminal's scrollback: to the window it came from first.
+        self.leave_scrollback();
         if id == self.document.id() {
             return true;
         }
@@ -67,6 +69,7 @@ impl Editor {
 
     /// `:bn` / `:bp`: the next or previous buffer by number, wrapping.
     pub fn switch_relative(&mut self, offset: isize) {
+        self.leave_scrollback();
         let ids: Vec<DocumentId> = self.buffers().iter().map(|b| b.id).collect();
         let current = ids
             .iter()
@@ -121,6 +124,10 @@ impl Editor {
     /// `:bd`: closes the active buffer, switching to the most recently used
     /// other one (or an empty scratch buffer if it was the last).
     pub fn close_buffer(&mut self) {
+        // The terminal's scrollback: back to the window it came from.
+        if self.scrollback_to_windows() {
+            return;
+        }
         // The tab beside it in this window, else the most recently used.
         let beside = self
             .tab_to_show_after_closing()
@@ -183,6 +190,9 @@ impl Editor {
     /// Makes `document` active, keeping the current one in the background
     /// unless it's an untouched scratch buffer.
     pub(super) fn activate(&mut self, document: Document) {
+        // A file opened from the terminal's scrollback goes in the window
+        // it came from.
+        self.leave_scrollback();
         // A file opened (from the sidebar, a picker) takes the windows'
         // place back from the settings editor.
         self.settings = None;

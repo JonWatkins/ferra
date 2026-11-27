@@ -242,7 +242,12 @@ impl CommandRegistry {
             range: invocation.range,
             arg_text: invocation.arg_text,
         };
-        (command.handler)(&mut cx)
+        let result = (command.handler)(&mut cx);
+        // The terminal's scrollback refused what it tried to change.
+        match cx.editor.refused_edit() {
+            Some(refused) if result.is_ok() => Err(refused),
+            _ => result,
+        }
     }
 }
 
