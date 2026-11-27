@@ -133,76 +133,18 @@ pub fn draw_windows(
             }
         }
         areas.push((id, rect));
-        map.add(rect, Target::Window(id));
-        // Each window draws with its own options (`:setlocal wrap`...).
-        let options = editor.options_for(id, document.id());
-        let state = views.entry((id, document.id())).or_default();
-        if let Some(top) = windows.take_requested_top(id) {
-            let last = document.buffer().line_count().saturating_sub(1);
-            state.viewport.top = if top.line > last { last.into() } else { top };
-        }
-        // The find box covers the active window's top rows.
-        let covered = if active && super::find::shown(editor) {
-            super::FindView::height(editor.find_state()) as usize
-        } else {
-            0
-        };
-        let highlights = syntax.as_deref_mut().and_then(|engine| {
-            let rows = state.visible_rows(document, window_cursor, rect, &options, covered);
-            engine.highlight(document, &editor.languages, &editor.syntax_trees, rows)
-        });
-
-        let view = EditorView::new(document, &options, theme)
-            .cursor(window_cursor)
-            .active(active)
-            .covered(covered)
-            .selection(if active {
-                editor.selection_range()
-            } else {
-                None
-            })
-            .block(editor.selection_block().filter(|_| active))
-            .extra_cursors(if active { editor.extra_cursors() } else { &[] })
-            .search(editor.search_highlight())
-            .find_scope(if active { editor.find_scope() } else { None })
-            .git_changes(editor.git_hunks(document.id()))
-            .conflicts(editor.git_conflicts(document.id()))
-            .caret(active && editor.mode() == crate::editor::Mode::Insert)
-            .current_match(if active {
-                editor.find_current_match()
-            } else {
-                None
-            })
-            .references(if active {
-                editor.references_shown()
-            } else {
-                &[]
-            })
-            .syntax(highlights)
-            .diagnostics(editor.diagnostics(document.id()));
-        let view = if options.bracket_colors {
-            view.brackets(
-                editor.bracket_states(document),
-                editor.comments_of(document),
-            )
-        } else {
-            view
-        };
-        let view = if options.indent_guides {
-            view.indent_guides(editor.indent_width_of(document, &options))
-        } else {
-            view
-        };
-        frame.render_stateful_widget(view, rect, state);
-        for (at, row) in state.fold_markers() {
-            map.add(
-                Rect::new(at.x, at.y, 1, 1),
-                Target::Fold { window: id, row },
-            );
-        }
-        windows.note_top(id, state.viewport.top);
+        let drawn = draw_text(
+            frame,
+            map,
+            editor,
+            theme,
+            (id, document, window_cursor),
+            rect,
+            views,
+            syntax.as_deref_mut(),
+        );
         if active {
-            cursor = state.cursor;
+            cursor = drawn;
             active_area = Some(rect);
         }
 
@@ -239,4 +181,92 @@ pub fn draw_windows(
         cursor,
         active: active_area,
     }
+}
+
+/// Draws window `id`'s text (`document`, the cursor at `window_cursor`)
+/// in `rect`, recording it in `map`: a window's, or the terminal panel's
+/// in terminal-normal mode. Returns where the terminal cursor goes, if
+/// it's the active window.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_text(
+    frame: &mut Frame,
+    map: &mut ScreenMap,
+    editor: &Editor,
+    theme: &Theme,
+    (id, document, window_cursor): (WindowId, &crate::editor::Document, crate::core::Position),
+    rect: Rect,
+    views: &mut Views,
+    syntax: Option<&mut SyntaxEngine>,
+) -> Option<Position> {
+    let windows = editor.windows();
+    let active = id == windows.active();
+    map.add(rect, Target::Window(id));
+    // Each window draws with its own options (`:setlocal wrap`...).
+    let options = editor.options_for(id, document.id());
+    let state = views.entry((id, document.id())).or_default();
+    if let Some(top) = windows.take_requested_top(id) {
+        let last = document.buffer().line_count().saturating_sub(1);
+        state.viewport.top = if top.line > last { last.into() } else { top };
+    }
+    // The find box covers the active window's top rows.
+    let covered = if active && super::find::shown(editor) {
+        super::FindView::height(editor.find_state()) as usize
+    } else {
+        0
+    };
+    let highlights = syntax.and_then(|engine| {
+        let rows = state.visible_rows(document, window_cursor, rect, &options, covered);
+        engine.highlight(document, &editor.languages, &editor.syntax_trees, rows)
+    });
+
+    let view = EditorView::new(document, &options, theme)
+        .cursor(window_cursor)
+        .active(active)
+        .covered(covered)
+        .selection(if active {
+            editor.selection_range()
+        } else {
+            None
+        })
+        .block(editor.selection_block().filter(|_| active))
+        .extra_cursors(if active { editor.extra_cursors() } else { &[] })
+        .search(editor.search_highlight())
+        .find_scope(if active { editor.find_scope() } else { None })
+        .git_changes(editor.git_hunks(document.id()))
+        .conflicts(editor.git_conflicts(document.id()))
+        .caret(active && editor.mode() == crate::editor::Mode::Insert)
+        .current_match(if active {
+            editor.find_current_match()
+        } else {
+            None
+        })
+        .references(if active {
+            editor.references_shown()
+        } else {
+            &[]
+        })
+        .syntax(highlights)
+        .diagnostics(editor.diagnostics(document.id()));
+    let view = if options.bracket_colors {
+        view.brackets(
+            editor.bracket_states(document),
+            editor.comments_of(document),
+        )
+    } else {
+        view
+    };
+    let view = if options.indent_guides {
+        view.indent_guides(editor.indent_width_of(document, &options))
+    } else {
+        view
+    };
+    frame.render_stateful_widget(view, rect, state);
+    for (at, row) in state.fold_markers() {
+        map.add(
+            Rect::new(at.x, at.y, 1, 1),
+            Target::Fold { window: id, row },
+        );
+    }
+    windows.note_top(id, state.viewport.top);
+    state.cursor
 }

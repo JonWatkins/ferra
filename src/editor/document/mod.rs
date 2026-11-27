@@ -94,6 +94,10 @@ pub struct Document {
     chosen_indent: Option<IndentUnit>,
     /// Closed folds (`zc`), kept in step with edits.
     folds: folds::Folds,
+    /// A terminal's scrollback (terminal-normal mode): edits are refused.
+    read_only: bool,
+    /// An edit was refused since last asked (`take_refused_edit`).
+    refused_edit: bool,
 }
 
 impl Document {
@@ -130,12 +134,34 @@ impl Document {
         self.detected_indent = crate::core::indent::detect(&self.buffer);
     }
 
-    /// Display name for the UI: the path as given, or `[scratch]`.
+    /// Display name for the UI: the path as given, or `[scratch]`
+    /// (`[terminal]` for a terminal's scrollback).
     pub fn name(&self) -> Cow<'_, str> {
         match &self.path {
             Some(path) => path.to_string_lossy(),
+            None if self.read_only => Cow::Borrowed("[terminal]"),
             None => Cow::Borrowed("[scratch]"),
         }
+    }
+
+    /// A terminal's scrollback, for terminal-normal mode: its text can't
+    /// be changed.
+    pub fn scrollback(text: &str) -> Self {
+        Self {
+            read_only: true,
+            ..Self::with_text(text)
+        }
+    }
+
+    /// Whether its text can't be changed (a terminal's scrollback).
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// Whether an edit was refused (the text being read-only) since last
+    /// asked.
+    pub fn take_refused_edit(&mut self) -> bool {
+        std::mem::take(&mut self.refused_edit)
     }
 
     /// Whether there are changes not yet saved. Undoing back to the saved
@@ -313,6 +339,10 @@ impl Document {
         if text.is_empty() {
             return at;
         }
+        if self.read_only {
+            self.refused_edit = true;
+            return at;
+        }
         self.begin_step_if_new();
         let end = self.buffer.insert_text(at, text);
         self.marks.after_insert(at, end);
@@ -331,6 +361,10 @@ impl Document {
     /// removed text. Doesn't move the cursor.
     pub fn delete(&mut self, start: Position, end: Position) -> String {
         if start == end {
+            return String::new();
+        }
+        if self.read_only {
+            self.refused_edit = true;
             return String::new();
         }
         self.begin_step_if_new();

@@ -2,8 +2,8 @@
 //! Code: shells (`crate::terminal`) under the windows, one shown at a time.
 //! `<Space>t` opens it and gives it focus, starting a shell the first time;
 //! with focus, keys go to the shell except `[keys.terminal]`'s (`<C-\><C-n>`
-//! back to the editor, leaving it open; `<C-`>` hides it, the shells still
-//! running).
+//! terminal-normal mode, `terminal_normal.rs`; `<C-`>` hides it, the shells
+//! still running).
 //!
 //! More than one shell (`:terminal-new`, ``Ctrl+Shift+` ``): the editor keeps
 //! them in order (`Shells`) with the one shown; `:terminal-next` and
@@ -110,6 +110,7 @@ impl Editor {
             self.set_mode(Mode::Normal);
             return Ok(());
         }
+        // From its scrollback, `<Space>t` is the shell again.
         self.focus_terminal()
     }
 
@@ -190,6 +191,7 @@ impl Editor {
     /// `:terminal-close`: ends the shell shown, showing the one after it;
     /// with the last, closes the panel.
     pub fn close_terminal(&mut self) {
+        self.scrollback_to_windows();
         self.terminals.remove(self.terminals.shown);
         if self.terminals.is_empty() {
             self.panel_open = false;

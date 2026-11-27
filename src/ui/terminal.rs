@@ -3,7 +3,7 @@
 //! them down the right, as VS Code's tabs list.
 //!
 //! ```text
-//!  TERMINAL  zsh                          ⌃\ ⌃N editor   ⌃` hide   +  ×
+//!  TERMINAL  zsh                          ⌃\ ⌃N normal   ⌃` hide   +  ×
 //! ~/Code/ferra $ cargo test                         │ $ zsh
 //!    Compiling ferra v0.1.0                         │ $ cargo test
 //! ```
@@ -42,6 +42,8 @@ use crate::terminal::Terminal;
 pub struct TerminalKeys {
     /// Back to the editor (in the panel).
     pub leave: Option<String>,
+    /// Terminal-normal mode (in the panel).
+    pub normal: Option<String>,
     /// Hide the panel (in the panel).
     pub hide: Option<String>,
     /// Go to the panel (from the editor).
@@ -232,6 +234,7 @@ impl<'a> TerminalView<'a> {
             )),
             None if self.focused => {
                 let hints: Vec<String> = [
+                    pair(&self.keys.normal, "normal"),
                     pair(&self.keys.leave, "editor"),
                     pair(&self.keys.hide, "hide"),
                 ]
@@ -375,7 +378,8 @@ mod tests {
         }
         let theme = crate::config::Config::default().theme;
         let keys = TerminalKeys {
-            leave: Some("⌃\\ ⌃N".into()),
+            normal: Some("⌃\\ ⌃N".into()),
+            leave: None,
             hide: Some("⌃`".into()),
             focus: None,
         };
@@ -388,7 +392,7 @@ mod tests {
         assert!(
             row(0)
                 .trim_end()
-                .ends_with("⌃\\ ⌃N editor   ⌃` hide   +  ×"),
+                .ends_with("⌃\\ ⌃N normal   ⌃` hide   +  ×"),
             "{:?}",
             row(0)
         );

@@ -442,8 +442,9 @@ With `mouse = true` (the default):
   picker or a popup.
 - In the **sidebar**, a click on a file opens it, on a folder opens or
   closes it, and on a tab shows that view. A click on the **terminal
-  panel** goes to it, and a program there that asks for the mouse (Vim,
-  `htop`, tmux, lazygit) gets its clicks, drags and wheel.
+  panel** goes to it, dragging there selects its text (terminal-normal
+  mode, with either keymap), and a program there that asks for the mouse
+  (Vim, `htop`, tmux, lazygit) gets its clicks, drags and wheel.
 - In the **picker** and plugins' list popups, a click chooses. In a
   question (`y move it   n cancel`, `s save   d don't save   Esc
   cancel`), a click on a key or the words after it is that key. In the
@@ -680,7 +681,7 @@ focus, every key goes to the shell, except:
 
 | Keys (in the panel) | Action |
 |---------------------|--------|
-| `<C-\><C-n>` | Back to the editor, leaving the panel open (`<Space>t` goes back to it) |
+| `<C-\><C-n>` | Terminal-normal mode: the shell's text as a buffer to move in, search and yank from (below). With VS Code's keys, back to the editor |
 | ``<C-`>`` | Hide the panel; the shell keeps running, and `<Space>t` shows it again |
 | `<S-PageUp>` `<S-PageDown>` | Scroll back through what's gone off the top (typing goes back to the bottom) |
 | ``<C-~>`` (``Ctrl+Shift+` ``) | Another shell (`:terminal-new`) |
@@ -702,6 +703,21 @@ for (Vim's bar in insert mode), else `cursor-shape.terminal`. A program's
 bell is ignored, as Neovim's `belloff=all` ignores it; with
 `terminal-bell = true` it rings the terminal ferra runs in, from any shell,
 shown or not.
+
+**Terminal-normal mode**, as Neovim's: `<C-\><C-n>` turns the panel into a
+read-only buffer of the shell's text (what's scrolled off, then the
+screen; a line the terminal wrapped is one line), with the cursor where
+the shell's was. Every key works there as in a window: motions, `/` and
+`?`, visual mode, `y` and the registers, `"+y` to the clipboard, `:w
+file` to save it. It's the text as it was when you came in; nothing in it
+can be changed. `i` (or `a`, `o`, any way into insert mode) goes back to
+the shell, and so does `<Space>t`; `<C-w>k`, `<C-w>w` or a click in a
+window goes back to the editor, the panel left open. **Dragging** over
+the shell's screen (when its program hasn't taken the mouse) does the
+same with the mouse: the text stays where it is and the drag selects it.
+With VS Code's keys that's the way in: `Ctrl+C` copies the selection, and
+typing, `Esc` or a click goes back to the shell (what's typed goes to it).
+
 When a shell exits, a key closes it (one that exits while it isn't shown
 goes at once); `:terminal-close` ends the one shown any time, and the
 panel closes with the last. The coding agent's `read_terminal` reads the
@@ -715,7 +731,7 @@ window does, so those keep running. Either way a shell that won't go is
 killed after a second, so quitting never hangs on one. A program that
 starts a session of its own (a daemon, `setsid`) is left alone. ``<C-`>`` and ``<C-~>`` need a terminal with
 the kitty keyboard protocol (Ghostty, kitty, WezTerm, iTerm2); elsewhere
-use `<C-\><C-n>`, and `:terminal-new` or the `+`.
+use `<C-\><C-n>` and `<C-w>k`, and `:terminal-new` or the `+`.
 
 ## The coding agent
 

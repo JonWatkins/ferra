@@ -102,6 +102,52 @@ impl vt100::Callbacks for Callbacks {
     }
 }
 
+/// The terminal's text as lines (a long line the terminal wrapped is one),
+/// what's scrolled off first, for terminal-normal mode
+/// (`Terminal::snapshot`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Snapshot {
+    /// The lines, the blank ones under the last text left off (at least
+    /// one, if empty).
+    pub lines: Vec<String>,
+    /// For each row on screen as it's scrolled now, top first: its line,
+    /// and the char in it the row starts at.
+    pub screen_rows: Vec<(usize, usize)>,
+    /// The rows on screen's text.
+    rows: Vec<String>,
+    /// The terminal's cursor: its line and char.
+    pub cursor: (usize, usize),
+    /// The screen's width in cells.
+    pub width: u16,
+}
+
+impl Snapshot {
+    /// The line and char at row `row`, column `col` of the screen (past
+    /// its text, the end of the line).
+    pub fn at(&self, row: u16, col: u16) -> (usize, usize) {
+        let row = usize::from(row).min(self.screen_rows.len().saturating_sub(1));
+        let Some(&(line, start)) = self.screen_rows.get(row) else {
+            return (0, 0);
+        };
+        let text = self.rows.get(row).map_or("", String::as_str);
+        let len = self.lines.get(line).map_or(0, |l| l.chars().count());
+        (line, (start + char_at_cell(text, col)).min(len))
+    }
+}
+
+/// The char at cell `col` of a row's text (past the text, its length).
+fn char_at_cell(text: &str, col: u16) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    let mut cells = 0;
+    for (i, c) in text.chars().enumerate() {
+        cells += c.width().unwrap_or(0).max(1);
+        if cells > usize::from(col) {
+            return i;
+        }
+    }
+    text.chars().count()
+}
+
 pub struct Terminal {
     parser: vt100::Parser<Callbacks>,
     writer: Box<dyn Write + Send>,
@@ -371,9 +417,17 @@ impl Terminal {
     /// back whole. (A full-screen program's screen has no scrollback: just
     /// that.) The user's place in the scrollback stays as it is.
     pub fn text_lines(&self) -> Vec<String> {
+        self.snapshot().lines
+    }
+
+    /// The text for terminal-normal mode (`text_lines`), with where the
+    /// rows on screen now (as scrolled back) and the cursor are in it.
+    pub fn snapshot(&self) -> Snapshot {
         let mut screen = self.screen().clone();
         let height = usize::from(screen.size().0.get());
         let width = screen.size().1.get();
+        let (cursor_row, cursor_col) = screen.cursor_position();
+        let viewed = screen.scrollback();
         screen.set_scrollback(usize::MAX);
         let scrolled = screen.scrollback();
         // Each scrollback offset shows `height` rows from `scrolled -
@@ -394,10 +448,13 @@ impl Terminal {
             }
             offset = offset.saturating_sub(height);
         }
+        // Each row's line, and the char in it the row starts at.
+        let mut starts = Vec::with_capacity(rows.len());
         let mut lines = Vec::with_capacity(rows.len());
         let mut line = String::new();
-        for (row, wrapped) in rows {
-            line.push_str(&row);
+        for (row, wrapped) in &rows {
+            starts.push((lines.len(), line.chars().count()));
+            line.push_str(row);
             if !wrapped {
                 lines.push(line.trim_end().to_string());
                 line.clear();
@@ -409,7 +466,34 @@ impl Terminal {
         while lines.last().is_some_and(String::is_empty) {
             lines.pop();
         }
-        lines
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        let last = lines.len() - 1;
+        let place = |row: usize, col: u16| {
+            let Some(&(line, start)) = starts.get(row) else {
+                return (last, 0);
+            };
+            let text = rows.get(row).map_or("", |(text, _)| text.as_str());
+            (line.min(last), start + char_at_cell(text, col))
+        };
+        let top = scrolled.saturating_sub(viewed);
+        let screen_rows = (0..height).map(|i| place(top + i, 0)).collect::<Vec<_>>();
+        let cursor = place(scrolled + usize::from(cursor_row), cursor_col);
+        let (cursor_line, cursor_char) = cursor;
+        let cursor_char = cursor_char.min(lines[cursor_line].chars().count());
+        Snapshot {
+            screen_rows,
+            cursor: (cursor_line, cursor_char),
+            width,
+            rows: rows
+                .into_iter()
+                .map(|(text, _)| text)
+                .skip(top)
+                .take(height)
+                .collect(),
+            lines,
+        }
     }
 
     /// What the shell's running now, if anything: the command line of the

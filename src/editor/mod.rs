@@ -54,6 +54,7 @@ mod selection;
 pub mod settings;
 pub mod sidebar_views;
 pub mod status_actions;
+mod terminal_normal;
 mod terminal_panel;
 pub use terminal_panel::Shells;
 pub mod text_field;
@@ -256,6 +257,9 @@ pub struct Editor {
     find: find::FindState,
     /// The terminal panel's shells (kept while the panel's hidden).
     terminals: terminal_panel::Shells,
+    /// Terminal-normal mode: the panel's scrollback is the buffer, in its
+    /// own window (`terminal_normal.rs`).
+    scrollback: Option<terminal_normal::Scrollback>,
     /// A shell rang the bell, for the app to pass on (`terminal-bell`).
     terminal_bell: bool,
     /// Whether the bottom panel is open (at `panel.tab`).
@@ -638,6 +642,12 @@ impl Editor {
         // With VS Code's keys there's no normal mode: insert mode is home.
         let mode = if mode == Mode::Normal && self.modeless() {
             Mode::Insert
+        } else {
+            mode
+        };
+        // In the terminal's scrollback, insert mode is the shell again.
+        let mode = if matches!(mode, Mode::Insert | Mode::Terminal) && self.scrollback_to_shell() {
+            Mode::Terminal
         } else {
             mode
         };

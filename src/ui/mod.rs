@@ -65,6 +65,7 @@ use ratatui::{
 use crate::config::{StatuslineMode, Theme};
 use screen_map::SidebarPart;
 
+use crate::editor::windows::{Area, PANEL_WINDOW};
 use crate::editor::{Editor, Mode};
 use crate::syntax::SyntaxEngine;
 
@@ -306,6 +307,8 @@ pub fn draw(
     // the tab's rows (the shell's, for the terminal), under the windows
     // (and their status lines).
     let mut terminal_cursor = None;
+    // Terminal-normal mode: the panel's window, drawn over the shell.
+    let mut scrollback: Option<(Option<ratatui::layout::Position>, Rect)> = None;
     let (main, status) = match editor.panel_shown() {
         Some(tab) => {
             let per_window = editor.options.statusline == StatuslineMode::Windows;
@@ -346,14 +349,39 @@ pub fn draw(
                         frame.render_widget(view, panel);
                         let row = Rect::new(panel.x, panel.y, panel.width, 1);
                         panel::draw_tabs(editor, theme, row, frame.buffer_mut());
+                        let list = terminal::shell_list(editor, panel);
                         if focused {
-                            let list = terminal::shell_list(editor, panel);
                             terminal_cursor = TerminalView::cursor_position(terminal, panel, list);
+                        }
+                        let body = terminal::body(panel, list);
+                        editor.windows().note_panel_area(Area::new(
+                            body.x,
+                            body.y,
+                            body.width,
+                            body.height,
+                        ));
+                        if editor.in_scrollback() {
+                            scrollback = Some((None, body));
                         }
                     }
                     _ => frame.render_widget(panel::PanelView::new(editor, theme), panel),
                 }
                 panel::PanelView::record(editor, panel, &mut map);
+                // Over the shell's screen, and on top of it in the map.
+                if let Some((cursor, body)) = &mut scrollback {
+                    frame.render_widget(ratatui::widgets::Clear, *body);
+                    let document = &editor.document;
+                    *cursor = windows::draw_text(
+                        frame,
+                        &mut map,
+                        editor,
+                        theme,
+                        (PANEL_WINDOW, document, document.cursor()),
+                        *body,
+                        views,
+                        syntax.as_deref_mut(),
+                    );
+                }
                 (main, status)
             } else {
                 (main, status)
@@ -398,7 +426,8 @@ pub fn draw(
             drawn
         }
     };
-    let window_cursor = drawn.cursor;
+    let window_cursor = drawn.cursor.or(scrollback.and_then(|(cursor, _)| cursor));
+    let active_area = drawn.active.or(scrollback.map(|(_, body)| body));
     frame.render_widget(CommandLineView::new(editor, theme), command);
     if editor.splash_visible() && !splash.is_empty() {
         frame.render_widget(Splash::new(splash, theme), main);
@@ -476,12 +505,10 @@ pub fn draw(
     // The find box floats at the top right of the active window.
     let mut find_cursor = None;
     if find::shown(editor)
-        && let Some(window) = drawn.active
+        && let Some(window) = active_area
     {
         let view = FindView::new(editor.find_state(), editor.find_count(), find_keys, theme);
-        let current = drawn
-            .cursor
-            .and_then(|at| find::current_match_cells(editor, at));
+        let current = window_cursor.and_then(|at| find::current_match_cells(editor, at));
         let area = FindView::area(editor.find_state(), window, current);
         find_cursor = FindView::cursor_position(editor.find_state(), area);
         FindView::record(editor.find_state(), find_keys, area, &mut map);
@@ -554,7 +581,7 @@ pub fn draw(
         } else {
             main
         };
-        let area = PopupView::area(popup, bounds, window_cursor, drawn.active);
+        let area = PopupView::area(popup, bounds, window_cursor, active_area);
         frame.render_widget(PopupView::new(popup, theme), area);
         PopupView::record(popup, area, &mut map);
     }

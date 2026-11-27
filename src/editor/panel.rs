@@ -127,6 +127,7 @@ impl Editor {
         if tab == PanelTab::Terminal {
             return self.focus_terminal();
         }
+        self.scrollback_to_windows();
         self.panel.tab = tab;
         self.panel_open = true;
         self.panel.scroll.set(0);
@@ -141,6 +142,7 @@ impl Editor {
     /// `Ctrl+J` (`:panel`): shows the panel at its last tab, or hides it.
     pub fn panel_toggle(&mut self) -> Result<(), String> {
         if self.panel_shown().is_some() {
+            self.scrollback_to_windows();
             self.panel_open = false;
             if matches!(self.mode(), Mode::Panel | Mode::Terminal) {
                 self.set_mode(Mode::Normal);
@@ -298,6 +300,7 @@ impl Editor {
     /// Puts `list` in the Locations tab and shows it, the first place
     /// selected; focus stays where it is.
     pub fn panel_show_locations(&mut self, list: LocationList) {
+        self.scrollback_to_windows();
         self.panel.locations = Some(list);
         self.panel.tab = PanelTab::Locations;
         self.panel_open = true;

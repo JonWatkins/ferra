@@ -16,6 +16,11 @@ pub fn register(r: &mut CommandRegistry) {
         |cx| cx.editor.focus_terminal(),
     );
     r.register(
+        "terminal_normal",
+        "Terminal-normal mode: the terminal panel's text as a read-only buffer, to move in, search and yank from (i goes back to the shell)",
+        |cx| cx.editor.terminal_normal(),
+    );
+    r.register(
         "terminal_leave",
         "From the terminal panel back to the editor, leaving it open",
         |cx| {
