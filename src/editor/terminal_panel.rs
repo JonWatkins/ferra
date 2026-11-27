@@ -229,6 +229,21 @@ impl Editor {
         }
     }
 
+    /// Whether the panel's shown and its program asked for the mouse.
+    pub fn terminal_wants_mouse(&self) -> bool {
+        self.terminal_panel().is_some_and(Terminal::wants_mouse)
+    }
+
+    /// The mouse over the panel's screen, for its program: whether it
+    /// took it (`Terminal::send_mouse`).
+    pub fn terminal_mouse(&mut self, mouse: crate::terminal::Mouse) -> bool {
+        self.terminal_panel().is_some()
+            && self
+                .terminals
+                .shown_mut()
+                .is_some_and(|terminal| terminal.send_mouse(mouse))
+    }
+
     /// The mouse wheel over the panel: `rows` back (or forward if negative).
     pub fn terminal_scroll_rows(&mut self, rows: isize) {
         if let Some(terminal) = self.terminals.shown_mut() {

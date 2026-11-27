@@ -123,7 +123,7 @@ pub fn buttons(area: Rect) -> Vec<(Rect, PanelPart)> {
 /// The shell's part of the panel's area: under the title row, a column
 /// in from the left (so it doesn't run into the sidebar's line), left of
 /// the `list` and its line.
-fn body(area: Rect, list: Option<Rect>) -> Rect {
+pub fn body(area: Rect, list: Option<Rect>) -> Rect {
     let margin = 1.min(area.width.saturating_sub(1));
     let right = list.map_or(area.right(), |list| list_edge(list).x);
     Rect::new(

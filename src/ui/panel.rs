@@ -143,9 +143,11 @@ impl<'a> PanelView<'a> {
         screen.add(area, panel(PanelPart::Rest));
         match editor.panel_shown() {
             Some(PanelTab::Terminal) => {
-                screen.add(list, panel(PanelPart::Terminal));
+                let rows = super::terminal::shell_list(editor, area);
+                let body = super::terminal::body(area, rows);
+                screen.add(body, panel(PanelPart::Terminal));
                 let shells = editor.terminals();
-                if let Some(rows) = super::terminal::shell_list(editor, area) {
+                if let Some(rows) = rows {
                     let first = super::terminal::list_first(shells.shown_index(), rows);
                     screen.rows(rows, first, shells.len(), |i| panel(PanelPart::Shell(i)));
                     let edge = super::terminal::list_edge(rows);

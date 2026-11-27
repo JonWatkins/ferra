@@ -18,6 +18,12 @@
 //! is the parser's; `cursor_shape` gives it to the app to set. Keys go back as the bytes a terminal sends
 //! (`terminal::key_bytes`: control characters, xterm's modifier parameters,
 //! application cursor mode); pastes are bracketed when the program asked.
+//! The mouse goes to a program that asked for it (`ESC [ ? 1000 h` and
+//! the rest, as Vim, htop, tmux and lazygit do): `send_mouse` reports the
+//! events its mode takes (presses; releases; drags; any move) in the
+//! encoding it asked for (`mouse_bytes`: xterm's bytes, UTF-8, or SGR's
+//! `ESC [ <`), both of which the parser keeps. Until it asks, the app
+//! keeps the mouse (the wheel scrolls the history).
 //!
 //! Dropping a `Terminal` ends its shell: a hangup, then, if it hasn't gone
 //! within a second, a kill, so quitting never waits on a shell that ignores
@@ -327,6 +333,31 @@ impl Terminal {
         }
     }
 
+    /// Whether its program asked for the mouse.
+    pub fn wants_mouse(&self) -> bool {
+        self.is_running() && self.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None
+    }
+
+    /// Reports `mouse` to the program, if it asked for that kind of
+    /// event. Returns whether it did. (Back to the bottom of the
+    /// scrollback first: the program's rows are the screen's.)
+    pub fn send_mouse(&mut self, mouse: Mouse) -> bool {
+        if !self.is_running() {
+            return false;
+        }
+        let screen = self.screen();
+        let Some(bytes) = mouse_bytes(
+            mouse,
+            screen.mouse_protocol_mode(),
+            screen.mouse_protocol_encoding(),
+        ) else {
+            return false;
+        };
+        self.parser.screen_mut().set_scrollback(0);
+        self.write(&bytes);
+        true
+    }
+
     /// Scrolls back (`rows` > 0) or forward through what's scrolled off.
     pub fn scroll(&mut self, rows: isize) {
         let screen = self.parser.screen_mut();
@@ -542,6 +573,98 @@ pub fn key_bytes(key: KeyPress, app_cursor: bool) -> Vec<u8> {
     bytes
 }
 
+/// A mouse button, as a terminal reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Middle,
+    Right,
+}
+
+/// What the mouse did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseAction {
+    Press(MouseButton),
+    Release(MouseButton),
+    /// Moved with the button held.
+    Drag(MouseButton),
+    /// Moved with no button held.
+    Move,
+    WheelUp,
+    WheelDown,
+}
+
+/// A mouse event over the terminal's screen, at `row` and `col` (from 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mouse {
+    pub action: MouseAction,
+    pub row: u16,
+    pub col: u16,
+    pub shift: bool,
+    pub alt: bool,
+    pub ctrl: bool,
+}
+
+/// The bytes reporting `mouse` to a program that asked for `mode` in
+/// `encoding`, as xterm sends them; `None` if that mode doesn't report it
+/// (or xterm's bytes can't say where: past column 223).
+pub fn mouse_bytes(
+    mouse: Mouse,
+    mode: vt100::MouseProtocolMode,
+    encoding: vt100::MouseProtocolEncoding,
+) -> Option<Vec<u8>> {
+    use vt100::MouseProtocolEncoding as E;
+    use vt100::MouseProtocolMode as M;
+    let button = |b: MouseButton| match b {
+        MouseButton::Left => 0u32,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    };
+    let taken = match mouse.action {
+        MouseAction::Press(_) | MouseAction::WheelUp | MouseAction::WheelDown => mode != M::None,
+        MouseAction::Release(_) => matches!(mode, M::PressRelease | M::ButtonMotion | M::AnyMotion),
+        MouseAction::Drag(_) => matches!(mode, M::ButtonMotion | M::AnyMotion),
+        MouseAction::Move => mode == M::AnyMotion,
+    };
+    if !taken {
+        return None;
+    }
+    // The button, plus 32 for a move, 64 for the wheel.
+    let mut code = match mouse.action {
+        MouseAction::Press(b) | MouseAction::Release(b) => button(b),
+        MouseAction::Drag(b) => 32 + button(b),
+        MouseAction::Move => 32 + 3,
+        MouseAction::WheelUp => 64,
+        MouseAction::WheelDown => 65,
+    };
+    // X10's mode reports no modifiers.
+    if mode != M::Press {
+        code += 4 * u32::from(mouse.shift) + 8 * u32::from(mouse.alt) + 16 * u32::from(mouse.ctrl);
+    }
+    let (x, y) = (u32::from(mouse.col) + 1, u32::from(mouse.row) + 1);
+    let release = matches!(mouse.action, MouseAction::Release(_));
+    if encoding == E::Sgr {
+        // SGR says which button went up, with `m`.
+        let end = if release { 'm' } else { 'M' };
+        return Some(format!("\x1b[<{code};{x};{y}{end}").into_bytes());
+    }
+    // The others say only that one did (3), each number plus 32.
+    if release {
+        code = (code & !3) | 3;
+    }
+    let mut bytes = b"\x1b[M".to_vec();
+    for n in [code, x, y] {
+        let n = n + 32;
+        if encoding == E::Utf8 {
+            let c = char::from_u32(n).filter(|_| n < 2048)?;
+            bytes.extend(c.to_string().as_bytes());
+        } else {
+            bytes.push(u8::try_from(n).ok()?);
+        }
+    }
+    Some(bytes)
+}
+
 /// Ctrl plus `c` as a control character (`<C-c>` is 3).
 fn control_byte(c: char) -> Option<u8> {
     match c {
@@ -586,6 +709,121 @@ mod tests {
         assert_eq!(bytes("<S-PageUp>", false), b"\x1b[5;2~");
         assert_eq!(bytes("<F1>", false), b"\x1bOP");
         assert_eq!(bytes("<F5>", false), b"\x1b[15~");
+    }
+
+    #[test]
+    fn the_mouse_is_reported_as_the_program_asked() {
+        use vt100::MouseProtocolEncoding as E;
+        use vt100::MouseProtocolMode as M;
+        let at = |action, row, col| Mouse {
+            action,
+            row,
+            col,
+            shift: false,
+            alt: false,
+            ctrl: false,
+        };
+        let left = MouseButton::Left;
+        let press = at(MouseAction::Press(left), 4, 9);
+        let release = at(MouseAction::Release(left), 4, 9);
+        let report = |mouse, mode, encoding| mouse_bytes(mouse, mode, encoding);
+
+        assert_eq!(report(press, M::None, E::Sgr), None, "not asked for");
+        assert_eq!(
+            report(press, M::PressRelease, E::Sgr).unwrap(),
+            b"\x1b[<0;10;5M"
+        );
+        assert_eq!(
+            report(release, M::PressRelease, E::Sgr).unwrap(),
+            b"\x1b[<0;10;5m"
+        );
+        assert_eq!(
+            report(press, M::PressRelease, E::Default).unwrap(),
+            [b"\x1b[M".as_slice(), &[32, 32 + 10, 32 + 5]].concat()
+        );
+        assert_eq!(
+            report(release, M::PressRelease, E::Default).unwrap(),
+            [b"\x1b[M".as_slice(), &[32 + 3, 32 + 10, 32 + 5]].concat(),
+            "which button isn't said"
+        );
+        assert_eq!(report(release, M::Press, E::Sgr), None, "X10: presses only");
+
+        let drag = at(MouseAction::Drag(MouseButton::Right), 0, 0);
+        assert_eq!(report(drag, M::PressRelease, E::Sgr), None);
+        assert_eq!(
+            report(drag, M::ButtonMotion, E::Sgr).unwrap(),
+            b"\x1b[<34;1;1M"
+        );
+        let moved = at(MouseAction::Move, 0, 0);
+        assert_eq!(report(moved, M::ButtonMotion, E::Sgr), None);
+        assert_eq!(
+            report(moved, M::AnyMotion, E::Sgr).unwrap(),
+            b"\x1b[<35;1;1M"
+        );
+
+        let wheel = at(MouseAction::WheelDown, 1, 1);
+        assert_eq!(
+            report(wheel, M::PressRelease, E::Sgr).unwrap(),
+            b"\x1b[<65;2;2M"
+        );
+
+        let ctrl_shift = Mouse {
+            ctrl: true,
+            shift: true,
+            ..press
+        };
+        assert_eq!(
+            report(ctrl_shift, M::PressRelease, E::Sgr).unwrap(),
+            b"\x1b[<20;10;5M"
+        );
+        assert_eq!(
+            report(ctrl_shift, M::Press, E::Sgr).unwrap(),
+            b"\x1b[<0;10;5M",
+            "X10 has no modifiers"
+        );
+
+        let far = at(MouseAction::Press(left), 0, 300);
+        assert_eq!(report(far, M::PressRelease, E::Default), None, "past 223");
+        assert_eq!(
+            report(far, M::PressRelease, E::Utf8).unwrap(),
+            [b"\x1b[M ".as_slice(), "ō".as_bytes(), b"!"].concat(),
+            "301 + 32 as UTF-8"
+        );
+        assert_eq!(
+            report(far, M::PressRelease, E::Sgr).unwrap(),
+            b"\x1b[<0;301;1M"
+        );
+    }
+
+    #[test]
+    fn a_program_that_asks_for_the_mouse_gets_it() {
+        let dir = tempfile::tempdir().unwrap();
+        // Asks for presses and releases in SGR, then shows what it reads.
+        let script = "printf '\\033[?1000h\\033[?1006hready\\n'; stty -echo raw; \
+                      head -c 9 | od -An -c; sleep 5";
+        let mut terminal = Terminal::spawn("/bin/sh", &["-c", script], dir.path(), 5, 40).unwrap();
+        assert!(!terminal.wants_mouse());
+        wait_for(&mut terminal, |t| t.screen().contents().contains("ready"));
+        assert!(terminal.wants_mouse());
+        let click = Mouse {
+            action: MouseAction::Press(MouseButton::Left),
+            row: 2,
+            col: 3,
+            shift: false,
+            alt: false,
+            ctrl: false,
+        };
+        assert!(terminal.send_mouse(click));
+        assert!(
+            !terminal.send_mouse(Mouse {
+                action: MouseAction::Move,
+                ..click
+            }),
+            "no moves asked for"
+        );
+        wait_for(&mut terminal, |t| t.screen().contents().contains('M'));
+        let text = terminal.screen().contents();
+        assert!(text.contains("[   <   0   ;   4   ;   3   M"), "{text:?}");
     }
 
     /// Pumps until `done` says so (or two seconds pass).

@@ -54,7 +54,7 @@ Coding agents over ACP (`client.rs`), and ferra's tools for them over MCP (`mcp.
 Git, by running the `git` program, with line diffs in-process ([ADR 0008](adr/0008-git-is-the-git-program.md)): status, staged text, hunks, log, blame, branches, staging, committing, merges. Plain functions over a repository path; depends on nothing else in the crate.
 
 **terminal** (`src/terminal/`):
-A shell in a pseudo-terminal for the panel: `portable-pty`, a `vt100` parser (which also gives the cursor shape its program asks for, and its bell), and keys as the bytes a terminal sends. Dropping a `Terminal` ends its shell, and with `terminal-close = "kill"` everything left in its session (`session.rs`).
+A shell in a pseudo-terminal for the panel: `portable-pty`, a `vt100` parser (which also gives the cursor shape its program asks for, and its bell, and the mouse mode it asks for), keys and the mouse as the bytes a terminal sends. Dropping a `Terminal` ends its shell, and with `terminal-close = "kill"` everything left in its session (`session.rs`).
 
 **plugins** (`src/plugins/`):
 Lua plugins ([ADR 0007](adr/0007-plugins-are-lua.md)): the host (`PluginHost`, registering into the same command registry, keymap and hooks as built-ins), the `ctx` API, popups and prompts, plugin packages (`packages.rs`: git clones with a manifest, the lock file, the directory) and grammars compiled on install (`grammars.rs`).
