@@ -60,9 +60,25 @@
 //!   server sent it (`ServerItem::resolve`); taking one asks
 //!   `LspQuery::ResolveCompletion` with it, and the answer's edits (its
 //!   `additionalTextEdits`) are made as the other edits.
+//! - The chosen item's documentation is drawn beside the menu (with Vim's
+//!   `completeopt=popup` in mind: only once one is chosen with `<C-n>`, not
+//!   for the first while typing). An item's `documentation` is Markdown:
+//!   its `detail` first, as code in the buffer's language, when the menu
+//!   would cut it short (a long signature), then the server's
+//!   documentation. ferra tells servers documentation can wait to be
+//!   asked for (`resolveSupport`), so lists are lighter; choosing a
+//!   resolvable item (`completion_choice_changed`) asks `ResolveCompletion`
+//!   with `taken: false`, once. The answer's documentation replaces the
+//!   item's, and its other edits are kept on it, so taking it after doesn't
+//!   ask again (nor does taking one whose edits came with the list). The
+//!   Markdown becomes a document of its own (`completion_docs`,
+//!   `COMPLETION_DOCS_DOCUMENT`), made again only when it changes so its
+//!   highlighting is kept, and `ui/mod.rs` draws it with the hover's
+//!   view (`HoverView::beside`): right of the menu, else left, else not
+//!   at all.
 
 use super::completion::{WordCompletion, is_word_char};
-use super::lsp::{LspQuery, LspRequest, Reply};
+use super::lsp::{COMPLETION_DOCS_DOCUMENT, Hover, LspQuery, LspRequest, Reply};
 use super::picker::fuzzy_match;
 use super::{Editor, Mode};
 use crate::core::Position;
@@ -94,9 +110,16 @@ pub struct ServerItem {
     /// Other edits it comes with (an import at the top): start, end, text,
     /// in the buffer's chars as it was when they were asked for.
     pub other_edits: Vec<(Position, Position, String)>,
-    /// When the server gives the other edits only on asking (resolving):
-    /// the item as it sent it, to ask about once it's taken.
+    /// What's shown beside the menu while it's chosen (Markdown): its
+    /// full detail, when the menu cuts it short, and its documentation.
+    pub documentation: String,
+    /// When the server gives the other edits (and maybe the
+    /// documentation) only on asking (resolving): the item as it sent it,
+    /// to ask about once it's chosen or taken. `None` once resolved.
     pub resolve: Option<serde_json::Value>,
+    /// It's been asked about for its documentation (so choosing it again
+    /// doesn't ask again).
+    pub resolving: bool,
 }
 
 /// A server's completion in progress.
@@ -394,11 +417,16 @@ impl Editor {
             return;
         };
         let item = &server.all[server.shown[i]];
-        if let Some(resolve) = item.resolve.clone() {
+        if item.other_edits.is_empty()
+            && let Some(resolve) = item.resolve.clone()
+        {
             // Its import comes when the server answers.
             let buffer = self.document.buffer();
             self.lsp_requests.push(LspRequest {
-                query: LspQuery::ResolveCompletion { item: resolve },
+                query: LspQuery::ResolveCompletion {
+                    item: resolve,
+                    taken: true,
+                },
                 document: self.document.id(),
                 position: self.document.cursor(),
                 buffer_id: buffer.id(),
@@ -425,6 +453,107 @@ impl Editor {
         // Before the other edits, which can move the text.
         self.note_completed_cursor();
         self.make_other_edits(edits);
+    }
+
+    /// After `<C-n>`/`<C-p>` in a server's completion: shows the chosen
+    /// item's documentation, asking the server for it first if it gives
+    /// it only on asking.
+    pub(super) fn completion_choice_changed(&mut self) {
+        let buffer = self.document.buffer();
+        let (buffer_id, edit_seq) = (buffer.id(), buffer.edit_seq());
+        let (document, cursor) = (self.document.id(), self.document.cursor());
+        // Asked even if it has some (its long detail, say): the server may
+        // give its documentation only on asking.
+        if let Some(item) = self.chosen_server_item_mut()
+            && !item.resolving
+            && let Some(resolve) = item.resolve.clone()
+        {
+            item.resolving = true;
+            self.lsp_requests.push(LspRequest {
+                query: LspQuery::ResolveCompletion {
+                    item: resolve,
+                    taken: false,
+                },
+                document,
+                position: cursor,
+                buffer_id,
+                edit_seq,
+                reply: Reply::Typing,
+            });
+        }
+        self.update_completion_docs();
+    }
+
+    fn chosen_server_item_mut(&mut self) -> Option<&mut ServerItem> {
+        let completion = self.completion.as_mut()?;
+        let i = completion.selected?;
+        let server = completion.server.as_mut()?;
+        let at = *server.shown.get(i)?;
+        server.all.get_mut(at)
+    }
+
+    fn chosen_server_item(&self) -> Option<&ServerItem> {
+        let completion = self.completion.as_ref()?;
+        let server = completion.server.as_ref()?;
+        server.all.get(*server.shown.get(completion.selected?)?)
+    }
+
+    /// The server's answer about `item`, chosen in the menu: its
+    /// documentation, and its other edits, kept for when it's taken (so
+    /// taking it needn't ask again).
+    pub(super) fn completion_item_resolved(
+        &mut self,
+        item: &serde_json::Value,
+        edits: Vec<(Position, Position, String)>,
+        documentation: String,
+    ) {
+        let Some(server) = self.completion.as_mut().and_then(|c| c.server.as_mut()) else {
+            return;
+        };
+        // Still offered, if typing hasn't brought a new list since.
+        let Some(found) = server
+            .all
+            .iter_mut()
+            .find(|i| i.resolve.as_ref() == Some(item))
+        else {
+            return;
+        };
+        if !documentation.trim().is_empty() {
+            found.documentation = documentation;
+        }
+        if found.other_edits.is_empty() {
+            found.other_edits = edits;
+        }
+        found.resolve = None;
+        self.update_completion_docs();
+    }
+
+    /// Makes the documentation beside the menu the chosen item's.
+    fn update_completion_docs(&mut self) {
+        let Some(markdown) = self
+            .chosen_server_item()
+            .map(|i| i.documentation.trim())
+            .filter(|d| !d.is_empty())
+        else {
+            return;
+        };
+        if self
+            .completion_docs
+            .as_ref()
+            .is_some_and(|(m, _)| m == markdown)
+        {
+            return;
+        }
+        let docs = Hover::new(markdown, COMPLETION_DOCS_DOCUMENT);
+        self.completion_docs = Some((markdown.to_string(), docs));
+    }
+
+    /// The documentation to show beside the completion menu: the chosen
+    /// item's, if it has any.
+    pub fn completion_docs(&self) -> Option<&Hover> {
+        let markdown = self.chosen_server_item()?.documentation.trim();
+        let (shown, docs) = self.completion_docs.as_ref()?;
+        (!markdown.is_empty() && shown == markdown).then_some(docs)
     }
 
     /// Makes a completion's other edits (an import), keeping the cursor on

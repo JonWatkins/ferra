@@ -36,6 +36,7 @@ impl Editor {
             // Only the screen asks for these.
             Ok(
                 Answer::Completion { .. }
+                | Answer::Resolved { .. }
                 | Answer::Signature(_)
                 | Answer::InlayHints(_)
                 | Answer::Highlights(_)

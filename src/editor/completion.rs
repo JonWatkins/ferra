@@ -41,7 +41,9 @@
 //! text lined up with the word, below its row or above when there's no room,
 //! showing up to 10 matches (each label with the letters typed in
 //! `ui.popup.match`, and its detail dimmed beside it) and scrolling to the
-//! selected one, with `n/total` in the border when they don't all fit.
+//! selected one, with `n/total` in the border when they don't all fit. A
+//! server's chosen item has its documentation beside it
+//! (`editor/server_completion.rs`).
 //!
 //! `.` puts back the text a completion put in, not the keys that chose it
 //! (which would complete again, perhaps to something else now). Each step
@@ -160,6 +162,7 @@ impl Editor {
             };
             completion.selected = (next < count).then_some(next);
             self.show_completion_choice();
+            self.completion_choice_changed();
             return Ok(());
         }
 

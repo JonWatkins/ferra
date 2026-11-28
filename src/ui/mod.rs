@@ -450,6 +450,23 @@ pub fn draw(
         let menu = CompletionMenu::new(completion, theme);
         let area = menu.area(cursor, main);
         frame.render_widget(menu, area);
+        // The chosen item's documentation beside it.
+        if let Some(docs) = editor.completion_docs() {
+            let rows = 0..docs.document.buffer().line_count();
+            let highlights = syntax.as_deref_mut().and_then(|engine| {
+                engine.highlight_as(
+                    &docs.document,
+                    Some("markdown"),
+                    &editor.languages,
+                    &editor.syntax_trees,
+                    rows,
+                )
+            });
+            let view = hover::HoverView::new(docs, highlights, theme).without_scrolling();
+            if let Some(beside) = view.beside(area, main) {
+                frame.render_widget(view, beside);
+            }
+        }
     }
 
     // A language server's hover floats by the cursor (or where the

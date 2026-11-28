@@ -17,6 +17,8 @@
 //!   `text.*` styles are dropped so they don't show through. The popup closes
 //!   on the next key unless that's `K` again, which scrolls a page (the draw
 //!   records how many rows there are and fit).
+//! - The chosen completion item's documentation is drawn the same way,
+//!   beside the menu (`beside`), cut off rather than scrolled.
 
 use ratatui::{
     buffer::Buffer,
@@ -89,7 +91,13 @@ pub struct HoverView<'a> {
     highlights: Option<&'a Highlights>,
     theme: &'a Theme,
     lines: Vec<ShownLine>,
+    /// Whether `K` scrolls it (and the border says so when there's more).
+    scrolls: bool,
 }
+
+/// The narrowest the completion's documentation is drawn beside the menu
+/// (its text, in cells): with less room on either side it isn't shown.
+const MIN_BESIDE: usize = 20;
 
 impl<'a> HoverView<'a> {
     pub fn new(hover: &'a Hover, highlights: Option<&'a Highlights>, theme: &'a Theme) -> Self {
@@ -99,7 +107,15 @@ impl<'a> HoverView<'a> {
             highlights,
             theme,
             lines,
+            scrolls: true,
         }
+    }
+
+    /// For text `K` doesn't scroll (the completion's documentation): what
+    /// doesn't fit is cut off, without the hint.
+    pub fn without_scrolling(mut self) -> Self {
+        self.scrolls = false;
+        self
     }
 
     /// The rows for a popup `width` cells wide.
@@ -131,6 +147,11 @@ impl<'a> HoverView<'a> {
     /// How wide the text is: its widest line, up to the most there's room
     /// for.
     fn text_width(&self, screen: Rect) -> usize {
+        self.text_width_in((screen.width as usize).saturating_sub(4).max(1))
+    }
+
+    /// Its widest line, at most `room` (and `MAX_WIDTH`) cells.
+    fn text_width_in(&self, room: usize) -> usize {
         let widest = self
             .lines
             .iter()
@@ -143,9 +164,38 @@ impl<'a> HoverView<'a> {
             })
             .max()
             .unwrap_or(0);
-        widest
-            .clamp(1, MAX_WIDTH)
-            .min((screen.width as usize).saturating_sub(4).max(1))
+        widest.clamp(1, MAX_WIDTH).min(room.max(1))
+    }
+
+    /// Where it goes beside the completion menu at `menu`: to its right if
+    /// there's room, else to its left, its top level with the menu's (moved
+    /// up to fit). `None` if there's no room either side.
+    pub fn beside(&self, menu: Rect, screen: Rect) -> Option<Rect> {
+        // The room for the text each side, less the border and padding.
+        let right = ((screen.x + screen.width).saturating_sub(menu.x + menu.width) as usize)
+            .saturating_sub(4);
+        let left = (menu.x.saturating_sub(screen.x) as usize).saturating_sub(4);
+        // Short text needs only its own width.
+        let needed = MIN_BESIDE.min(self.text_width_in(MAX_WIDTH));
+        let (on_right, text) = if right >= needed {
+            (true, right)
+        } else if left >= needed {
+            (false, left)
+        } else {
+            return None;
+        };
+        let width = self.text_width_in(text);
+        let rows = self.rows(width).len().clamp(1, MAX_HEIGHT) as u16;
+        let (width, height) = (width as u16 + 4, (rows + 2).min(screen.height));
+        let x = if on_right {
+            menu.x + menu.width
+        } else {
+            menu.x - width
+        };
+        let y = menu
+            .y
+            .min((screen.y + screen.height).saturating_sub(height));
+        Some(Rect::new(x, y.max(screen.y), width, height).intersection(screen))
     }
 
     /// The style of the char at `col` of document line `row`.
@@ -547,7 +597,7 @@ impl Widget for HoverView<'_> {
         let mut block = Block::bordered()
             .border_style(base.patch(self.theme.get("ui.popup.border")))
             .style(base);
-        if scroll + shown < rows.len() {
+        if self.scrolls && scroll + shown < rows.len() {
             block = block.title_bottom(Line::from(" K: more ").right_aligned());
         }
         let inner = block.inner(area);
@@ -689,6 +739,37 @@ mod tests {
             table_cells(&"| a | `x|y` |".chars().collect::<Vec<_>>()),
             [(2, 3), (6, 11)],
             "a `|` in a code span doesn't split"
+        );
+    }
+
+    #[test]
+    fn documentation_goes_right_of_the_menu_else_left() {
+        let mut editor = crate::editor::Editor::default();
+        editor.show_hover("Some documentation that is fairly long, to wrap.");
+        let hover = editor.hover().unwrap();
+        let theme = Theme::default();
+        let view = HoverView::new(hover, None, &theme);
+        let screen = Rect::new(0, 0, 80, 20);
+        let right = view.beside(Rect::new(10, 15, 20, 5), screen).unwrap();
+        assert_eq!(
+            (right.x, right.width),
+            (30, 50),
+            "beside, as wide as there's room"
+        );
+        assert_eq!(
+            (right.y, right.height),
+            (15, 4),
+            "level with the menu, wrapped"
+        );
+        let low = view.beside(Rect::new(10, 17, 20, 3), screen).unwrap();
+        assert_eq!(low.y + low.height, 20, "moved up to fit");
+        let left = view.beside(Rect::new(55, 2, 20, 5), screen).unwrap();
+        assert_eq!(left.x + left.width, 55, "no room on the right");
+        assert!(left.width < 55);
+        assert_eq!(
+            view.beside(Rect::new(20, 2, 40, 5), screen),
+            None,
+            "nor either side"
         );
     }
 
