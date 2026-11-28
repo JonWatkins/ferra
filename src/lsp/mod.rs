@@ -27,7 +27,7 @@
 //!
 //! - `mod.rs`: `Lsp`, owned by `App`. `update`, called before each draw, drains
 //!   the channel (answers, server requests, `publishDiagnostics`, `showMessage`
-//!   errors, servers that closed) and then syncs: each buffer with a file and a
+//!   errors, servers that closed, which are started again) and then syncs: each buffer with a file and a
 //!   language that has a server gets a client for its (language, root), started
 //!   if need be, and is opened or changed there; documents no longer open are
 //!   closed. Server requests are answered: `workspace/configuration` with each
@@ -95,6 +95,9 @@ pub struct Lsp {
     missing: HashSet<String>,
     /// Servers that failed to start, by command and root, and why.
     failed: HashMap<(String, PathBuf), String>,
+    /// When each server (by command and root) stopped by itself lately,
+    /// so one that keeps stopping isn't started again and again.
+    stops: HashMap<(String, PathBuf), Vec<std::time::Instant>>,
     /// Off until the editor runs in a terminal (or a test sets a spawner),
     /// so tests that open files don't start real servers.
     enabled: bool,
@@ -136,6 +139,7 @@ impl Default for Lsp {
             next_id: 0,
             missing: HashSet::new(),
             failed: HashMap::new(),
+            stops: HashMap::new(),
             enabled: false,
             parts: Vec::new(),
             waiting: Vec::new(),
@@ -402,6 +406,8 @@ impl Lsp {
         let retried = self.missing.len() + self.failed.len();
         self.missing.clear();
         self.failed.clear();
+        self.stops.clear();
+        self.hints_asked = None;
         let names: Vec<String> = gone.iter().map(|c| c.name.clone()).collect();
         for mut client in gone {
             let documents: Vec<DocumentId> = client.document_uris().map(|(d, _)| d).collect();
@@ -485,26 +491,48 @@ impl Lsp {
         handled
     }
 
-    /// Server `id`'s output ended: it's stopped, and its diagnostics go.
+    /// Server `id`'s output ended: its diagnostics go, and its requests are
+    /// told it won't answer. One that stopped by itself (not refusing to
+    /// start) is started again by the next sync, unless it's the fifth time
+    /// in three minutes, as VS Code: then it's left stopped until
+    /// `:lsp-restart`.
     fn closed(&mut self, id: ClientId, editor: &mut Editor) {
-        let Some(client) = self.clients.iter_mut().find(|c| c.id == id) else {
+        const STOPS: usize = 5;
+        const WITHIN: std::time::Duration = std::time::Duration::from_secs(180);
+        let Some(index) = self.clients.iter().position(|c| c.id == id) else {
             return;
         };
-        if !matches!(client.state, State::Stopped(_)) {
-            editor.set_message(Message::error(format!(
-                "{} stopped (see :lsp)",
-                client.name
-            )));
-            client.state = State::Stopped("it exited".into());
-        }
+        let client = &mut self.clients[index];
         let documents: Vec<DocumentId> = client.document_uris().map(|(d, _)| d).collect();
         for document in documents {
             editor.set_diagnostics(document, Vec::new());
+            self.raw_diagnostics.remove(&document);
         }
         let name = client.name.clone();
         for request in client.take_unanswered() {
             self.parts.retain(|(r, _)| *r != request);
             editor.lsp_answered(&request, Err(NoAnswer::Stopped(name.clone())));
+        }
+        if client.refused {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let stops = self
+            .stops
+            .entry((name.clone(), client.root.clone()))
+            .or_default();
+        stops.retain(|&at| now.duration_since(at) < WITHIN);
+        stops.push(now);
+        if stops.len() < STOPS {
+            // Dropping it ends the process; the sync starts another.
+            self.clients.remove(index);
+            self.hints_asked = None;
+            editor.set_message(Message::info(format!("{name} stopped: starting it again")));
+        } else {
+            client.state = State::Stopped(format!("it exited {STOPS} times in 3 minutes"));
+            editor.set_message(Message::error(format!(
+                "{name} stopped {STOPS} times in 3 minutes: :lsp-restart starts it again"
+            )));
         }
     }
 

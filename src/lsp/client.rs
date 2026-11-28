@@ -28,7 +28,11 @@
 //!   names (the buffer's, by command or language, or `all`) are sent `shutdown`
 //!   and dropped (which ends their processes), their diagnostics cleared, and
 //!   which commands weren't found or failed is forgotten; the sync after starts
-//!   what the open files need.
+//!   what the open files need. A server whose output ends by itself (it
+//!   exited or crashed, and didn't refuse `initialize`) is dropped the same
+//!   way, so the next sync starts it again, unless that's its fifth stop in
+//!   three minutes (VS Code's limit): then it stays, stopped, until
+//!   `:lsp-restart`, which also forgets the stops.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
@@ -245,6 +249,9 @@ pub struct Client {
     pub language: String,
     pub root: PathBuf,
     pub state: State,
+    /// It answered `initialize` with an error: it isn't started again
+    /// when it exits.
+    pub refused: bool,
     writer: crate::outbox::Outbox,
     child: Option<Child>,
     next_request: i64,
@@ -297,6 +304,7 @@ impl Client {
             language: language.to_string(),
             root: root.to_path_buf(),
             state: State::Starting,
+            refused: false,
             writer: crate::outbox::Outbox::spawn(writer, "lsp-out", |out, message| {
                 write_message(out, message)
             }),
@@ -746,6 +754,7 @@ impl Client {
                 if let Some(error) = message.get("error") {
                     let text = error["message"].as_str().unwrap_or("initialize failed");
                     self.state = State::Stopped(text.to_string());
+                    self.refused = true;
                     return Response::Failed(text.to_string());
                 }
                 self.capabilities = message["result"]["capabilities"].clone();

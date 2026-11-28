@@ -1250,7 +1250,9 @@ While a server works, the status line says what on (`rust-analyzer:
 Indexing 45%`). `:lsp-restart` restarts the buffer's server (or `:lsp-restart
 gopls`, or `all`), for one that's stuck or stopped or whose config you
 changed, and tries again servers that weren't found, so one installed
-since starts without restarting ferra.
+since starts without restarting ferra. A server that stops by itself is
+started again, unless it's stopped five times in three minutes; then it's
+left stopped until `:lsp-restart`.
 
 Problems are underlined, with the line number coloured and the first one's
 message after the line (`● expected i32, found &str`). `]d` and `[d` go to
