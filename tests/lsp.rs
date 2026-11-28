@@ -2177,6 +2177,65 @@ fn lsp_restart_starts_the_server_again() {
     );
 }
 
+#[test]
+fn a_server_that_stops_by_itself_is_started_again() {
+    let (_dir, mut app, seen) = with_server("fn die() {}\nlet bad = 1;\n", true);
+    until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
+    // Asked about `die`, the fake server exits.
+    keys(&mut app, "wK");
+    until(&mut app, |_| seen.lock().unwrap().starts == 2);
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "rust-analyzer stopped: starting it again"
+    );
+    // With the file open in it, and its diagnostics back.
+    until(&mut app, |a| !a.editor().diagnostics(doc(a)).is_empty());
+    assert!(!app.editor().diagnostics(doc(&app)).is_empty());
+}
+
+#[test]
+fn a_server_that_keeps_stopping_is_left_stopped() {
+    let (_dir, mut app, seen) = with_server("fn die() {}\n", true);
+    for start in 1..=4 {
+        ready(&mut app);
+        keys(&mut app, "ggwK");
+        until(&mut app, |_| seen.lock().unwrap().starts == start + 1);
+    }
+    // The fifth time in three minutes, it isn't started again (as VS Code).
+    ready(&mut app);
+    keys(&mut app, "ggwK");
+    until(&mut app, |a| {
+        a.editor()
+            .lsp_status()
+            .iter()
+            .any(|l| l.contains("stopped"))
+    });
+    for _ in 0..5 {
+        app.update();
+    }
+    assert_eq!(seen.lock().unwrap().starts, 5);
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "rust-analyzer stopped 5 times in 3 minutes: :lsp-restart starts it again"
+    );
+    keys(&mut app, ":lsp<CR>");
+    assert!(
+        app.editor()
+            .message()
+            .unwrap()
+            .text
+            .contains("stopped: it exited 5 times in 3 minutes"),
+        "{}",
+        app.editor().message().unwrap().text
+    );
+    // `:lsp-restart` does, and forgets the times it stopped.
+    keys(&mut app, ":lsp-restart<CR>");
+    until(&mut app, |_| seen.lock().unwrap().starts == 6);
+    ready(&mut app);
+    keys(&mut app, "ggwK");
+    until(&mut app, |_| seen.lock().unwrap().starts == 7);
+}
+
 /// A server that isn't installed, counting the tries.
 struct MissingCounted(Arc<Mutex<usize>>);
 
