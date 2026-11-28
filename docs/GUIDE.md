@@ -1339,6 +1339,15 @@ selection in visual mode: quick fixes for the diagnostics there
 test for Area"). Choosing one makes its changes, in any files it names,
 as with rename.
 
+With `code-action-sign = true` under `[editor]`, a `◆` in the gutter, left
+of the line number, says `<Space>a` would find something: once the cursor
+has rested a moment on a line (in normal mode, or between keys with VS
+Code's), the server's asked, and asked again when its diagnostics change,
+as a quick fix comes with its error. Moving off the line or editing hides
+it until the server's asked again. Without line numbers it goes after the
+line's text. Its colour is `ui.gutter.code-action`. It's off by default,
+as it's one more request each time the cursor stops.
+
 Some servers check more when you save: rust-analyzer finds syntax errors
 as you type, but type and borrow errors come from `cargo check`, which it
 runs on `:w`. And it only checks files that are part of a crate (in the

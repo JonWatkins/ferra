@@ -217,6 +217,11 @@ fn serve(
                 }
                 publish(&mut output, &params["textDocument"]["uri"], seen, utf8);
             }
+            // As rust-analyzer does after `cargo check`, which it runs on
+            // saving: the diagnostics again, the text unchanged.
+            "textDocument/didSave" => {
+                publish(&mut output, &params["textDocument"]["uri"], seen, utf8);
+            }
             "workspace/didChangeConfiguration" => {
                 seen.lock().unwrap().settings = params["settings"].clone();
             }
@@ -2255,6 +2260,116 @@ fn highlight_references_can_be_turned_off() {
             .methods
             .contains(&"textDocument/documentHighlight".into())
     );
+}
+
+fn code_action_requests(seen: &Mutex<Seen>) -> usize {
+    seen.lock()
+        .unwrap()
+        .methods
+        .iter()
+        .filter(|m| *m == "textDocument/codeAction")
+        .count()
+}
+
+#[test]
+fn resting_where_there_are_code_actions_marks_the_line() {
+    let (_dir, mut app, seen) = with_server("let x = 1;\nfine\nlast\n", true);
+    ready(&mut app);
+    keys(&mut app, ":set code-action-sign<CR>j");
+    until(&mut app, |a| a.editor().code_action_sign() == Some(1));
+    let range = seen.lock().unwrap().action_range.clone();
+    assert_eq!(
+        range,
+        json!({"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 0}}),
+        "asked at the cursor, as <Space>a would"
+    );
+    let rows = render(&mut app, 40, 6).rows;
+    assert!(rows[1].starts_with('◆'), "before the number: {rows:?}");
+    assert!(!rows[0].contains('◆') && !rows[2].contains('◆'), "{rows:?}");
+    assert!(app.editor().picker().is_none(), "quiet: nothing listed");
+    assert!(
+        app.editor().message().is_none(),
+        "{:?}",
+        app.editor().message()
+    );
+
+    // Off the line, or editing it, hides it at once.
+    keys(&mut app, "j");
+    assert_eq!(app.editor().code_action_sign(), None);
+    until(&mut app, |a| a.editor().code_action_sign() == Some(2));
+    keys(&mut app, "x");
+    assert_eq!(app.editor().code_action_sign(), None);
+    // Insert mode hides it too (it's not resting there with Vim's keys).
+    until(&mut app, |a| a.editor().code_action_sign() == Some(2));
+    keys(&mut app, "i");
+    assert_eq!(app.editor().code_action_sign(), None);
+}
+
+#[test]
+fn with_vscodes_keys_the_code_action_sign_shows_while_typing_pauses() {
+    let app = app_with_config("[editor]\nkeymap = \"vscode\"\ncode-action-sign = true\n");
+    let (_dir, mut app, _) = with_server_in(app, "let x = 1;\nfine\n", true);
+    ready(&mut app);
+    assert_eq!(app.editor().mode(), ferra::editor::Mode::Insert);
+    keys(&mut app, "<Down>");
+    until(&mut app, |a| a.editor().code_action_sign() == Some(1));
+    // Selecting isn't resting (it's visual mode underneath): no sign.
+    keys(&mut app, "<S-Right>");
+    assert_eq!(app.editor().code_action_sign(), None);
+    assert!(app.editor().selection_range().is_some(), "still selected");
+}
+
+#[test]
+fn the_code_action_sign_is_off_unless_asked_for() {
+    let (_dir, mut app, seen) = with_server("let x = 1;\nfine\n", true);
+    ready(&mut app);
+    keys(&mut app, "j");
+    for _ in 0..40 {
+        app.update();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(app.editor().code_action_sign(), None);
+    assert_eq!(code_action_requests(&seen), 0, "nothing asked");
+}
+
+#[test]
+fn diagnostics_arriving_ask_for_code_actions_again() {
+    let (_dir, mut app, seen) = with_server("let x = 1;\nfine\n", true);
+    ready(&mut app);
+    keys(&mut app, ":set code-action-sign<CR>");
+    until(&mut app, |a| a.editor().code_action_sign() == Some(0));
+    let before = code_action_requests(&seen);
+    // A save gets the fake server to send its diagnostics again.
+    keys(&mut app, ":w<CR>");
+    until(&mut app, |_| code_action_requests(&seen) > before);
+}
+
+#[test]
+fn without_line_numbers_the_code_action_sign_follows_the_text() {
+    let (_dir, mut app, _) = with_server("let x = 1;\nfine\n", true);
+    ready(&mut app);
+    keys(&mut app, ":set code-action-sign line-numbers=none<CR>");
+    until(&mut app, |a| a.editor().code_action_sign() == Some(0));
+    let rows = render(&mut app, 40, 6).rows;
+    assert!(rows[0].starts_with("let x = 1;  ◆"), "{rows:?}");
+}
+
+#[test]
+fn a_server_without_code_actions_shows_no_sign() {
+    let (_dir, mut app, seen) = with_server("x\n", false);
+    ready(&mut app);
+    keys(&mut app, ":set code-action-sign<CR>");
+    for _ in 0..40 {
+        app.update();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(app.editor().code_action_sign(), None);
+    assert_eq!(
+        app.editor().message().unwrap().text,
+        "code-action-sign=true",
+        "quiet: nothing said over :set's"
+    );
+    assert_eq!(code_action_requests(&seen), 0);
 }
 
 fn hints(app: &App) -> Vec<(usize, usize, String)> {

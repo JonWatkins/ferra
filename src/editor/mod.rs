@@ -305,6 +305,9 @@ pub struct Editor {
     config_file: Option<std::path::PathBuf>,
     /// The uses of the symbol under the cursor (a language server's).
     references: Option<lsp::References>,
+    /// Where a server last said there are code actions, for
+    /// `code-action-sign`.
+    code_actions_at: Option<lsp::ActionsAt>,
     /// Servers' diagnostics for files that aren't open, by path.
     file_diagnostics: HashMap<std::path::PathBuf, Vec<diagnostics::Diagnostic>>,
     /// The project symbol picker's query when the server was last asked.

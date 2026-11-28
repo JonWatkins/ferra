@@ -42,6 +42,13 @@
 //!   Choosing one checks the text hasn't changed since, then asks
 //!   `ApplyCodeAction` with it; its edits are made as they come, with the
 //!   action's title (or the server's label) in the message.
+//! - The code action sign: the quiet code action requests the cursor's
+//!   resting makes (`code-action-sign`) aren't listed; a non-empty answer
+//!   marks the place (`ActionsAt`), any other unmarks it, and
+//!   `code_action_sign` gives the view the cursor's line while the text's
+//!   unchanged and the cursor's resting on that line. Drawn as a `◆` in the
+//!   gutter's left cell (after the line's text without line numbers), in
+//!   `ui.gutter.code-action`.
 //! - Highlighting references: the answer is kept with the edit count it's
 //!   for (`set_references`), and `references_shown` gives the view the
 //!   ranges only while the text is unchanged, in normal mode, with the
@@ -695,6 +702,15 @@ pub struct References {
     pub ranges: Vec<(Position, Position)>,
 }
 
+/// Where a server said it has code actions (`code-action-sign`): the buffer,
+/// its text (edit count) and the place asked about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActionsAt {
+    pub document: DocumentId,
+    pub edit_seq: u64,
+    pub position: Position,
+}
+
 /// The id hover documents have: never one of the editor's buffers.
 pub const HOVER_DOCUMENT: DocumentId = DocumentId(u64::MAX);
 
@@ -735,6 +751,36 @@ impl Editor {
         } else {
             &[]
         }
+    }
+
+    /// The line to mark with the code action sign (`code-action-sign`): the
+    /// cursor's, while the text's as it was when the server said it had
+    /// code actions there and the cursor's resting on that line.
+    pub fn code_action_sign(&self) -> Option<usize> {
+        let at = self.code_actions_at?;
+        let current = self.options.code_action_sign
+            && at.document == self.document.id()
+            && at.edit_seq == self.document.buffer().edit_seq()
+            && at.position.row == self.document.cursor().row
+            && self.resting();
+        current.then_some(at.position.row)
+    }
+
+    /// The quiet code action request's answer (`code-action-sign`): marks
+    /// the place if there are some, unmarks it if not (or the server
+    /// couldn't say), while the text's as it was asked about.
+    fn note_code_actions(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
+        if self.document.id() != request.document
+            || self.document.buffer().edit_seq() != request.edit_seq
+        {
+            return;
+        }
+        let some = matches!(answer, Ok(Answer::Actions(actions)) if !actions.is_empty());
+        self.code_actions_at = some.then_some(ActionsAt {
+            document: request.document,
+            edit_seq: request.edit_seq,
+            position: request.position,
+        });
     }
 
     /// Lets `:format` and `format-on-save` ask language servers.
@@ -1291,6 +1337,9 @@ impl Editor {
     /// The screen's side of `lsp_answered`: shown if it's still wanted
     /// (the cursor, or the pointer, still where it was asked).
     fn show_lsp_answer(&mut self, request: &LspRequest, answer: Result<Answer, NoAnswer>) {
+        if request.feature() == LspFeature::CodeAction && request.reply == Reply::View {
+            return self.note_code_actions(request, answer);
+        }
         let pointer = request.reply == Reply::Pointer;
         let current = |e: &Self| e.document.id() == request.document;
         let unchanged = |e: &Self| current(e) && e.document.buffer().edit_seq() == request.edit_seq;
