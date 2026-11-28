@@ -220,6 +220,10 @@ highlight-references = true
 # types, parameters' names (rust-analyzer, TypeScript...). :inlay_hints
 # turns them on and off.
 inlay-hints = true
+# Mark the cursor's line with a ◆ in the gutter when the language server
+# has code actions there (<Space>a would list some), once the cursor has
+# rested a moment. Off: one fewer request each time the cursor stops.
+code-action-sign = false
 # Check open files for changes made by other programs (a formatter, git, a
 # tool editing alongside you) every second while you're idle in normal mode,
 # not only when the terminal regains focus. Unmodified buffers reload (u
@@ -430,6 +434,8 @@ language-server = { command = "yaml-language-server", args = ["--stdio"] }
 "ui.gutter.added" = "#9ece6a"
 "ui.gutter.changed" = "#7aa2f7"
 "ui.gutter.removed" = "#f7768e"
+# code-action-sign: the server has code actions on the cursor's line.
+"ui.gutter.code-action" = "#e0af68"
 # The status bar (statusline-style = "vscode"): its colour, and the text
 # on it.
 "ui.statusbar" = { fg = "#e6e9f5", bg = "#3d59a1" }

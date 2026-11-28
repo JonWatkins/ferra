@@ -245,6 +245,7 @@ pub fn draw_text(
         } else {
             &[]
         })
+        .code_action_sign(editor.code_action_sign().filter(|_| active))
         .syntax(highlights)
         .diagnostics(editor.diagnostics(document.id()));
     let view = if options.bracket_colors {

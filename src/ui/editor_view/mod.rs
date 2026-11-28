@@ -162,6 +162,9 @@ impl ViewState {
     }
 }
 
+/// The mark on a line with code actions (`code-action-sign`).
+const CODE_ACTION_SIGN: &str = "◆";
+
 /// How far above the top a search that spans lines looks for matches
 /// running into view.
 const SPANNING_LOOKBACK: usize = 200;
@@ -212,6 +215,8 @@ pub struct EditorView<'a> {
     active_guide: Option<(usize, usize, usize)>,
     /// The bracket at the cursor and its pair, highlighted.
     bracket_pair: Option<(TextPosition, TextPosition)>,
+    /// The line a language server has code actions on (`code-action-sign`).
+    code_action_sign: Option<usize>,
 }
 
 impl<'a> EditorView<'a> {
@@ -240,7 +245,14 @@ impl<'a> EditorView<'a> {
             indent_guides: None,
             active_guide: None,
             bracket_pair: None,
+            code_action_sign: None,
         }
+    }
+
+    /// Marks `row` as having code actions (`code-action-sign`).
+    pub fn code_action_sign(mut self, row: Option<usize>) -> Self {
+        self.code_action_sign = row;
+        self
     }
 
     /// Colours brackets by depth (`bracket-colors`), from `states`.
@@ -926,6 +938,14 @@ impl EditorView<'_> {
             &label,
             gutter_style,
         );
+        // Code actions here: a mark in the padding before the number (or
+        // after the line's text, without one: see below).
+        let actions_here = first && self.code_action_sign == Some(row);
+        if actions_here && gutter_area.width >= 2 {
+            buf[(gutter_area.x, y)]
+                .set_symbol(CODE_ACTION_SIGN)
+                .set_style(row_style.patch(self.theme.get("ui.gutter.code-action")));
+        }
         // A git change's mark, in the padding after the number.
         if gutter_area.width >= 2
             && let Some((mark, scope)) = git_mark(self.git, row, first)
@@ -1166,11 +1186,22 @@ impl EditorView<'_> {
         if !last {
             return;
         }
-        // After the line's text on its last row: a diagnostic's message,
-        // then any end-of-line virtual text (git blame), as far as fits.
+        // After the line's text on its last row: the code action sign when
+        // there's no gutter for it, a diagnostic's message, then any
+        // end-of-line virtual text (git blame), as far as fits.
         let mut x = crate::core::columns::display_width(&line_text[..upto], tab_width)
             .saturating_sub(left)
             + 2;
+        if self.code_action_sign == Some(row) && gutter_area.width < 2 && x < width {
+            buf.set_stringn(
+                text_area.x + x as u16,
+                y,
+                CODE_ACTION_SIGN,
+                width - x,
+                row_style.patch(self.theme.get("ui.gutter.code-action")),
+            );
+            x += 2;
+        }
         if let Some(d) = on_line
             && x < width
         {

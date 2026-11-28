@@ -144,6 +144,9 @@ pub struct EditorOptions {
     /// Highlight the other uses of the symbol under the cursor (from the
     /// language server), once the cursor rests on it.
     pub highlight_references: bool,
+    /// Mark the cursor's line in the gutter when the language server has
+    /// code actions there, once the cursor rests.
+    pub code_action_sign: bool,
     /// Check open files for changes made by other programs every second
     /// (as well as on focus, buffer switches and `:checktime`).
     pub watch_files: bool,

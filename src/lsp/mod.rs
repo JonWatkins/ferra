@@ -42,6 +42,12 @@
 //! - Highlighting references: `Lsp::update` notes where the cursor is (buffer,
 //!   place, edit count); once it's rested there 150 ms in normal mode it asks
 //!   `LspQuery::DocumentHighlight` (once per place), for a view: quiet.
+//!
+//! - The code action sign (`code-action-sign`): once the cursor's rested the
+//!   same way (in insert mode too with VS Code's keys), it asks for the code
+//!   actions there, as `<Space>a` would, quietly; and again at the same place
+//!   whenever the server sends that file's diagnostics, as a quick fix comes
+//!   with its error. `Editor::code_action_sign` says where to draw it.
 
 mod client;
 pub mod convert;
@@ -66,6 +72,19 @@ use client::{Client, ClientId, Incoming, Response};
 /// they've been cleared.
 type HintsAt = (DocumentId, u64, u64);
 
+/// Where the cursor's resting: the buffer, place and text (edit count), since
+/// when, and what's been asked there: the symbol's other uses (once), and
+/// the code actions, with the diagnostics they were asked with.
+struct Resting {
+    document: DocumentId,
+    at: crate::core::Position,
+    edit_seq: u64,
+    since: std::time::Instant,
+    highlights_asked: bool,
+    /// With how many of its diagnostics (see `diagnostics_received`).
+    actions_asked: Option<u64>,
+}
+
 pub struct Lsp {
     clients: Vec<Client>,
     sender: Sender<Incoming>,
@@ -87,16 +106,13 @@ pub struct Lsp {
     /// Each document's diagnostics as its server sent them, to send back
     /// with code action requests.
     raw_diagnostics: HashMap<DocumentId, Vec<Value>>,
-    /// Where the cursor was last seen (buffer, place, text's edit count),
-    /// since when, and whether the server's been asked about it: it's asked
-    /// for the symbol's other uses once the cursor rests.
-    resting: Option<(
-        DocumentId,
-        crate::core::Position,
-        u64,
-        std::time::Instant,
-        bool,
-    )>,
+    /// Where the cursor was last seen, since when, and what the server's
+    /// been asked about it once it rested.
+    resting: Option<Resting>,
+    /// How many times each document's diagnostics have come: its code
+    /// actions are asked for again when they change (a fix comes with an
+    /// error).
+    diagnostics_received: HashMap<DocumentId, u64>,
     /// The answer to the formatting request being waited for.
     formatted: Option<Result<Value, client::ResponseError>>,
     /// The formatting request `format` waits for: its server, and its id.
@@ -127,6 +143,7 @@ impl Default for Lsp {
             formatted: None,
             formatting: None,
             resting: None,
+            diagnostics_received: HashMap::new(),
             hints_asked: None,
             hints_seen: None,
         }
@@ -297,37 +314,71 @@ impl Lsp {
         }
     }
 
-    /// Once the cursor has rested in normal mode for a moment, asks for the
-    /// other uses of the symbol under it (with `highlight-references`).
+    /// Once the cursor has rested for a moment, asks for the other uses of
+    /// the symbol under it (in normal mode, with `highlight-references`),
+    /// and whether there are code actions there (`code-action-sign`, asked
+    /// again when diagnostics arrive).
     fn ask_about_resting_cursor(&mut self, editor: &mut Editor) {
         const REST: std::time::Duration = std::time::Duration::from_millis(150);
-        if !editor.options.highlight_references
-            || editor.mode() != crate::editor::Mode::Normal
-            || editor.document.path().is_none()
-        {
+        let highlights =
+            editor.options.highlight_references && editor.mode() == crate::editor::Mode::Normal;
+        let actions = editor.options.code_action_sign && editor.resting();
+        if !(highlights || actions) || editor.document.path().is_none() {
             self.resting = None;
             return;
         }
-        let here = (
+        let (document, at, edit_seq) = (
             editor.document.id(),
             editor.document.cursor(),
             editor.document.buffer().edit_seq(),
         );
-        match &mut self.resting {
-            Some((doc, at, seq, since, asked)) if (*doc, *at, *seq) == here => {
-                if !*asked && since.elapsed() >= REST {
-                    *asked = true;
-                    // Already showing for this place: nothing to ask.
-                    if editor.references_shown().is_empty()
-                        && editor.request_lsp(LspFeature::DocumentHighlight).is_ok()
-                        && let Some(request) = editor.lsp_requests_mut().last_mut()
-                    {
-                        request.reply = crate::editor::lsp::Reply::View;
-                    }
-                }
-            }
+        let resting = match &mut self.resting {
+            Some(r) if (r.document, r.at, r.edit_seq) == (document, at, edit_seq) => r,
             _ => {
-                self.resting = Some((here.0, here.1, here.2, std::time::Instant::now(), false));
+                self.resting = Some(Resting {
+                    document,
+                    at,
+                    edit_seq,
+                    since: std::time::Instant::now(),
+                    highlights_asked: false,
+                    actions_asked: None,
+                });
+                return;
+            }
+        };
+        if resting.since.elapsed() < REST {
+            return;
+        }
+        let quietly = |editor: &mut Editor| {
+            if let Some(request) = editor.lsp_requests_mut().last_mut() {
+                request.reply = crate::editor::lsp::Reply::View;
+            }
+        };
+        if highlights && !resting.highlights_asked {
+            resting.highlights_asked = true;
+            // Already showing for this place: nothing to ask.
+            if editor.references_shown().is_empty()
+                && editor.request_lsp(LspFeature::DocumentHighlight).is_ok()
+            {
+                quietly(editor);
+            }
+        }
+        let diagnostics = self
+            .diagnostics_received
+            .get(&document)
+            .copied()
+            .unwrap_or(0);
+        if actions && resting.actions_asked != Some(diagnostics) {
+            resting.actions_asked = Some(diagnostics);
+            // As `<Space>a` asks at the cursor (but leaving any selection).
+            let query = crate::editor::lsp::LspQuery::CodeActions {
+                start: at,
+                end: at,
+                file_wide: false,
+                with_line: false,
+            };
+            if editor.ask_lsp(query).is_ok() {
+                quietly(editor);
             }
         }
     }
@@ -617,6 +668,7 @@ impl Lsp {
                     .cloned()
                     .unwrap_or_default();
                 self.raw_diagnostics.insert(document, raw);
+                *self.diagnostics_received.entry(document).or_default() += 1;
             }
             (Some("$/progress"), None) => client.note_progress(&message["params"]),
             // What a server logs: in the Output tab.

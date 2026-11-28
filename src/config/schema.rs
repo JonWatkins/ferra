@@ -87,7 +87,9 @@ fn category_of(path: &str) -> &'static str {
         "search" => "Search",
         "file-picker" | "fallback-encoding" | "watch-files" | "path" | "suffixes-add" => "Files",
         "git" | "git-blame" => "Git",
-        "lsp" | "auto-complete" | "highlight-references" | "inlay-hints" => "Language servers",
+        "lsp" | "auto-complete" | "highlight-references" | "inlay-hints" | "code-action-sign" => {
+            "Language servers"
+        }
         "keymap" | "mouse" | "mouse-hover" | "mouse-hover-delay" | "kitty-keyboard"
         | "key-timeout" | "clipboard" | "clipboard-provider" => "Keyboard and mouse",
         "terminal-height"
