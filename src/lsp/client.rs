@@ -382,8 +382,11 @@ impl Client {
                                 "documentationFormat": ["markdown", "plaintext"],
                                 // Imports can come once an item is taken
                                 // (rust-analyzer only offers items needing
-                                // one when they can).
-                                "resolveSupport": { "properties": ["additionalTextEdits"] },
+                                // one when they can), and documentation
+                                // once one is chosen (lighter lists).
+                                "resolveSupport": {
+                                    "properties": ["additionalTextEdits", "documentation"],
+                                },
                             },
                             "contextSupport": true,
                         },

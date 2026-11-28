@@ -226,6 +226,10 @@ pub struct Editor {
     hover: Option<lsp::Hover>,
     /// Whether the key being handled scrolled the hover (so it stays).
     hover_used: bool,
+    /// The chosen completion item's documentation, shown beside the menu:
+    /// its Markdown, and that as a document (see
+    /// `Editor::completion_docs`).
+    completion_docs: Option<(String, lsp::Hover)>,
     /// The coding agent's chat (`agent/chat.rs`).
     agent: agent::AgentChat,
     /// The editor's side of the agent's tool calls (`agent/tools.rs`).

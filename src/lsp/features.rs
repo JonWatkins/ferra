@@ -34,8 +34,9 @@
 //!   server sends (`workspace/applyEdit`) are for the query that ran it
 //!   (`Editor::lsp_edits_pushed`), and the command's end is its answer.
 //! - Completion items carry their server form too, to be resolved when
-//!   one's taken (`completionItem/resolve`): nothing is kept here between
-//!   queries.
+//!   one's chosen or taken (`completionItem/resolve`): nothing is kept
+//!   here between queries. The answer is its edits and its documentation
+//!   (`Answer::Resolved`).
 //! - Renaming from `<F2>` asks `textDocument/prepareRename` first, for
 //!   the name to start from ([`rename_from`]: its placeholder, its range's
 //!   text, or the word under the cursor); a server that renames but has no
@@ -415,7 +416,7 @@ impl Lsp {
                 continue;
             }
             if request.feature() == LspFeature::ResolveCompletion {
-                let LspQuery::ResolveCompletion { item } = request.query.clone() else {
+                let LspQuery::ResolveCompletion { item, .. } = request.query.clone() else {
                     continue;
                 };
                 client.resolve_completion(request, item);
@@ -532,14 +533,15 @@ pub(super) fn answer(
             let resolves = client.resolves_completions();
             let (items, incomplete, raw) =
                 completion_items(editor, &request, &result, client.encoding);
-            // Resolved when taken, for its import: if the server says it
-            // resolves items, or the item has `data` for it to
-            // (rust-analyzer says it doesn't, but resolves those).
+            // Resolved when chosen or taken, for its documentation and
+            // import: if the server says it resolves items, or the item
+            // has `data` for it to (rust-analyzer says it doesn't, but
+            // resolves those).
             let items = items
                 .into_iter()
                 .zip(raw)
                 .map(|(mut item, raw)| {
-                    if (resolves || raw.get("data").is_some()) && item.other_edits.is_empty() {
+                    if resolves || raw.get("data").is_some() {
                         item.resolve = Some(raw);
                     }
                     item
@@ -547,7 +549,8 @@ pub(super) fn answer(
                 .collect();
             Answer::Completion { items, incomplete }
         }
-        // A taken item's other edits (its import), in its buffer.
+        // An item's other edits (its import), in its buffer, and its
+        // documentation; or a format's edits.
         LspFeature::ResolveCompletion | LspFeature::Format => {
             let Some(document) = editor.document_by_id(request.document) else {
                 return;
@@ -568,10 +571,18 @@ pub(super) fn answer(
                     (start, end, e["newText"].as_str().unwrap_or("").to_string())
                 })
                 .collect();
-            Answer::Edits(Edits {
-                documents: vec![(request.document, edits)],
-                ..Edits::default()
-            })
+            if request.feature() == LspFeature::ResolveCompletion {
+                let language = editor.language_of(document);
+                Answer::Resolved {
+                    edits,
+                    documentation: item_documentation(&result, language),
+                }
+            } else {
+                Answer::Edits(Edits {
+                    documents: vec![(request.document, edits)],
+                    ..Edits::default()
+                })
+            }
         }
         LspFeature::InlayHint => {
             let Some(document) = editor.document_by_id(request.document) else {
@@ -1197,6 +1208,7 @@ fn completion_items(
         return (Vec::new(), false, Vec::new());
     };
     let buffer = document.buffer();
+    let language = editor.language_of(document);
     let range = |range: &Value| {
         (
             convert::from_lsp(buffer, &range["start"], encoding),
@@ -1274,15 +1286,40 @@ fn completion_items(
                 cursor,
                 filter: item["filterText"].as_str().unwrap_or(&label).to_string(),
                 sort: item["sortText"].as_str().unwrap_or(&label).to_string(),
+                documentation: item_documentation(item, language),
                 label,
                 text,
                 detail,
                 other_edits,
                 resolve: None,
+                resolving: false,
             }
         })
         .collect();
     (items, incomplete, items_raw(result))
+}
+
+/// The widest a completion item's detail is before it's shown again in
+/// full above its documentation (the menu cuts it at 30).
+const SHORT_DETAIL: usize = 30;
+
+/// What's shown beside the completion menu for `item`: its detail (a
+/// signature) as code in the buffer's `language`, when it's too long or
+/// has more lines than the menu shows, then its documentation.
+fn item_documentation(item: &Value, language: Option<&str>) -> String {
+    let detail = item["detail"].as_str().unwrap_or("").trim();
+    let docs = hover_markdown(&item["documentation"]);
+    let docs = docs.trim();
+    let long = detail.chars().count() > SHORT_DETAIL || detail.contains('\n');
+    // Some servers start the documentation with the detail already.
+    let mut parts = Vec::new();
+    if long && !docs.contains(detail) {
+        parts.push(format!("```{}\n{detail}\n```", language.unwrap_or("")));
+    }
+    if !docs.is_empty() {
+        parts.push(docs.to_string());
+    }
+    parts.join("\n\n")
 }
 
 fn items_raw(result: &Value) -> Vec<Value> {
@@ -1618,6 +1655,26 @@ mod tests {
                 (2, "Argh", "struct", "Argh"),
             ]
         );
+    }
+
+    #[test]
+    fn an_items_documentation_starts_with_its_detail_when_its_long() {
+        let long = "fn area(&self, scale: f64) -> Result<f64, Error>";
+        let item = json!({"detail": long,
+                          "documentation": {"kind": "markdown", "value": "The **area**.\n"}});
+        assert_eq!(
+            item_documentation(&item, Some("rust")),
+            format!("```rust\n{long}\n```\n\nThe **area**."),
+        );
+        let short = json!({"detail": "f64", "documentation": "Plain."});
+        assert_eq!(
+            item_documentation(&short, Some("rust")),
+            "Plain.",
+            "the menu shows it"
+        );
+        let repeated = json!({"detail": long, "documentation": format!("```\n{long}\n```")});
+        assert!(!item_documentation(&repeated, None).starts_with("```\n```"));
+        assert_eq!(item_documentation(&json!({"label": "x"}), None), "");
     }
 
     #[test]

@@ -1273,7 +1273,9 @@ letters of a word, or a character it completes after (`.`, `::`). The menu
 shows each with its type or kind, the letters typed picked out. Nothing
 goes in until you choose: `<C-n>` and `<C-p>` put the items in turn,
 `<Tab>` or `<C-y>` takes the chosen one (or the first), and `<C-e>` puts
-back what you typed. Typing more of the word narrows the list (those
+back what you typed. The item chosen with `<C-n>` has its documentation
+beside the menu (with its full signature, when the menu cuts it short).
+Typing more of the word narrows the list (those
 starting with what you typed first); anything else (a space, `<Esc>`,
 moving) closes it. Taking an item also makes the edits that come with it,
 such as rust-analyzer adding `use std::collections::HashMap;`. Set

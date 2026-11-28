@@ -215,10 +215,13 @@ pub enum LspQuery {
         trigger: Option<char>,
         word_start: Position,
     },
-    /// A taken completion item's details (its import): the item as the
-    /// server sent it (see `ServerItem::resolve`).
+    /// A completion item's details: the item as the server sent it (see
+    /// `ServerItem::resolve`). `taken`: it was taken, for its import;
+    /// else it was chosen in the menu, for its documentation (and its
+    /// import, kept for when it's taken).
     ResolveCompletion {
         item: serde_json::Value,
+        taken: bool,
     },
     Format,
     PrepareRename,
@@ -385,6 +388,12 @@ pub enum Answer {
     RenameFrom(Option<String>),
     /// The code actions there are (those that can be done there).
     Actions(Vec<CodeAction>),
+    /// A completion item resolved: its other edits (an import) and its
+    /// documentation (Markdown, maybe empty).
+    Resolved {
+        edits: Vec<(Position, Position, String)>,
+        documentation: String,
+    },
     /// Completions for the word being typed; `incomplete` if the server
     /// has more, to be asked again as more is typed.
     Completion {
@@ -713,6 +722,26 @@ pub struct ActionsAt {
 
 /// The id hover documents have: never one of the editor's buffers.
 pub const HOVER_DOCUMENT: DocumentId = DocumentId(u64::MAX);
+
+/// The id of the documentation shown beside the completion menu.
+pub const COMPLETION_DOCS_DOCUMENT: DocumentId = DocumentId(u64::MAX - 1);
+
+impl Hover {
+    /// `markdown` (without its HTML) as a document of its own, `id`.
+    pub fn new(markdown: &str, id: DocumentId) -> Self {
+        let markdown = without_html(markdown);
+        let mut document = Document::with_text(markdown.trim());
+        document.set_id(id);
+        let lines = document.buffer().line_count();
+        Self {
+            document,
+            scroll: 0,
+            shown: std::cell::Cell::new(lines),
+            total: std::cell::Cell::new(lines),
+            anchor: None,
+        }
+    }
+}
 
 impl Editor {
     /// Keeps the uses of the symbol under the cursor, found for `document`'s
@@ -1156,17 +1185,7 @@ impl Editor {
 
     /// Shows `markdown` in a popup by the cursor, until the next key.
     pub fn show_hover(&mut self, markdown: &str) {
-        let markdown = without_html(markdown);
-        let mut document = Document::with_text(markdown.trim());
-        document.set_id(HOVER_DOCUMENT);
-        let lines = document.buffer().line_count();
-        self.hover = Some(Hover {
-            document,
-            scroll: 0,
-            shown: std::cell::Cell::new(lines),
-            total: std::cell::Cell::new(lines),
-            anchor: None,
-        });
+        self.hover = Some(Hover::new(markdown, HOVER_DOCUMENT));
         // Shown as it arrives, between keys: the next key is the first that
         // could close it.
         self.hover_used = true;
@@ -1394,11 +1413,18 @@ impl Editor {
                     self.set_message(Message::info(format!("{title}: {}", applied.describe())));
                 }
             }
-            // A taken completion's other edits (its import).
-            Answer::Edits(edits) if request.feature() == LspFeature::ResolveCompletion => {
-                let edits = edits.documents.into_iter().flat_map(|(_, e)| e).collect();
-                self.make_other_edits(edits);
-            }
+            // A taken completion's other edits (its import), or a chosen
+            // one's documentation.
+            Answer::Resolved {
+                edits,
+                documentation,
+            } => match &request.query {
+                LspQuery::ResolveCompletion { taken: true, .. } => self.make_other_edits(edits),
+                LspQuery::ResolveCompletion { item, .. } => {
+                    self.completion_item_resolved(item, edits, documentation)
+                }
+                _ => {}
+            },
             Answer::Edits(edits) if request.feature() == LspFeature::Rename => {
                 let name = match &request.query {
                     LspQuery::Rename { name } => name.as_str(),

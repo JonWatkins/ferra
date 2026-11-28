@@ -303,7 +303,8 @@ fn serve(
                         {"label": "badge()", "insertText": "badge", "kind": 3},
                         {"label": "basket", "insertText": "basket(${1:n})$0",
                          "insertTextFormat": 2},
-                        {"label": "fine", "kind": 14},
+                        {"label": "fine", "kind": 14,
+                         "documentation": {"kind": "markdown", "value": "A **fine** word."}},
                         {"label": "imported", "additionalTextEdits": [import]},
                         {"label": "resolved", "data": {"id": 7}},
                     ]}),
@@ -677,6 +678,7 @@ fn serve(
                               "end": {"line": 0, "character": 0}},
                     "newText": "use resolved;\n",
                 }]);
+                item["documentation"] = json!("Comes from resolving.");
                 reply(&mut output, item);
             }
             "shutdown" => reply(&mut output, Value::Null),
@@ -1393,6 +1395,52 @@ fn taking_an_item_makes_its_import_too() {
     assert_eq!(common::cursor(&app), (4, 12));
     keys(&mut app, "x");
     assert!(text(&app).contains("    resolvedx\n"), "{}", text(&app));
+}
+
+#[test]
+fn the_chosen_items_documentation_is_shown_beside_the_menu() {
+    let (_dir, mut app, seen) = with_server("fn main() {\n    \n}\n", true);
+    ready(&mut app);
+    keys(&mut app, "jA");
+    keys(&mut app, "fin");
+    until(&mut app, |a| menu(a) == ["fine"]);
+    let row_with = |app: &mut App, text: &str| {
+        render(app, 80, 20)
+            .rows
+            .into_iter()
+            .find(|r| r.contains(text))
+    };
+    assert!(
+        row_with(&mut app, "fine word").is_none(),
+        "nothing chosen yet"
+    );
+    keys(&mut app, "<C-n>");
+    let row = row_with(&mut app, "A fine word.").expect("shown once chosen");
+    assert!(
+        row.find("fine").unwrap() < row.find("│ A fine word.").unwrap(),
+        "{row}"
+    );
+
+    // One whose documentation comes from resolving it, once chosen; its
+    // import comes with it, so taking it doesn't ask again.
+    keys(&mut app, "<Esc>o");
+    keys(&mut app, "reso");
+    until(&mut app, |a| menu(a) == ["resolved"]);
+    keys(&mut app, "<C-n>");
+    until(&mut app, |a| a.editor().completion_docs().is_some());
+    assert!(row_with(&mut app, "Comes from resolving.").is_some());
+    keys(&mut app, "<C-p><C-n>");
+    keys(&mut app, "<C-y>");
+    assert!(text(&app).starts_with("use resolved;"), "{}", text(&app));
+    let resolves = |seen: &Arc<Mutex<Seen>>| {
+        let seen = seen.lock().unwrap();
+        seen.methods
+            .iter()
+            .filter(|m| *m == "completionItem/resolve")
+            .count()
+    };
+    app.update();
+    assert_eq!(resolves(&seen), 1, "asked once");
 }
 
 #[test]
